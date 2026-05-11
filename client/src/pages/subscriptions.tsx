@@ -102,7 +102,8 @@ const subscriptions: Subscription[] = [
     url: "https://www.pipnet.com",
     icon: Globe,
     color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
-    hasApi: false,
+    hasApi: true,
+    apiNote: "Scrape-based integration — credentials configured below (admins only).",
   },
   {
     name: "Requirement List",
@@ -211,6 +212,61 @@ export default function Subscriptions() {
   const [keysExpanded, setKeysExpanded] = useState(false);
   const [chartIniting, setChartIniting] = useState(false);
   const { toast } = useToast();
+
+  const { data: currentUser } = useQuery<{ isAdmin?: boolean } | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/auth/me");
+      return res.json();
+    },
+  });
+  const isAdmin = !!currentUser?.isAdmin;
+
+  const { data: pipnetStatus, refetch: refetchPipnet } = useQuery<{ configured: boolean; source: "db" | "env" | "none"; usernameMasked: string; emailMasked: string }>({
+    queryKey: ["/api/admin/integrations/pipnet"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/integrations/pipnet");
+      return res.json();
+    },
+    enabled: isAdmin,
+  });
+  const [pipnetForm, setPipnetForm] = useState({ username: "helliott", email: "harrye@brucegillinghampollard.com", password: "" });
+  const [pipnetSaving, setPipnetSaving] = useState(false);
+  const [pipnetTesting, setPipnetTesting] = useState(false);
+  const savePipnetCreds = async () => {
+    if (!pipnetForm.username || !pipnetForm.email || !pipnetForm.password) {
+      toast({ title: "Missing fields", description: "Username, email and password are all required.", variant: "destructive" });
+      return;
+    }
+    setPipnetSaving(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/integrations/pipnet", pipnetForm);
+      if (!res.ok) throw new Error((await res.json()).message || "Save failed");
+      toast({ title: "PIPnet credentials saved", description: "The next search/import will use these credentials." });
+      setPipnetForm(f => ({ ...f, password: "" }));
+      await refetchPipnet();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSaving(false);
+    }
+  };
+  const testPipnetLogin = async () => {
+    setPipnetTesting(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/integrations/pipnet/test");
+      const data = await res.json();
+      if (data.ok) {
+        toast({ title: "PIPnet login successful", description: data.message });
+      } else {
+        toast({ title: "PIPnet login failed", description: data.message, variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: "Test failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetTesting(false);
+    }
+  };
 
   const { data: keyStatus, isLoading: keysLoading, refetch: refetchKeys, isFetching: keysFetching } = useQuery<IntegrationsStatus>({
     queryKey: ["/api/integrations/status"],
@@ -507,6 +563,69 @@ export default function Subscriptions() {
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{sub.description}</p>
                     {sub.apiNote && isExpanded && (
                       <p className="text-xs text-primary/80 mt-1.5 italic">{sub.apiNote}</p>
+                    )}
+                    {sub.name === "PIPNET" && isExpanded && isAdmin && (
+                      <div className="mt-3 p-3 rounded-md border bg-muted/30 space-y-2" data-testid="pipnet-config">
+                        <div className="flex items-center gap-2 text-xs">
+                          {pipnetStatus?.configured ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Connected — {pipnetStatus.usernameMasked} / {pipnetStatus.emailMasked} ({pipnetStatus.source})</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="w-3.5 h-3.5 text-amber-600" />
+                              <span>Not configured — enter credentials below</span>
+                            </>
+                          )}
+                        </div>
+                        <Input
+                          placeholder="Username (e.g. helliott)"
+                          value={pipnetForm.username}
+                          onChange={(e) => setPipnetForm(f => ({ ...f, username: e.target.value }))}
+                          className="h-7 text-xs"
+                          data-testid="input-pipnet-username"
+                        />
+                        <Input
+                          placeholder="Email"
+                          type="email"
+                          value={pipnetForm.email}
+                          onChange={(e) => setPipnetForm(f => ({ ...f, email: e.target.value }))}
+                          className="h-7 text-xs"
+                          data-testid="input-pipnet-email"
+                        />
+                        <Input
+                          placeholder="Password"
+                          type="password"
+                          value={pipnetForm.password}
+                          onChange={(e) => setPipnetForm(f => ({ ...f, password: e.target.value }))}
+                          className="h-7 text-xs"
+                          data-testid="input-pipnet-password"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs flex-1"
+                            onClick={savePipnetCreds}
+                            disabled={pipnetSaving}
+                            data-testid="button-save-pipnet"
+                          >
+                            {pipnetSaving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <KeyRound className="w-3 h-3 mr-1" />}
+                            Save
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={testPipnetLogin}
+                            disabled={pipnetTesting || !pipnetStatus?.configured}
+                            data-testid="button-test-pipnet"
+                          >
+                            {pipnetTesting ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                            Test login
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>

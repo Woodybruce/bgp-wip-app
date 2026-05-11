@@ -2,11 +2,9 @@ import { db } from "./db";
 import { externalRequirements } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
+import { getPipnetCreds } from "./integration-credentials";
 
 const PIPNET_URL = process.env.PIPNET_URL || "https://v1.pipnet.co.uk";
-const PIPNET_USERNAME = process.env.PIPNET_USERNAME || "helliott";
-const PIPNET_PASSWORD = process.env.PIPNET_PASSWORD || "";
-const PIPNET_EMAIL = process.env.PIPNET_EMAIL || "";
 
 let sessionCookie: string | null = null;
 
@@ -35,10 +33,14 @@ async function login(): Promise<string> {
     sessionCookie = null;
   }
 
+  const creds = await getPipnetCreds();
+  if (!creds.password || !creds.email) {
+    throw new Error("PIPnet not configured — set username, email and password in /subscriptions or Railway env vars.");
+  }
   const body = new URLSearchParams({
-    username: PIPNET_USERNAME,
-    password: PIPNET_PASSWORD,
-    email: PIPNET_EMAIL,
+    username: creds.username,
+    password: creds.password,
+    email: creds.email,
     Submit: "Login",
   });
 

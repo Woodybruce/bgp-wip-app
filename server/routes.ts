@@ -2,7 +2,8 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
-import { requireAuth, getUserIdFromToken } from "./auth";
+import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
+import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope } from "./company-scope";
 import multer from "multer";
 import path from "path";
@@ -1428,6 +1429,52 @@ export async function registerRoutes(
       res.json(tone);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const status = await getPipnetCredsStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to read PIPnet credentials" });
+    }
+  });
+
+  app.post("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { username, email, password } = req.body || {};
+      if (!username || !email || !password) {
+        return res.status(400).json({ message: "username, email and password are all required" });
+      }
+      await setPipnetCreds({ username, email, password });
+      const { resetSession } = await import("./pipnet");
+      resetSession();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to save PIPnet credentials" });
+    }
+  });
+
+  app.post("/api/admin/integrations/pipnet/test", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { resetSession, searchPipnetRequirements } = await import("./pipnet");
+      resetSession();
+      await searchPipnetRequirements({ location: "London" });
+      res.json({ ok: true, message: "Login successful — PIPnet is responding." });
+    } catch (err: any) {
+      res.status(400).json({ ok: false, message: err?.message || "PIPnet test failed" });
+    }
+  });
+
+  app.delete("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      await clearPipnetCreds();
+      const { resetSession } = await import("./pipnet");
+      resetSession();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to clear PIPnet credentials" });
     }
   });
 
