@@ -303,7 +303,26 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
         for (const [k, v] of entries) lines.push(`${k}: ${v}`);
       }
       lines.push("");
-      lines.push("--- HTML preview (first 1200 chars) ---");
+      lines.push("--- View All Images (brochure) ---");
+      if (data.brochure) {
+        lines.push(`URL: ${data.brochure.url}`);
+        lines.push(`Content-Type: ${data.brochure.contentType}`);
+        lines.push(`Size: ${data.brochure.bytes} bytes`);
+        lines.push(`Is HTML: ${data.brochure.isHtml}`);
+        if (data.brochure.imageUrls?.length) {
+          lines.push(`Image URLs (${data.brochure.imageUrls.length}):`);
+          lines.push(...data.brochure.imageUrls);
+        }
+        if (data.brochure.htmlPreview) {
+          lines.push("");
+          lines.push("Brochure HTML preview:");
+          lines.push(data.brochure.htmlPreview);
+        }
+      } else {
+        lines.push("(no View All Images link found on this requirement)");
+      }
+      lines.push("");
+      lines.push("--- Detail HTML preview (first 1200 chars) ---");
       lines.push(data.htmlPreview || "");
       setPipnetHeadersText(lines.join("\n"));
     } catch (err: any) {

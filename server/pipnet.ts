@@ -725,6 +725,14 @@ export async function inspectPipnetDetail(): Promise<{
   fields: Record<string, string>;
   htmlPreview: string;
   htmlLength: number;
+  brochure?: {
+    url: string;
+    contentType: string;
+    bytes: number;
+    isHtml: boolean;
+    htmlPreview?: string;
+    imageUrls?: string[];
+  } | null;
 }> {
   const cookie = await login();
   const body = new URLSearchParams({
@@ -795,12 +803,39 @@ export async function inspectPipnetDetail(): Promise<{
     if (k && v && !(k in fields)) fields[k] = v;
   }
 
+  // Also follow the "View All Images" link so we can see what format the
+  // brochure is in (HTML index, single image, PDF, etc). Determines the
+  // downloader / OCR pipeline we need to build next.
+  let brochure: { url: string; contentType: string; bytes: number; isHtml: boolean; htmlPreview?: string; imageUrls?: string[] } | null = null;
+  const viewAllMatch = detailHtml.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i);
+  if (viewAllMatch) {
+    const brochureUrl = viewAllMatch[1].startsWith("http") ? viewAllMatch[1] : `${PIPNET_URL}/${viewAllMatch[1].replace(/^\//, "")}`;
+    try {
+      const bRes = await pipFetch(brochureUrl, { headers: { Cookie: cookie } });
+      const ct = bRes.headers.get("content-type") || "";
+      const isHtml = /html/i.test(ct);
+      if (isHtml) {
+        const bHtml = await bRes.text();
+        const imgs = Array.from(new Set(
+          [...bHtml.matchAll(/<img[^>]+src="([^"]+)"/gi)].map(m => m[1])
+        )).slice(0, 20);
+        brochure = { url: brochureUrl, contentType: ct, bytes: bHtml.length, isHtml: true, htmlPreview: bHtml.slice(0, 1500), imageUrls: imgs };
+      } else {
+        const buf = await bRes.arrayBuffer();
+        brochure = { url: brochureUrl, contentType: ct, bytes: buf.byteLength, isHtml: false };
+      }
+    } catch (e: any) {
+      brochure = { url: brochureUrl, contentType: `error: ${e?.message}`, bytes: 0, isHtml: false };
+    }
+  }
+
   return {
     candidateLinks: detailCandidates.slice(0, 20),
     detailUrl,
     fields,
     htmlPreview: detailHtml.slice(0, 1200),
     htmlLength: detailHtml.length,
+    brochure,
   };
 }
 
