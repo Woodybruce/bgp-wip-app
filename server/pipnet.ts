@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { externalRequirements } from "@shared/schema";
+import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
@@ -293,6 +293,44 @@ export async function searchPipnetProperties(params: {
   return parseHtmlTable(html);
 }
 
+function parseUkDate(input: string | undefined | null): Date | null {
+  if (!input) return null;
+  const s = String(input).trim();
+  if (!s) return null;
+  // DD/MM/YYYY or DD-MM-YYYY
+  let m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    const month = parseInt(m[2], 10) - 1;
+    let year = parseInt(m[3], 10);
+    if (year < 100) year += year < 70 ? 2000 : 1900;
+    const d = new Date(Date.UTC(year, month, day));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // YYYY-MM-DD
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) {
+    const d = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // DD Mon YYYY or DD Month YYYY (e.g. "11 May 2026" / "11-May-2026")
+  const months: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  m = s.match(/^(\d{1,2})[\s\-/]+([A-Za-z]{3,})[\s\-/]+(\d{2,4})/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    const mon = months[m[2].slice(0, 3).toLowerCase()];
+    if (mon !== undefined) {
+      let year = parseInt(m[3], 10);
+      if (year < 100) year += year < 70 ? 2000 : 1900;
+      const d = new Date(Date.UTC(year, mon, day));
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+  // Last resort — let Date parse it
+  const fallback = new Date(s);
+  return isNaN(fallback.getTime()) ? null : fallback;
+}
+
 export async function importPipnetRequirements(params: {
   location?: string;
   minSize?: string;
@@ -300,12 +338,21 @@ export async function importPipnetRequirements(params: {
   client?: string;
   documentDate?: string;
   allPages?: boolean;
-}): Promise<{ imported: number; total: number; pages: number }> {
+  monthsBack?: number;
+  autoPromote?: boolean;
+}): Promise<{ imported: number; promoted: number; skippedOld: number; total: number; pages: number }> {
+  const monthsBack = params.monthsBack ?? 3;
+  const autoPromote = params.autoPromote ?? true;
+  const cutoff = new Date();
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - monthsBack);
+
   const results = await searchPipnetRequirements({
     ...params,
     allPages: params.allPages ?? true,
   });
   let imported = 0;
+  let promoted = 0;
+  let skippedOld = 0;
 
   for (const row of results) {
     const companyName =
@@ -316,6 +363,12 @@ export async function importPipnetRequirements(params: {
     const contact = row["Contact"] || "";
     const area = row["Area"] || row["Size"] || row["Sales Area"] || "";
     const docDate = row["Document Date"] || row["Date"] || row["Updated"] || "";
+
+    const parsedDate = parseUkDate(docDate);
+    if (parsedDate && parsedDate < cutoff) {
+      skippedOld++;
+      continue;
+    }
 
     const sourceId = `pipnet-req-${companyName}-${agent}-${area}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
 
@@ -348,18 +401,117 @@ export async function importPipnetRequirements(params: {
       updatedAt: new Date(),
     };
 
+    let externalId: string;
     if (existing.length > 0) {
       await db
         .update(externalRequirements)
         .set(record)
         .where(eq(externalRequirements.id, existing[0].id));
+      externalId = existing[0].id;
     } else {
-      await db.insert(externalRequirements).values(record);
+      const [inserted] = await db.insert(externalRequirements).values(record).returning({ id: externalRequirements.id });
+      externalId = inserted.id;
     }
     imported++;
+
+    if (autoPromote && (existing.length === 0 || existing[0].status !== "converted")) {
+      const created = await promoteToCrmRequirement(externalId, record);
+      if (created) promoted++;
+    }
   }
 
-  return { imported, total: results.length, pages: Math.ceil(results.length / 20) };
+  return { imported, promoted, skippedOld, total: results.length, pages: Math.ceil(results.length / 20) };
+}
+
+async function promoteToCrmRequirement(
+  externalId: string,
+  item: {
+    companyName: string;
+    contactName: string | null;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    useClass: string | null;
+    sizeRange: string | null;
+    locations: string[] | null;
+    tenure: string | null;
+    description: string | null;
+  }
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    let companyId: string | null = null;
+    if (item.companyName) {
+      const existingCompany = await tx
+        .select()
+        .from(crmCompanies)
+        .where(eq(crmCompanies.name, item.companyName))
+        .limit(1);
+      if (existingCompany.length > 0) {
+        companyId = existingCompany[0].id;
+      } else {
+        const [newCompany] = await tx
+          .insert(crmCompanies)
+          .values({ name: item.companyName })
+          .returning({ id: crmCompanies.id });
+        companyId = newCompany.id;
+      }
+    }
+
+    let contactId: string | null = null;
+    if (item.contactName) {
+      const existingContact = await tx
+        .select()
+        .from(crmContacts)
+        .where(eq(crmContacts.name, item.contactName))
+        .limit(1);
+      if (existingContact.length > 0) {
+        contactId = existingContact[0].id;
+      } else {
+        const [newContact] = await tx
+          .insert(crmContacts)
+          .values({
+            name: item.contactName,
+            companyName: item.companyName,
+            email: item.contactEmail,
+            phone: item.contactPhone,
+            companyId,
+          })
+          .returning({ id: crmContacts.id });
+        contactId = newContact.id;
+      }
+    }
+
+    // Skip if a leasing requirement for this company already exists — avoids
+    // duplicating when a re-sync sees the same client. Match by name + company.
+    const existingReq = await tx
+      .select({ id: crmRequirementsLeasing.id })
+      .from(crmRequirementsLeasing)
+      .where(eq(crmRequirementsLeasing.name, item.companyName))
+      .limit(1);
+    if (existingReq.length > 0) {
+      await tx
+        .update(externalRequirements)
+        .set({ status: "converted" })
+        .where(eq(externalRequirements.id, externalId));
+      return false;
+    }
+
+    await tx.insert(crmRequirementsLeasing).values({
+      name: item.companyName,
+      companyId,
+      principalContactId: contactId,
+      use: item.useClass ? [item.useClass] : null,
+      size: item.sizeRange ? [item.sizeRange] : null,
+      requirementLocations: item.locations,
+      comments: [item.description, `Tenure: ${item.tenure || "N/A"}`, "Source: PIPnet"].filter(Boolean).join("\n"),
+      status: "Active",
+    });
+
+    await tx
+      .update(externalRequirements)
+      .set({ status: "converted" })
+      .where(eq(externalRequirements.id, externalId));
+    return true;
+  });
 }
 
 export function resetSession() {

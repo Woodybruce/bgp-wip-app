@@ -260,12 +260,17 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ allPages: true }),
+        body: JSON.stringify({ allPages: true, monthsBack: 3, autoPromote: true }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Sync failed");
       queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
-      toast({ title: "Pipnet synced", description: `${data.imported} requirement${data.imported !== 1 ? "s" : ""} imported / updated from ${data.total} found` });
+      const parts = [
+        `${data.imported} from last 3 months`,
+        data.promoted ? `${data.promoted} added to requirements page` : null,
+        data.skippedOld ? `${data.skippedOld} older skipped` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "Pipnet synced", description: parts || "No new requirements found" });
     } catch (err: any) {
       toast({ title: "Pipnet sync failed", description: err.message, variant: "destructive" });
     } finally {

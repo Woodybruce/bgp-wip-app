@@ -1494,8 +1494,8 @@ export async function registerRoutes(
 
   app.post("/api/external-requirements/import-pipnet", requireAuth, async (req, res) => {
     try {
-      const { location, minSize, maxSize, client, documentDate, allPages } = req.body;
-      const result = await importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages });
+      const { location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote } = req.body;
+      const result = await importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "PIPnet import failed" });
