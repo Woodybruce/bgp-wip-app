@@ -189,6 +189,12 @@ function parseHtmlTable(html: string): Record<string, string>[] {
       headers.forEach((h, idx) => {
         if (idx < cells.length) row[h] = cells[idx];
       });
+      // Capture the first per-row detail link so the importer can fetch the
+      // requirement's full detail page (use class, email, mobile, brochure URL).
+      // Pagination links are ignored — they all live outside the row body.
+      const rowHrefs = [...allTrs[i][1].matchAll(/href="([^"]+)"/gi)].map(m => m[1]);
+      const detailHref = rowHrefs.find(h => /req|detail|show|view/i.test(h) && !/action=next/i.test(h));
+      if (detailHref) row._detailHref = detailHref;
       rows.push(row);
     }
   }
@@ -300,6 +306,81 @@ export async function searchPipnetProperties(params: {
   return parseHtmlTable(html);
 }
 
+// Pulls every additional field that lives on a requirement's detail page —
+// use class, email, mobile, address, comments, tenure, plus the "View All
+// Images" URL which the team treats as the landlord pack. The list view
+// doesn't expose any of these, so a per-row detail fetch is mandatory if we
+// want a complete record.
+async function fetchPipnetDetail(href: string, cookie: string): Promise<{
+  requirementId?: string;
+  useClass?: string;
+  email?: string;
+  mobile?: string;
+  telephone?: string;
+  contactName?: string;
+  tenure?: string;
+  comments?: string;
+  address1?: string;
+  address2?: string;
+  town?: string;
+  county?: string;
+  postCode?: string;
+  documentDate?: string;
+  landlordPackUrl?: string;
+}> {
+  const url = href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
+  const res = await pipFetch(url, { headers: { Cookie: cookie } });
+  if (!res.ok) return {};
+  const html = await res.text();
+
+  const fields: Record<string, string> = {};
+  const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+
+  for (const m of html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && k.length < 60) fields[k] = v;
+  }
+  for (const m of html.matchAll(/<td[^>]*class="[^"]*(?:label|fieldLabel|key)[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && k.length < 60) fields[k] = v;
+  }
+  for (const m of html.matchAll(/<td[^>]*>\s*([^<:]{2,40}):\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && !(k in fields)) fields[k] = v;
+  }
+
+  // "View All Images" — the multi-page brochure the team calls the landlord pack.
+  const viewAllMatch = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i);
+  const landlordPackUrl = viewAllMatch
+    ? (viewAllMatch[1].startsWith("http") ? viewAllMatch[1] : `${PIPNET_URL}/${viewAllMatch[1].replace(/^\//, "")}`)
+    : undefined;
+
+  // "Requirement ID: 87425" — sometimes in a labelled row, sometimes inline.
+  let requirementId = fields["Requirement ID"] || fields["Req. ID"] || fields["Req ID"];
+  if (!requirementId) {
+    const idMatch = html.match(/Requirement\s*ID\s*:?\s*<\/?[^>]*>?\s*(\d+)/i);
+    if (idMatch) requirementId = idMatch[1];
+  }
+
+  return {
+    requirementId,
+    useClass: fields["User Categories"] || fields["Use Categories"] || fields["Use Class"],
+    email: fields["Email"] || fields["E-Mail"] || fields["E-mail"],
+    mobile: fields["Mobile"],
+    telephone: fields["Telephone"] || fields["Tel"] || fields["Tel. No"],
+    contactName: fields["Contact"],
+    tenure: fields["Tenures"] || fields["Tenure"],
+    comments: fields["Comments"] || fields["Notes"],
+    address1: fields["Address 1"],
+    address2: fields["Address 2"],
+    town: fields["Town"],
+    county: fields["County"],
+    postCode: fields["Post Code"] || fields["Postcode"],
+    documentDate: fields["Document Date"] || fields["Date"],
+    landlordPackUrl,
+  };
+}
+
 function parseUkDate(input: string | undefined | null): Date | null {
   if (!input) return null;
   const s = String(input).trim();
@@ -364,6 +445,8 @@ export async function importPipnetRequirements(params: {
   let skippedOld = 0;
   let loggedHeaders = false;
 
+  const cookie = await login();
+
   for (const row of results) {
     if (!loggedHeaders) {
       console.log(`[pipnet import] PIPnet row columns: ${JSON.stringify(Object.keys(row))}`);
@@ -374,12 +457,9 @@ export async function importPipnetRequirements(params: {
     if (companyName === "Unknown" || companyName === "[No Client Quoted]") continue;
 
     const agentCompany = (row["Agent"] || row["Agency"] || row["Acting Agent"] || "").trim();
-    const agentContactName = (row["Contact"] || row["Contact Name"] || row["Agent Contact"] || "").trim();
-    // Size: prefer dedicated size headers; fall back to "Area" only if no other.
+    // List view's Contact has a "(Agent)" suffix — strip it. Detail page Contact is cleaner anyway.
+    const listContactName = (row["Contact"] || row["Contact Name"] || row["Agent Contact"] || "").trim().replace(/\s*\(Agent\)\s*$/i, "");
     const sizeRange = (row["Size"] || row["Sales Area"] || row["Sq Ft"] || row["Square Footage"] || row["Floor Area"] || row["Area"] || "").trim();
-    // Location: never reads "Area" (collides with size); use dedicated location headers.
-    const locationRaw = (row["Location"] || row["Locations"] || row["Town"] || row["Region"] || row["Wanted Area"] || row["Search Area"] || row["Geographic Area"] || row["Where"] || row["Area Required"] || "").trim();
-    const useClass = (row["Use"] || row["Use Class"] || row["Use Type"] || row["Type"] || row["Property Type"] || row["Sector"] || row["Class"] || "").trim();
     const docDate = row["Document Date"] || row["Date"] || row["Updated"] || row["Last Updated"] || "";
 
     const parsedDate = parseUkDate(docDate);
@@ -388,7 +468,23 @@ export async function importPipnetRequirements(params: {
       continue;
     }
 
-    const sourceId = `pipnet-req-${companyName}-${agentCompany}-${sizeRange}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
+    // Per-row detail fetch — pulls use class, email, mobile, brochure URL etc.
+    // The list view doesn't expose any of these. Adds one HTTP request per row.
+    let detail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
+    if (row._detailHref) {
+      try {
+        detail = await fetchPipnetDetail(row._detailHref, cookie);
+        await new Promise(r => setTimeout(r, 150));
+      } catch (e: any) {
+        console.error(`[pipnet detail] ${row._detailHref}: ${e?.message}`);
+      }
+    }
+
+    // Prefer PIPnet's stable Requirement ID for dedup; fall back to the old
+    // hash-style id for rows where the detail page didn't yield one.
+    const sourceId = detail.requirementId
+      ? `pipnet-req-${detail.requirementId}`
+      : `pipnet-req-${companyName}-${agentCompany}-${sizeRange}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
 
     const existing = await db
       .select()
@@ -401,23 +497,31 @@ export async function importPipnetRequirements(params: {
       )
       .limit(1);
 
+    const contactName = (detail.contactName || listContactName || "").trim();
+    const useClass = detail.useClass || "";
+
     const record = {
       source: "PIPnet" as const,
       sourceId,
       companyName,
-      // PIPnet's "Contact" is the agent's named contact, not a client-side
-      // contact. Stored here for the promote step to route to agentContactId.
-      contactName: agentContactName || null,
-      contactPhone: row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
-      contactEmail: row["Email"] || row["E-Mail"] || row["E-mail"] || null,
-      tenure: row["Tenure"] || null,
+      contactName: contactName || null,
+      contactPhone: detail.telephone || row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
+      contactEmail: detail.email || row["Email"] || row["E-Mail"] || row["E-mail"] || null,
+      tenure: detail.tenure || row["Tenure"] || null,
       sizeRange: sizeRange || null,
       useClass: useClass || null,
-      locations: locationRaw ? locationRaw.split(/\s*[,;|]\s*/).filter(Boolean) : null,
-      lastUpdated: docDate || null,
-      description: agentCompany ? `Acting agent: ${agentCompany}` : null,
+      locations: null, // PIPnet does not expose wanted locations — team fills manually.
+      lastUpdated: detail.documentDate || docDate || null,
+      description: [detail.comments, agentCompany ? `Acting agent: ${agentCompany}` : null].filter(Boolean).join("\n\n") || null,
       status: row["Status"] || "active",
-      rawData: { ...row, _agentCompany: agentCompany } as any,
+      rawData: {
+        ...row,
+        _agentCompany: agentCompany,
+        _detail: detail,
+        _landlordPackUrl: detail.landlordPackUrl || null,
+        _mobile: detail.mobile || null,
+        _address: { line1: detail.address1, line2: detail.address2, town: detail.town, county: detail.county, postCode: detail.postCode },
+      } as any,
       updatedAt: new Date(),
     };
 
@@ -455,10 +559,14 @@ async function promoteToCrmRequirement(
     locations: string[] | null;
     tenure: string | null;
     description: string | null;
+    lastUpdated?: string | null;
     rawData: any;
   }
 ): Promise<boolean> {
   const agentCompanyName: string = (item.rawData?._agentCompany || "").trim();
+  const landlordPackUrl: string | null = item.rawData?._landlordPackUrl || null;
+  const mobile: string | null = item.rawData?._mobile || null;
+  const addr = item.rawData?._address || {};
   return db.transaction(async (tx) => {
     // Client company — the tenant looking for space (PIPnet "Client" column).
     let clientCompanyId: string | null = null;
@@ -479,8 +587,9 @@ async function promoteToCrmRequirement(
       }
     }
 
-    // Agent company — the agency representing the client (PIPnet "Agent"
-    // column). Looked up by name; if missing, created with companyType="Agent".
+    // Agent company — look up by name. On create, tag companyType="Agent".
+    // On existing rows without a type, also set it — pre-PIPnet rows for
+    // Savills/CBRE/etc. otherwise never get the tag.
     let agentCompanyId: string | null = null;
     if (agentCompanyName) {
       const existingAgentCo = await tx
@@ -490,6 +599,12 @@ async function promoteToCrmRequirement(
         .limit(1);
       if (existingAgentCo.length > 0) {
         agentCompanyId = existingAgentCo[0].id;
+        if (!existingAgentCo[0].companyType) {
+          await tx
+            .update(crmCompanies)
+            .set({ companyType: "Agent" })
+            .where(eq(crmCompanies.id, existingAgentCo[0].id));
+        }
       } else {
         const [newAgentCo] = await tx
           .insert(crmCompanies)
@@ -499,8 +614,9 @@ async function promoteToCrmRequirement(
       }
     }
 
-    // Agent contact — the named person at the agency (PIPnet "Contact"
-    // column). Goes into agentContactId, NOT principalContactId.
+    // Agent contact — named person at the agency. Goes into agentContactId,
+    // not principalContactId. Email + mobile + address are merged on existing
+    // rows so subsequent syncs enrich rather than duplicate.
     let agentContactId: string | null = null;
     if (item.contactName) {
       const existingContact = await tx
@@ -515,6 +631,13 @@ async function promoteToCrmRequirement(
         .limit(1);
       if (existingContact.length > 0) {
         agentContactId = existingContact[0].id;
+        const updates: Record<string, any> = {};
+        if (!existingContact[0].email && item.contactEmail) updates.email = item.contactEmail;
+        if (!existingContact[0].phone && item.contactPhone) updates.phone = item.contactPhone;
+        if (!existingContact[0].phoneMobile && mobile) updates.phoneMobile = mobile;
+        if (Object.keys(updates).length > 0) {
+          await tx.update(crmContacts).set(updates).where(eq(crmContacts.id, existingContact[0].id));
+        }
       } else {
         const [newContact] = await tx
           .insert(crmContacts)
@@ -523,12 +646,26 @@ async function promoteToCrmRequirement(
             companyName: agentCompanyName || null,
             email: item.contactEmail,
             phone: item.contactPhone,
+            phoneMobile: mobile,
             companyId: agentCompanyId,
+            contactType: "Agent",
           })
           .returning({ id: crmContacts.id });
         agentContactId = newContact.id;
       }
     }
+
+    // Use class arrives comma-separated from PIPnet ("A1,A3,SG,A4,E") — split.
+    const useArray = item.useClass
+      ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
+      : null;
+
+    const landlordPackJson = landlordPackUrl
+      ? JSON.stringify({ url: landlordPackUrl, name: "PIPnet brochure" })
+      : null;
+
+    const requirementDate = parseUkDate(item.lastUpdated || "");
+    const requirementDateIso = requirementDate ? requirementDate.toISOString().slice(0, 10) : null;
 
     // Skip if a leasing requirement for this client already exists — avoids
     // duplicating when a re-sync sees the same client.
@@ -545,15 +682,23 @@ async function promoteToCrmRequirement(
       return false;
     }
 
+    const addressLine = [addr.line1, addr.line2, addr.town, addr.county, addr.postCode].filter(Boolean).join(", ");
     await tx.insert(crmRequirementsLeasing).values({
       name: item.companyName,
       companyId: clientCompanyId,
       principalContactId: null,
       agentContactId,
-      use: item.useClass ? [item.useClass] : null,
+      requirementDate: requirementDateIso,
+      use: useArray,
       size: item.sizeRange ? [item.sizeRange] : null,
       requirementLocations: item.locations,
-      comments: [item.description, `Tenure: ${item.tenure || "N/A"}`, "Source: PIPnet"].filter(Boolean).join("\n"),
+      landlordPack: landlordPackJson,
+      comments: [
+        item.description,
+        item.tenure ? `Tenure: ${item.tenure}` : null,
+        addressLine ? `Agent address: ${addressLine}` : null,
+        "Source: PIPnet",
+      ].filter(Boolean).join("\n"),
       status: "Active",
     });
 
