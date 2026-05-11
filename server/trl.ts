@@ -260,11 +260,48 @@ export async function importTrlRequirement(url: string, autoPromote = true): Pro
   return externalId;
 }
 
+// Classify a TRL contact as Principal (brand staff) or Agent (external rep)
+// from the email domain. e.g. brand "Pret A Manger" + email "*@pret.co.uk" →
+// Principal; "*@knightfrank.com" → Agent. Brand-name tokens are matched as
+// substrings of the email's host so "pretamanger.com" and "pret.co.uk" both
+// hit. Falls back to Agent when no email is available — TRL's named contacts
+// are usually agents on the user's read of the data.
+function classifyTrlContact(brandName: string, email: string | null): "Principal" | "Agent" {
+  if (!email) return "Agent";
+  const at = email.lastIndexOf("@");
+  if (at < 0) return "Agent";
+  const host = email.slice(at + 1).toLowerCase().split(":")[0]; // strip any port
+  if (!host) return "Agent";
+  const STOP = new Set(["the", "and", "group", "co", "company", "ltd", "limited", "plc", "uk", "of", "a", "an"]);
+  const tokens = brandName
+    .toLowerCase()
+    .replace(/&/g, " ")
+    .split(/[^a-z0-9]+/)
+    .filter(t => t.length >= 3 && !STOP.has(t));
+  if (tokens.length === 0) return "Agent";
+  for (const t of tokens) {
+    if (host.includes(t)) return "Principal";
+  }
+  return "Agent";
+}
+
+// Normalise a brand/company name for cross-source dedup. Same agent often
+// registers a requirement on both PIPnet and TRL under slightly different
+// names ("Pret", "Pret A Manger", "Pret A Manger Ltd") — we want all three
+// to collapse to one CRM row.
+function normaliseBrandName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\b(ltd|limited|plc|llp|inc|co|company|group|holdings|the)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 // Mirror of PIPnet's promote — the brand company (Pret, Greggs etc.) is the
-// requirement holder, but the named contact on TRL is usually an agent
-// representing them, not the brand's own property director. Defaults
-// accordingly: contact → agentContactId, no companyId on the contact (we
-// don't know which agency they're at without an extra scrape).
+// requirement holder. Contact routing uses classifyTrlContact: email-domain
+// match → principal (linked to brand company), mismatch → agent (unlinked,
+// since we don't have the agency name from TRL).
 async function promoteTrlToCrmRequirement(
   externalId: string,
   item: {
@@ -286,6 +323,7 @@ async function promoteTrlToCrmRequirement(
   }
 ): Promise<boolean> {
   const mappedUse: string[] = item.rawData?.mappedUse || [];
+  const role = classifyTrlContact(item.companyName, item.contactEmail);
   return db.transaction(async (tx) => {
     // Brand company — tag as "Brand" when newly created so it doesn't
     // collide with the agent/landlord segments.
@@ -307,10 +345,10 @@ async function promoteTrlToCrmRequirement(
       }
     }
 
-    // Agent contact — TRL's named contact is usually the agent representing
-    // the brand, not the brand's own staff. Store unlinked from any company
-    // (we don't reliably know which agency) and tag as Agent. If a contact
-    // with the same name already exists anywhere in CRM, reuse them.
+    // Contact — Principal if email domain matches the brand, else Agent.
+    // Principal contacts are linked to the brand company. Agent contacts are
+    // left unlinked (we don't know the agency name from TRL).
+    let principalContactId: string | null = null;
     let agentContactId: string | null = null;
     if (item.contactName) {
       const existingContact = await tx
@@ -318,12 +356,18 @@ async function promoteTrlToCrmRequirement(
         .from(crmContacts)
         .where(eq(crmContacts.name, item.contactName))
         .limit(1);
+      let contactId: string;
       if (existingContact.length > 0) {
-        agentContactId = existingContact[0].id;
+        contactId = existingContact[0].id;
         const updates: Record<string, any> = {};
         if (!existingContact[0].email && item.contactEmail) updates.email = item.contactEmail;
         if (!existingContact[0].phone && item.contactPhone) updates.phone = item.contactPhone;
         if (!existingContact[0].role && item.contactTitle) updates.role = item.contactTitle;
+        if (role === "Principal" && !existingContact[0].companyId && clientCompanyId) {
+          updates.companyId = clientCompanyId;
+          updates.companyName = item.companyName;
+        }
+        if (!existingContact[0].contactType) updates.contactType = role;
         if (Object.keys(updates).length > 0) {
           await tx.update(crmContacts).set(updates).where(eq(crmContacts.id, existingContact[0].id));
         }
@@ -335,20 +379,26 @@ async function promoteTrlToCrmRequirement(
             email: item.contactEmail,
             phone: item.contactPhone,
             role: item.contactTitle,
-            contactType: "Agent",
+            contactType: role,
+            companyId: role === "Principal" ? clientCompanyId : null,
+            companyName: role === "Principal" ? item.companyName : null,
           })
           .returning({ id: crmContacts.id });
-        agentContactId = newContact.id;
+        contactId = newContact.id;
       }
+      if (role === "Principal") principalContactId = contactId;
+      else agentContactId = contactId;
     }
 
-    // Skip if a leasing requirement for this brand already exists.
-    const existingReq = await tx
-      .select({ id: crmRequirementsLeasing.id })
-      .from(crmRequirementsLeasing)
-      .where(eq(crmRequirementsLeasing.name, item.companyName))
-      .limit(1);
-    if (existingReq.length > 0) {
+    // Skip if a leasing requirement for this brand already exists. Match by
+    // normalised name so agents registering on both PIPnet and TRL under
+    // slightly different brand strings collapse to a single CRM row.
+    const normalisedTarget = normaliseBrandName(item.companyName);
+    const candidateReqs = await tx
+      .select({ id: crmRequirementsLeasing.id, name: crmRequirementsLeasing.name })
+      .from(crmRequirementsLeasing);
+    const existingReq = candidateReqs.find(r => normaliseBrandName(r.name) === normalisedTarget);
+    if (existingReq) {
       await tx
         .update(externalRequirements)
         .set({ status: "converted" })
@@ -365,7 +415,7 @@ async function promoteTrlToCrmRequirement(
     await tx.insert(crmRequirementsLeasing).values({
       name: item.companyName,
       companyId: clientCompanyId,
-      principalContactId: null,
+      principalContactId,
       agentContactId,
       use: useArray,
       size: item.sizeRange ? [item.sizeRange] : null,

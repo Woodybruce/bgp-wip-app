@@ -490,6 +490,17 @@ async function imagesToPdf(pages: { bytes: Buffer; contentType: string }[]): Pro
   return Buffer.from(await pdf.save());
 }
 
+// Cross-source brand-name dedup. The same agent often registers a brand on
+// both PIPnet and TRL under slightly different strings — collapse them.
+function normaliseBrandName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\b(ltd|limited|plc|llp|inc|co|company|group|holdings|the)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function parseUkDate(input: string | undefined | null): Date | null {
   if (!input) return null;
   const s = String(input).trim();
@@ -791,14 +802,15 @@ async function promoteToCrmRequirement(
     const requirementDate = parseUkDate(item.lastUpdated || "");
     const requirementDateIso = requirementDate ? requirementDate.toISOString().slice(0, 10) : null;
 
-    // Skip if a leasing requirement for this client already exists — avoids
-    // duplicating when a re-sync sees the same client.
-    const existingReq = await tx
-      .select({ id: crmRequirementsLeasing.id })
-      .from(crmRequirementsLeasing)
-      .where(eq(crmRequirementsLeasing.name, item.companyName))
-      .limit(1);
-    if (existingReq.length > 0) {
+    // Skip if a leasing requirement for this client already exists. Match by
+    // normalised name so "Pret", "Pret A Manger", "Pret A Manger Ltd" — and
+    // the same brand seen via TRL — all collapse to a single CRM row.
+    const normalisedTarget = normaliseBrandName(item.companyName);
+    const candidateReqs = await tx
+      .select({ id: crmRequirementsLeasing.id, name: crmRequirementsLeasing.name })
+      .from(crmRequirementsLeasing);
+    const existingReq = candidateReqs.find(r => normaliseBrandName(r.name) === normalisedTarget);
+    if (existingReq) {
       await tx
         .update(externalRequirements)
         .set({ status: "converted" })
