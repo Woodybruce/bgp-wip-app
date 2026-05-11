@@ -2705,6 +2705,25 @@ Return ONLY JSON.`,
     }
   });
 
+  // Hard-delete a review form. Self or admin only — admins should be able
+  // to clear genuinely wrong entries (test rows, miskeyed periods etc.),
+  // employees should be able to bin a draft they don't want anymore.
+  // No soft-delete — these are user-authored forms, not regulatory records.
+  app.delete("/api/hr/reviews/:id", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const owner = await pool.query("SELECT user_id FROM staff_reviews WHERE id = $1", [req.params.id]);
+      if (!owner.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (!actor.isAdmin && actor.userId !== owner.rows[0].user_id) {
+        return res.status(403).json({ error: "Forbidden — you can only delete your own reviews" });
+      }
+      await pool.query("DELETE FROM staff_reviews WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Import a pasted review (e.g. from a SharePoint Word doc) and let Claude
   // extract the structured fields into a staff_reviews row. Lets BGP retire
   // the SharePoint copies and keep everything searchable in-app.

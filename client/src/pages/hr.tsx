@@ -158,6 +158,17 @@ interface HrDocument {
 const fmtSalary = (pence: number) => `£${(pence / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
 const fmtProgress = (pence: number, total: number) => total > 0 ? Math.min((pence / total) * 100, 100) : 0;
 
+// Whether a staff member's job is fee-earning (property advisor) or
+// support (PA, secretary, office manager, etc). Drives which review-form
+// fields show up — non-fee-earners don't have fees/pipeline/referrals.
+// Title-based heuristic, deliberately broad to default-include uncommon
+// titles as fee-earners (safer to over-show fields than to hide them).
+function isFeeEarner(title?: string | null): boolean {
+  if (!title) return true;
+  const t = title.toLowerCase().trim();
+  return !/\b(pa|p\.a\.?|personal assistant|secretary|secretarial|receptionist|office manager|office admin|admin(?: assistant)?|office support|ea|executive assistant|hr|human resources|finance|accounts|accountant|bookkeeper|it support|office junior)\b/.test(t);
+}
+
 function tenure(startDate: string | null): string {
   if (!startDate) return "—";
   const start = new Date(startDate);
@@ -2329,6 +2340,22 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
     },
   });
 
+  const deleteReview = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/hr/reviews/${id}`).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
+      setEditingId(null);
+      toast({ title: "Review deleted" });
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Couldn't delete",
+        description: e?.message?.slice(0, 240) || "",
+        variant: "destructive",
+      });
+    },
+  });
+
   const aiDraft = useMutation({
     mutationFn: async (id: string) => apiRequest("POST", `/api/hr/reviews/${id}/ai-draft`).then(r => r.json()),
     onSuccess: () => {
@@ -2492,6 +2519,21 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                     Mark complete
                   </Button>
                 )}
+                {(isOwn || isAdmin) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-destructive hover:text-destructive"
+                    title="Delete this review form (cannot be undone)"
+                    onClick={() => {
+                      if (!confirm(`Delete the ${editing.kind} review for ${editing.period}? This cannot be undone.`)) return;
+                      deleteReview.mutate(editing.id);
+                    }}
+                    disabled={deleteReview.isPending}
+                  >
+                    {deleteReview.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  </Button>
+                )}
               </div>
             </CardTitle>
           </CardHeader>
@@ -2503,6 +2545,12 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
               </div>
             )}
 
+            {/* Fee-earner fields only — PAs / EAs / Secretaries / Office
+                Managers / Receptionists / Admins don't have fees / pipeline,
+                so we hide these blocks for them. Detection is title-based,
+                see isFeeEarner(person.title). Their version of the form
+                emphasises workload, support, and office contributions. */}
+            {isFeeEarner(person.title) ? (
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs">Target (£)</Label>
@@ -2553,8 +2601,23 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 />
               </div>
             </div>
+            ) : (
+              // PA / EA / Secretary / Office Manager etc. — no fees or pipeline.
+              // Salary expectation is still relevant; everything else moves to
+              // the text fields below.
+              <div className="grid grid-cols-1 gap-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Salary expectation (£)</Label>
+                  <MoneyInput
+                    value={editing.salary_expectation_pence ? Math.round(editing.salary_expectation_pence / 100) : null}
+                    onCommit={(n) => updateReview.mutate({ id: editing.id, body: { salary_expectation_pence: n === null ? null : n * 100 } })}
+                    className="h-8"
+                  />
+                </div>
+              </div>
+            )}
 
-            {[
+            {(isFeeEarner(person.title) ? [
               { key: "achievements", label: "Achievements", placeholder: "Numbered list of wins this year" },
               { key: "development_areas", label: "Development areas", placeholder: "What to work on" },
               { key: "goals", label: "Goals for next year", placeholder: "SMART goals — turn into tasks above" },
@@ -2562,7 +2625,21 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
               { key: "marketing_pr", label: "Marketing / PR", placeholder: "LinkedIn posts, press, panels" },
               { key: "feedback", label: "Feedback for line manager", placeholder: "" },
               { key: "bgp_can_help", label: "Anything BGP can do to help you?", placeholder: "Hire a grad, more kit, training..." },
-            ].map(f => (
+            ] : [
+              // PA / admin role — different sections matching how these
+              // roles actually describe their work (per Cara M's review
+              // format): workload + who they support, office contributions,
+              // development, goals, feedback. Salary expectation stays
+              // above. Achievements field gets relabeled to capture
+              // "workload & support" since that's the equivalent for
+              // non-fee-earners.
+              { key: "achievements", label: "Workload & people I support", placeholder: "Day-to-day duties: who you support, recurring tasks, projects (Goads, marketing material, website etc.)" },
+              { key: "marketing_pr", label: "Office contributions", placeholder: "General office life — buzzer, kitchen, office moves, anything you do beyond your formal role" },
+              { key: "development_areas", label: "Development areas", placeholder: "What you'd like to work on next year" },
+              { key: "goals", label: "Goals for next year", placeholder: "How you'd like to grow / focus / improve" },
+              { key: "feedback", label: "Feedback for line manager", placeholder: "" },
+              { key: "bgp_can_help", label: "Anything BGP can do to help you?", placeholder: "Training, kit, time, support…" },
+            ]).map(f => (
               <div key={f.key} className="space-y-1.5">
                 <Label className="text-xs">{f.label}</Label>
                 <Textarea
