@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
 
@@ -362,16 +362,25 @@ export async function importPipnetRequirements(params: {
   let imported = 0;
   let promoted = 0;
   let skippedOld = 0;
+  let loggedHeaders = false;
 
   for (const row of results) {
+    if (!loggedHeaders) {
+      console.log(`[pipnet import] PIPnet row columns: ${JSON.stringify(Object.keys(row))}`);
+      loggedHeaders = true;
+    }
     const companyName =
       row["Client"] || row["Company"] || row["Name"] || "Unknown";
     if (companyName === "Unknown" || companyName === "[No Client Quoted]") continue;
 
-    const agent = row["Agent"] || "";
-    const contact = row["Contact"] || "";
-    const area = row["Area"] || row["Size"] || row["Sales Area"] || "";
-    const docDate = row["Document Date"] || row["Date"] || row["Updated"] || "";
+    const agentCompany = (row["Agent"] || row["Agency"] || row["Acting Agent"] || "").trim();
+    const agentContactName = (row["Contact"] || row["Contact Name"] || row["Agent Contact"] || "").trim();
+    // Size: prefer dedicated size headers; fall back to "Area" only if no other.
+    const sizeRange = (row["Size"] || row["Sales Area"] || row["Sq Ft"] || row["Square Footage"] || row["Floor Area"] || row["Area"] || "").trim();
+    // Location: never reads "Area" (collides with size); use dedicated location headers.
+    const locationRaw = (row["Location"] || row["Locations"] || row["Town"] || row["Region"] || row["Wanted Area"] || row["Search Area"] || row["Geographic Area"] || row["Where"] || row["Area Required"] || "").trim();
+    const useClass = (row["Use"] || row["Use Class"] || row["Use Type"] || row["Type"] || row["Property Type"] || row["Sector"] || row["Class"] || "").trim();
+    const docDate = row["Document Date"] || row["Date"] || row["Updated"] || row["Last Updated"] || "";
 
     const parsedDate = parseUkDate(docDate);
     if (parsedDate && parsedDate < cutoff) {
@@ -379,7 +388,7 @@ export async function importPipnetRequirements(params: {
       continue;
     }
 
-    const sourceId = `pipnet-req-${companyName}-${agent}-${area}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
+    const sourceId = `pipnet-req-${companyName}-${agentCompany}-${sizeRange}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
 
     const existing = await db
       .select()
@@ -396,17 +405,19 @@ export async function importPipnetRequirements(params: {
       source: "PIPnet" as const,
       sourceId,
       companyName,
-      contactName: contact || null,
-      contactPhone: row["Tel. No"] || row["Phone"] || row["Telephone"] || null,
-      contactEmail: row["Email"] || null,
+      // PIPnet's "Contact" is the agent's named contact, not a client-side
+      // contact. Stored here for the promote step to route to agentContactId.
+      contactName: agentContactName || null,
+      contactPhone: row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
+      contactEmail: row["Email"] || row["E-Mail"] || row["E-mail"] || null,
       tenure: row["Tenure"] || null,
-      sizeRange: area || null,
-      useClass: row["Use"] || row["Use Class"] || null,
-      locations: row["Location"] ? [row["Location"]] : null,
+      sizeRange: sizeRange || null,
+      useClass: useClass || null,
+      locations: locationRaw ? locationRaw.split(/\s*[,;|]\s*/).filter(Boolean) : null,
       lastUpdated: docDate || null,
-      description: agent ? `Agent: ${agent}` : null,
+      description: agentCompany ? `Acting agent: ${agentCompany}` : null,
       status: row["Status"] || "active",
-      rawData: row as any,
+      rawData: { ...row, _agentCompany: agentCompany } as any,
       updatedAt: new Date(),
     };
 
@@ -444,10 +455,13 @@ async function promoteToCrmRequirement(
     locations: string[] | null;
     tenure: string | null;
     description: string | null;
+    rawData: any;
   }
 ): Promise<boolean> {
+  const agentCompanyName: string = (item.rawData?._agentCompany || "").trim();
   return db.transaction(async (tx) => {
-    let companyId: string | null = null;
+    // Client company — the tenant looking for space (PIPnet "Client" column).
+    let clientCompanyId: string | null = null;
     if (item.companyName) {
       const existingCompany = await tx
         .select()
@@ -455,42 +469,69 @@ async function promoteToCrmRequirement(
         .where(eq(crmCompanies.name, item.companyName))
         .limit(1);
       if (existingCompany.length > 0) {
-        companyId = existingCompany[0].id;
+        clientCompanyId = existingCompany[0].id;
       } else {
         const [newCompany] = await tx
           .insert(crmCompanies)
           .values({ name: item.companyName })
           .returning({ id: crmCompanies.id });
-        companyId = newCompany.id;
+        clientCompanyId = newCompany.id;
       }
     }
 
-    let contactId: string | null = null;
+    // Agent company — the agency representing the client (PIPnet "Agent"
+    // column). Looked up by name; if missing, created with companyType="Agent".
+    let agentCompanyId: string | null = null;
+    if (agentCompanyName) {
+      const existingAgentCo = await tx
+        .select()
+        .from(crmCompanies)
+        .where(eq(crmCompanies.name, agentCompanyName))
+        .limit(1);
+      if (existingAgentCo.length > 0) {
+        agentCompanyId = existingAgentCo[0].id;
+      } else {
+        const [newAgentCo] = await tx
+          .insert(crmCompanies)
+          .values({ name: agentCompanyName, companyType: "Agent" })
+          .returning({ id: crmCompanies.id });
+        agentCompanyId = newAgentCo.id;
+      }
+    }
+
+    // Agent contact — the named person at the agency (PIPnet "Contact"
+    // column). Goes into agentContactId, NOT principalContactId.
+    let agentContactId: string | null = null;
     if (item.contactName) {
       const existingContact = await tx
         .select()
         .from(crmContacts)
-        .where(eq(crmContacts.name, item.contactName))
+        .where(
+          and(
+            eq(crmContacts.name, item.contactName),
+            agentCompanyId ? eq(crmContacts.companyId, agentCompanyId) : isNull(crmContacts.companyId),
+          )
+        )
         .limit(1);
       if (existingContact.length > 0) {
-        contactId = existingContact[0].id;
+        agentContactId = existingContact[0].id;
       } else {
         const [newContact] = await tx
           .insert(crmContacts)
           .values({
             name: item.contactName,
-            companyName: item.companyName,
+            companyName: agentCompanyName || null,
             email: item.contactEmail,
             phone: item.contactPhone,
-            companyId,
+            companyId: agentCompanyId,
           })
           .returning({ id: crmContacts.id });
-        contactId = newContact.id;
+        agentContactId = newContact.id;
       }
     }
 
-    // Skip if a leasing requirement for this company already exists — avoids
-    // duplicating when a re-sync sees the same client. Match by name + company.
+    // Skip if a leasing requirement for this client already exists — avoids
+    // duplicating when a re-sync sees the same client.
     const existingReq = await tx
       .select({ id: crmRequirementsLeasing.id })
       .from(crmRequirementsLeasing)
@@ -506,8 +547,9 @@ async function promoteToCrmRequirement(
 
     await tx.insert(crmRequirementsLeasing).values({
       name: item.companyName,
-      companyId,
-      principalContactId: contactId,
+      companyId: clientCompanyId,
+      principalContactId: null,
+      agentContactId,
       use: item.useClass ? [item.useClass] : null,
       size: item.sizeRange ? [item.sizeRange] : null,
       requirementLocations: item.locations,
