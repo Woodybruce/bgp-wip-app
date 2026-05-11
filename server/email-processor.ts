@@ -962,18 +962,26 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
 }
 
 function formatReplyHtml(reply: string, actions: ProcessedAction[]): string {
-  const actionList = actions
-    .filter(a => a.success)
-    .map(a => `<li>${a.result}</li>`)
-    .join("");
+  // Filter out internal diagnostic results that aren't useful to a recipient.
+  // "Action type X acknowledged …", "Found 0 contacts …", URGENT-flagged
+  // internal notes, etc. — these are AI bookkeeping, not customer copy.
+  // Surface only results that genuinely report an outcome (sent X,
+  // scheduled Y, drafted Z) — and even then keep them collapsed in a
+  // small note so the email reads like a person, not a logfile.
+  const VISIBLE_PREFIXES = ["Sent ", "Drafted ", "Scheduled ", "Created ", "Updated ", "Logged ", "Filed "];
+  const visibleActions = actions
+    .filter((a) => a.success && a.result)
+    .filter((a) => VISIBLE_PREFIXES.some((p) => a.result.startsWith(p)));
+
+  const actionList = visibleActions.map((a) => `<li>${a.result}</li>`).join("");
 
   return `
     <div style="font-family: Arial, Helvetica, sans-serif; color: #333;">
       <p>${reply.replace(/\n/g, "<br>")}</p>
       ${actionList ? `
         <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-        <p style="color: #666; font-size: 13px;"><strong>Actions taken:</strong></p>
-        <ul style="color: #666; font-size: 13px;">${actionList}</ul>
+        <p style="color: #666; font-size: 12px; margin: 0 0 4px 0;">Logged in BGP:</p>
+        <ul style="color: #666; font-size: 12px; margin: 0;">${actionList}</ul>
       ` : ""}
       <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
       <p style="color: #999; font-size: 11px;">This is an automated response from ChatBGP. For complex requests, please use the <a href="https://bgp-wip-app-production-efac.up.railway.app/chatbgp">ChatBGP dashboard</a>.</p>
