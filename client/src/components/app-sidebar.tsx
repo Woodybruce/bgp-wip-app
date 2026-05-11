@@ -259,17 +259,18 @@ export function AppSidebar() {
   const { brand, isLandsec } = useBrand();
 
   // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
-  // Items flagged adminOnly are hidden from non-admins until polished — they
-  // hand-rolled their way into the sidebar before being ready for the firm.
-  const coreNavFiltered = user?.isAdmin
-    ? coreNavBase
-    : coreNavBase.filter((i: any) => !i.adminOnly);
+  // Items flagged adminOnly are work-in-progress — moved out of Core entirely
+  // so the demo nav is clean, and grouped into the Admin section for admins
+  // to keep working on. Non-admins don't see the Admin section at all.
+  const coreWipItems = coreNavBase.filter((i: any) => i.adminOnly);
+  const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly);
   const coreNav = isLandsec
     ? [...coreNavFiltered, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
     : coreNavFiltered;
-  const adminNav = isLandsec
+  const adminNavCleaned = isLandsec
     ? adminNavBase.filter(i => i.url !== "/reporting")
     : adminNavBase;
+  const adminNav = [...coreWipItems, ...adminNavCleaned];
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
