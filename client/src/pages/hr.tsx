@@ -18,6 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1312,7 +1313,11 @@ function SalaryHistoryPanel({ person }: { person: StaffMember }) {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label>New salary (£)</Label>
-              <Input type="number" placeholder="65000" value={form.salary} onChange={e => setForm(f => ({ ...f, salary: e.target.value }))} />
+              <MoneyInput
+                placeholder="65,000"
+                value={form.salary ? parseFloat(String(form.salary).replace(/,/g, "")) : null}
+                onCommit={(n) => setForm((f) => ({ ...f, salary: n === null ? "" : String(n) }))}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Effective date</Label>
@@ -2491,27 +2496,51 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs">Target (£)</Label>
-                <Input type="number" defaultValue={editing.fees_target_pence ? Math.round(editing.fees_target_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { fees_target_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+                <MoneyInput
+                  value={editing.fees_target_pence ? Math.round(editing.fees_target_pence / 100) : null}
+                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { fees_target_pence: n === null ? null : n * 100 } })}
+                  className="h-8"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Achieved (£)</Label>
-                <Input type="number" defaultValue={editing.fees_achieved_pence ? Math.round(editing.fees_achieved_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { fees_achieved_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+                <MoneyInput
+                  value={editing.fees_achieved_pence ? Math.round(editing.fees_achieved_pence / 100) : null}
+                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { fees_achieved_pence: n === null ? null : n * 100 } })}
+                  className="h-8"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Pipeline — under offer (£)</Label>
-                <Input type="number" defaultValue={editing.pipeline_under_offer_pence ? Math.round(editing.pipeline_under_offer_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { pipeline_under_offer_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+                <MoneyInput
+                  value={editing.pipeline_under_offer_pence ? Math.round(editing.pipeline_under_offer_pence / 100) : null}
+                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { pipeline_under_offer_pence: n === null ? null : n * 100 } })}
+                  className="h-8"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Pipeline — negotiating (£)</Label>
-                <Input type="number" defaultValue={editing.pipeline_negotiating_pence ? Math.round(editing.pipeline_negotiating_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { pipeline_negotiating_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+                <MoneyInput
+                  value={editing.pipeline_negotiating_pence ? Math.round(editing.pipeline_negotiating_pence / 100) : null}
+                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { pipeline_negotiating_pence: n === null ? null : n * 100 } })}
+                  className="h-8"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Expected invoice next year (£)</Label>
-                <Input type="number" defaultValue={editing.expected_invoice_next_year_pence ? Math.round(editing.expected_invoice_next_year_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { expected_invoice_next_year_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+                <MoneyInput
+                  value={editing.expected_invoice_next_year_pence ? Math.round(editing.expected_invoice_next_year_pence / 100) : null}
+                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { expected_invoice_next_year_pence: n === null ? null : n * 100 } })}
+                  className="h-8"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Salary expectation (£)</Label>
-                <Input type="number" defaultValue={editing.salary_expectation_pence ? Math.round(editing.salary_expectation_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { salary_expectation_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+                <MoneyInput
+                  value={editing.salary_expectation_pence ? Math.round(editing.salary_expectation_pence / 100) : null}
+                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { salary_expectation_pence: n === null ? null : n * 100 } })}
+                  className="h-8"
+                />
               </div>
             </div>
 
@@ -2594,6 +2623,59 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   {(editing as any).reactions.map((r: any) => `${r.byName} ${r.emoji}`).join(" · ")}
                 </div>
               )}
+            </div>
+
+            {/* Status footer — always visible. Makes it clear what state the
+                review is in and what the next action does. Field edits
+                autosave on blur; this button progresses status. */}
+            <div className="border-t pt-3 mt-3 flex items-center justify-between gap-3">
+              <div className="text-[11px] text-muted-foreground">
+                {editing.status === "draft" && (
+                  <>Draft — your field edits autosave as you type. {isOwn ? "Click Submit when you're ready for your manager to review." : "Waiting for the reviewee to submit."}</>
+                )}
+                {editing.status === "submitted" && (
+                  <>Submitted to manager{(editing as any).submitted_at ? ` on ${new Date((editing as any).submitted_at).toLocaleDateString("en-GB")}` : ""}. {isAdmin ? "Add manager comments above, then mark complete." : "Awaiting manager review."}</>
+                )}
+                {editing.status === "completed" && (
+                  <>Completed{(editing as any).reviewed_at ? ` on ${new Date((editing as any).reviewed_at).toLocaleDateString("en-GB")}` : ""}.</>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {editing.status === "draft" && isOwn && (
+                  <Button
+                    size="sm"
+                    className="h-8"
+                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "submitted" } })}
+                    disabled={updateReview.isPending}
+                  >
+                    {updateReview.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                    Submit to manager →
+                  </Button>
+                )}
+                {editing.status === "submitted" && isAdmin && (
+                  <Button
+                    size="sm"
+                    className="h-8"
+                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "completed" } })}
+                    disabled={updateReview.isPending}
+                  >
+                    {updateReview.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                    Mark complete →
+                  </Button>
+                )}
+                {editing.status === "submitted" && isOwn && !isAdmin && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "draft" } })}
+                    disabled={updateReview.isPending}
+                    title="Reopen this review as a draft so you can edit it again"
+                  >
+                    ↩︎ Reopen as draft
+                  </Button>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>

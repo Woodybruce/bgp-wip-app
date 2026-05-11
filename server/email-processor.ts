@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { chatbgpEmailLog, crmContacts, crmCompanies, crmInteractions, users } from "@shared/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
 import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest, getSharedMailboxConversation } from "./shared-mailbox";
@@ -317,6 +317,91 @@ async function processInstruction(
   classification: EmailClassification,
   messageId?: string,
 ): Promise<{ actions: ProcessedAction[]; reply: string; attachments?: EmailAttachment[] }> {
+  // Entity pre-fetch — extract postcodes, addresses, and capitalised
+  // company names from the email body, then look them up in the CRM
+  // and join the matches into the AI prompt. Closes the "I don't know
+  // what you're referring to" gap by grounding the AI in the actual
+  // data BGP has — no more inventing properties from thin air.
+  let entityContext = "";
+  try {
+    const text = `${subject} ${bodyText}`;
+    // Postcodes — UK format
+    const postcodes = Array.from(
+      new Set(
+        (text.match(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi) || [])
+          .map((s) => s.toUpperCase().replace(/\s+/g, " ").trim()),
+      ),
+    ).slice(0, 5);
+    // Capitalised multi-word phrases — likely company / property names
+    const capPhrases = Array.from(
+      new Set(
+        (text.match(/\b([A-Z][a-zA-Z0-9&'.-]+(?:\s+[A-Z][a-zA-Z0-9&'.-]+){1,4})\b/g) || [])
+          .filter((s) => !/^(Subject|From|To|Cc|Sent|Date|Hi|Dear|Best|Regards|Kind|Many|Thanks|Thank|RE|FW|FWD)\b/i.test(s))
+          .map((s) => s.trim()),
+      ),
+    ).slice(0, 12);
+
+    const chunks: string[] = [];
+    if (postcodes.length > 0) {
+      const matchedProps = await pool.query<any>(
+        `SELECT name, address, postcode, group_name, status FROM crm_properties
+          WHERE postcode = ANY($1::text[]) OR REPLACE(UPPER(postcode), ' ', '') = ANY($2::text[])
+          LIMIT 12`,
+        [postcodes, postcodes.map((p) => p.replace(/\s+/g, ""))],
+      );
+      if (matchedProps.rows.length > 0) {
+        chunks.push(`Properties at mentioned postcodes (${postcodes.join(", ")}):`);
+        for (const p of matchedProps.rows) {
+          chunks.push(`  - ${p.name} (${p.postcode || "no postcode"}) ${p.group_name ? `[${p.group_name}]` : ""} ${p.status ? `· ${p.status}` : ""}`);
+        }
+      }
+    }
+    if (capPhrases.length > 0) {
+      const matchedCompanies = await pool.query<any>(
+        `SELECT name, industry, type FROM crm_companies
+          WHERE lower(name) = ANY($1::text[])
+             OR EXISTS (
+               SELECT 1 FROM unnest($1::text[]) AS phrase
+                WHERE lower(crm_companies.name) LIKE '%' || phrase || '%'
+                  OR phrase LIKE '%' || lower(crm_companies.name) || '%'
+             )
+          LIMIT 12`,
+        [capPhrases.map((s) => s.toLowerCase())],
+      );
+      if (matchedCompanies.rows.length > 0) {
+        chunks.push(`Companies matching mentioned names:`);
+        for (const c of matchedCompanies.rows) {
+          chunks.push(`  - ${c.name}${c.industry ? ` · ${c.industry}` : ""}${c.type ? ` (${c.type})` : ""}`);
+        }
+      }
+
+      // Also look for matching properties by name fragment (Lots Rd,
+      // Hanover Square, etc.) — common case the user complained about.
+      const matchedByName = await pool.query<any>(
+        `SELECT name, address, postcode, status FROM crm_properties
+          WHERE EXISTS (
+            SELECT 1 FROM unnest($1::text[]) AS phrase
+             WHERE lower(crm_properties.name) LIKE '%' || phrase || '%'
+          )
+          LIMIT 12`,
+        [capPhrases.map((s) => s.toLowerCase())],
+      );
+      if (matchedByName.rows.length > 0) {
+        chunks.push(`Properties matching mentioned names:`);
+        for (const p of matchedByName.rows) {
+          chunks.push(`  - ${p.name} (${p.postcode || "no postcode"}) ${p.status ? `· ${p.status}` : ""}`);
+        }
+      }
+    }
+    if (chunks.length > 0) {
+      entityContext = `\n\nENTITIES MATCHED IN CRM (use these for context — don't invent properties / companies that aren't here):\n${chunks.join("\n")}\n`;
+    } else if (postcodes.length > 0 || capPhrases.length > 0) {
+      entityContext = `\n\nENTITIES NOT FOUND IN CRM: ${[...postcodes, ...capPhrases.slice(0, 5)].join(", ")} — be honest that BGP doesn't have records for these. Don't make up details.\n`;
+    }
+  } catch (err: any) {
+    console.warn(`[email-processor] entity pre-fetch failed: ${err?.message}`);
+  }
+
   // Pull prior messages in the same email thread so the AI has context
   // when the user replies "yes go ahead" or "what about the second
   // option" — without this, every reply is a cold start.
@@ -373,7 +458,7 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
           { role: "system", content: INSTRUCTION_PROMPT + "\n\n" + crmContext },
           {
             role: "user",
-            content: `Subject: ${subject}\nFrom: ${from}${conversationHistory}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
+            content: `Subject: ${subject}\nFrom: ${from}${entityContext}${conversationHistory}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
           },
         ],
         max_completion_tokens: 2048,

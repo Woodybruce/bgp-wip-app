@@ -2668,16 +2668,33 @@ Return ONLY JSON.`,
         await pool.query(`UPDATE staff_reviews SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
       }
 
-      // Status transitions: draft → submitted (self), submitted → completed (admin).
+      // Status transitions:
+      //   draft → submitted   (self, when ready for manager review)
+      //   submitted → draft   (self OR admin, to reopen for edits)
+      //   submitted → completed (admin, after review)
+      //   completed → submitted (admin, to allow re-review if needed)
       if (req.body.status === "submitted" && owner.rows[0].status === "draft") {
         await pool.query(
           `UPDATE staff_reviews SET status = 'submitted', submitted_at = now(), updated_at = now() WHERE id = $1`,
           [req.params.id]
         );
-      } else if (req.body.status === "completed" && actor.isAdmin) {
+      } else if (req.body.status === "draft" && owner.rows[0].status === "submitted") {
+        // Reopen — self OR admin can reverse a premature submit.
+        await pool.query(
+          `UPDATE staff_reviews SET status = 'draft', submitted_at = NULL, updated_at = now() WHERE id = $1`,
+          [req.params.id]
+        );
+      } else if (req.body.status === "completed" && actor.isAdmin && owner.rows[0].status === "submitted") {
         await pool.query(
           `UPDATE staff_reviews SET status = 'completed', reviewed_at = now(), reviewed_by_user_id = $2, updated_at = now() WHERE id = $1`,
           [req.params.id, actor.userId]
+        );
+      } else if (req.body.status === "submitted" && actor.isAdmin && owner.rows[0].status === "completed") {
+        // Admin can reopen a completed review back to submitted (e.g. needs
+        // more discussion). Doesn't lose the prior reviewer info.
+        await pool.query(
+          `UPDATE staff_reviews SET status = 'submitted', reviewed_at = NULL, updated_at = now() WHERE id = $1`,
+          [req.params.id]
         );
       }
 
