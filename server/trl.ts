@@ -390,27 +390,41 @@ async function promoteTrlToCrmRequirement(
       else agentContactId = contactId;
     }
 
+    const useArray = mappedUse.length > 0
+      ? mappedUse
+      : item.useClass
+      ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
+      : null;
+
     // Skip if a leasing requirement for this brand already exists. Match by
     // normalised name so agents registering on both PIPnet and TRL under
     // slightly different brand strings collapse to a single CRM row.
     const normalisedTarget = normaliseBrandName(item.companyName);
     const candidateReqs = await tx
-      .select({ id: crmRequirementsLeasing.id, name: crmRequirementsLeasing.name })
+      .select()
       .from(crmRequirementsLeasing);
     const existingReq = candidateReqs.find(r => normaliseBrandName(r.name) === normalisedTarget);
     if (existingReq) {
+      // Enrich: fill empty fields on the existing row with TRL data. TRL is
+      // particularly valuable for locations + principal contact + pitch text
+      // which PIPnet doesn't surface.
+      const updates: Record<string, any> = {};
+      if (!existingReq.principalContactId && principalContactId) updates.principalContactId = principalContactId;
+      if (!existingReq.agentContactId && agentContactId) updates.agentContactId = agentContactId;
+      if ((!existingReq.use || existingReq.use.length === 0) && useArray) updates.use = useArray;
+      if ((!existingReq.size || existingReq.size.length === 0) && item.sizeRange) updates.size = [item.sizeRange];
+      if ((!existingReq.requirementLocations || existingReq.requirementLocations.length === 0) && item.locations && item.locations.length > 0) {
+        updates.requirementLocations = item.locations;
+      }
+      if (Object.keys(updates).length > 0) {
+        await tx.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
+      }
       await tx
         .update(externalRequirements)
         .set({ status: "converted" })
         .where(eq(externalRequirements.id, externalId));
       return false;
     }
-
-    const useArray = mappedUse.length > 0
-      ? mappedUse
-      : item.useClass
-      ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
-      : null;
 
     await tx.insert(crmRequirementsLeasing).values({
       name: item.companyName,

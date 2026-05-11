@@ -807,10 +807,21 @@ async function promoteToCrmRequirement(
     // the same brand seen via TRL — all collapse to a single CRM row.
     const normalisedTarget = normaliseBrandName(item.companyName);
     const candidateReqs = await tx
-      .select({ id: crmRequirementsLeasing.id, name: crmRequirementsLeasing.name })
+      .select()
       .from(crmRequirementsLeasing);
     const existingReq = candidateReqs.find(r => normaliseBrandName(r.name) === normalisedTarget);
     if (existingReq) {
+      // Enrich: fill any empty field on the existing row with PIPnet data,
+      // leave non-empty fields untouched (don't trample manual edits).
+      const updates: Record<string, any> = {};
+      if (!existingReq.agentContactId && agentContactId) updates.agentContactId = agentContactId;
+      if ((!existingReq.use || existingReq.use.length === 0) && useArray) updates.use = useArray;
+      if ((!existingReq.size || existingReq.size.length === 0) && item.sizeRange) updates.size = [item.sizeRange];
+      if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
+      if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
+      if (Object.keys(updates).length > 0) {
+        await tx.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
+      }
       await tx
         .update(externalRequirements)
         .set({ status: "converted" })
