@@ -1940,6 +1940,19 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     const clipData = e.clipboardData;
     if (!clipData) return;
 
+    // Prefer text. Many apps (macOS Word/Pages, Google Docs, styled web
+    // pages) put BOTH text/plain AND an image preview in the clipboard
+    // when you copy formatted text. Without this guard, pasting text
+    // from those apps lands as an image attachment instead of text in
+    // the input. If meaningful plain text is present, let the default
+    // paste happen and skip image extraction entirely.
+    const plainText = clipData.getData("text/plain");
+    if (plainText && plainText.trim().length > 0) {
+      // Don't preventDefault — the browser will insert the text into
+      // the textarea naturally.
+      return;
+    }
+
     const imageFiles = extractImagesFromClipboard(clipData);
 
     if (imageFiles.length > 0) {
