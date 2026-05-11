@@ -3,6 +3,8 @@ import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts
 import { eq, and, isNull } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
+import { saveFile } from "./file-storage";
+import { randomBytes } from "crypto";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -381,6 +383,113 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
   };
 }
 
+// Download a requirement's "View All Images" brochure, stitch every page into
+// a single PDF, save via the existing file-storage helper and return the
+// BGP-hosted URL ready for the landlord_pack JSON. Returns null if the
+// brochure couldn't be fetched or contained no usable pages.
+async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId: string): Promise<{ url: string; name: string; pages: number } | null> {
+  try {
+    const res = await pipFetch(brochureUrl, { headers: { Cookie: cookie } });
+    if (!res.ok) {
+      console.error(`[pipnet brochure] ${reqId}: fetch failed ${res.status}`);
+      return null;
+    }
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+
+    // Direct PDF — save as-is.
+    if (ct.includes("pdf")) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
+      await saveFile(key, buf, "application/pdf", `pipnet-${reqId}.pdf`);
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1 };
+    }
+
+    // Direct image — wrap in single-page PDF.
+    if (ct.startsWith("image/")) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const pdf = await imagesToPdf([{ bytes: buf, contentType: ct }]);
+      if (!pdf) return null;
+      const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
+      await saveFile(key, pdf, "application/pdf", `pipnet-${reqId}.pdf`);
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1 };
+    }
+
+    // HTML index — find every <img>, download each, stitch.
+    const html = await res.text();
+    const imgSrcs = Array.from(new Set(
+      [...html.matchAll(/<img[^>]+src="([^"]+)"/gi)].map(m => m[1])
+    ));
+    // Filter to brochure pages: prefer same-origin, skip obvious chrome
+    // (logos, icons, spacers).
+    const skipChrome = /(logo|icon|spacer|button|nav|header|footer|pixel\.gif|blank\.gif)/i;
+    const baseUrl = new URL(brochureUrl);
+    const pageImageUrls = imgSrcs
+      .filter(src => !skipChrome.test(src))
+      .map(src => {
+        if (src.startsWith("http")) return src;
+        if (src.startsWith("//")) return `${baseUrl.protocol}${src}`;
+        if (src.startsWith("/")) return `${baseUrl.origin}${src}`;
+        return new URL(src, brochureUrl).toString();
+      })
+      .filter(u => u.startsWith(baseUrl.origin)); // only PIPnet-hosted
+
+    if (pageImageUrls.length === 0) {
+      console.error(`[pipnet brochure] ${reqId}: no usable images on ${brochureUrl}`);
+      return null;
+    }
+
+    const pages: { bytes: Buffer; contentType: string }[] = [];
+    for (const u of pageImageUrls.slice(0, 50)) { // cap at 50 pages just in case
+      try {
+        const r = await pipFetch(u, { headers: { Cookie: cookie } });
+        if (!r.ok) continue;
+        const ict = (r.headers.get("content-type") || "image/jpeg").toLowerCase();
+        if (!ict.startsWith("image/")) continue;
+        pages.push({ bytes: Buffer.from(await r.arrayBuffer()), contentType: ict });
+        await new Promise(rs => setTimeout(rs, 80));
+      } catch (e: any) {
+        console.error(`[pipnet brochure] ${reqId}: image fetch failed for ${u}: ${e?.message}`);
+      }
+    }
+
+    if (pages.length === 0) {
+      console.error(`[pipnet brochure] ${reqId}: all image downloads failed`);
+      return null;
+    }
+
+    const pdfBytes = await imagesToPdf(pages);
+    if (!pdfBytes) return null;
+    const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
+    await saveFile(key, pdfBytes, "application/pdf", `pipnet-${reqId}.pdf`);
+    return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure (${pages.length} pages)`, pages: pages.length };
+  } catch (e: any) {
+    console.error(`[pipnet brochure] ${reqId}: ${e?.message}`);
+    return null;
+  }
+}
+
+// Stitch an array of image buffers into one PDF, sized to each image. Uses
+// pdf-lib's JPEG/PNG embedders directly — no rasterising, so resolution is
+// preserved at the cost of a slightly larger file.
+async function imagesToPdf(pages: { bytes: Buffer; contentType: string }[]): Promise<Buffer | null> {
+  if (pages.length === 0) return null;
+  const { PDFDocument } = await import("pdf-lib");
+  const pdf = await PDFDocument.create();
+  for (const p of pages) {
+    try {
+      const img = p.contentType.includes("png")
+        ? await pdf.embedPng(p.bytes)
+        : await pdf.embedJpg(p.bytes);
+      const page = pdf.addPage([img.width, img.height]);
+      page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+    } catch (e: any) {
+      console.error(`[pipnet brochure] PDF embed failed: ${e?.message}`);
+    }
+  }
+  if (pdf.getPageCount() === 0) return null;
+  return Buffer.from(await pdf.save());
+}
+
 function parseUkDate(input: string | undefined | null): Date | null {
   if (!input) return null;
   const s = String(input).trim();
@@ -480,6 +589,14 @@ export async function importPipnetRequirements(params: {
       }
     }
 
+    // Download the "View All Images" brochure (the landlord pack — flyer plus
+    // photos) and stitch into a single PDF hosted by BGP. Falls back to the
+    // raw PIPnet URL on failure so the link still works (with PIPnet login).
+    let brochurePack: { url: string; name: string; pages: number } | null = null;
+    if (detail.landlordPackUrl && detail.requirementId) {
+      brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId);
+    }
+
     // Prefer PIPnet's stable Requirement ID for dedup; fall back to the old
     // hash-style id for rows where the detail page didn't yield one.
     const sourceId = detail.requirementId
@@ -519,6 +636,7 @@ export async function importPipnetRequirements(params: {
         _agentCompany: agentCompany,
         _detail: detail,
         _landlordPackUrl: detail.landlordPackUrl || null,
+        _brochurePack: brochurePack, // BGP-hosted PDF (preferred) or null
         _mobile: detail.mobile || null,
         _address: { line1: detail.address1, line2: detail.address2, town: detail.town, county: detail.county, postCode: detail.postCode },
       } as any,
@@ -565,6 +683,7 @@ async function promoteToCrmRequirement(
 ): Promise<boolean> {
   const agentCompanyName: string = (item.rawData?._agentCompany || "").trim();
   const landlordPackUrl: string | null = item.rawData?._landlordPackUrl || null;
+  const brochurePack: { url: string; name: string; pages: number } | null = item.rawData?._brochurePack || null;
   const mobile: string | null = item.rawData?._mobile || null;
   const addr = item.rawData?._address || {};
   return db.transaction(async (tx) => {
@@ -660,8 +779,13 @@ async function promoteToCrmRequirement(
       ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
       : null;
 
-    const landlordPackJson = landlordPackUrl
-      ? JSON.stringify({ url: landlordPackUrl, name: "PIPnet brochure" })
+    // Prefer the BGP-hosted PDF (no PIPnet login required). Fall back to the
+    // raw PIPnet URL only if the download/stitch failed, so the link still
+    // works for anyone logged into PIPnet in the same browser.
+    const landlordPackJson = brochurePack
+      ? JSON.stringify({ url: brochurePack.url, name: brochurePack.name, pages: brochurePack.pages })
+      : landlordPackUrl
+      ? JSON.stringify({ url: landlordPackUrl, name: "PIPnet brochure (PIPnet-hosted)" })
       : null;
 
     const requirementDate = parseUkDate(item.lastUpdated || "");
