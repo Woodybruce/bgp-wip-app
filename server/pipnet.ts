@@ -4,7 +4,23 @@ import { eq, and } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
 
-const PIPNET_URL = process.env.PIPNET_URL || "https://v1.pipnet.co.uk";
+const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
+const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
+
+function sanitisePipnetUrl(raw: string | undefined): string {
+  if (!raw) return PIPNET_DEFAULT;
+  // Strip surrounding quotes and anything after the first whitespace/newline —
+  // guards against env-var pastes that accidentally include trailing junk
+  // (e.g. a second KEY=value line glued on by a Railway UI quirk).
+  const cleaned = raw.replace(/^["'\s]+|["'\s]+$/g, "").split(/[\s\n]/)[0];
+  try {
+    const u = new URL(cleaned);
+    return u.origin;
+  } catch {
+    console.error(`[pipnet] PIPNET_URL env var is malformed (${JSON.stringify(raw)}). Falling back to ${PIPNET_DEFAULT}.`);
+    return PIPNET_DEFAULT;
+  }
+}
 
 let sessionCookie: string | null = null;
 
