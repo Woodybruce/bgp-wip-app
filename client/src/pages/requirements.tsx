@@ -278,6 +278,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
     }
   };
 
+  const [pipnetHeadersText, setPipnetHeadersText] = useState<string | null>(null);
   const inspectPipnetHeaders = async () => {
     try {
       const res = await fetch("/api/external-requirements/pipnet-headers", {
@@ -290,7 +291,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
       const summary = (data.headers || [])
         .map((h: any) => `${h.name} (${h.presentIn}) → ${h.samples.join(" | ") || "—"}`)
         .join("\n");
-      alert(`Inspected ${data.rowsInspected} rows.\n\n` + (summary || "No headers found."));
+      setPipnetHeadersText(`Inspected ${data.rowsInspected} rows.\n\n` + (summary || "No headers found."));
     } catch (err: any) {
       toast({ title: "Header inspect failed", description: err.message, variant: "destructive" });
     }
@@ -821,6 +822,35 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
             >
               Delete
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!pipnetHeadersText} onOpenChange={(o) => !o && setPipnetHeadersText(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>PIPnet column headers</DialogTitle>
+            <DialogDescription>Format: header name (rows it appears in) → sample values</DialogDescription>
+          </DialogHeader>
+          <textarea
+            readOnly
+            className="w-full h-80 font-mono text-xs p-2 border rounded bg-muted"
+            value={pipnetHeadersText ?? ""}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (pipnetHeadersText) {
+                  navigator.clipboard.writeText(pipnetHeadersText);
+                  toast({ title: "Copied to clipboard" });
+                }
+              }}
+            >
+              Copy
+            </Button>
+            <Button onClick={() => setPipnetHeadersText(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
