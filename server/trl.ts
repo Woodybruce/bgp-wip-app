@@ -260,10 +260,11 @@ export async function importTrlRequirement(url: string, autoPromote = true): Pro
   return externalId;
 }
 
-// Mirror of PIPnet's promote — but TRL contacts are the OCCUPIER's property
-// director (Pret, Greggs, etc.), so they go into principalContactId rather
-// than agentContactId. The client company is also tagged as a Brand/Occupier
-// when freshly created, so it surfaces in the right CRM segment.
+// Mirror of PIPnet's promote — the brand company (Pret, Greggs etc.) is the
+// requirement holder, but the named contact on TRL is usually an agent
+// representing them, not the brand's own property director. Defaults
+// accordingly: contact → agentContactId, no companyId on the contact (we
+// don't know which agency they're at without an extra scrape).
 async function promoteTrlToCrmRequirement(
   externalId: string,
   item: {
@@ -286,8 +287,8 @@ async function promoteTrlToCrmRequirement(
 ): Promise<boolean> {
   const mappedUse: string[] = item.rawData?.mappedUse || [];
   return db.transaction(async (tx) => {
-    // Client company — the tenant. Tag as "Brand" when newly created so it
-    // doesn't collide with the agent/landlord segments.
+    // Brand company — tag as "Brand" when newly created so it doesn't
+    // collide with the agent/landlord segments.
     let clientCompanyId: string | null = null;
     if (item.companyName) {
       const existingCompany = await tx
@@ -306,21 +307,19 @@ async function promoteTrlToCrmRequirement(
       }
     }
 
-    // Principal (occupier-side) contact — Pret's property director etc.
-    let principalContactId: string | null = null;
+    // Agent contact — TRL's named contact is usually the agent representing
+    // the brand, not the brand's own staff. Store unlinked from any company
+    // (we don't reliably know which agency) and tag as Agent. If a contact
+    // with the same name already exists anywhere in CRM, reuse them.
+    let agentContactId: string | null = null;
     if (item.contactName) {
       const existingContact = await tx
         .select()
         .from(crmContacts)
-        .where(
-          and(
-            eq(crmContacts.name, item.contactName),
-            clientCompanyId ? eq(crmContacts.companyId, clientCompanyId) : isNull(crmContacts.companyId),
-          )
-        )
+        .where(eq(crmContacts.name, item.contactName))
         .limit(1);
       if (existingContact.length > 0) {
-        principalContactId = existingContact[0].id;
+        agentContactId = existingContact[0].id;
         const updates: Record<string, any> = {};
         if (!existingContact[0].email && item.contactEmail) updates.email = item.contactEmail;
         if (!existingContact[0].phone && item.contactPhone) updates.phone = item.contactPhone;
@@ -333,19 +332,17 @@ async function promoteTrlToCrmRequirement(
           .insert(crmContacts)
           .values({
             name: item.contactName,
-            companyName: item.companyName,
-            companyId: clientCompanyId,
             email: item.contactEmail,
             phone: item.contactPhone,
             role: item.contactTitle,
-            contactType: "Principal",
+            contactType: "Agent",
           })
           .returning({ id: crmContacts.id });
-        principalContactId = newContact.id;
+        agentContactId = newContact.id;
       }
     }
 
-    // Skip if a leasing requirement for this client already exists.
+    // Skip if a leasing requirement for this brand already exists.
     const existingReq = await tx
       .select({ id: crmRequirementsLeasing.id })
       .from(crmRequirementsLeasing)
@@ -368,8 +365,8 @@ async function promoteTrlToCrmRequirement(
     await tx.insert(crmRequirementsLeasing).values({
       name: item.companyName,
       companyId: clientCompanyId,
-      principalContactId,
-      agentContactId: null,
+      principalContactId: null,
+      agentContactId,
       use: useArray,
       size: item.sizeRange ? [item.sizeRange] : null,
       requirementLocations: item.locations,
