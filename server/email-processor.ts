@@ -3,7 +3,7 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { chatbgpEmailLog, crmContacts, crmCompanies, crmInteractions, users } from "@shared/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
-import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest } from "./shared-mailbox";
+import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest, getSharedMailboxConversation } from "./shared-mailbox";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { generateAutonomousDocument, exportDocumentToPdf } from "./document-templates";
 import { ingestBytes } from "./universal-ingest";
@@ -314,8 +314,37 @@ async function processInstruction(
   subject: string,
   bodyText: string,
   from: string,
-  classification: EmailClassification
+  classification: EmailClassification,
+  messageId?: string,
 ): Promise<{ actions: ProcessedAction[]; reply: string; attachments?: EmailAttachment[] }> {
+  // Pull prior messages in the same email thread so the AI has context
+  // when the user replies "yes go ahead" or "what about the second
+  // option" — without this, every reply is a cold start.
+  let conversationHistory = "";
+  if (messageId) {
+    try {
+      const current = await getSharedMailboxMessageById(messageId);
+      const convId = current?.conversationId;
+      if (convId) {
+        const prior = await getSharedMailboxConversation(convId, messageId);
+        if (prior.length > 0) {
+          const formatted = prior
+            .slice(0, 8)            // most recent 8 prior messages, oldest first below
+            .reverse()
+            .map((m: any) => {
+              const sender = m.from?.emailAddress?.address || m.from?.emailAddress?.name || "(unknown)";
+              const when = m.receivedDateTime ? new Date(m.receivedDateTime).toISOString().slice(0, 16).replace("T", " ") : "";
+              const preview = (m.bodyPreview || "").replace(/\s+/g, " ").trim().slice(0, 400);
+              return `[${when}] ${sender}: ${preview}`;
+            })
+            .join("\n");
+          conversationHistory = `\n\nPRIOR THREAD (oldest first, most recent ${prior.length} messages — use this for context):\n${formatted}\n`;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[email-processor] thread history fetch failed: ${err?.message}`);
+    }
+  }
   const allContacts = await db.select({
     id: crmContacts.id,
     name: crmContacts.name,
@@ -344,7 +373,7 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
           { role: "system", content: INSTRUCTION_PROMPT + "\n\n" + crmContext },
           {
             role: "user",
-            content: `Subject: ${subject}\nFrom: ${from}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
+            content: `Subject: ${subject}\nFrom: ${from}${conversationHistory}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
           },
         ],
         max_completion_tokens: 2048,
@@ -530,9 +559,33 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
     }
   }
 
+  // Attachment hallucination guard. The AI's reply text sometimes claims
+  // "the document is attached" but no generate_document action was emitted
+  // (e.g. it intended to but didn't, or it was paraphrasing). If we don't
+  // actually have an attachment to send, strip the claim from the reply —
+  // better to undersell than mislead. ("Attaching the doc separately" reads
+  // better than "PFA" with no attachment.)
+  let finalReply = parsed.replyToSender || "Your instruction has been received and processed.";
+  if (generatedAttachments.length === 0) {
+    const claimsAttachment = /attach(?:ed|ing|ment|ments)|enclos(?:ed|ure)|please find|\bPFA\b|is attached|find attached/i.test(finalReply);
+    if (claimsAttachment) {
+      // Drop any sentence containing an attachment claim.
+      finalReply = finalReply
+        .split(/(?<=[.!?])\s+/)
+        .filter((s: string) => !/attach(?:ed|ing|ment|ments)|enclos(?:ed|ure)|please find|\bPFA\b|find attached/i.test(s))
+        .join(" ")
+        .trim();
+      // If we stripped everything, fall back to a neutral acknowledgement.
+      if (!finalReply) {
+        finalReply = "Thanks for the email — I've logged this. Reply if you need anything else.";
+      }
+      console.warn(`[email-processor] stripped attachment claim from reply — no document was actually generated`);
+    }
+  }
+
   return {
     actions: executedActions,
-    reply: parsed.replyToSender || "Your instruction has been received and processed.",
+    reply: finalReply,
     attachments: generatedAttachments.length > 0 ? generatedAttachments : undefined,
   };
 }
@@ -806,7 +859,7 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
               break;
             }
 
-            const result = await processInstruction(subject, bodyText, fromEmail, classification);
+            const result = await processInstruction(subject, bodyText, fromEmail, classification, messageId);
             actionsTaken = result.actions;
             console.log(`[email-processor] Instruction processed for "${subject}": ${result.actions.length} actions, reply=${!!result.reply}`);
 
@@ -1150,7 +1203,7 @@ export function registerEmailProcessorRoutes(app: Express) {
       }
 
       if (classification.classification === "instruction") {
-        const result = await processInstruction(subject, bodyText, fromEmail, classification);
+        const result = await processInstruction(subject, bodyText, fromEmail, classification, logEntry.messageId);
         actionsTaken = result.actions;
         const replyText = result.reply || `Hi — I've received your email "${subject}" and logged it. If you need me to take a specific action, try sending a more detailed instruction via the ChatBGP dashboard or email.`;
         replySent = await sendReplyWithFallback(logEntry.messageId, fromEmail, subject, replyText, actionsTaken, result.attachments);

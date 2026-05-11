@@ -110,12 +110,31 @@ export async function getSharedMailboxMessages(
 export async function getSharedMailboxMessageById(messageId: string): Promise<any | null> {
   try {
     const data = await graphRequest(
-      `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
-      `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
+      `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,conversationId,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
     );
     return data;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Fetch every prior message in the same email thread (conversation), newest
+ * first, capped at 12 to keep prompts compact. Powers the email-thread
+ * memory feature so ChatBGP doesn't ask "what are you referring to?" on
+ * a reply.
+ */
+export async function getSharedMailboxConversation(conversationId: string, excludeMessageId?: string): Promise<any[]> {
+  if (!conversationId) return [];
+  try {
+    const data = await graphRequest(
+      `/users/${SHARED_MAILBOX}/messages?$filter=conversationId eq '${conversationId}'&$select=id,subject,bodyPreview,from,toRecipients,receivedDateTime,hasAttachments&$orderby=receivedDateTime desc&$top=12`
+    );
+    const all = Array.isArray(data?.value) ? data.value : [];
+    return excludeMessageId ? all.filter((m: any) => m.id !== excludeMessageId) : all;
+  } catch (err: any) {
+    console.warn(`[shared-mailbox] conversation fetch failed: ${err?.message}`);
+    return [];
   }
 }
 
