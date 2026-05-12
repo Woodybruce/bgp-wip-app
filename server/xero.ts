@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
-import { xeroInvoices, crmDeals, crmCompanies } from "@shared/schema";
+import { xeroInvoices, crmDeals } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
@@ -15,6 +15,21 @@ const XERO_CONNECTIONS_URL = "https://api.xero.com/connections";
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
 const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
+
+// Xero contacts can carry multiple addresses (POBOX, STREET, DELIVERY).
+// For billing we want POBOX (the one used on invoices); fall back to
+// STREET, then the first non-empty entry.
+function pickBillingAddress(addresses: any[] | undefined | null): any | null {
+  if (!Array.isArray(addresses) || addresses.length === 0) return null;
+  const hasContent = (a: any) =>
+    a && (a.AddressLine1 || a.AddressLine2 || a.City || a.PostalCode || a.Country);
+  return (
+    addresses.find((a) => a?.AddressType === "POBOX" && hasContent(a)) ||
+    addresses.find((a) => a?.AddressType === "STREET" && hasContent(a)) ||
+    addresses.find(hasContent) ||
+    null
+  );
+}
 
 async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Promise<boolean> {
   if (!XERO_INVOICED_STATUSES.includes(xeroStatus)) return false;
@@ -35,9 +50,9 @@ async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Pr
 
 const createInvoiceSchema = z.object({
   dealId: z.string().min(1),
+  xeroContactId: z.string().nullable().optional(),
   contactName: z.string().optional(),
   contactEmail: z.string().email().optional().or(z.literal("")),
-  invoicingEntityId: z.string().nullable().optional(),
   poNumber: z.string().nullable().optional(),
   reference: z.string().optional(),
   dueDate: z.string().optional(),
@@ -387,20 +402,55 @@ export function setupXeroRoutes(app: Express) {
     }
   });
 
+  // Returns Xero contacts with their account number and primary billing
+  // address flattened to a stable shape, so the client billing-entity
+  // picker can render account number + address without extra calls.
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
-      const search = req.query.search as string;
-      let path = "/Contacts?page=1&pageSize=50";
+      const search = (req.query.search as string) || "";
+      let path = "/Contacts?page=1&pageSize=50&includeArchived=false";
       if (search) {
         path += `&where=Name.Contains("${search.replace(/"/g, "")}")`;
       }
       const data = await xeroApi(req.session, path);
-      res.json(data.Contacts || []);
+      const contacts = (data.Contacts || []).map((c: any) => ({
+        ContactID: c.ContactID,
+        Name: c.Name,
+        AccountNumber: c.AccountNumber || null,
+        EmailAddress: c.EmailAddress || null,
+        BillingAddress: pickBillingAddress(c.Addresses),
+        Addresses: c.Addresses || [],
+      }));
+      res.json(contacts);
     } catch (err: any) {
       if (err.message.includes("Not connected")) {
         return res.status(401).json({ message: "Not connected to Xero" });
       }
       console.error("[Xero] Contacts error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Fetch a single Xero contact by ID — used to refresh the cached
+  // account number / billing address stored on a deal.
+  app.get("/api/xero/contacts/:contactId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const data = await xeroApi(req.session, `/Contacts/${req.params.contactId}`);
+      const c = data.Contacts?.[0];
+      if (!c) return res.status(404).json({ message: "Contact not found" });
+      res.json({
+        ContactID: c.ContactID,
+        Name: c.Name,
+        AccountNumber: c.AccountNumber || null,
+        EmailAddress: c.EmailAddress || null,
+        BillingAddress: pickBillingAddress(c.Addresses),
+        Addresses: c.Addresses || [],
+      });
+    } catch (err: any) {
+      if (err.message.includes("Not connected")) {
+        return res.status(401).json({ message: "Not connected to Xero" });
+      }
+      console.error("[Xero] Contact fetch error:", err);
       res.status(500).json({ message: err.message });
     }
   });
@@ -424,28 +474,25 @@ export function setupXeroRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request", errors: parsed.error.flatten().fieldErrors });
       }
-      const { dealId, contactName, contactEmail, invoicingEntityId, poNumber, lineItems, reference, dueDate, accountCode } = parsed.data;
+      const { dealId, xeroContactId: bodyContactId, contactName, contactEmail, poNumber, lineItems, reference, dueDate, accountCode } = parsed.data;
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
       if (!deal) return res.status(404).json({ message: "Deal not found" });
 
-      // KYC approval is no longer a hard pre-condition for drafting an invoice —
-      // surveyors need to be able to draft early. AML status is still tracked
-      // on the deal and visible on the KYC board for follow-up.
-      let invoicingEntityName: string | undefined;
-      const entityId = invoicingEntityId !== undefined ? (invoicingEntityId || null) : (deal.invoicingEntityId || null);
-      if (entityId) {
-        const [entity] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, entityId));
-        if (entity) invoicingEntityName = entity.name || undefined;
-      }
+      // KYC approval is not a hard pre-condition for drafting an invoice —
+      // surveyors need to be able to draft early. AML status is still
+      // tracked on the deal and visible on the KYC board for follow-up.
+      //
+      // Xero contact is the source of truth for billing. Resolve in order:
+      // request body → deal.xeroContactId → name lookup → create new.
+      let xeroContactId: string | undefined = bodyContactId || deal.xeroContactId || undefined;
+      let resolvedContactName: string | undefined = contactName || deal.xeroContactName || deal.name || undefined;
 
-      const resolvedContactName = contactName || invoicingEntityName || deal.name;
-      let xeroContactId: string | undefined;
-
-      if (resolvedContactName) {
+      if (!xeroContactId && resolvedContactName) {
         const searchRes = await xeroApi(req.session, `/Contacts?where=Name=="${resolvedContactName.replace(/"/g, "")}"`);
         if (searchRes.Contacts?.length > 0) {
           xeroContactId = searchRes.Contacts[0].ContactID;
+          resolvedContactName = searchRes.Contacts[0].Name || resolvedContactName;
         } else {
           const createContactRes = await xeroApi(req.session, "/Contacts", {
             method: "POST",
@@ -502,8 +549,8 @@ export function setupXeroRoutes(app: Express) {
         dealId,
         xeroInvoiceId: xeroInvoice?.InvoiceID,
         xeroContactId: xeroContactId || null,
-        invoicingEntityId: entityId || null,
-        invoicingEntityName: invoicingEntityName || resolvedContactName || null,
+        invoicingEntityId: null,
+        invoicingEntityName: resolvedContactName || null,
         invoiceNumber: xeroInvoice?.InvoiceNumber,
         reference: reference || deal.name,
         status: xeroInvoice?.Status || "DRAFT",

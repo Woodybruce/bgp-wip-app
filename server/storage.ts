@@ -753,7 +753,6 @@ export class DatabaseStorage implements IStorage {
     await db.transaction(async (tx) => {
       await tx.update(crmDeals).set({ landlordId: null }).where(eq(crmDeals.landlordId, id));
       await tx.update(crmDeals).set({ tenantId: null }).where(eq(crmDeals.tenantId, id));
-      await tx.update(crmDeals).set({ invoicingEntityId: null }).where(eq(crmDeals.invoicingEntityId, id));
       await tx.update(crmProperties).set({ landlordId: null }).where(eq(crmProperties.landlordId, id));
       await tx.update(crmProperties).set({ freeholderId: null }).where(eq(crmProperties.freeholderId, id));
       await tx.update(crmProperties).set({ longLeaseholderId: null }).where(eq(crmProperties.longLeaseholderId, id));

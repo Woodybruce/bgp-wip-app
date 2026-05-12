@@ -610,10 +610,10 @@ export async function archiveOrphanedWipDeals(
  * billing-entity / fee-split / tenant-rep relationships that Sage carries
  * but the legacy WIP report didn't expose:
  *
- *   - **Billing entity** (`NAME` + `ADDRESS_*`) → upserts a `crm_companies`
- *     row of type "Billing" and stamps it as `crm_deals.invoicing_entity_id`.
- *     Dedup by lower-cased name. The Xero contact sync layer will later
- *     populate `xero_contact_id` on these rows.
+ *   - **Billing identity** (`NAME` + `ADDRESS_*`) → cached on the deal as
+ *     `xero_contact_name` + `xero_billing_address`. Xero is the source of
+ *     truth for the actual contact link; this just records the Sage name
+ *     so a user can match it to a real Xero contact when invoicing.
  *   - **Per-agent allocations** (`Agent` + `NetAmount`, with `STOCK_CODE`
  *     CON049 tagged as BGP House) → wipes existing `deal_fee_allocations`
  *     for the deal, then inserts one row per slice as `allocationType=fixed`
@@ -637,8 +637,7 @@ async function enrichWipDealsFromSage(
 ) {
   const result = {
     dealsEnriched: 0,
-    billingEntitiesCreated: 0,
-    billingEntitiesLinked: 0,
+    billingNamesStamped: 0,
     allocationsCreated: 0,
     tenantRepSearchesCreated: 0,
     skippedNoDeal: 0,
@@ -659,13 +658,6 @@ async function enrichWipDealsFromSage(
       if (m) refToDeal.set(m[1], { id: d.id, tenantId: d.tenant_id });
     }
 
-    // Cache existing companies for billing-entity dedup.
-    const { rows: companies } = await client.query(
-      `SELECT id, LOWER(TRIM(name)) AS name_lower FROM crm_companies`,
-    );
-    const compByName = new Map<string, string>();
-    for (const c of companies) compByName.set(c.name_lower, c.id);
-
     for (const [headerNum, enrich] of enrichments) {
       const deal = refToDeal.get(headerNum);
       if (!deal) {
@@ -674,45 +666,36 @@ async function enrichWipDealsFromSage(
       }
       result.dealsEnriched++;
 
-      // 1) Billing entity ----------------------------------------------------
+      // 1) Billing identity — cached from Sage NAME/ADDRESS_*. We do not
+      //    create a CRM company; Xero is the source of truth for the
+      //    actual contact link. The user picks the real Xero contact
+      //    later via the deal form's Xero contact picker, which
+      //    overwrites these cached fields with authoritative data.
       if (enrich.billingEntity?.name) {
-        const billingName = enrich.billingEntity.name;
-        const key = billingName.toLowerCase();
-        let billingId = compByName.get(key);
-        if (!billingId) {
-          billingId = randomUUID();
-          // crm_companies stores address as a single JSONB blob — there's no
-          // top-level postcode column, the postcode goes inside the JSON.
-          // Earlier INSERT had `postcode = $4` and crashed every WIP import
-          // with `column "postcode" of relation "crm_companies" does not exist`.
-          const addressParts = [
-            enrich.billingEntity.addressLine1,
-            enrich.billingEntity.addressLine2,
-            enrich.billingEntity.city,
-            enrich.billingEntity.postcode,
-          ].filter(Boolean).join(", ");
-          const addressBlob = (addressParts || enrich.billingEntity.postcode)
-            ? JSON.stringify({
-                address: addressParts || null,
-                line1: enrich.billingEntity.addressLine1 || null,
-                line2: enrich.billingEntity.addressLine2 || null,
-                city: enrich.billingEntity.city || null,
-                postcode: enrich.billingEntity.postcode || null,
-              })
-            : null;
-          await client.query(
-            `INSERT INTO crm_companies (id, name, company_type, head_office_address, created_at, updated_at)
-             VALUES ($1, $2, 'Billing Entity', $3, NOW(), NOW())`,
-            [billingId, billingName, addressBlob],
-          );
-          compByName.set(key, billingId);
-          result.billingEntitiesCreated++;
-        }
+        const addressParts = [
+          enrich.billingEntity.addressLine1,
+          enrich.billingEntity.addressLine2,
+          enrich.billingEntity.city,
+          enrich.billingEntity.postcode,
+        ].filter(Boolean).join(", ");
+        const addressBlob = (addressParts || enrich.billingEntity.postcode)
+          ? JSON.stringify({
+              AddressType: "POBOX",
+              AddressLine1: enrich.billingEntity.addressLine1 || null,
+              AddressLine2: enrich.billingEntity.addressLine2 || null,
+              City: enrich.billingEntity.city || null,
+              PostalCode: enrich.billingEntity.postcode || null,
+            })
+          : null;
         await client.query(
-          `UPDATE crm_deals SET invoicing_entity_id = $1, updated_at = NOW() WHERE id = $2`,
-          [billingId, deal.id],
+          `UPDATE crm_deals
+              SET xero_contact_name = $1,
+                  xero_billing_address = COALESCE(xero_billing_address, $2::jsonb),
+                  updated_at = NOW()
+            WHERE id = $3`,
+          [enrich.billingEntity.name, addressBlob, deal.id],
         );
-        result.billingEntitiesLinked++;
+        result.billingNamesStamped++;
       }
 
       // 2) Fee allocations ---------------------------------------------------
@@ -979,18 +962,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
 
       // ── Billing entity (Sage NAME column) ──────────────────────────────
       // The company that pays the invoice. Auto-create if not in CRM yet.
-      let billingEntityId: string | null = null;
-      if (deal.billing_entity?.trim()) {
-        billingEntityId = wipFuzzyMatch(deal.billing_entity, compMap);
-        if (!billingEntityId) {
-          billingEntityId = randomUUID();
-          await client.query(
-            `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, 'Billing Entity', NOW(), NOW())`,
-            [billingEntityId, deal.billing_entity.trim()]
-          );
-          compMap.set(deal.billing_entity.trim().toLowerCase(), billingEntityId);
-        }
-      }
+      // Billing identity comes from Xero now. We just stamp the WIP
+      // "billing_entity" string onto the deal as a cached name; the user
+      // links to a real Xero contact via the deal form.
+      const billingEntityName: string | null = deal.billing_entity?.trim() || null;
 
       const teamArr = Array.from(new Set(
         (deal.teams || []).map((t: string) => normalizeTeamName(t)).filter(Boolean) as string[]
@@ -1049,10 +1024,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
                  target_date = COALESCE(target_date, $11),
                  completed_at = COALESCE(completed_at, $12),
                  invoiced_at = COALESCE(invoiced_at, $13),
-                 invoicing_entity_id = COALESCE($15, invoicing_entity_id),
+                 xero_contact_name = COALESCE(xero_contact_name, $15),
                  updated_at=NOW()
            WHERE id=$14`,
-          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId, billingEntityId]
+          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId, billingEntityName]
         );
         // Write hard FKs back onto every wip_entries row for this ref so
         // future reads don't have to re-derive from strings.
@@ -1064,9 +1039,9 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       } else {
         const dealId = randomUUID();
         await client.query(
-          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, invoicing_entity_id, created_at, updated_at)
+          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, xero_contact_name, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8::text[], $9::text[], $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
-          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, billingEntityId]
+          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, billingEntityName]
         );
         await client.query(
           `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
@@ -1475,7 +1450,6 @@ export function setupCrmRoutes(app: Express) {
             await tx.update(crmContacts).set({ companyId: keepId }).where(eq(crmContacts.companyId, deleteId));
             await tx.update(crmDeals).set({ landlordId: keepId }).where(eq(crmDeals.landlordId, deleteId));
             await tx.update(crmDeals).set({ tenantId: keepId }).where(eq(crmDeals.tenantId, deleteId));
-            await tx.update(crmDeals).set({ invoicingEntityId: keepId }).where(eq(crmDeals.invoicingEntityId, deleteId));
             await tx.update(crmProperties).set({ landlordId: keepId }).where(eq(crmProperties.landlordId, deleteId));
             await tx.execute(sql`UPDATE crm_company_deals SET company_id = ${keepId} WHERE company_id = ${deleteId} AND deal_id NOT IN (SELECT deal_id FROM crm_company_deals WHERE company_id = ${keepId})`);
             await tx.delete(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, deleteId));
@@ -2486,7 +2460,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         "leaseLength", "breakOption", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "tenureText", "assetClass",
         "comments", "amlCheckCompleted", "totalAreaSqft", "basementAreaSqft",
         "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "areaBasis", "propertyId", "landlordId",
-        "tenantId", "vendorId", "purchaserId", "invoicingEntityId", "kycApproved",
+        "tenantId", "vendorId", "purchaserId", "xeroContactId", "xeroContactName", "kycApproved",
         "feePercentage", "invoicingNotes", "poNumber",
         "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
         "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
@@ -2777,40 +2751,33 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             }
 
             if (existingInvoices.length === 0 && (deal.fee || 0) > 0 && !kycBlocked) {
-              let contactName = "";
-              let contactEmail = "";
-
-              if (deal.invoicingEntityId) {
-                const [entity] = await db.select().from(crmCompanies)
-                  .where(eq(crmCompanies.id, deal.invoicingEntityId)).limit(1);
-                if (entity) {
-                  contactName = entity.name;
-                  contactEmail = deal.invoicingEmail || entity.email || "";
-                }
-              }
+              let contactName = deal.xeroContactName || "";
+              let contactEmail = deal.invoicingEmail || "";
+              let xeroContactId: string | undefined = deal.xeroContactId || undefined;
 
               if (!contactName && deal.tenantId) {
                 const [tenant] = await db.select().from(crmCompanies)
                   .where(eq(crmCompanies.id, deal.tenantId)).limit(1);
                 if (tenant) {
                   contactName = tenant.name;
-                  contactEmail = deal.invoicingEmail || tenant.email || "";
+                  contactEmail = contactEmail || tenant.email || "";
                 }
               }
 
-              if (contactName) {
-                let xeroContactId: string | undefined;
-                const searchRes = await xeroApi(req.session, `/Contacts?where=Name=="${contactName.replace(/"/g, "")}"`);
-                if (searchRes.Contacts?.length > 0) {
-                  xeroContactId = searchRes.Contacts[0].ContactID;
-                } else {
-                  const createContactRes = await xeroApi(req.session, "/Contacts", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      Contacts: [{ Name: contactName, EmailAddress: contactEmail || undefined }],
-                    }),
-                  });
-                  xeroContactId = createContactRes.Contacts?.[0]?.ContactID;
+              if (xeroContactId || contactName) {
+                if (!xeroContactId && contactName) {
+                  const searchRes = await xeroApi(req.session, `/Contacts?where=Name=="${contactName.replace(/"/g, "")}"`);
+                  if (searchRes.Contacts?.length > 0) {
+                    xeroContactId = searchRes.Contacts[0].ContactID;
+                  } else {
+                    const createContactRes = await xeroApi(req.session, "/Contacts", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        Contacts: [{ Name: contactName, EmailAddress: contactEmail || undefined }],
+                      }),
+                    });
+                    xeroContactId = createContactRes.Contacts?.[0]?.ContactID;
+                  }
                 }
 
                 const invoicePayload = {
@@ -4004,12 +3971,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
         id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName,
         status: crmDeals.status, dealType: crmDeals.dealType,
         landlordId: crmDeals.landlordId, tenantId: crmDeals.tenantId,
-        clientContactId: crmDeals.clientContactId, invoicingEntityId: crmDeals.invoicingEntityId,
+        clientContactId: crmDeals.clientContactId,
         comments: crmDeals.comments, internalAgent: crmDeals.internalAgent,
       }).from(crmDeals);
 
       const unlinkedDeals = allDeals.filter(d =>
-        !d.landlordId && !d.tenantId && !d.clientContactId && !d.invoicingEntityId
+        !d.landlordId && !d.tenantId && !d.clientContactId
       );
 
       if (unlinkedDeals.length === 0) {
@@ -4161,9 +4128,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               await db.update(crmDeals).set({ landlordId: entityId }).where(eq(crmDeals.id, dealId));
             } else if (role === "tenant") {
               await db.update(crmDeals).set({ tenantId: entityId }).where(eq(crmDeals.id, dealId));
-            } else if (role === "invoicing_entity") {
-              await db.update(crmDeals).set({ invoicingEntityId: entityId }).where(eq(crmDeals.id, dealId));
             }
+            // Note: "invoicing_entity" role is no longer applied to deals — Xero
+            // contact is the source of truth, set explicitly via the deal form.
             const existing = await db.select().from(crmCompanyDeals)
               .where(and(eq(crmCompanyDeals.companyId, entityId), eq(crmCompanyDeals.dealId, dealId)));
             if (existing.length === 0) {
@@ -5208,7 +5175,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
-        const billingEntityName = deal.invoicingEntityId ? compMap.get(deal.invoicingEntityId) || null : null;
+        const billingEntityName = deal.xeroContactName || null;
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
         const isInvoiced = stage === "invoiced";

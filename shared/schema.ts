@@ -840,7 +840,13 @@ export const crmDeals = pgTable("crm_deals", {
   sharepointLink: text("sharepoint_link"),
   tenureText: text("tenure_text"),
   assetClass: text("asset_class"),
-  invoicingEntityId: varchar("invoicing_entity_id"),
+  // Billing identity now lives in Xero — `xeroContactId` is the source of
+  // truth. Account number + billing address are cached from Xero so the
+  // deal list/edit forms can render without an extra API round-trip.
+  xeroContactId: text("xero_contact_id"),
+  xeroContactName: text("xero_contact_name"),
+  xeroAccountNumber: text("xero_account_number"),
+  xeroBillingAddress: jsonb("xero_billing_address"),
   invoicingEmail: text("invoicing_email"),
   feePercentage: real("fee_percentage"),
   invoicingNotes: text("invoicing_notes"),
@@ -1392,8 +1398,9 @@ export const wipEntries = pgTable("wip_entries", {
   groupName: text("group_name"),
   project: text("project"),
   tenant: text("tenant"),
-  // Billing entity from the Sage NAME column — the company that pays the invoice.
-  // Resolved to invoicing_entity_id on crm_deals at sync time.
+  // Billing entity name from the Sage NAME column. Cached on
+  // crm_deals.xero_contact_name at sync time; the actual Xero contact
+  // link is set by the user via the deal form.
   billingEntity: text("billing_entity"),
   team: text("team"),
   agent: text("agent"),

@@ -193,12 +193,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   });
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
-    queryFn: async () => {
-      const res = await fetch("/api/crm/companies?includeBillingEntities=true");
-      if (!res.ok) throw new Error("Failed to load companies");
-      return res.json();
-    },
+    queryKey: ["/api/crm/companies"],
   });
 
   const { data: contacts = [] } = useQuery<CrmContact[]>({
@@ -241,7 +236,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
   const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;
-  const linkedInvoicingEntity = deal?.invoicingEntityId ? companies.find((c) => c.id === deal.invoicingEntityId) : null;
 
   const linkedContacts = useMemo(() => {
     if (!deal) return [];
@@ -302,7 +296,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     setFeeEditing(false);
   };
 
-  const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId" | "invoicingEntityId", value: string | null) => {
+  const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => {
     await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
     invalidateDealCaches(id);
     if (value) {
@@ -365,7 +359,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const linkedTenantName = deal.tenantId ? companies.find(c => c.id === deal.tenantId)?.name : null;
   const linkedVendorName = deal.vendorId ? companies.find(c => c.id === deal.vendorId)?.name : null;
   const linkedPurchaserName = deal.purchaserId ? companies.find(c => c.id === deal.purchaserId)?.name : null;
-  const linkedBillingName = deal.invoicingEntityId ? companies.find(c => c.id === deal.invoicingEntityId)?.name : null;
+  const linkedBillingName = (deal as any).xeroContactName || null;
 
   const textFields: { label: string; value: string | null | undefined; colorMap?: Record<string, string>; href?: string }[] = [
     { label: "Deal Type", value: deal.dealType, colorMap: DEAL_TYPE_COLORS },
@@ -496,14 +490,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               />
             </div>
             <div className="flex flex-col gap-1">
-              <p className="text-[10px] text-muted-foreground leading-tight">Billing Entity</p>
-              <InlineLinkSelect
-                value={deal.invoicingEntityId}
-                options={companies.map(c => ({ id: c.id, name: c.name }))}
-                href={deal.invoicingEntityId ? `/companies/${deal.invoicingEntityId}` : undefined}
-                onSave={(v) => handlePartySave("invoicingEntityId", v || null)}
-                placeholder="Link billing entity"
-              />
+              <p className="text-[10px] text-muted-foreground leading-tight">Xero Contact</p>
+              {(deal as any).xeroContactName ? (
+                <div className="text-xs">
+                  <span className="font-medium">{(deal as any).xeroContactName}</span>
+                  {(deal as any).xeroAccountNumber && (
+                    <span className="text-muted-foreground"> · A/C {(deal as any).xeroAccountNumber}</span>
+                  )}
+                </div>
+              ) : (
+                <span className="text-[11px] text-muted-foreground italic">Set via Edit · Xero Contact</span>
+              )}
             </div>
           </div>
         </CardContent>

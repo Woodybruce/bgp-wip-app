@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
-import { useDealAmlStatus } from "@/components/deal-aml-status";
+import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -247,7 +247,7 @@ const COLUMN_LABELS: Record<string, string> = {
   fee: "Fee",
   feeAlloc: "Fee Split",
   feeAgreement: "Fee Agreement",
-  invoicingEntity: "Invoicing Entity",
+  xeroContact: "Xero Contact",
   floorAreas: "Floor Areas",
   pricePsf: "Price PSF",
   priceItza: "Price ITZA",
@@ -256,6 +256,7 @@ const COLUMN_LABELS: Record<string, string> = {
   rentFree: "Rent Free",
   leaseLength: "Lease Length",
   breakOption: "Break Option",
+  dateAdded: "Date Added",
   instructedAt: "Instructed",
   targetDate: "Target Date",
   exchangedAt: "Exchanged",
@@ -406,7 +407,10 @@ interface DealFormData {
   lastInteraction: string;
   sharepointLink: string;
   rentAnalysis: string;
-  invoicingEntityId: string;
+  xeroContactId: string;
+  xeroContactName: string;
+  xeroAccountNumber: string;
+  xeroBillingAddress: any | null;
   poNumber: string;
 }
 
@@ -450,7 +454,10 @@ const emptyForm: DealFormData = {
   lastInteraction: "",
   sharepointLink: "",
   rentAnalysis: "",
-  invoicingEntityId: "",
+  xeroContactId: "",
+  xeroContactName: "",
+  xeroAccountNumber: "",
+  xeroBillingAddress: null,
   poNumber: "",
 };
 
@@ -495,7 +502,10 @@ function dealToForm(deal: CrmDeal): DealFormData {
     lastInteraction: deal.lastInteraction || "",
     sharepointLink: deal.sharepointLink || "",
     rentAnalysis: deal.rentAnalysis != null ? String(deal.rentAnalysis) : "",
-    invoicingEntityId: deal.invoicingEntityId || "",
+    xeroContactId: (deal as any).xeroContactId || "",
+    xeroContactName: (deal as any).xeroContactName || "",
+    xeroAccountNumber: (deal as any).xeroAccountNumber || "",
+    xeroBillingAddress: (deal as any).xeroBillingAddress || null,
     poNumber: deal.poNumber || "",
   };
 }
@@ -545,7 +555,10 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     lastInteraction: form.lastInteraction || null,
     sharepointLink: form.sharepointLink || null,
     rentAnalysis: parseNum(form.rentAnalysis),
-    invoicingEntityId: form.invoicingEntityId || null,
+    xeroContactId: form.xeroContactId || null,
+    xeroContactName: form.xeroContactName || null,
+    xeroAccountNumber: form.xeroAccountNumber || null,
+    xeroBillingAddress: form.xeroBillingAddress || null,
     poNumber: form.poNumber || null,
   };
   if (changeReason) payload.changeReason = changeReason;
@@ -635,30 +648,6 @@ export function DealFormDialog({
       }
       setChangeReason("");
       onOpenChange(false);
-
-      const invoicingChanged = form.invoicingEntityId && (!deal || form.invoicingEntityId !== (deal.invoicingEntityId || ""));
-      if (invoicingChanged) {
-        const entityName = companies.find(c => c.id === form.invoicingEntityId)?.name || "company";
-        toast({ title: "Running KYC", description: `Checking ${entityName} via Companies House...` });
-        try {
-          const res = await fetch(`/api/companies-house/auto-kyc/${form.invoicingEntityId}`, {
-            method: "POST",
-            credentials: "include",
-            headers: getAuthHeaders(),
-          });
-          const data = await res.json();
-          if (res.ok && data.success) {
-            queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-            toast({
-              title: data.kycStatus === "pass" ? "KYC Passed" : data.kycStatus === "warning" ? "KYC Needs Review" : "KYC Failed",
-              description: `${data.profile?.companyName || entityName} — ${data.kycStatus === "pass" ? "Active, no adverse flags" : "Review needed"}`,
-              variant: data.kycStatus === "fail" ? "destructive" : "default",
-            });
-          }
-        } catch (err: any) {
-          console.error("[KYC] Auto-check failed:", err.message);
-        }
-      }
     },
     onError: (err: Error) => {
       // Handle approval gate 403
@@ -1113,15 +1102,24 @@ export function DealFormDialog({
                     </Select>
                   </div>
 
-                  <div>
-                    <Label>Invoicing Entity</Label>
-                    <Select value={form.invoicingEntityId || undefined} onValueChange={(v) => set("invoicingEntityId", v === "__clear__" ? "" : v)}>
-                      <SelectTrigger data-testid="select-deal-invoicing-entity"><SelectValue placeholder="Select company" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__clear__">None</SelectItem>
-                        {companies.map((c) => (<SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>))}
-                      </SelectContent>
-                    </Select>
+                  <div className="sm:col-span-2">
+                    <Label>Xero Contact (Billing)</Label>
+                    <XeroContactPicker
+                      value={form.xeroContactId || null}
+                      cachedName={form.xeroContactName}
+                      cachedAccountNumber={form.xeroAccountNumber}
+                      cachedAddress={form.xeroBillingAddress}
+                      onChange={(c) => {
+                        setForm((prev) => ({
+                          ...prev,
+                          xeroContactId: c?.ContactID || "",
+                          xeroContactName: c?.Name || "",
+                          xeroAccountNumber: c?.AccountNumber || "",
+                          xeroBillingAddress: c?.BillingAddress || null,
+                        }));
+                      }}
+                      testIdPrefix="deal-xero-contact"
+                    />
                   </div>
                   <div>
                     <Label>PO Number</Label>
@@ -1506,7 +1504,10 @@ function HotsChecklistDialog({
   const [missingFields, setMissingFields] = useState<string[]>([]);
 
   const [form, setForm] = useState({
-    invoicingEntityId: "",
+    xeroContactId: "",
+    xeroContactName: "",
+    xeroAccountNumber: "",
+    xeroBillingAddress: null as any,
     invoicingEmail: "",
     propertyId: "",
     rentPa: 0,
@@ -1527,7 +1528,6 @@ function HotsChecklistDialog({
   const [feeRows, setFeeRows] = useState<{ agentName: string; percentage: number }[]>([
     { agentName: "", percentage: 100 },
   ]);
-  const [companySearch, setCompanySearch] = useState("");
   const [propertySearch, setPropertySearch] = useState("");
   const [kycResult, setKycResult] = useState<{
     running: boolean;
@@ -1550,7 +1550,6 @@ function HotsChecklistDialog({
       setExtractedData(null);
       setMissingFields([]);
       setKycResult(null);
-      setCompanySearch("");
       setPropertySearch("");
     }
   }, [open]);
@@ -1559,7 +1558,10 @@ function HotsChecklistDialog({
     if (deal && open && step === "upload") {
       setForm(prev => ({
         ...prev,
-        invoicingEntityId: deal.invoicingEntityId || "",
+        xeroContactId: (deal as any).xeroContactId || "",
+        xeroContactName: (deal as any).xeroContactName || "",
+        xeroAccountNumber: (deal as any).xeroAccountNumber || "",
+        xeroBillingAddress: (deal as any).xeroBillingAddress || null,
         propertyId: deal.propertyId || "",
         rentPa: deal.rentPa || 0,
         fee: deal.fee || 0,
@@ -1597,19 +1599,12 @@ function HotsChecklistDialog({
     }
   }, [form.rentPa, form.feePercentage]);
 
-  const filteredCompanies = useMemo(() => {
-    if (!companySearch.trim()) return companies.slice(0, 20);
-    const q = companySearch.toLowerCase();
-    return companies.filter(c => c.name.toLowerCase().includes(q)).slice(0, 20);
-  }, [companies, companySearch]);
-
   const filteredProperties = useMemo(() => {
     if (!propertySearch.trim()) return properties.slice(0, 20);
     const q = propertySearch.toLowerCase();
     return properties.filter(p => p.name.toLowerCase().includes(q)).slice(0, 20);
   }, [properties, propertySearch]);
 
-  const selectedCompany = companies.find(c => c.id === form.invoicingEntityId);
   const selectedProperty = properties.find(p => p.id === form.propertyId);
 
   const handleFileUpload = async (file: File) => {
@@ -1651,10 +1646,14 @@ function HotsChecklistDialog({
 
       const tenantId = tryMatchCompany(ex.tenantName);
       const landlordId = tryMatchCompany(ex.landlordName);
-      const billingId = tenantId || landlordId || form.invoicingEntityId;
       const propId = tryMatchProperty(ex.propertyAddress) || form.propertyId;
 
-      if (!billingId) missing.push("Billing Entity");
+      // The Xero contact picker is unfilled until the user selects one —
+      // we cache the extracted name as a search hint, but the actual
+      // ContactID has to come from Xero.
+      const extractedBillingName = ex.tenantName || ex.landlordName || "";
+
+      if (!form.xeroContactId && !extractedBillingName) missing.push("Billing Contact");
       if (!propId) missing.push("Property / Unit");
       if (!ex.rentPa) missing.push("Rent PA");
       if (!ex.feePercentage && !ex.fee) missing.push("Fee Details");
@@ -1663,7 +1662,7 @@ function HotsChecklistDialog({
       setMissingFields(missing);
       setForm(prev => ({
         ...prev,
-        invoicingEntityId: billingId || prev.invoicingEntityId,
+        xeroContactName: prev.xeroContactName || extractedBillingName,
         propertyId: propId || prev.propertyId,
         rentPa: ex.rentPa || prev.rentPa,
         feePercentage: ex.feePercentage || prev.feePercentage,
@@ -1692,7 +1691,6 @@ function HotsChecklistDialog({
         })));
       }
 
-      if (!tenantId && ex.tenantName) setCompanySearch(ex.tenantName);
       if (!propId && ex.propertyAddress) setPropertySearch(ex.propertyAddress);
 
       setStep("form");
@@ -1708,7 +1706,10 @@ function HotsChecklistDialog({
       if (!deal) throw new Error("No deal");
       const payload: Record<string, unknown> = {
         status: "HOTs",
-        invoicingEntityId: form.invoicingEntityId || null,
+        xeroContactId: form.xeroContactId || null,
+        xeroContactName: form.xeroContactName || null,
+        xeroAccountNumber: form.xeroAccountNumber || null,
+        xeroBillingAddress: form.xeroBillingAddress || null,
         invoicingEmail: form.invoicingEmail || null,
         propertyId: form.propertyId || null,
         rentPa: form.rentPa || null,
@@ -1740,35 +1741,8 @@ function HotsChecklistDialog({
       toast({ title: "HOTs checklist completed", description: "Deal moved to HOTs with all details saved." });
       invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/fee-allocations"] });
-
-      if (form.invoicingEntityId) {
-        setStep("kyc");
-        setKycResult({ running: true });
-        try {
-          const res = await fetch(`/api/companies-house/auto-kyc/${form.invoicingEntityId}`, {
-            method: "POST",
-            credentials: "include",
-            headers: getAuthHeaders(),
-          });
-          const data = await res.json();
-          if (res.ok && data.success) {
-            setKycResult({ running: false, status: data.kycStatus, profile: data.profile, officers: data.officers });
-            queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-            toast({
-              title: data.kycStatus === "pass" ? "KYC Verified" : data.kycStatus === "warning" ? "KYC Needs Review" : "KYC Failed",
-              description: `${data.profile?.companyName || "Company"} — ${data.kycStatus === "pass" ? "Active, no adverse flags" : "Review needed"}`,
-              variant: data.kycStatus === "fail" ? "destructive" : "default",
-            });
-          } else {
-            setKycResult({ running: false, status: data.kycStatus || "error", error: data.message || data.error });
-          }
-        } catch (err: any) {
-          setKycResult({ running: false, status: "error", error: err.message });
-        }
-      } else {
-        onOpenChange(false);
-        onComplete();
-      }
+      onOpenChange(false);
+      onComplete();
     },
     onError: (err: Error) => {
       setStep("form");
@@ -1776,7 +1750,7 @@ function HotsChecklistDialog({
     },
   });
 
-  const canSubmit = form.invoicingEntityId && form.fee > 0;
+  const canSubmit = (form.xeroContactId || form.xeroContactName) && form.fee > 0;
   const bgpAgents = users.map(u => u.name);
 
   return (
@@ -1864,55 +1838,38 @@ function HotsChecklistDialog({
               </div>
             )}
 
-            <div className={`rounded-md border p-3 space-y-3 bg-muted/20 ${missingFields.includes("Billing Entity") ? "ring-2 ring-amber-400" : ""}`}>
+            <div className={`rounded-md border p-3 space-y-3 bg-muted/20 ${missingFields.includes("Billing Contact") ? "ring-2 ring-amber-400" : ""}`}>
               <h4 className="text-sm font-semibold flex items-center gap-2">
-                <Building2 className="w-4 h-4" />
-                Billing Entity (required)
-                {missingFields.includes("Billing Entity") && <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-400">Needs input</Badge>}
+                <Receipt className="w-4 h-4" />
+                Xero Billing Contact (required)
+                {missingFields.includes("Billing Contact") && <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-400">Needs input</Badge>}
               </h4>
               <div>
-                <Label className="text-xs">Client / Invoicing Entity</Label>
-                <div className="relative">
-                  <Input
-                    value={selectedCompany ? selectedCompany.name : companySearch}
-                    onChange={(e) => {
-                      setCompanySearch(e.target.value);
-                      if (form.invoicingEntityId) setForm(prev => ({ ...prev, invoicingEntityId: "" }));
-                    }}
-                    placeholder="Search companies..."
-                    data-testid="input-hots-company"
-                  />
-                  {companySearch && !form.invoicingEntityId && (
-                    <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto">
-                      {filteredCompanies.map(c => (
-                        <div key={c.id} className="px-3 py-2 text-sm hover:bg-accent cursor-pointer"
-                          onClick={() => { setForm(prev => ({ ...prev, invoicingEntityId: c.id })); setCompanySearch(""); }}
-                          data-testid={`hots-company-option-${c.id}`}>
-                          <span className="font-medium">{c.name}</span>
-                          {c.companyType && <Badge variant="outline" className="ml-2 text-[10px]">{c.companyType}</Badge>}
-                          {c.companiesHouseNumber && <Badge className="ml-1 text-[9px] bg-green-600">KYC</Badge>}
-                        </div>
-                      ))}
-                      {filteredCompanies.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">No companies found</div>}
-                    </div>
-                  )}
-                </div>
-                {selectedCompany && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs">{selectedCompany.name}</Badge>
-                    {selectedCompany.companiesHouseNumber ? (
-                      <Badge className="text-[9px] bg-green-600 text-white">KYC Verified</Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-400">KYC Required</Badge>
-                    )}
-                    <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setForm(prev => ({ ...prev, invoicingEntityId: "" }))}>
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
+                <Label className="text-xs">Xero Contact</Label>
+                <XeroContactPicker
+                  value={form.xeroContactId || null}
+                  cachedName={form.xeroContactName}
+                  cachedAccountNumber={form.xeroAccountNumber}
+                  cachedAddress={form.xeroBillingAddress}
+                  onChange={(c) => {
+                    setForm((prev) => ({
+                      ...prev,
+                      xeroContactId: c?.ContactID || "",
+                      xeroContactName: c?.Name || "",
+                      xeroAccountNumber: c?.AccountNumber || "",
+                      xeroBillingAddress: c?.BillingAddress || null,
+                    }));
+                  }}
+                  testIdPrefix="hots-xero-contact"
+                />
+                {!form.xeroContactId && form.xeroContactName && (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    AI suggested name: <span className="font-medium">{form.xeroContactName}</span> — pick the matching Xero contact above.
+                  </p>
                 )}
               </div>
               <div>
-                <Label className="text-xs">Invoicing Email Address</Label>
+                <Label className="text-xs">Invoicing Email Address (override)</Label>
                 <Input value={form.invoicingEmail} onChange={(e) => setForm(prev => ({ ...prev, invoicingEmail: e.target.value }))}
                   placeholder="invoices@company.com" type="email" data-testid="input-hots-email" />
               </div>
@@ -2194,56 +2151,36 @@ function HotsChecklistDialog({
   );
 }
 
-export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: string; deal: CrmDeal; companies?: CrmCompany[] }) {
+export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: CrmDeal; companies?: CrmCompany[] }) {
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
-  const { data: amlStatus } = useDealAmlStatus(dealId);
-  const [contactName, setContactName] = useState("");
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
-  const [invoicingEntityId, setInvoicingEntityId] = useState(deal.invoicingEntityId || "");
-  const [entitySearch, setEntitySearch] = useState("");
   const [poNumber, setPoNumber] = useState(deal.poNumber || "");
 
-  useEffect(() => {
-    setInvoicingEntityId(deal.invoicingEntityId || "");
-  }, [deal.invoicingEntityId]);
+  const xeroContactId = (deal as any).xeroContactId || null;
+  const xeroContactName = (deal as any).xeroContactName || null;
+  const xeroAccountNumber = (deal as any).xeroAccountNumber || null;
+  const xeroBillingAddress = (deal as any).xeroBillingAddress || null;
 
-  const invoicingEntity = companies.find(c => c.id === invoicingEntityId);
-
-  const filteredEntities = useMemo(() => {
-    if (!entitySearch) return companies.slice(0, 20);
-    const q = entitySearch.toLowerCase();
-    return companies.filter(c => c.name?.toLowerCase().includes(q)).slice(0, 20);
-  }, [companies, entitySearch]);
-
-  const updateInvoicingEntity = useCallback((entityId: string) => {
-    setInvoicingEntityId(entityId);
-    setEntitySearch("");
-    const entity = companies.find(c => c.id === entityId);
-    if (entity?.name) setContactName(entity.name);
-    apiRequest("PUT", `/api/crm/deals/${dealId}`, { invoicingEntityId: entityId || null })
+  const updateXeroContact = useCallback((contact: XeroContact | null) => {
+    apiRequest("PUT", `/api/crm/deals/${dealId}`, {
+      xeroContactId: contact?.ContactID || null,
+      xeroContactName: contact?.Name || null,
+      xeroAccountNumber: contact?.AccountNumber || null,
+      xeroBillingAddress: contact?.BillingAddress || null,
+    })
       .then(() => {
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
         invalidateDealCaches();
-        if (entityId) {
-          toast({ title: "Running KYC", description: `Checking ${entity?.name || "entity"} via Companies House...` });
-          fetch(`/api/companies-house/auto-kyc/${entityId}`, { method: "POST", credentials: "include", headers: getAuthHeaders() })
-            .then(r => r.json())
-            .then(data => {
-              if (data.success) {
-                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-                toast({
-                  title: data.kycStatus === "pass" ? "KYC Passed" : data.kycStatus === "warning" ? "KYC Needs Review" : "KYC Failed",
-                  description: `${data.profile?.companyName || entity?.name || "Company"} — ${data.kycStatus === "pass" ? "Active, no adverse flags" : "Review needed"}`,
-                  variant: data.kycStatus === "fail" ? "destructive" : "default",
-                });
-              }
-            })
-            .catch(() => {});
+        if (contact) {
+          toast({ title: "Xero contact linked", description: `${contact.Name}${contact.AccountNumber ? ` (A/C ${contact.AccountNumber})` : ""}` });
         }
+      })
+      .catch((err) => {
+        toast({ title: "Error linking Xero contact", description: err?.message || String(err), variant: "destructive" });
       });
-  }, [companies, dealId, toast]);
+  }, [dealId, toast]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2275,11 +2212,10 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
 
   const createInvoiceMutation = useMutation({
     mutationFn: async () => {
-      const finalContact = contactName || invoicingEntity?.name || deal.name;
       const res = await apiRequest("POST", "/api/xero/invoices", {
         dealId,
-        contactName: finalContact,
-        invoicingEntityId: invoicingEntityId || null,
+        xeroContactId: xeroContactId || null,
+        contactName: xeroContactName || deal.name,
         poNumber: poNumber || deal.poNumber || null,
         lineItems: [{
           Description: deal.name || "Professional fees",
@@ -2295,7 +2231,6 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
     onSuccess: () => {
       toast({ title: "Invoice created in Xero" });
       setCreating(false);
-      setContactName("");
       setReference("");
       setAmount(0);
       refetchInvoices();
@@ -2369,91 +2304,49 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
                 variant="outline"
                 size="sm"
                 onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }}
-                disabled={amlStatus && !amlStatus.canInvoice}
-                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
                 data-testid="button-create-xero-invoice"
               >
                 <Send className="w-3.5 h-3.5 mr-1" />
                 Send to Xero
-                {amlStatus && !amlStatus.canInvoice && <span className="ml-1.5 text-[10px] uppercase opacity-70">AML pending</span>}
               </Button>
             )}
           </div>
         </div>
 
-        {invoicingEntity && !creating && (
-          <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
-            <Building2 className="w-3.5 h-3.5" />
-            <span>Invoicing Entity: <span className="font-medium text-foreground">{invoicingEntity.name}</span></span>
-            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => updateInvoicingEntity("")} data-testid="button-clear-invoicing-entity">
-              <X className="w-3 h-3" />
-            </Button>
-          </div>
-        )}
-
-        {creating && !deal.kycApproved && (
-          <div className="flex items-center gap-2 mb-3 p-2 rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-xs" data-testid="kyc-warning-banner">
-            <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-            <span>KYC has not been approved for this deal. From 1st May 2025, invoices cannot be created without KYC approval.</span>
+        {!creating && (
+          <div className="mb-3">
+            <XeroContactPicker
+              value={xeroContactId}
+              cachedName={xeroContactName}
+              cachedAccountNumber={xeroAccountNumber}
+              cachedAddress={xeroBillingAddress}
+              onChange={updateXeroContact}
+              testIdPrefix="deal-summary-xero-contact"
+            />
           </div>
         )}
 
         {creating && (
           <div className="border rounded-md p-3 mb-3 space-y-3 bg-muted/30">
             <div>
-              <Label className="text-xs mb-1 block">Invoicing Entity (Billing Company)</Label>
-              {invoicingEntity ? (
-                <div className="flex items-center gap-2 bg-background border rounded-md px-3 py-2">
-                  <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-sm font-medium flex-1">{invoicingEntity.name}</span>
-                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => { setInvoicingEntityId(""); setContactName(""); }} data-testid="button-change-invoicing-entity">
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-              ) : (
-                <div className="relative">
-                  <Input
-                    value={entitySearch}
-                    onChange={(e) => setEntitySearch(e.target.value)}
-                    placeholder="Search companies..."
-                    data-testid="input-invoicing-entity-search"
-                  />
-                  {entitySearch && filteredEntities.length > 0 && (
-                    <div className="absolute z-50 mt-1 w-full bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto">
-                      {filteredEntities.map(c => (
-                        <button
-                          key={c.id}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent truncate"
-                          onClick={() => updateInvoicingEntity(c.id)}
-                          data-testid={`entity-option-${c.id}`}
-                        >
-                          {c.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+              <Label className="text-xs mb-1 block">Xero Contact (Billing)</Label>
+              <XeroContactPicker
+                value={xeroContactId}
+                cachedName={xeroContactName}
+                cachedAccountNumber={xeroAccountNumber}
+                cachedAddress={xeroBillingAddress}
+                onChange={updateXeroContact}
+                testIdPrefix="invoice-xero-contact"
+              />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1 block">Contact / Client Name</Label>
-                <Input
-                  value={contactName}
-                  onChange={(e) => setContactName(e.target.value)}
-                  placeholder={invoicingEntity?.name || deal.name || "Client name"}
-                  data-testid="input-xero-contact"
-                />
-              </div>
-              <div>
-                <Label className="text-xs mb-1 block">Reference</Label>
-                <Input
-                  value={reference}
-                  onChange={(e) => setReference(e.target.value)}
-                  placeholder={deal.name || "Invoice reference"}
-                  data-testid="input-xero-reference"
-                />
-              </div>
+            <div>
+              <Label className="text-xs mb-1 block">Reference</Label>
+              <Input
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder={deal.name || "Invoice reference"}
+                data-testid="input-xero-reference"
+              />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -2480,8 +2373,7 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
               <Button
                 size="sm"
                 onClick={() => createInvoiceMutation.mutate()}
-                disabled={createInvoiceMutation.isPending || (amlStatus && !amlStatus.canInvoice)}
-                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
+                disabled={createInvoiceMutation.isPending}
                 data-testid="button-confirm-xero-invoice"
               >
                 {createInvoiceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
@@ -2697,8 +2589,9 @@ function getRequiredKycParties(deal: CrmDeal, companies: CrmCompany[]): { compan
     parties.push({ company: co, role, required });
   };
 
-  add(deal.invoicingEntityId, "Billing Entity", true);
-
+  // Billing identity is now the Xero contact, not a CRM company — so we
+  // don't surface it as a "party" needing KYC. KYC still runs against the
+  // counterparty companies below.
   const dt = deal.dealType?.toLowerCase() || "";
 
   if (dt.includes("disposal") || dt.includes("letting")) {
@@ -3376,7 +3269,9 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
       tenureText: "tenure", assetClass: "asset class",
       comments: "comments", amlCheckCompleted: "AML check", totalAreaSqft: "total area",
       propertyId: "property", landlordId: "landlord", tenantId: "tenant",
-      vendorId: "vendor", purchaserId: "purchaser", invoicingEntityId: "billing entity",
+      vendorId: "vendor", purchaserId: "purchaser",
+      xeroContactId: "Xero contact", xeroContactName: "Xero contact name",
+      xeroAccountNumber: "Xero account number", xeroBillingAddress: "Xero billing address",
       kycApproved: "KYC approved", feePercentage: "fee %",
       invoicingNotes: "invoicing notes",
       poNumber: "PO number",
@@ -3873,7 +3768,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     fee: true,
     feeAlloc: true,
     feeAgreement: true,
-    invoicingEntity: true,
+    xeroContact: true,
     floorAreas: true,
     pricePsf: true,
     priceItza: true,
@@ -3882,6 +3777,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     rentFree: true,
     leaseLength: true,
     breakOption: true,
+    dateAdded: true,
     instructedAt: false,
     targetDate: true,
     exchangedAt: false,
@@ -4049,27 +3945,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
     inlineUpdateMutation.mutate({ id: dealId, field, value });
 
-    if (field === "invoicingEntityId" && value) {
-      const entityId = String(value);
-      const entity = companies.find((c: any) => c.id === entityId);
-      toast({ title: "Running KYC", description: `Checking ${entity?.name || "billing entity"} via Companies House...` });
-      fetch(`/api/companies-house/auto-kyc/${entityId}`, { method: "POST", credentials: "include", headers: getAuthHeaders() })
-        .then(r => r.json())
-        .then(data => {
-          if (data.success) {
-            queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-            toast({
-              title: data.kycStatus === "pass" ? "KYC Passed" : data.kycStatus === "warning" ? "KYC Needs Review" : "KYC Failed",
-              description: `${data.profile?.companyName || entity?.name || "Company"} — ${data.kycStatus === "pass" ? "Active, no adverse flags" : "Review needed"}`,
-              variant: data.kycStatus === "fail" ? "destructive" : "default",
-            });
-          }
-        })
-        .catch(() => {});
-    }
-
     // Counterparty/client party change → fire full AML sweep on both sides of the deal.
-    // Mirror of the invoicingEntityId auto-KYC, scoped to the deal so tenant + landlord both get screened.
     if ((field === "tenantId" || field === "landlordId" || field === "vendorId" || field === "purchaserId") && value) {
       const entity = companies.find((c: any) => c.id === String(value));
       toast({ title: "Running AML checks", description: `Screening ${entity?.name || "party"}...` });
@@ -4665,7 +4541,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.pricing && <TableHead className="min-w-[100px] text-right">Pricing</TableHead>}
                     {visibleColumns.yield && <TableHead className="min-w-[80px] text-right">Yield %</TableHead>}
                     {visibleColumns.feeAgreement && <TableHead className="min-w-[100px]">Fee Agreement</TableHead>}
-                    {visibleColumns.invoicingEntity && <TableHead className="min-w-[150px]">Invoicing Entity</TableHead>}
+                    {visibleColumns.xeroContact && <TableHead className="min-w-[180px]">Xero Contact</TableHead>}
                     {visibleColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
                     {visibleColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
                     {visibleColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
@@ -4674,6 +4550,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.rentFree && <TableHead className="min-w-[80px] text-right">Rent Free</TableHead>}
                     {visibleColumns.leaseLength && <TableHead className="min-w-[80px] text-right">Lease Length</TableHead>}
                     {visibleColumns.breakOption && <TableHead className="min-w-[80px] text-right">Break Option</TableHead>}
+                    {visibleColumns.dateAdded && <TableHead className="min-w-[110px]">Date Added</TableHead>}
                     {visibleColumns.instructedAt && <TableHead className="min-w-[110px]">Instructed</TableHead>}
                     {visibleColumns.targetDate && <TableHead className="min-w-[120px]">Target Date</TableHead>}
                     {visibleColumns.exchangedAt && <TableHead className="min-w-[110px]">Exchanged</TableHead>}
@@ -4937,15 +4814,18 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.invoicingEntity && (
+                      {visibleColumns.xeroContact && (
                         <TableCell className="px-1.5 py-1">
-                          <InlineLinkSelect
-                            value={deal.invoicingEntityId}
-                            options={companies.map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.invoicingEntityId ? `/companies/${deal.invoicingEntityId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "invoicingEntityId", v || null)}
-                            placeholder="Link entity"
-                          />
+                          {(deal as any).xeroContactName ? (
+                            <div className="flex flex-col">
+                              <span className="text-xs truncate">{(deal as any).xeroContactName}</span>
+                              {(deal as any).xeroAccountNumber && (
+                                <span className="text-[10px] text-muted-foreground">A/C {(deal as any).xeroAccountNumber}</span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.floorAreas && (
@@ -5032,6 +4912,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "breakOption", v)}
                             suffix=" years"
                           />
+                        </TableCell>
+                      )}
+                      {visibleColumns.dateAdded && (
+                        <TableCell className="px-1.5 py-1">
+                          {deal.createdAt ? formatDate(deal.createdAt) : "—"}
                         </TableCell>
                       )}
                       {visibleColumns.instructedAt && (

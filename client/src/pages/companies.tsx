@@ -59,7 +59,6 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
-import { BillingEntityPanel } from "@/components/billing-entity-panel";
 import { LenderPanel } from "@/components/lender-panel";
 
 interface CHSearchResult {
@@ -1041,7 +1040,7 @@ function CompanyDetail({ id }: { id: string }) {
 
   const relatedDeals = useMemo(() => {
     if (!allDeals) return [];
-    const directDeals = allDeals.filter(d => d.landlordId === id || d.tenantId === id || d.vendorId === id || d.purchaserId === id || d.invoicingEntityId === id);
+    const directDeals = allDeals.filter(d => d.landlordId === id || d.tenantId === id || d.vendorId === id || d.purchaserId === id);
     const directIds = new Set(directDeals.map(d => d.id));
     const linkedDealIds = (companyDealLinksForDetail || []).filter(l => l.companyId === id).map(l => l.dealId);
     const linkedDeals = allDeals.filter(d => linkedDealIds.includes(d.id) && !directIds.has(d.id));
@@ -1285,15 +1284,11 @@ function CompanyDetail({ id }: { id: string }) {
 
           {(() => {
             const t = (company.companyType || "").toLowerCase();
-            const isBilling = t.includes("billing");
             const isLender = t.includes("lender") || t.includes("clearing bank") || t.includes("investment bank")
               || t.includes("debt fund") || t.includes("private credit") || t.includes("mezzanine")
               || t.includes("bridging") || t.includes("development finance") || t.includes("building society")
               || t.includes("insurance lender") || t.includes("pension fund");
             const isLandlord = !isLender && (t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund"));
-            if (isBilling) {
-              return <BillingEntityPanel company={company as any} />;
-            }
             if (isLender) {
               return <LenderPanel companyId={id} company={company} />;
             }
