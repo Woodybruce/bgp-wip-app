@@ -288,7 +288,16 @@ export function PropertyDetail({ id }: { id: string }) {
                       onChange={(result) => {
                         const newAddress = resultToAddress(result);
                         const updates: any = { address: newAddress };
-                        if (result?.formatted) updates.name = result.formatted;
+                        // Prefer the establishment name (e.g. "Grand
+                        // Central") as the property's display name when
+                        // Google identifies one. Otherwise fall back to
+                        // the formatted address so we never end up with
+                        // a blank name.
+                        if (result?.placeName) {
+                          updates.name = result.placeName;
+                        } else if (result?.formatted) {
+                          updates.name = result.formatted;
+                        }
                         updateMutation.mutate(updates, { onSuccess: () => setEditingAddress(false) });
                       }}
                       placeholder="Search for an address..."
