@@ -6204,13 +6204,27 @@ async function executeCrmToolRaw(
         }
       } else if (fnArgs.imageUrl) {
         const url = String(fnArgs.imageUrl);
-        if (!url.startsWith("https://")) return { data: { success: false, error: "imageUrl must be https://" } };
-        const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15000) });
-        if (!resp.ok) return { data: { success: false, error: `Image fetch failed: HTTP ${resp.status}` } };
-        const ctype = resp.headers.get("content-type") || "image/jpeg";
-        if (!ctype.startsWith("image/")) return { data: { success: false, error: `URL did not return an image (${ctype})` } };
-        mimeType = (ctype.split(";")[0].trim() as any);
-        base64 = Buffer.from(await resp.arrayBuffer()).toString("base64");
+        // Accept chat-media paths (images dragged into ChatBGP) the same
+        // way save_to_image_studio does — they live in file-storage under
+        // chat-media/<filename> and never get an https URL. Without this
+        // branch, vision can't see anything the user has just pasted.
+        if (url.startsWith("/api/chat-media/") || url.startsWith("chat-media/")) {
+          const mediaName = url.replace(/^\/?api\/chat-media\//, "").replace(/^chat-media\//, "");
+          const { getFile } = await import("./file-storage");
+          const file = await getFile(`chat-media/${mediaName}`);
+          if (!file) return { data: { success: false, error: `chat-media file not found: ${mediaName}` } };
+          mimeType = (file.contentType?.split(";")[0].trim() || (mediaName.match(/\.(png|jpe?g|gif|webp)$/i)?.[1] === "png" ? "image/png" : "image/jpeg")) as any;
+          base64 = Buffer.from(file.data).toString("base64");
+        } else if (!url.startsWith("https://")) {
+          return { data: { success: false, error: "imageUrl must be https:// or a chat-media path" } };
+        } else {
+          const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+          if (!resp.ok) return { data: { success: false, error: `Image fetch failed: HTTP ${resp.status}` } };
+          const ctype = resp.headers.get("content-type") || "image/jpeg";
+          if (!ctype.startsWith("image/")) return { data: { success: false, error: `URL did not return an image (${ctype})` } };
+          mimeType = (ctype.split(";")[0].trim() as any);
+          base64 = Buffer.from(await resp.arrayBuffer()).toString("base64");
+        }
       } else if (fnArgs.base64Data) {
         base64 = String(fnArgs.base64Data).replace(/^data:image\/\w+;base64,/, "");
       } else {
