@@ -90,6 +90,15 @@ import { pool } from "./db";
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_lr_title_purchases_title_docs ON land_registry_title_purchases(title_number, documents)`,
     `CREATE INDEX IF NOT EXISTS idx_lr_title_purchases_created ON land_registry_title_purchases(created_at DESC)`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT`,
+    // Xero contact replaces the old internal "invoicing entity" — Xero is the
+    // source of truth for billing. Cached fields render in deal list / form
+    // without an extra Xero API call.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS xero_contact_id TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS xero_contact_name TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS xero_account_number TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS xero_billing_address JSONB`,
+    `CREATE INDEX IF NOT EXISTS crm_deals_xero_contact_id_idx ON crm_deals (xero_contact_id) WHERE xero_contact_id IS NOT NULL`,
+    `ALTER TABLE crm_deals DROP COLUMN IF EXISTS invoicing_entity_id`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
