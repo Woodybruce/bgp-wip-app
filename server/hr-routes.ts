@@ -2733,8 +2733,9 @@ Return ONLY JSON.`,
   app.post("/api/hr/reviews/:id/record-compensation", requireAuth, async (req: any, res) => {
     const actor = await getActor(req);
     if (!actor.isAdmin) return res.status(403).json({ error: "Admin only" });
+    const client = await pool.connect();
     try {
-      const review = await pool.query(
+      const review = await client.query(
         "SELECT id, user_id, period, current_salary_pence FROM staff_reviews WHERE id = $1",
         [req.params.id],
       );
@@ -2751,12 +2752,16 @@ Return ONLY JSON.`,
         ? effectiveDate
         : new Date().toISOString().slice(0, 10);
 
-      const employee = await pool.query("SELECT name, email FROM users WHERE id = $1", [r.user_id]);
+      const employee = await client.query("SELECT name, email FROM users WHERE id = $1", [r.user_id]);
       const employeeName = employee.rows[0]?.name || "Employee";
+
+      // All-or-nothing — if the Wendy task fails, we don't want a half-
+      // written bonus / salary row sitting around with no notification.
+      await client.query("BEGIN");
 
       const inserted: Record<string, any> = {};
       if (bonus > 0) {
-        const ins = await pool.query(
+        const ins = await client.query(
           `INSERT INTO bonus_history (user_id, amount_pence, effective_date, kind, reason, notes, recorded_by)
            VALUES ($1, $2, $3, 'bonus', $4, $5, $6)
            ON CONFLICT (user_id, effective_date, amount_pence, kind) DO NOTHING
@@ -2766,7 +2771,7 @@ Return ONLY JSON.`,
         inserted.bonus = ins.rows[0] || null;
       }
       if (salaryNew > 0) {
-        const ins = await pool.query(
+        const ins = await client.query(
           `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by)
            VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING id, salary_pence, effective_date`,
@@ -2776,7 +2781,7 @@ Return ONLY JSON.`,
 
         // Mirror the new salary onto the staff_reviews row so the form
         // and dashboards show the freshly-agreed number.
-        await pool.query(
+        await client.query(
           `UPDATE staff_reviews
               SET current_salary_pence = $1,
                   last_increase_date = $2::date,
@@ -2786,18 +2791,18 @@ Return ONLY JSON.`,
         );
       }
 
-      // Notify Wendy (or fallback to first admin) — she runs Xero payroll
-      // and needs to push these through outside the app.
-      const wendyRes = await pool.query(
+      // Notify Wendy (or fallback to first admin). The `users` table has
+      // no created_at column — order by name for stability instead.
+      const wendyRes = await client.query(
         `SELECT id FROM users
           WHERE is_active = true
-            AND (LOWER(name) LIKE 'wendy%' OR LOWER(name) LIKE '%mckenzie')
-          ORDER BY created_at LIMIT 1`,
+            AND (LOWER(name) LIKE 'wendy%' OR LOWER(name) LIKE '%mckenzie%')
+          ORDER BY name LIMIT 1`,
       );
       let taskUserId: string | null = wendyRes.rows[0]?.id || null;
       if (!taskUserId) {
-        const adminRes = await pool.query(
-          `SELECT id FROM users WHERE is_admin = true AND is_active = true ORDER BY created_at LIMIT 1`,
+        const adminRes = await client.query(
+          `SELECT id FROM users WHERE is_admin = true AND is_active = true ORDER BY name LIMIT 1`,
         );
         taskUserId = adminRes.rows[0]?.id || null;
       }
@@ -2814,7 +2819,7 @@ Return ONLY JSON.`,
       if (taskUserId) {
         const due = new Date(effDate);
         due.setDate(due.getDate() - 3);
-        const ins = await pool.query(
+        const ins = await client.query(
           `INSERT INTO user_tasks (user_id, title, description, due_date, priority, status, category)
            VALUES ($1, $2, $3, $4, 'high', 'todo', 'payroll')
            RETURNING id`,
@@ -2834,10 +2839,14 @@ Return ONLY JSON.`,
         taskId = ins.rows[0]?.id || null;
       }
 
+      await client.query("COMMIT");
       res.json({ ok: true, inserted, taskUserId, taskId });
     } catch (e: any) {
-      console.error("[hr] record-compensation error:", e?.message);
+      try { await client.query("ROLLBACK"); } catch { /* ignore */ }
+      console.error("[hr] record-compensation error:", e?.message, e?.stack);
       res.status(500).json({ error: e.message });
+    } finally {
+      client.release();
     }
   });
 
