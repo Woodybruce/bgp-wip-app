@@ -2684,11 +2684,24 @@ Return ONLY JSON.`,
           `UPDATE staff_reviews SET status = 'draft', submitted_at = NULL, updated_at = now() WHERE id = $1`,
           [req.params.id]
         );
-      } else if (req.body.status === "completed" && actor.isAdmin && owner.rows[0].status === "submitted") {
-        await pool.query(
-          `UPDATE staff_reviews SET status = 'completed', reviewed_at = now(), reviewed_by_user_id = $2, updated_at = now() WHERE id = $1`,
-          [req.params.id, actor.userId]
-        );
+      } else if (req.body.status === "completed" && actor.isAdmin && (owner.rows[0].status === "submitted" || owner.rows[0].status === "draft")) {
+        // Admin can mark complete from either submitted (normal flow) or
+        // draft (after an in-person meeting where the manager finalises
+        // the review on behalf of the employee — saves the employee
+        // having to log in just to click Submit). Stamps submitted_at
+        // too when going draft → completed so the audit trail makes
+        // sense.
+        if (owner.rows[0].status === "draft") {
+          await pool.query(
+            `UPDATE staff_reviews SET status = 'completed', submitted_at = COALESCE(submitted_at, now()), reviewed_at = now(), reviewed_by_user_id = $2, updated_at = now() WHERE id = $1`,
+            [req.params.id, actor.userId]
+          );
+        } else {
+          await pool.query(
+            `UPDATE staff_reviews SET status = 'completed', reviewed_at = now(), reviewed_by_user_id = $2, updated_at = now() WHERE id = $1`,
+            [req.params.id, actor.userId]
+          );
+        }
       } else if (req.body.status === "submitted" && actor.isAdmin && owner.rows[0].status === "completed") {
         // Admin can reopen a completed review back to submitted (e.g. needs
         // more discussion). Doesn't lose the prior reviewer info.

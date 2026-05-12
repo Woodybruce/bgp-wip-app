@@ -2823,7 +2823,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
             <div className="border-t pt-3 mt-3 flex items-center justify-between gap-3">
               <div className="text-[11px] text-muted-foreground">
                 {editing.status === "draft" && (
-                  <>Draft — your field edits autosave as you type. {isOwn ? "Click Submit when you're ready for your manager to review." : "Waiting for the reviewee to submit."}</>
+                  <>Draft — your field edits autosave as you type. {isOwn ? "Click Submit when you're ready for your manager to review." : isAdmin ? "After the in-person meeting, click Mark review complete to finalise without waiting for the employee to submit." : "Waiting for the reviewee to submit."}</>
                 )}
                 {editing.status === "submitted" && (
                   <>Submitted to manager{(editing as any).submitted_at ? ` on ${new Date((editing as any).submitted_at).toLocaleDateString("en-GB")}` : ""}. {isAdmin ? "Add manager comments above, then mark complete." : "Awaiting manager review."}</>
@@ -2842,6 +2842,18 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   >
                     {updateReview.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
                     Submit to manager →
+                  </Button>
+                )}
+                {editing.status === "draft" && isAdmin && !isOwn && (
+                  <Button
+                    size="sm"
+                    className="h-8"
+                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "completed" } })}
+                    disabled={updateReview.isPending}
+                    title="Finalise this review now — use after the in-person meeting"
+                  >
+                    {updateReview.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                    Mark review complete →
                   </Button>
                 )}
                 {editing.status === "submitted" && isAdmin && (
