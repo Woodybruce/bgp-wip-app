@@ -13,7 +13,7 @@ import {
   Network, Cake, UserPlus, Trash2, FolderLock, Folder, Upload,
   LayoutGrid, GitBranch, Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
   Train, HeartHandshake, Mountain, Award, Megaphone, Sparkles, Target,
-  MessageSquare,
+  MessageSquare, PoundSterling,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -167,6 +167,22 @@ function isFeeEarner(title?: string | null): boolean {
   if (!title) return true;
   const t = title.toLowerCase().trim();
   return !/\b(pa|p\.a\.?|personal assistant|secretary|secretarial|receptionist|office manager|office admin|admin(?: assistant)?|office support|ea|executive assistant|hr|human resources|finance|accounts|accountant|bookkeeper|it support|office junior)\b/.test(t);
+}
+
+// Graduate Surveyor — pre-qualification. The APC card / competencies are
+// only meaningful while someone's actively working through the APC.
+// "Graduate" in their title is the canonical signal; falling back to
+// apc_status === "in_progress" catches anyone whose title hasn't been
+// updated yet.
+function isGraduate(title?: string | null, apcStatus?: string | null): boolean {
+  if (title && /\bgraduate\b/i.test(title)) return true;
+  if (apcStatus === "in_progress") return true;
+  return false;
+}
+
+function isSecretary(title?: string | null): boolean {
+  if (!title) return false;
+  return /\b(secretary|secretarial)\b/i.test(title);
 }
 
 function tenure(startDate: string | null): string {
@@ -1722,8 +1738,10 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
         {/* What I'm working on — admin or self only */}
         {(isAdmin || isOwn) && <ActiveDealsCard userId={person.id} />}
 
-        {/* APC for grads */}
-        {person.apc_status && person.apc_status !== "not_started" && (
+        {/* APC card — only relevant for Graduate Surveyors actively working
+            through APC. Hidden for everyone else (qualified surveyors,
+            office staff, leadership). */}
+        {isGraduate(person.title, person.apc_status) && person.apc_status && person.apc_status !== "not_started" && (
           <div className="p-3 rounded-lg border bg-card">
             <div className="flex items-center gap-2 mb-1">
               <ApcBadge status={person.apc_status} />
@@ -1751,7 +1769,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             {isAdmin && !isOfficeStaff && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="mystuff" className="text-xs">My stuff</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
+            {(isAdmin || isOwn) && !isSecretary(person.title) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Card &amp; Expenses</TabsTrigger>}
           </TabsList>
 
@@ -1880,9 +1898,11 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             <ReviewsTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} person={person} />
           </TabsContent>
 
-          <TabsContent value="career" className="mt-4">
-            <CareerRoadmapTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} currentTitle={person.title} />
-          </TabsContent>
+          {!isSecretary(person.title) && (
+            <TabsContent value="career" className="mt-4">
+              <CareerRoadmapTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} currentTitle={person.title} />
+            </TabsContent>
+          )}
 
           <TabsContent value="expenses" className="mt-4 space-y-4">
             {cardholder && <CardTab cardholder={cardholder} isAdmin={isAdmin} person={person} />}
@@ -2386,6 +2406,38 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] }),
   });
 
+  const [bonusPence, setBonusPence] = useState<number | null>(null);
+  const [salaryNewPence, setSalaryNewPence] = useState<number | null>(null);
+  const [compEffectiveDate, setCompEffectiveDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [compReason, setCompReason] = useState<string>("");
+
+  const recordCompensation = useMutation({
+    mutationFn: async ({ id }: { id: string }) =>
+      apiRequest("POST", `/api/hr/reviews/${id}/record-compensation`, {
+        bonusPence: bonusPence ? bonusPence * 100 : 0,
+        salaryNewPence: salaryNewPence ? salaryNewPence * 100 : 0,
+        effectiveDate: compEffectiveDate,
+        reason: compReason || undefined,
+      }).then(r => r.json()),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
+      setBonusPence(null);
+      setSalaryNewPence(null);
+      setCompReason("");
+      toast({
+        title: "Recorded — task raised for Wendy",
+        description: "Logged in app history. Wendy will push to Xero from her task list.",
+      });
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Couldn't record",
+        description: e?.message?.slice(0, 240) || "",
+        variant: "destructive",
+      });
+    },
+  });
+
   const addGoal = useMutation({
     mutationFn: async (title: string) => apiRequest("POST", `/api/hr/goals`, { userId, title, createTask: true }).then(r => r.json()),
     onSuccess: () => {
@@ -2685,6 +2737,59 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                     onBlur={e => updateReview.mutate({ id: editing.id, body: { employeeAcknowledgement: e.target.value } })}
                     className="text-sm bg-background"
                   />
+                </div>
+              )}
+
+              {/* Admin-only: agree a bonus and/or new salary, log it to
+                  bonus_history / salary_history, and auto-raise a task for
+                  Wendy so she pushes the change through Xero payroll. */}
+              {isAdmin && (
+                <div className="rounded-md border bg-background p-2.5 space-y-2.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                    <PoundSterling className="w-3.5 h-3.5" /> Bonus &amp; salary increase
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Bonus (£)</Label>
+                      <MoneyInput value={bonusPence} onCommit={setBonusPence} className="h-8" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">New salary (£, gross annual)</Label>
+                      <MoneyInput value={salaryNewPence} onCommit={setSalaryNewPence} className="h-8" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Effective date</Label>
+                      <Input
+                        type="date"
+                        value={compEffectiveDate}
+                        onChange={(e) => setCompEffectiveDate(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Reason (optional)</Label>
+                      <Input
+                        value={compReason}
+                        onChange={(e) => setCompReason(e.target.value)}
+                        placeholder="e.g. annual review, market adjustment"
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px] text-muted-foreground leading-tight">
+                      Saves to the employee's bonus / salary history and raises a payroll task for Wendy. Wendy still pushes the change to Xero — we don't write to Xero directly.
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={() => recordCompensation.mutate({ id: editing.id })}
+                      disabled={recordCompensation.isPending || (!bonusPence && !salaryNewPence)}
+                      data-testid="button-record-compensation"
+                    >
+                      {recordCompensation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />}
+                      Record &amp; notify Wendy
+                    </Button>
+                  </div>
                 </div>
               )}
 

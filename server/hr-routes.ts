@@ -2724,6 +2724,123 @@ Return ONLY JSON.`,
     }
   });
 
+  // Record a manager's recommendation for a bonus + / or salary uplift
+  // coming out of a review. Writes to bonus_history + salary_history, and
+  // raises a task for Wendy (or fallback first admin) so she can action
+  // it in Xero — Xero stays the system of record for payroll, we just
+  // log + notify here so nothing gets lost between the review and the
+  // pay run.
+  app.post("/api/hr/reviews/:id/record-compensation", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin) return res.status(403).json({ error: "Admin only" });
+    try {
+      const review = await pool.query(
+        "SELECT id, user_id, period, current_salary_pence FROM staff_reviews WHERE id = $1",
+        [req.params.id],
+      );
+      if (!review.rows[0]) return res.status(404).json({ error: "Review not found" });
+      const r = review.rows[0];
+
+      const { bonusPence, salaryNewPence, effectiveDate, reason } = req.body || {};
+      const bonus = Number.isFinite(Number(bonusPence)) ? Math.round(Number(bonusPence)) : 0;
+      const salaryNew = Number.isFinite(Number(salaryNewPence)) ? Math.round(Number(salaryNewPence)) : 0;
+      if (bonus <= 0 && salaryNew <= 0) {
+        return res.status(400).json({ error: "Provide bonusPence and/or salaryNewPence (>0)" });
+      }
+      const effDate = effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)
+        ? effectiveDate
+        : new Date().toISOString().slice(0, 10);
+
+      const employee = await pool.query("SELECT name, email FROM users WHERE id = $1", [r.user_id]);
+      const employeeName = employee.rows[0]?.name || "Employee";
+
+      const inserted: Record<string, any> = {};
+      if (bonus > 0) {
+        const ins = await pool.query(
+          `INSERT INTO bonus_history (user_id, amount_pence, effective_date, kind, reason, notes, recorded_by)
+           VALUES ($1, $2, $3, 'bonus', $4, $5, $6)
+           ON CONFLICT (user_id, effective_date, amount_pence, kind) DO NOTHING
+           RETURNING id, amount_pence, effective_date`,
+          [r.user_id, bonus, effDate, reason || `Review ${r.period}`, `From review ${r.id}`, actor.userId],
+        );
+        inserted.bonus = ins.rows[0] || null;
+      }
+      if (salaryNew > 0) {
+        const ins = await pool.query(
+          `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, salary_pence, effective_date`,
+          [r.user_id, salaryNew, effDate, reason || `Review ${r.period}`, `From review ${r.id}`, actor.userId],
+        );
+        inserted.salaryIncrease = ins.rows[0] || null;
+
+        // Mirror the new salary onto the staff_reviews row so the form
+        // and dashboards show the freshly-agreed number.
+        await pool.query(
+          `UPDATE staff_reviews
+              SET current_salary_pence = $1,
+                  last_increase_date = $2::date,
+                  updated_at = now()
+            WHERE id = $3`,
+          [salaryNew, effDate, r.id],
+        );
+      }
+
+      // Notify Wendy (or fallback to first admin) — she runs Xero payroll
+      // and needs to push these through outside the app.
+      const wendyRes = await pool.query(
+        `SELECT id FROM users
+          WHERE is_active = true
+            AND (LOWER(name) LIKE 'wendy%' OR LOWER(name) LIKE '%mckenzie')
+          ORDER BY created_at LIMIT 1`,
+      );
+      let taskUserId: string | null = wendyRes.rows[0]?.id || null;
+      if (!taskUserId) {
+        const adminRes = await pool.query(
+          `SELECT id FROM users WHERE is_admin = true AND is_active = true ORDER BY created_at LIMIT 1`,
+        );
+        taskUserId = adminRes.rows[0]?.id || null;
+      }
+
+      const bits: string[] = [];
+      if (bonus > 0) bits.push(`Bonus £${(bonus / 100).toLocaleString("en-GB")}`);
+      if (salaryNew > 0) {
+        const fromTxt = r.current_salary_pence ? ` (from £${(r.current_salary_pence / 100).toLocaleString("en-GB")})` : "";
+        bits.push(`New salary £${(salaryNew / 100).toLocaleString("en-GB")}${fromTxt}`);
+      }
+      const summary = bits.join(", ");
+
+      let taskId: string | null = null;
+      if (taskUserId) {
+        const due = new Date(effDate);
+        due.setDate(due.getDate() - 3);
+        const ins = await pool.query(
+          `INSERT INTO user_tasks (user_id, title, description, due_date, priority, status, category)
+           VALUES ($1, $2, $3, $4, 'high', 'todo', 'payroll')
+           RETURNING id`,
+          [
+            taskUserId,
+            `Push to Xero: ${employeeName} — ${summary}`,
+            [
+              `Action from ${employeeName}'s review (${r.period}).`,
+              summary,
+              `Effective ${effDate}.`,
+              reason ? `Reason: ${reason}` : "",
+              `Review id: ${r.id}`,
+            ].filter(Boolean).join("\n"),
+            due.toISOString(),
+          ],
+        );
+        taskId = ins.rows[0]?.id || null;
+      }
+
+      res.json({ ok: true, inserted, taskUserId, taskId });
+    } catch (e: any) {
+      console.error("[hr] record-compensation error:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Import a pasted review (e.g. from a SharePoint Word doc) and let Claude
   // extract the structured fields into a staff_reviews row. Lets BGP retire
   // the SharePoint copies and keep everything searchable in-app.
