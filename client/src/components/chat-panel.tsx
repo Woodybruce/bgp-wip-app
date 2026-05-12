@@ -2042,6 +2042,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       const clipData = e.clipboardData;
       if (!clipData) return;
 
+      // Same text-preference rule as the onPaste handler — the
+      // document-level listener also has to bail out when text is
+      // present, or pasting from Word/Docs outside the textarea still
+      // gets hijacked into an image attachment.
+      const plainText = clipData.getData("text/plain");
+      if (plainText && plainText.trim().length > 0) return;
+
       const imageFiles = extractImagesFromClipboard(clipData);
       if (imageFiles.length > 0) {
         e.preventDefault();

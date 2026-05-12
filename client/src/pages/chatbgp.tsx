@@ -2824,6 +2824,17 @@ export default function ChatBGP() {
     const clipData = e.clipboardData;
     if (!clipData) return;
 
+    // Prefer text. macOS Word / Pages / Google Docs / styled web pages
+    // put BOTH text/plain AND an image preview on the clipboard when
+    // you copy formatted text. Without this guard, pasted text lands
+    // as an image attachment. If meaningful plain text is present, let
+    // the default browser paste insert it into the textarea and skip
+    // image extraction entirely. Same fix as chat-panel.tsx (9109144).
+    const plainText = clipData.getData("text/plain");
+    if (plainText && plainText.trim().length > 0) {
+      return;
+    }
+
     const imageFiles = extractImagesFromClipboardEvent(clipData);
 
     if (imageFiles.length > 0) {
@@ -2911,6 +2922,12 @@ export default function ChatBGP() {
       if (pasteHandledRef.current) return;
       const clipData = e.clipboardData;
       if (!clipData) return;
+      // Same text-preference rule as handlePaste — the document-level
+      // listener also has to bail out when text is present, or pasting
+      // Word/Docs text outside the textarea still gets hijacked into
+      // an image attachment.
+      const plainText = clipData.getData("text/plain");
+      if (plainText && plainText.trim().length > 0) return;
       const imageFiles = extractImagesFromClipboardEvent(clipData);
       if (imageFiles.length > 0) {
         e.preventDefault();
