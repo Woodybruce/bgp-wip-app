@@ -4120,6 +4120,10 @@ function CareerRoadmapTab({ userId, isAdmin, isOwn, currentTitle }: { userId: st
     : -1;
 
   const canEdit = isAdmin || isOwn;
+  // RICS competencies (the APC matrix) are only meaningful for Graduate
+  // Surveyors actively working through APC. Hide for everyone else; keep
+  // the BGP career path visible so non-grads still see their ladder.
+  const showRicsCompetencies = isGraduate(currentTitle);
 
   const renderCompetencyList = (items: CompetencyEntry[], label: string) => (
     <div>
@@ -4156,23 +4160,25 @@ function CareerRoadmapTab({ userId, isAdmin, isOwn, currentTitle }: { userId: st
 
   return (
     <div className="space-y-4 pb-4">
-      {/* Overall progress hero */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-baseline justify-between mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">RICS competency progress</span>
-            <span className="text-xs text-muted-foreground">{totalLevels} of {maxLevels} levels</span>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-bold tabular-nums">{overallPct}%</span>
-            <span className="text-sm text-muted-foreground">towards APC submission</span>
-          </div>
-          <div className="h-2 mt-2 rounded-full bg-muted overflow-hidden">
-            <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${overallPct}%` }} />
-          </div>
-          <div className="text-[10px] text-muted-foreground mt-1.5">Levels: 0 = not started · 1 = knowledge · 2 = application · 3 = achievement</div>
-        </CardContent>
-      </Card>
+      {/* RICS competency progress hero — graduates only */}
+      {showRicsCompetencies && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">RICS competency progress</span>
+              <span className="text-xs text-muted-foreground">{totalLevels} of {maxLevels} levels</span>
+            </div>
+            <div className="flex items-baseline gap-3">
+              <span className="text-3xl font-bold tabular-nums">{overallPct}%</span>
+              <span className="text-sm text-muted-foreground">towards APC submission</span>
+            </div>
+            <div className="h-2 mt-2 rounded-full bg-muted overflow-hidden">
+              <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${overallPct}%` }} />
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-1.5">Levels: 0 = not started · 1 = knowledge · 2 = application · 3 = achievement</div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* BGP career ladder */}
       <Card>
@@ -4215,17 +4221,19 @@ function CareerRoadmapTab({ userId, isAdmin, isOwn, currentTitle }: { userId: st
         </CardContent>
       </Card>
 
-      {/* RICS competencies */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2"><GraduationCap className="w-4 h-4 text-primary" /> RICS competencies — Commercial Property Practice</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0 space-y-4">
-          {renderCompetencyList(data.rics.mandatory, "Mandatory")}
-          {renderCompetencyList(data.rics.technical, "Technical")}
-          {!canEdit && <div className="text-[10px] text-muted-foreground italic">Read-only — only the user themselves or an admin can update levels.</div>}
-        </CardContent>
-      </Card>
+      {/* RICS competencies — graduates only (this is the APC matrix) */}
+      {showRicsCompetencies && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><GraduationCap className="w-4 h-4 text-primary" /> RICS competencies — Commercial Property Practice</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-4">
+            {renderCompetencyList(data.rics.mandatory, "Mandatory")}
+            {renderCompetencyList(data.rics.technical, "Technical")}
+            {!canEdit && <div className="text-[10px] text-muted-foreground italic">Read-only — only the user themselves or an admin can update levels.</div>}
+          </CardContent>
+        </Card>
+      )}
 
       <PromotionPitchesPanel
         userId={userId}
