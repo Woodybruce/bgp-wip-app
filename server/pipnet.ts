@@ -819,6 +819,11 @@ async function promoteToCrmRequirement(
       if ((!existingReq.size || existingReq.size.length === 0) && item.sizeRange) updates.size = [item.sizeRange];
       if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
       if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
+      // Append "PIPnet" to the sources array if not already there.
+      const existingSources = existingReq.sources ?? [];
+      if (!existingSources.includes("PIPnet")) {
+        updates.sources = [...existingSources, "PIPnet"];
+      }
       if (Object.keys(updates).length > 0) {
         await tx.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
       }
@@ -840,6 +845,7 @@ async function promoteToCrmRequirement(
       size: item.sizeRange ? [item.sizeRange] : null,
       requirementLocations: item.locations,
       landlordPack: landlordPackJson,
+      sources: ["PIPnet"],
       comments: [
         item.description,
         item.tenure ? `Tenure: ${item.tenure}` : null,

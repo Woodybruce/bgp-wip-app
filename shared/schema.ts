@@ -938,6 +938,7 @@ export const crmRequirementsLeasing = pgTable("crm_requirements_leasing", {
   viewing: boolean("viewing").default(false),
   shortlisted: boolean("shortlisted").default(false),
   underOffer: boolean("under_offer").default(false),
+  sources: text("sources").array(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

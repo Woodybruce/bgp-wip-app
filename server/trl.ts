@@ -416,6 +416,10 @@ async function promoteTrlToCrmRequirement(
       if ((!existingReq.requirementLocations || existingReq.requirementLocations.length === 0) && item.locations && item.locations.length > 0) {
         updates.requirementLocations = item.locations;
       }
+      const existingSources = existingReq.sources ?? [];
+      if (!existingSources.includes("TRL")) {
+        updates.sources = [...existingSources, "TRL"];
+      }
       if (Object.keys(updates).length > 0) {
         await tx.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
       }
@@ -434,6 +438,7 @@ async function promoteTrlToCrmRequirement(
       use: useArray,
       size: item.sizeRange ? [item.sizeRange] : null,
       requirementLocations: item.locations,
+      sources: ["TRL"],
       comments: [
         item.description,
         item.pitch ? `Pitch: ${item.pitch}` : null,

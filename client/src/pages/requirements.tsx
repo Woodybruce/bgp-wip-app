@@ -1932,6 +1932,19 @@ function LeasingSection({
                         navigate={navigate}
                         testIdPrefix={`name-leasing-${item.id}`}
                       />
+                      {item.sources && item.sources.length > 0 && (
+                        <div className="flex gap-0.5 mt-0.5 flex-wrap">
+                          {item.sources.map((s) => (
+                            <span
+                              key={s}
+                              className={`text-[9px] px-1 py-px rounded ${s === "PIPnet" ? "bg-blue-100 text-blue-700" : s === "TRL" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-700"}`}
+                              data-testid={`source-${item.id}-${s}`}
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <InlineDate
