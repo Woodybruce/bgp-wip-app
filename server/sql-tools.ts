@@ -50,8 +50,8 @@ const FORBIDDEN_KEYWORDS = [
   /\bpg_/i,                 // pg_* system catalog access blocked
 ];
 
-const MAX_QUERY_ROWS = 500;
-const QUERY_TIMEOUT_MS = 15_000;
+const MAX_QUERY_ROWS = 5000;
+const QUERY_TIMEOUT_MS = 60_000;
 
 // ── Schema digest ──────────────────────────────────────────────────────────
 // Built once at import time from the Drizzle schema. Returns a compact

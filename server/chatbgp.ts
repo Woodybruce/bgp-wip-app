@@ -2480,7 +2480,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         type: "object",
         properties: {
           query: { type: "string", description: "Search query — matches against subject, body, sender, recipients, and attachments. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
-          top: { type: "number", description: "Number of results to return (default 25, max 50)" },
+          top: { type: "number", description: "Number of results to return (default 50, max 500)." },
           mailbox: { type: "string", description: "Optional. A specific BGP mailbox email address (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal string 'all' to fan out across every active BGP user's mailbox plus the shared inbox. Omit to search only the current user's inbox." },
         },
         required: ["query"],
@@ -2497,7 +2497,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         type: "object",
         properties: {
           query: { type: "string", description: "Search query — matches subject, body, attendees, location. e.g. 'Aurora Capital', '18-22 Haymarket', 'rent review meeting'." },
-          top: { type: "number", description: "Number of results to return (default 25, max 50)." },
+          top: { type: "number", description: "Number of results to return (default 50, max 500)." },
           mailbox: { type: "string", description: "Optional. A specific BGP mailbox email (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal 'all' to fan out across every active BGP calendar plus the shared inbox. Omit to search only the current user's calendar." },
           startDateTime: { type: "string", description: "Optional ISO date-time lower bound (default: 18 months ago). Events must start on or after this." },
           endDateTime: { type: "string", description: "Optional ISO date-time upper bound (default: 6 months from now). Events must end on or before this." },
@@ -4890,14 +4890,14 @@ async function executeCrmToolRaw(
       return or(...conditions);
     };
     if (entityType === "all" || entityType === "deals") {
-      results.deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(15);
+      results.deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
     }
     if (entityType === "all" || entityType === "contacts") {
-      results.contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(15);
+      results.contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
     }
     if (entityType === "all" || entityType === "companies") {
       const { and: andOp, eq: eqOp, ne: neOp } = await import("drizzle-orm");
-      results.companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(andOp(buildOr([crmCompanies.name]), neOp(crmCompanies.aiDisabled, true))).limit(15);
+      results.companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(andOp(buildOr([crmCompanies.name]), neOp(crmCompanies.aiDisabled, true))).limit(100);
     }
     if (entityType === "all" || entityType === "properties") {
       const { sql: sqlTag } = await import("drizzle-orm");
@@ -4907,23 +4907,23 @@ async function executeCrmToolRaw(
       for (const wp of wordPatterns) propConditions.push(ilike(crmProperties.name, wp));
       propConditions.push(sqlTag`${addressText} ILIKE ${exactQ}`);
       for (const wp of wordPatterns) propConditions.push(sqlTag`${addressText} ILIKE ${wp}`);
-      results.properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(15);
+      results.properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(100);
     }
     if (entityType === "all" || entityType === "investment") {
-      results.investmentTracker = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(15);
+      results.investmentTracker = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
     }
     if (entityType === "all" || entityType === "units") {
-      results.availableUnits = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(15);
+      results.availableUnits = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
     }
     if (entityType === "all" || entityType === "requirements") {
       const reqConds = [exactQ, ...wordPatterns].map((p, i) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
       const reqParams = [exactQ, ...wordPatterns];
-      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 15`, reqParams);
+      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 100`, reqParams);
       results.requirements = reqResult.rows;
     }
     if (entityType === "all" || entityType === "comps") {
       const { crmComps } = await import("@shared/schema");
-      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(15);
+      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(100);
     }
     const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
     return { data: { success: true, query: fnArgs.query, totalFound, results } };
@@ -6465,9 +6465,14 @@ async function executeCrmToolRaw(
   if (fnName === "property_data_lookup") {
     const apiKey = process.env.PROPERTYDATA_API_KEY;
     if (!apiKey) return { data: { error: "PropertyData API key not configured. Add PROPERTYDATA_API_KEY to environment secrets." } };
-    const ALLOWED_ENDPOINTS = new Set(["sold-prices", "prices", "prices-per-sqf", "sold-prices-per-sqf", "rents", "rents-commercial", "rents-hmo", "yields", "growth", "growth-psf", "planning-applications", "valuation-commercial-sale", "valuation-commercial-rent", "valuation-sale", "valuation-rent", "demand", "demand-rent", "demographics", "flood-risk", "floor-areas", "postcode-key-stats", "uprns", "energy-efficiency", "address-match-uprn", "uprn", "uprn-title", "analyse-buildings", "rebuild-cost", "ptal", "crime", "schools", "internet-speed", "restaurants", "conservation-area", "green-belt", "aonb", "national-park", "listed-buildings", "household-income", "population", "tenure-types", "property-types", "council-tax", "national-hmo-register", "freeholds", "politics", "agents", "area-type", "land-registry-documents"]);
+    // No allowlist — PropertyData ship new endpoints regularly and a
+    // hardcoded list goes stale. Validate the SHAPE of the endpoint
+    // name only: lowercase letters, digits, hyphens, no path-escape
+    // characters. That blocks SSRF / injection while letting any
+    // legitimate PropertyData endpoint through.
+    const VALID_ENDPOINT = /^[a-z0-9][a-z0-9-]{1,60}$/;
     const endpoint = fnArgs.endpoint as string;
-    if (!endpoint || !ALLOWED_ENDPOINTS.has(endpoint)) return { data: { error: `Invalid endpoint "${endpoint}". Allowed: ${[...ALLOWED_ENDPOINTS].join(", ")}` } };
+    if (!endpoint || !VALID_ENDPOINT.test(endpoint)) return { data: { error: `Invalid endpoint name "${endpoint}". Endpoint names must be lowercase letters/digits/hyphens only (e.g. "sold-prices", "freeholds", "valuation-commercial-sale").` } };
     const postcode = (fnArgs.postcode as string || "").trim().replace(/\s{2,}/g, " ");
     const needsPostcode = !["uprn", "uprn-title", "analyse-buildings", "land-registry-documents"].includes(endpoint);
     if (needsPostcode && !postcode) return { data: { error: "Postcode is required." } };
@@ -6878,7 +6883,7 @@ async function executeCrmToolRaw(
   if (fnName === "search_emails") {
     try {
       const searchQuery = fnArgs.query;
-      const top = Math.min(fnArgs.top || 25, 50);
+      const top = Math.min(fnArgs.top || 50, 500);
       const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
       const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
       if ("error" in results) return { data: { error: results.error } };
@@ -6891,7 +6896,7 @@ async function executeCrmToolRaw(
   if (fnName === "search_calendar") {
     try {
       const searchQuery = fnArgs.query;
-      const top = Math.min(fnArgs.top || 25, 50);
+      const top = Math.min(fnArgs.top || 50, 500);
       const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
       const results = await runSearchCalendarTool({
         query: searchQuery,
@@ -9521,15 +9526,15 @@ export async function handleCrmToolCall(
     };
 
     if (entityType === "all" || entityType === "deals") {
-      const deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(15);
+      const deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
       results.deals = deals;
     }
     if (entityType === "all" || entityType === "contacts") {
-      const contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(15);
+      const contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
       results.contacts = contacts;
     }
     if (entityType === "all" || entityType === "companies") {
-      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(buildOr([crmCompanies.name])).limit(15);
+      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(buildOr([crmCompanies.name])).limit(100);
       results.companies = companies;
     }
     if (entityType === "all" || entityType === "properties") {
@@ -9540,27 +9545,27 @@ export async function handleCrmToolCall(
       for (const wp of wordPatterns) propConditions.push(ilike(crmProperties.name, wp));
       propConditions.push(sqlTag`${addressText} ILIKE ${exactQ}`);
       for (const wp of wordPatterns) propConditions.push(sqlTag`${addressText} ILIKE ${wp}`);
-      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(15);
+      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(100);
       results.properties = properties;
     }
     if (entityType === "all" || entityType === "investment") {
-      const investments = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(15);
+      const investments = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
       results.investmentTracker = investments;
     }
     if (entityType === "all" || entityType === "units") {
-      const units = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(15);
+      const units = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
       results.availableUnits = units;
     }
     if (entityType === "all" || entityType === "requirements") {
       const { pool } = await import("./db");
       const reqConds = [exactQ, ...wordPatterns].map((p: string, i: number) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
       const reqParams = [exactQ, ...wordPatterns];
-      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 15`, reqParams);
+      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 100`, reqParams);
       results.requirements = reqResult.rows;
     }
     if (entityType === "all" || entityType === "comps") {
       const { crmComps } = await import("@shared/schema");
-      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(15);
+      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(100);
     }
 
     const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
@@ -10003,9 +10008,14 @@ export async function handleCrmToolCall(
   if (fnName === "property_data_lookup") {
     const apiKey = process.env.PROPERTYDATA_API_KEY;
     if (!apiKey) return { handled: true, response: { reply: "PropertyData API key not configured." } };
-    const ALLOWED_ENDPOINTS = new Set(["sold-prices", "prices", "prices-per-sqf", "sold-prices-per-sqf", "rents", "rents-commercial", "rents-hmo", "yields", "growth", "growth-psf", "planning-applications", "valuation-commercial-sale", "valuation-commercial-rent", "valuation-sale", "valuation-rent", "demand", "demand-rent", "demographics", "flood-risk", "floor-areas", "postcode-key-stats", "uprns", "energy-efficiency", "address-match-uprn", "uprn", "uprn-title", "analyse-buildings", "rebuild-cost", "ptal", "crime", "schools", "internet-speed", "restaurants", "conservation-area", "green-belt", "aonb", "national-park", "listed-buildings", "household-income", "population", "tenure-types", "property-types", "council-tax", "national-hmo-register", "freeholds", "politics", "agents", "area-type", "land-registry-documents"]);
+    // No allowlist — PropertyData ship new endpoints regularly and a
+    // hardcoded list goes stale. Validate the SHAPE of the endpoint
+    // name only: lowercase letters, digits, hyphens, no path-escape
+    // characters. That blocks SSRF / injection while letting any
+    // legitimate PropertyData endpoint through.
+    const VALID_ENDPOINT = /^[a-z0-9][a-z0-9-]{1,60}$/;
     const endpoint = fnArgs.endpoint as string;
-    if (!endpoint || !ALLOWED_ENDPOINTS.has(endpoint)) return { handled: true, response: { reply: `Invalid endpoint "${endpoint}". Allowed: ${[...ALLOWED_ENDPOINTS].join(", ")}` } };
+    if (!endpoint || !VALID_ENDPOINT.test(endpoint)) return { handled: true, response: { reply: `Invalid endpoint name "${endpoint}". Endpoint names must be lowercase letters/digits/hyphens only.` } };
     const postcode = (fnArgs.postcode as string || "").trim().replace(/\s{2,}/g, " ");
     const needsPostcode = !["uprn", "uprn-title", "analyse-buildings", "land-registry-documents"].includes(endpoint);
     if (needsPostcode && !postcode) return { handled: true, response: { reply: "Postcode is required." } };
@@ -10400,7 +10410,7 @@ export async function handleCrmToolCall(
   if (fnName === "search_emails") {
     try {
       const searchQuery = fnArgs.query;
-      const top = Math.min(fnArgs.top || 25, 50);
+      const top = Math.min(fnArgs.top || 50, 500);
       const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
       const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
       if ("error" in results) return { handled: true, response: { reply: results.error } };
@@ -10882,7 +10892,7 @@ export function setupChatBGPRoutes(app: Express) {
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 12000 ? resultStr.slice(0, 12000) + "\n...[truncated]" : resultStr,
+                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -11784,15 +11794,18 @@ export function setupChatBGPRoutes(app: Express) {
             console.log(`[ChatBGP] Loop ${loopCount}: tool=${tcName}${tcArgs?.command ? ' cmd=' + tcArgs.command.substring(0, 80) : ''}`);
 
             try {
+              // Permissive-by-default timeout ladder. Used to be 15s default
+              // which was killing things like big SharePoint fetches, multi-
+              // step CRM updates, anything chained with a web search.
+              // Default is now 60s — long enough for almost every real tool
+              // to finish. Genuinely-long ones bumped higher.
               const toolTimeoutMs =
                 tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
-                // Audio/video transcription pipeline: download (can be 100s of MB)
-                // → ffmpeg audio strip → ffprobe duration → Whisper (~1m of audio
-                // per ~5-10s of API time). 30-min Teams recording realistically
-                // needs ~3-5 minutes total. Bucket it with the heavy long-runners.
+                // Audio/video transcription: download (100s of MB) → ffmpeg
+                // strip → segment → Whisper. 30-min recording = ~3-5 min.
                 tcName === "transcribe_audio" ? 300000 :
-                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
-                15000;
+                tcName.includes("sharepoint") || tcName.includes("file") ? 60000 :
+                60000;
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
                 toolTimeoutMs,
@@ -11803,7 +11816,7 @@ export function setupChatBGPRoutes(app: Express) {
               conversationMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 12000 ? resultStr.slice(0, 12000) + "\n...[truncated]" : resultStr,
+                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -12102,15 +12115,18 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
             let tcArgs: any;
             try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
             try {
+              // Permissive-by-default timeout ladder. Used to be 15s default
+              // which was killing things like big SharePoint fetches, multi-
+              // step CRM updates, anything chained with a web search.
+              // Default is now 60s — long enough for almost every real tool
+              // to finish. Genuinely-long ones bumped higher.
               const toolTimeoutMs =
                 tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
-                // Audio/video transcription pipeline: download (can be 100s of MB)
-                // → ffmpeg audio strip → ffprobe duration → Whisper (~1m of audio
-                // per ~5-10s of API time). 30-min Teams recording realistically
-                // needs ~3-5 minutes total. Bucket it with the heavy long-runners.
+                // Audio/video transcription: download (100s of MB) → ffmpeg
+                // strip → segment → Whisper. 30-min recording = ~3-5 min.
                 tcName === "transcribe_audio" ? 300000 :
-                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
-                15000;
+                tcName.includes("sharepoint") || tcName.includes("file") ? 60000 :
+                60000;
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
                 toolTimeoutMs,
@@ -12121,7 +12137,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 12000 ? resultStr.slice(0, 12000) + "\n...[truncated]" : resultStr,
+                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP Excel] Tool ${tcName} error:`, toolErr?.message);
