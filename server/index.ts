@@ -1118,6 +1118,21 @@ import { pool } from "./db";
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS board_member BOOLEAN DEFAULT false`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS management_team BOOLEAN DEFAULT false`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS rics_number TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_planned_sitting TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_submission_deadline TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_counsellor_name TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_counsellor_email TEXT`,
+    `CREATE TABLE IF NOT EXISTS cpd_entries (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      entry_date DATE NOT NULL,
+      hours REAL NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'informal',
+      activity TEXT NOT NULL,
+      competency TEXT,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS cpd_entries_user_idx ON cpd_entries(user_id, entry_date DESC)`,
     `CREATE TABLE IF NOT EXISTS bonus_history (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,

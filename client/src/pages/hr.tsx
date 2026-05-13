@@ -55,6 +55,10 @@ interface StaffMember {
   rics_pathway: string | null;
   apc_status: string | null;
   apc_assessment_date: string | null;
+  apc_planned_sitting?: string | null;
+  apc_submission_deadline?: string | null;
+  apc_counsellor_name?: string | null;
+  apc_counsellor_email?: string | null;
   education: string | null;
   bio: string | null;
   emergency_contact_name: string | null;
@@ -221,6 +225,134 @@ function ApcBadge({ status }: { status: string | null }) {
   if (!status || status === "not_started") return <Badge variant="outline" className="text-muted-foreground">APC: Not started</Badge>;
   if (status === "in_progress") return <Badge variant="outline" className="text-amber-600 border-amber-300">APC: In progress</Badge>;
   return <Badge variant="outline" className="text-green-600 border-green-300">APC: Complete</Badge>;
+}
+
+// ── 📚 CPD log card ──────────────────────────────────────────────────────────
+// Surfaces every CPD entry the user has logged plus a progress meter against
+// the appropriate target. Two targets, picked from apc_status:
+//   • in_progress → 96 hours cumulative (the APC structured-training minimum)
+//   • completed   → 20 hours rolling-12-month (the ongoing MRICS obligation)
+// Anyone who isn't on either pathway just sees raw totals.
+interface CpdEntry {
+  id: string;
+  entry_date: string;
+  hours: number;
+  kind: "formal" | "informal";
+  activity: string;
+  competency: string | null;
+}
+interface CpdTotals { total: number; formal: number; informal: number; calendarYear: number; rolling12: number }
+
+function CpdCard({ userId, apcStatus, canEdit }: { userId: string; apcStatus: string | null; canEdit: boolean }) {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<{ entries: CpdEntry[]; totals: CpdTotals }>({
+    queryKey: [`/api/hr/cpd/${userId}`],
+  });
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ entryDate: new Date().toISOString().slice(0, 10), hours: "1", kind: "informal", activity: "", competency: "" });
+
+  const addEntry = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/hr/cpd/${userId}`, {
+        entryDate: form.entryDate,
+        hours: parseFloat(form.hours),
+        kind: form.kind,
+        activity: form.activity,
+        competency: form.competency || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/cpd/${userId}`] });
+      setForm({ entryDate: new Date().toISOString().slice(0, 10), hours: "1", kind: "informal", activity: "", competency: "" });
+      setAdding(false);
+      toast({ title: "CPD logged" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
+  });
+
+  const removeEntry = useMutation({
+    mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/hr/cpd/${userId}/${id}`); },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/cpd/${userId}`] }),
+  });
+
+  if (isLoading || !data) return null;
+  const totals = data.totals;
+  const isApc = apcStatus === "in_progress";
+  const target = isApc ? 96 : 20;
+  const progress = isApc ? totals.total : totals.rolling12;
+  const pct = Math.min(100, Math.round((progress / target) * 100));
+  const targetLabel = isApc ? "96 hrs structured training" : "20 hrs / rolling 12 months";
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-emerald-500" />CPD log
+          <span className="ml-auto text-xs font-normal text-muted-foreground">{progress.toFixed(1)} / {target} hrs</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div>
+          <div className="h-1.5 bg-muted rounded overflow-hidden">
+            <div className={`h-full ${pct >= 100 ? "bg-green-500" : pct >= 60 ? "bg-emerald-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-1">{targetLabel} · {totals.formal.toFixed(1)} formal · {totals.informal.toFixed(1)} informal</div>
+        </div>
+
+        {data.entries.length === 0 ? (
+          <div className="text-xs text-muted-foreground italic">No CPD logged yet.</div>
+        ) : (
+          <div className="space-y-1 max-h-56 overflow-y-auto">
+            {data.entries.map(e => (
+              <div key={e.id} className="flex items-start gap-2 text-xs py-1 border-b last:border-0">
+                <span className="text-muted-foreground w-16 shrink-0">{new Date(e.entry_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                <span className="w-12 shrink-0 font-medium">{e.hours}h</span>
+                <Badge variant="outline" className="text-[9px] py-0 h-4">{e.kind}</Badge>
+                <span className="flex-1 truncate">{e.activity}{e.competency ? ` · ${e.competency}` : ""}</span>
+                {canEdit && (
+                  <button onClick={() => removeEntry.mutate(e.id)} className="text-muted-foreground hover:text-destructive" title="Delete">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {canEdit && !adding && (
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)} className="w-full">
+            <Plus className="w-3 h-3 mr-1" />Log CPD
+          </Button>
+        )}
+        {canEdit && adding && (
+          <div className="space-y-2 border rounded p-2 bg-muted/30">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1"><Label className="text-xs">Date</Label><Input type="date" value={form.entryDate} onChange={e => setForm(f => ({ ...f, entryDate: e.target.value }))} /></div>
+              <div className="space-y-1"><Label className="text-xs">Hours</Label><Input type="number" step="0.5" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} /></div>
+              <div className="space-y-1">
+                <Label className="text-xs">Kind</Label>
+                <Select value={form.kind} onValueChange={v => setForm(f => ({ ...f, kind: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="formal">Formal</SelectItem>
+                    <SelectItem value="informal">Informal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1"><Label className="text-xs">Activity</Label><Input value={form.activity} onChange={e => setForm(f => ({ ...f, activity: e.target.value }))} placeholder="e.g. RICS webinar — sustainability in commercial leases" /></div>
+            <div className="space-y-1"><Label className="text-xs">Competency (optional)</Label><Input value={form.competency} onChange={e => setForm(f => ({ ...f, competency: e.target.value }))} placeholder="e.g. Sustainability" /></div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setAdding(false)} className="flex-1">Cancel</Button>
+              <Button size="sm" onClick={() => addEntry.mutate()} disabled={!form.activity || !(parseFloat(form.hours) > 0) || addEntry.isPending} className="flex-1">
+                {addEntry.isPending && <Loader2 className="w-3 h-3 animate-spin mr-1" />}Save
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ── Staff card (directory grid) ───────────────────────────────────────────────
@@ -1397,6 +1529,10 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
     ricsNumber: (person as any).rics_number || "",
     apcStatus: person.apc_status || "not_started",
     apcAssessmentDate: person.apc_assessment_date || "",
+    apcPlannedSitting: person.apc_planned_sitting || "",
+    apcSubmissionDeadline: person.apc_submission_deadline || "",
+    apcCounsellorName: person.apc_counsellor_name || "",
+    apcCounsellorEmail: person.apc_counsellor_email || "",
     education: person.education || "",
     bio: person.bio || "",
     emergencyContactName: person.emergency_contact_name || "",
@@ -1431,6 +1567,10 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         ricsNumber: form.ricsNumber || undefined,
         apcStatus: form.apcStatus || undefined,
         apcAssessmentDate: form.apcAssessmentDate || undefined,
+        apcPlannedSitting: form.apcPlannedSitting || undefined,
+        apcSubmissionDeadline: form.apcSubmissionDeadline || undefined,
+        apcCounsellorName: form.apcCounsellorName || undefined,
+        apcCounsellorEmail: form.apcCounsellorEmail || undefined,
         education: form.education || undefined,
         bio: form.bio || undefined,
         emergencyContactName: form.emergencyContactName || undefined,
@@ -1511,7 +1651,13 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
                 </Select>
               </div>
               {form.apcStatus === "in_progress" && (
-                <div className="space-y-1.5"><Label>Assessment date</Label><Input type="date" value={form.apcAssessmentDate} onChange={f("apcAssessmentDate")} /></div>
+                <>
+                  <div className="space-y-1.5"><Label>Planned sitting</Label><Input value={form.apcPlannedSitting} onChange={f("apcPlannedSitting")} placeholder="e.g. Spring 2026" /></div>
+                  <div className="space-y-1.5"><Label>Submission deadline</Label><Input type="date" value={form.apcSubmissionDeadline} onChange={f("apcSubmissionDeadline")} /></div>
+                  <div className="space-y-1.5"><Label>Assessment date</Label><Input type="date" value={form.apcAssessmentDate} onChange={f("apcAssessmentDate")} /></div>
+                  <div className="space-y-1.5"><Label>Counsellor name</Label><Input value={form.apcCounsellorName} onChange={f("apcCounsellorName")} placeholder="e.g. Mark Hoffman" /></div>
+                  <div className="space-y-1.5 col-span-2"><Label>Counsellor email</Label><Input value={form.apcCounsellorEmail} onChange={f("apcCounsellorEmail")} placeholder="mark@apc-training.co.uk" /></div>
+                </>
               )}
             </div>
           </div>
@@ -1742,13 +1888,21 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             through APC. Hidden for everyone else (qualified surveyors,
             office staff, leadership). */}
         {isGraduate(person.title, person.apc_status) && person.apc_status && person.apc_status !== "not_started" && (
-          <div className="p-3 rounded-lg border bg-card">
-            <div className="flex items-center gap-2 mb-1">
+          <div className="p-3 rounded-lg border bg-card space-y-1">
+            <div className="flex items-center gap-2">
               <ApcBadge status={person.apc_status} />
               {person.rics_pathway && <span className="text-xs text-muted-foreground">{person.rics_pathway}</span>}
             </div>
-            {person.apc_assessment_date && (
-              <div className="text-xs text-muted-foreground">Assessment: {new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</div>
+            <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+              {person.apc_planned_sitting && <div><span className="font-medium text-foreground">Planning to sit:</span> {person.apc_planned_sitting}</div>}
+              {person.apc_submission_deadline && <div><span className="font-medium text-foreground">Submit by:</span> {new Date(person.apc_submission_deadline).toLocaleDateString("en-GB")}</div>}
+              {person.apc_assessment_date && <div><span className="font-medium text-foreground">Sitting:</span> {new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</div>}
+            </div>
+            {person.apc_counsellor_name && (
+              <div className="text-xs text-muted-foreground">
+                Counsellor: {person.apc_counsellor_name}
+                {person.apc_counsellor_email && <> · <a href={`mailto:${person.apc_counsellor_email}`} className="underline">{person.apc_counsellor_email}</a></>}
+              </div>
             )}
           </div>
         )}
@@ -1827,16 +1981,18 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                     <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><GraduationCap className="w-4 h-4 text-blue-500" />RICS &amp; qualifications</CardTitle></CardHeader>
                     <CardContent className="text-sm space-y-1.5">
                       <Row label="RICS member number">{person.rics_number}</Row>
-                      {/* APC fields are only shown while the surveyor is still
-                          on the pathway. Once they've qualified the member
-                          number is the only ongoing-relevant detail. */}
                       {!isQualifiedSurveyor && <Row label="Pathway">{person.rics_pathway}</Row>}
                       {!isQualifiedSurveyor && <Row label="APC status">{person.apc_status?.replace(/_/g, " ")}</Row>}
+                      {!isQualifiedSurveyor && <Row label="Planning to sit">{person.apc_planned_sitting}</Row>}
+                      {!isQualifiedSurveyor && person.apc_submission_deadline && <Row label="Submission deadline">{new Date(person.apc_submission_deadline).toLocaleDateString("en-GB")}</Row>}
                       {!isQualifiedSurveyor && person.apc_assessment_date && <Row label="Assessment date">{new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</Row>}
+                      {!isQualifiedSurveyor && <Row label="Counsellor">{person.apc_counsellor_name}{person.apc_counsellor_email ? ` (${person.apc_counsellor_email})` : ""}</Row>}
                       <Row label="Education">{person.education}</Row>
                     </CardContent>
                   </Card>
                 )}
+
+                {showRicsCard && <CpdCard userId={person.id} apcStatus={person.apc_status} canEdit={isAdmin || isOwn} />}
 
                 {person.emergency_contact_name && (
                   <Card>

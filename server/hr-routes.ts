@@ -212,6 +212,8 @@ export function setupHrRoutes(app: Express) {
           sp.title, sp.start_date, sp.end_date, sp.status AS hr_status,
           sp.salary_current, sp.manager_id, sp.department AS hr_department,
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
+          sp.apc_planned_sitting, sp.apc_submission_deadline,
+          sp.apc_counsellor_name, sp.apc_counsellor_email,
           sp.education, sp.bio,
           sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
@@ -254,6 +256,8 @@ export function setupHrRoutes(app: Express) {
           sp.title, sp.start_date, sp.end_date, sp.status AS hr_status,
           sp.salary_current, sp.manager_id, sp.department AS hr_department,
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
+          sp.apc_planned_sitting, sp.apc_submission_deadline,
+          sp.apc_counsellor_name, sp.apc_counsellor_email,
           sp.education, sp.bio,
           sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
@@ -284,6 +288,7 @@ export function setupHrRoutes(app: Express) {
     const {
       title, startDate, endDate, status, salaryCurrent, managerId,
       department, ricsPathway, ricsNumber, apcStatus, apcAssessmentDate,
+      apcPlannedSitting, apcSubmissionDeadline, apcCounsellorName, apcCounsellorEmail,
       education, bio, emergencyContactName, emergencyContactPhone,
       emergencyContactRelation, holidayEntitlement, pensionOptIn, pensionRate,
       contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
@@ -307,9 +312,10 @@ export function setupHrRoutes(app: Express) {
           holiday_entitlement, pension_opt_in, pension_rate,
           contract_sharepoint_url, passport_sharepoint_url, linkedin_url, xero_tracking_name,
           dob, address, wfh_days, employment_type, cv_sharepoint_url, board_member, management_team,
-          rics_number
+          rics_number,
+          apc_planned_sitting, apc_submission_deadline, apc_counsellor_name, apc_counsellor_email
         ) VALUES ($1,$2,$3,$4,COALESCE($5, 'active'),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-                  $24,$25,$26,$27,$28,$29,$30,$31)
+                  $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
         ON CONFLICT (user_id) DO UPDATE SET
           title = COALESCE(EXCLUDED.title, staff_profiles.title),
           start_date = COALESCE(EXCLUDED.start_date, staff_profiles.start_date),
@@ -341,6 +347,10 @@ export function setupHrRoutes(app: Express) {
           board_member = COALESCE(EXCLUDED.board_member, staff_profiles.board_member),
           management_team = COALESCE(EXCLUDED.management_team, staff_profiles.management_team),
           rics_number = COALESCE(EXCLUDED.rics_number, staff_profiles.rics_number),
+          apc_planned_sitting = COALESCE(EXCLUDED.apc_planned_sitting, staff_profiles.apc_planned_sitting),
+          apc_submission_deadline = COALESCE(EXCLUDED.apc_submission_deadline, staff_profiles.apc_submission_deadline),
+          apc_counsellor_name = COALESCE(EXCLUDED.apc_counsellor_name, staff_profiles.apc_counsellor_name),
+          apc_counsellor_email = COALESCE(EXCLUDED.apc_counsellor_email, staff_profiles.apc_counsellor_email),
           updated_at = now()
       `, [
         userId, title, startDate, endDate, status, salaryCurrent, managerId,
@@ -350,6 +360,7 @@ export function setupHrRoutes(app: Express) {
         contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
         dob, address, wfhDays, employmentType, cvSharepointUrl, boardMember, managementTeam,
         ricsNumber,
+        apcPlannedSitting, apcSubmissionDeadline, apcCounsellorName, apcCounsellorEmail,
       ]);
       res.json({ ok: true });
     } catch (e: any) {
@@ -2573,6 +2584,74 @@ Return ONLY JSON.`,
            updated_at = now()`,
         [req.params.userId, decodeURIComponent(req.params.competency), lvl, evidence || null, actor.userId]
       );
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 📚 CPD log ─────────────────────────────────────────────────────────────
+  // RICS APC candidates need 96 hrs over 24 months; qualified MRICS need 20 hrs
+  // every calendar year (10 formal + 10 informal). The aggregates endpoint
+  // computes both views and lets the UI pick the right target for the user.
+
+  app.get("/api/hr/cpd/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, user_id, entry_date, hours, kind, activity, competency, created_at
+         FROM cpd_entries WHERE user_id = $1 ORDER BY entry_date DESC, created_at DESC`,
+        [req.params.userId]
+      );
+      const nowYear = new Date().getFullYear();
+      const twelveMonthsAgo = new Date(); twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+      let total = 0, formal = 0, informal = 0, calendarYear = 0, rolling12 = 0;
+      for (const r of rows) {
+        const h = Number(r.hours) || 0;
+        total += h;
+        if (r.kind === "formal") formal += h; else informal += h;
+        const d = new Date(r.entry_date);
+        if (d.getFullYear() === nowYear) calendarYear += h;
+        if (d >= twelveMonthsAgo) rolling12 += h;
+      }
+      res.json({ entries: rows, totals: { total, formal, informal, calendarYear, rolling12 } });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/cpd/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    const { entryDate, hours, kind, activity, competency } = req.body || {};
+    if (!entryDate || !activity || !(Number(hours) > 0)) {
+      return res.status(400).json({ error: "entryDate, hours and activity required" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO cpd_entries (user_id, entry_date, hours, kind, activity, competency)
+         VALUES ($1, $2, $3, COALESCE($4, 'informal'), $5, $6) RETURNING *`,
+        [req.params.userId, entryDate, Number(hours), kind, activity, competency || null]
+      );
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/cpd/:userId/:entryId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      await pool.query(`DELETE FROM cpd_entries WHERE id = $1 AND user_id = $2`,
+        [req.params.entryId, req.params.userId]);
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

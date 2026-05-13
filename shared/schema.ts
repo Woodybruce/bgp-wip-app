@@ -2657,7 +2657,11 @@ export const staffProfiles = pgTable("staff_profiles", {
   ricsPathway: text("rics_pathway"),
   ricsNumber: text("rics_number"),    // RICS member number (e.g. 1234567)
   apcStatus: text("apc_status"),      // not_started | in_progress | completed
-  apcAssessmentDate: text("apc_assessment_date"),
+  apcAssessmentDate: text("apc_assessment_date"),       // confirmed exam date
+  apcPlannedSitting: text("apc_planned_sitting"),       // intent — "Spring 2026", etc.
+  apcSubmissionDeadline: text("apc_submission_deadline"),
+  apcCounsellorName: text("apc_counsellor_name"),       // external counsellor (e.g. Mark Hoffman)
+  apcCounsellorEmail: text("apc_counsellor_email"),
   education: text("education"),
   bio: text("bio"),
   emergencyContactName: text("emergency_contact_name"),
@@ -2685,6 +2689,20 @@ export const staffProfiles = pgTable("staff_profiles", {
 export const insertStaffProfileSchema = createInsertSchema(staffProfiles).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertStaffProfile = z.infer<typeof insertStaffProfileSchema>;
 export type StaffProfile = typeof staffProfiles.$inferSelect;
+
+export const cpdEntries = pgTable("cpd_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  entryDate: text("entry_date").notNull(),
+  hours: real("hours").notNull(),
+  kind: text("kind").notNull().default("informal"), // formal | informal
+  activity: text("activity").notNull(),
+  competency: text("competency"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertCpdEntrySchema = createInsertSchema(cpdEntries).omit({ id: true, createdAt: true });
+export type InsertCpdEntry = z.infer<typeof insertCpdEntrySchema>;
+export type CpdEntry = typeof cpdEntries.$inferSelect;
 
 export const salaryHistory = pgTable("salary_history", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
