@@ -2404,14 +2404,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       );
       if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
 
-      const dataset = (req.body?.dataset || req.query?.dataset) as "ccod" | "ocod" | undefined;
-      if (dataset !== "ccod" && dataset !== "ocod") {
-        return res.status(400).json({ error: "dataset must be 'ccod' or 'ocod' (form field or query param)" });
-      }
       if (!req.file) return res.status(400).json({ error: "no file uploaded (use multipart field 'file')" });
 
       const localPath = req.file.path;
       const filename = req.file.originalname;
+
+      // Auto-detect dataset from the filename so a caller can't
+      // accidentally mislabel — CCOD_FULL_*.zip is always CCOD, OCOD_FULL_*.zip
+      // always OCOD. Caller can still override via dataset form field
+      // if they really want, but if filename and override disagree we
+      // trust the filename and reject the call so we don't half-ingest
+      // junk under the wrong label.
+      const explicitDataset = (req.body?.dataset || req.query?.dataset) as "ccod" | "ocod" | undefined;
+      let detectedDataset: "ccod" | "ocod" | null = null;
+      if (/(^|[^a-z])ccod(_|\.|$)/i.test(filename)) detectedDataset = "ccod";
+      else if (/(^|[^a-z])ocod(_|\.|$)/i.test(filename)) detectedDataset = "ocod";
+      if (detectedDataset && explicitDataset && detectedDataset !== explicitDataset) {
+        try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+        return res.status(400).json({
+          error: `Filename suggests ${detectedDataset.toUpperCase()} but caller said ${explicitDataset.toUpperCase()}. Either rename the file or pass the correct dataset.`,
+        });
+      }
+      const dataset = detectedDataset || explicitDataset;
+      if (dataset !== "ccod" && dataset !== "ocod") {
+        try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+        return res.status(400).json({ error: "Cannot detect dataset from filename. Pass dataset='ccod' or 'ocod' explicitly." });
+      }
       console.log(`[hmlr-upload] received ${filename} (${(req.file.size / 1024 / 1024).toFixed(1)} MB) → ${localPath}`);
 
       // Background ingest — same pattern as the API sync, returns 202
@@ -2430,6 +2448,38 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.status(202).json({ ok: true, message: `${dataset.toUpperCase()} ingest started — poll /api/admin/hmlr/runs for progress`, dataset, sizeBytes: req.file.size });
     } catch (e: any) {
       console.error("[hmlr-upload] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Clear HMLR ingest data — useful when a mislabelled upload has put
+  // bad data into the table and you want to start fresh. Caller passes
+  // dataset='ccod' | 'ocod' | 'all' to scope the delete.
+  app.post("/api/admin/hmlr/reset", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const scope = (req.body?.dataset || "all") as "ccod" | "ocod" | "all";
+      if (scope !== "ccod" && scope !== "ocod" && scope !== "all") {
+        return res.status(400).json({ error: "dataset must be 'ccod', 'ocod', or 'all'" });
+      }
+      const propsRes = scope === "all"
+        ? await pool.query(`DELETE FROM hmlr_proprietors`)
+        : await pool.query(`DELETE FROM hmlr_proprietors WHERE dataset = $1`, [scope]);
+      const runsRes = scope === "all"
+        ? await pool.query(`DELETE FROM hmlr_ingest_runs`)
+        : await pool.query(`DELETE FROM hmlr_ingest_runs WHERE dataset = $1`, [scope]);
+      res.json({
+        ok: true,
+        deletedProprietorRows: propsRes.rowCount,
+        deletedRunRows: runsRes.rowCount,
+        scope,
+      });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
