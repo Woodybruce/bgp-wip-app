@@ -3606,11 +3606,11 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "transcribe_audio",
-      description: "Transcribe audio or video files to text using AI speech recognition (Whisper). Use when a user uploads a voice note, meeting recording, Teams recording, or any audio/video file and wants it transcribed. Supports MP3, MP4, M4A, WAV, WEBM, OGG, and other common formats. After transcription, you can use the transcript to update CRM deals, create diary notes, log viewings, update trackers, or take any follow-up actions the user requests.",
+      description: "Transcribe audio or video files to text using AI speech recognition (Whisper). Use when a user uploads a voice note, meeting recording, Teams recording, or any audio/video file and wants it transcribed. Accepts three source types: (1) chat-media uploads (e.g. '/api/chat-media/filename.mp4'), (2) SharePoint or OneDrive share links (any 'https://...sharepoint.com/...' or 'https://...-my.sharepoint.com/...' URL — auto-resolved via Microsoft Graph and streamed server-side, no need to download first), or (3) any public https URL. Supports MP3, MP4, M4A, WAV, WEBM, OGG, MOV, AVI, MKV and other common formats. After transcription, you can use the transcript to update CRM deals, create diary notes, log viewings, update trackers, or take any follow-up actions the user requests.",
       parameters: {
         type: "object",
         properties: {
-          fileUrl: { type: "string", description: "URL path to the audio/video file (e.g. '/api/chat-media/filename.mp4' for uploaded files, or a full URL for external files)" },
+          fileUrl: { type: "string", description: "Source of the audio/video. Accepts: '/api/chat-media/filename.mp4' for uploaded files, a SharePoint/OneDrive share link (e.g. 'https://yourtenant-my.sharepoint.com/...'), or any public https URL." },
           language: { type: "string", description: "Language code (e.g. 'en' for English). Defaults to 'en'." },
         },
         required: ["fileUrl"],
@@ -7186,24 +7186,77 @@ async function executeCrmToolRaw(
       const fileUrl = fnArgs.fileUrl as string;
       const language = (fnArgs.language as string) || "en";
 
-      if (!fileUrl.startsWith("/api/chat-media/")) {
-        return { data: { error: "Only uploaded chat-media files are supported. Please upload the file via the chat attachment button." } };
-      }
-
       const tmpDir = path.join(process.cwd(), "ChatBGP", "transcribe-tmp");
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
       const tmpId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-      const filename = fileUrl.replace("/api/chat-media/", "");
-      const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const file = await getFile(`chat-media/${filename}`);
-      if (!file) return { data: { error: "File not found in chat media" } };
       const allowedExts = [".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac", ".wma", ".mov", ".avi", ".mkv", ".wmv", ".flv"];
-      const ext = path.extname(safeFilename).toLowerCase() || ".mp4";
-      if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
-      const audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
-      fs.writeFileSync(audioFilePath, file.data);
-      tmpFiles.push(audioFilePath);
+
+      let audioFilePath: string;
+      let ext: string;
+
+      if (fileUrl.startsWith("/api/chat-media/")) {
+        // Existing path — file uploaded via the chat attachment button.
+        const filename = fileUrl.replace("/api/chat-media/", "");
+        const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const file = await getFile(`chat-media/${filename}`);
+        if (!file) return { data: { error: "File not found in chat media" } };
+        ext = path.extname(safeFilename).toLowerCase() || ".mp4";
+        if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
+        audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
+        fs.writeFileSync(audioFilePath, file.data);
+        tmpFiles.push(audioFilePath);
+      } else if (/^https?:\/\/.*sharepoint\.com\//i.test(fileUrl) || /^https?:\/\/.*-my\.sharepoint\.com\//i.test(fileUrl)) {
+        // SharePoint / OneDrive share link — resolve via Microsoft Graph
+        // and stream directly to disk so big meeting recordings (often
+        // ~100-500 MB) don't buffer in memory. Same resolver + streamer
+        // we use for HMLR data.
+        const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
+        let meta;
+        try {
+          meta = await resolveSharePointShareLinkMetadata(fileUrl);
+        } catch (resErr: any) {
+          return { data: { error: `Failed to resolve SharePoint link: ${resErr?.message || resErr}` } };
+        }
+        if (meta.isFolder) {
+          return { data: { error: "SharePoint link points to a folder, not a single audio/video file. Share the specific recording, not the folder." } };
+        }
+        if (!meta.downloadUrl) {
+          return { data: { error: "SharePoint link resolved but no download URL returned. The file may be permission-locked." } };
+        }
+        const safeFilename = (meta.name || "recording.mp4").replace(/[^a-zA-Z0-9._-]/g, "_");
+        ext = path.extname(safeFilename).toLowerCase() || ".mp4";
+        if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
+        audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
+        try {
+          await streamUrlToFile(meta.downloadUrl, audioFilePath);
+        } catch (dlErr: any) {
+          return { data: { error: `Failed to download from SharePoint: ${dlErr?.message || dlErr}` } };
+        }
+        tmpFiles.push(audioFilePath);
+      } else if (/^https?:\/\//i.test(fileUrl)) {
+        // Generic public URL fallback — just fetch and write to disk.
+        const resp = await fetch(fileUrl, { redirect: "follow" });
+        if (!resp.ok) return { data: { error: `Public URL fetch failed: HTTP ${resp.status}` } };
+        const ctype = resp.headers.get("content-type") || "";
+        const guessExt = (() => {
+          if (ctype.includes("mp4") || ctype.includes("mpeg")) return ".mp4";
+          if (ctype.includes("wav")) return ".wav";
+          if (ctype.includes("webm")) return ".webm";
+          return ".mp4";
+        })();
+        const lastSeg = (new URL(fileUrl)).pathname.split("/").pop() || "audio";
+        const safeFilename = lastSeg.replace(/[^a-zA-Z0-9._-]/g, "_");
+        ext = path.extname(safeFilename).toLowerCase() || guessExt;
+        if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
+        audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
+        const fsStream = fs.createWriteStream(audioFilePath);
+        const { pipeline } = await import("stream/promises");
+        if (!resp.body) return { data: { error: "Response had no body" } };
+        await pipeline(resp.body as any, fsStream);
+        tmpFiles.push(audioFilePath);
+      } else {
+        return { data: { error: "fileUrl must be a chat-media path (/api/chat-media/...), a SharePoint/OneDrive share link, or a public https URL." } };
+      }
 
       const videoExts = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"];
       let whisperInputPath = audioFilePath;
