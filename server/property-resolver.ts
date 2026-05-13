@@ -20,7 +20,7 @@
 
 import { db } from "./db";
 import { crmProperties, type CrmProperty } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, inArray } from "drizzle-orm";
 import {
   osPlacesFind,
   osPlacesByPostcode,
@@ -452,10 +452,14 @@ async function annotateCandidates(results: OsPlacesResult[]): Promise<ResolverCa
   const uprns = results.map((r) => r.uprn).filter((u): u is string => !!u);
   const byUprn = new Map<string, string>();
   if (uprns.length > 0) {
+    // Drizzle's sql`... = ANY(${arr})` template splits the JS array into
+    // separate params, producing "ANY($1, $2, $3)" which Postgres rejects
+    // with "op ANY/ALL (array) requires array on right side". inArray
+    // (or sql`... IN ${arr}`) handles the array binding correctly.
     const existing = await db
       .select({ id: crmProperties.id, uprn: crmProperties.uprn })
       .from(crmProperties)
-      .where(sql`${crmProperties.uprn} = ANY(${uprns})`);
+      .where(inArray(crmProperties.uprn, uprns));
     for (const e of existing) {
       if (e.uprn) byUprn.set(e.uprn, e.id);
     }
