@@ -7292,19 +7292,57 @@ async function executeCrmToolRaw(
         if (ffprobeStatic?.path) ffprobeBin = ffprobeStatic.path;
       } catch { /* keep PATH fallback */ }
 
+      // Diagnostic: log actual on-disk size right before ffmpeg. If the
+      // SharePoint stream dropped chunks silently this is where we'll
+      // see it (file much smaller than expected).
+      const sourceStat = fs.statSync(audioFilePath);
+      console.log(`[transcribe_audio] source: ${audioFilePath} size=${sourceStat.size}B (${(sourceStat.size / 1024 / 1024).toFixed(1)} MB)`);
+
       const videoExts = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"];
       let whisperInputPath = audioFilePath;
 
-      if (videoExts.includes(ext)) {
+      // Whisper API accepts MP4 / M4A / MP3 / WAV / WebM / etc.
+      // directly. If the file is small enough, skip ffmpeg entirely —
+      // no point re-encoding to MP3 just to upload. This also dodges
+      // ffmpeg's pickiness about Teams' weird container quirks. Only
+      // need to invoke ffmpeg for >25MB files where we have to
+      // segment for Whisper's per-request size cap.
+      if (sourceStat.size <= 25 * 1024 * 1024) {
+        whisperInputPath = audioFilePath;
+      } else if (videoExts.includes(ext)) {
         const audioOutPath = path.join(tmpDir, `${tmpId}-audio.mp3`);
         tmpFiles.push(audioOutPath);
-        try {
-          execFileSync(ffmpegBin, ["-i", audioFilePath, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", audioOutPath], { timeout: 240000, stdio: "pipe" });
-          whisperInputPath = audioOutPath;
-        } catch (ffErr: any) {
+        const { spawnSync } = await import("child_process");
+        // Capture full stderr so we can diagnose if it fails. The old
+        // execFileSync threw with .message truncated to a useless
+        // prefix — we'd never see the actual ffmpeg error.
+        // -err_detect ignore_err: tolerate Teams MP4 quirks
+        // -fflags +genpts+igndts: regenerate timestamps if Teams' are weird
+        const ff = spawnSync(ffmpegBin, [
+          "-err_detect", "ignore_err",
+          "-fflags", "+genpts+igndts",
+          "-i", audioFilePath,
+          "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y",
+          audioOutPath,
+        ], { timeout: 240000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+        if (ff.status !== 0) {
+          const stderr = ff.stderr || "";
+          const stdout = ff.stdout || "";
+          // Last ~3000 chars of stderr is usually where the actual fatal error lives.
+          const tail = stderr.slice(-3000);
+          console.error("[transcribe_audio] ffmpeg FAILED. stdout-tail:", stdout.slice(-500), "stderr-tail:", tail);
           cleanupTmp();
-          return { data: { error: `Failed to extract audio from video (ffmpeg=${ffmpegBin}): ${ffErr?.message?.substring(0, 300)}` } };
+          return { data: {
+            error: "Audio extraction failed",
+            ffmpegPath: ffmpegBin,
+            exitCode: ff.status,
+            signal: ff.signal,
+            sourceFile: audioFilePath,
+            sourceSize: sourceStat.size,
+            stderr: tail,
+          } };
         }
+        whisperInputPath = audioOutPath;
       }
 
       const fileStat = fs.statSync(whisperInputPath);

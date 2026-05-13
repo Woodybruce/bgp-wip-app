@@ -117,7 +117,10 @@ export async function resolveSharePointShareLinkMetadata(shareUrl: string): Prom
 
 /**
  * Stream a download URL directly to disk so very large files don't
- * buffer in memory. Returns the local path.
+ * buffer in memory. Verifies the on-disk size matches Content-Length
+ * when the server provides it — catches silent truncations that
+ * otherwise show up as cryptic "ffmpeg can't parse the file" errors.
+ * Returns the local path.
  */
 export async function streamUrlToFile(url: string, destPath: string): Promise<void> {
   const fs = await import("fs");
@@ -125,6 +128,12 @@ export async function streamUrlToFile(url: string, destPath: string): Promise<vo
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`Stream download failed: HTTP ${res.status}`);
   if (!res.body) throw new Error("Stream download had no response body");
+  const expected = Number(res.headers.get("content-length") || 0) || null;
   const out = fs.createWriteStream(destPath);
   await pipeline(res.body as any, out);
+  const stat = fs.statSync(destPath);
+  if (expected && stat.size !== expected) {
+    throw new Error(`Stream download size mismatch: expected ${expected} bytes (Content-Length), got ${stat.size}. File is likely truncated. Try again or download manually.`);
+  }
+  console.log(`[streamUrlToFile] ${destPath} = ${stat.size} bytes (expected ${expected ?? "unknown"})`);
 }
