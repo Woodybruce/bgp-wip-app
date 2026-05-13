@@ -294,7 +294,7 @@ async function ingestCsvFile(csvPath: string, dataset: HmlrDataset, sourceFilena
   let processed = 0, inserted = 0, updated = 0, skipped = 0;
   let batch: ProprietorRow[] = [];
 
-  const parser = parse({ columns: true, skip_empty_lines: true, trim: true, bom: true });
+  const parser = parse({ columns: true, skip_empty_lines: true, trim: true, bom: true, relax_column_count_less: true });
   const stream = fs.createReadStream(csvPath).pipe(parser);
 
   try {
