@@ -1368,6 +1368,17 @@ export const chatbgpLearnings = pgTable("chatbgp_learnings", {
   sourceThreadId: varchar("source_thread_id", { length: 255 }),
   confidence: varchar("confidence", { length: 50 }).notNull().default("confirmed"),
   active: boolean("active").notNull().default(true),
+  // Subject linkage — lets us supersede stale learnings when a verified
+  // fact lands. e.g. "Sugar/Amsprop owns Haymarket" gets tagged with
+  // subjectPropertyId=<haymarket id>; when HMLR-CCOD later stamps a
+  // different proprietor on the same property, we mark the old one
+  // superseded with a reason. Optional — most learnings (market intel,
+  // BGP process tips) won't have a subject.
+  subjectPropertyId: varchar("subject_property_id", { length: 64 }),
+  subjectCompanyNumber: varchar("subject_company_number", { length: 32 }),
+  supersededAt: timestamp("superseded_at"),
+  supersededByLearningId: integer("superseded_by_learning_id"),
+  supersededReason: text("superseded_reason"),
   createdAt: timestamp("created_at").defaultNow(),
   lastUsedAt: timestamp("last_used_at"),
 });

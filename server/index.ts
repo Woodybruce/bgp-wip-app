@@ -108,6 +108,17 @@ import { pool } from "./db";
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS landlord_source TEXT`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS landlord_confidence TEXT`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS landlord_verified_at TIMESTAMPTZ`,
+    // chatbgp_learnings supersession — kills the "Sugar/Amsprop legend
+    // resurfacing" problem. When HMLR-verified data lands, old learnings
+    // that referred to the now-disproven proprietor get marked superseded
+    // (active=false + superseded_at + reason) so they no longer feed
+    // ChatBGP's context.
+    `ALTER TABLE chatbgp_learnings ADD COLUMN IF NOT EXISTS subject_property_id VARCHAR(64)`,
+    `ALTER TABLE chatbgp_learnings ADD COLUMN IF NOT EXISTS subject_company_number VARCHAR(32)`,
+    `ALTER TABLE chatbgp_learnings ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMP`,
+    `ALTER TABLE chatbgp_learnings ADD COLUMN IF NOT EXISTS superseded_by_learning_id INTEGER`,
+    `ALTER TABLE chatbgp_learnings ADD COLUMN IF NOT EXISTS superseded_reason TEXT`,
+    `CREATE INDEX IF NOT EXISTS chatbgp_learnings_subject_property_idx ON chatbgp_learnings (subject_property_id) WHERE subject_property_id IS NOT NULL`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,

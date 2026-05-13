@@ -3850,6 +3850,26 @@ async function runStage4(runId: string, req: Request): Promise<void> {
                 [landlordId, run.propertyId],
               );
               console.log(`[pathway stage4] stamped landlord ${landlordId} (${propCo.proprietorName}) on property ${run.propertyId} from title ${single.titleNumber}`);
+
+              // Supersede any saved learnings that claimed a different
+              // proprietor for this property. Kills the "Sugar/Amsprop
+              // legend keeps resurfacing" problem ChatBGP hit at
+              // Haymarket — once HMLR verifies the truth, stale
+              // institutional records get retired.
+              try {
+                const { supersedeContradictingLearnings } = await import("./learnings-supersede");
+                const result = await supersedeContradictingLearnings({
+                  propertyId: run.propertyId,
+                  newCompanyNumber: propCo.companyRegistrationNo!,
+                  newCompanyName: propCo.proprietorName,
+                  source: "HMLR_CCOD",
+                });
+                if (result.superseded > 0) {
+                  console.log(`[pathway stage4] superseded ${result.superseded} stale learnings on property ${run.propertyId}: ${result.reason}`);
+                }
+              } catch (supErr: any) {
+                console.warn("[pathway stage4] learning supersession failed:", supErr?.message);
+              }
             }
           } else if (primaries.length > 1) {
             // Multi-title at the same address — split freehold. Don't

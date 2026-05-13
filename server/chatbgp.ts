@@ -3570,12 +3570,14 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function" as const,
     function: {
       name: "save_learning",
-      description: "Save a piece of business knowledge or insight that ChatBGP has learned during this conversation. This persists across all future conversations, making ChatBGP smarter about BGP's business over time. Only save genuinely useful, reusable knowledge — not transient details.",
+      description: "Save a piece of business knowledge or insight that ChatBGP has learned during this conversation. This persists across all future conversations, making ChatBGP smarter about BGP's business over time. Only save genuinely useful, reusable knowledge — not transient details. Pass subjectPropertyId or subjectCompanyNumber when the fact is about a specific property or company so later HMLR-verified findings can correctly supersede it.",
       parameters: {
         type: "object",
         properties: {
           category: { type: "string", enum: ["client_intel", "market_knowledge", "bgp_process", "property_insight", "team_preference", "general"], description: "Category of the learning" },
           learning: { type: "string", description: "The specific knowledge or insight to remember. Be concise but include enough context to be useful in future conversations. E.g. 'The Cadogan Estate (SW1) prefer to deal directly with Charlotte Roberts for any leasing enquiries.'" },
+          subjectPropertyId: { type: "string", description: "Optional. The crm_properties.id this learning is about. Use when saving a fact about a specific property (e.g. ownership, tenant, lease terms) so subsequent HMLR-verified data can supersede stale entries." },
+          subjectCompanyNumber: { type: "string", description: "Optional. Companies House number (or OE / OC number) the learning is about. Use for company-specific facts (UBOs, group structure)." },
         },
         required: ["category", "learning"],
       },
@@ -9261,6 +9263,8 @@ Be thorough — include every unit row you can classify, across all properties i
       return { data: { success: true, alreadyKnown: true, message: "I already know this — no need to save again." }, action: { type: "learning_already_known" } };
     }
     
+    const subjectPropertyId = typeof fnArgs.subjectPropertyId === "string" ? fnArgs.subjectPropertyId.trim() || null : null;
+    const subjectCompanyNumber = typeof fnArgs.subjectCompanyNumber === "string" ? fnArgs.subjectCompanyNumber.trim().toUpperCase() || null : null;
     await db.insert(chatbgpLearnings).values({
       category: fnArgs.category || "general",
       learning: learningText,
@@ -9268,6 +9272,8 @@ Be thorough — include every unit row you can classify, across all properties i
       sourceUserName: userName,
       confidence: "confirmed",
       active: true,
+      subjectPropertyId,
+      subjectCompanyNumber,
     });
     return { data: { success: true, saved: learningText }, action: { type: "learning_saved" } };
   }
@@ -10545,6 +10551,8 @@ export async function handleCrmToolCall(
       return { handled: true, response: { reply: reply || "I already know that — no need to save again.", action: { type: "learning_already_known" } } };
     }
     
+    const subjectPropertyId = typeof fnArgs.subjectPropertyId === "string" ? fnArgs.subjectPropertyId.trim() || null : null;
+    const subjectCompanyNumber = typeof fnArgs.subjectCompanyNumber === "string" ? fnArgs.subjectCompanyNumber.trim().toUpperCase() || null : null;
     await db.insert(chatbgpLearnings).values({
       category: fnArgs.category || "general",
       learning: learningText,
@@ -10552,6 +10560,8 @@ export async function handleCrmToolCall(
       sourceUserName: userName,
       confidence: "confirmed",
       active: true,
+      subjectPropertyId,
+      subjectCompanyNumber,
     });
     const reply = await summaryHelper({ success: true, saved: learningText });
     return { handled: true, response: { reply: reply || "Got it — I've noted that down.", action: { type: "learning_saved" } } };
