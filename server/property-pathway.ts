@@ -248,6 +248,60 @@ interface StageResults {
       incorporatedOn?: string;
       error?: string;
     }>;
+    // All commercial freeholds detected at the resolved property by the
+    // CCOD/OCOD postcode + address-fuzzy sweep. Lets the user see split
+    // freeholds before Stage 6 builds the business plan — e.g. 18-22
+    // Haymarket has TWO freeholds (Al-Mana NGL952166 + Geaney NGL939200)
+    // and the plan needs to reflect both.
+    candidateTitles?: Array<{
+      titleNumber: string;
+      tenure: string | null;
+      propertyAddress: string | null;
+      pricePaid: string | null;
+      dateProprietorAdded: string | null;
+      proprietors: Array<{
+        proprietorName: string | null;
+        proprietorCategory: string | null;
+        companyRegistrationNo: string | null;
+        countryIncorporated: string | null;
+        dataset: "ccod" | "ocod";
+      }>;
+      // True if this title looks like a sibling carve-out (same postcode
+      // + matching street number) vs an unrelated property in the same
+      // postcode. Set by the sweep heuristic so the UI can sort the
+      // primary title to the top and de-emphasise unrelated neighbours.
+      isLikelyAtAddress: boolean;
+    }>;
+    // ROE filings for OE-prefix proprietors. Free Companies House lookup,
+    // gives the UBOs declared under the 2022 Economic Crime Act regime.
+    roeFilings?: Array<{
+      overseasEntityNumber: string;
+      entityName: string | null;
+      registeredOn: string | null;
+      lastConfirmationDate: string | null;
+      ubos: Array<{
+        name: string;
+        nationality?: string | null;
+        controlNatures: string[];
+        addedOn?: string | null;
+      }>;
+      error?: string;
+    }>;
+    // LLP member listings for OC-prefix proprietors. Free Companies House
+    // lookup; surfaces the people behind a family-office LLP (e.g. the
+    // Geaney members behind The Gainesville Partnership LLP).
+    llpMembers?: Array<{
+      llpNumber: string;
+      llpName: string | null;
+      members: Array<{
+        name: string;
+        role: string;
+        appointedOn?: string | null;
+        nationality?: string | null;
+      }>;
+      pscs: Array<{ name: string; natureOfControl: string[] }>;
+      error?: string;
+    }>;
     proprietorKyc?: any;
   };
   stage5?: {
@@ -3324,6 +3378,70 @@ async function runStage4(runId: string, req: Request): Promise<void> {
 
     console.log(`[pathway stage4] companyTargets resolved: ${companyTargets.map((c) => `${c.role}=${c.companyNumber}(${c.companyName})`).join(", ") || "NONE"}`);
 
+    // ── CCOD/OCOD sweep: every commercial freehold at this address ──
+    // The legacy Stage 1 path only surfaces ONE proprietor (the closest
+    // address match), so split freeholds get missed — see the 18-22
+    // Haymarket dig where Gainesville's carve-out (NGL939200) sat next
+    // to Al-Mana's main (NGL952166) and only one of them appeared. The
+    // sweep queries hmlr_proprietors directly by postcode+address-fuzzy
+    // and returns up to 50 candidate freeholds, with the primary
+    // address-matched ones flagged isLikelyAtAddress=true. Free + sub-
+    // 10ms so it's safe to run on every Stage 4.
+    let candidateTitles: any[] = [];
+    let roeFilings: any[] = [];
+    let llpMembers: any[] = [];
+    try {
+      const { sweepCandidateTitles, enrichProprietorChains } = await import("./pathway-stage4-enrich");
+      candidateTitles = await sweepCandidateTitles(address, postcode);
+      if (candidateTitles.length > 0) {
+        console.log(`[pathway stage4] CCOD sweep found ${candidateTitles.length} candidate freeholds (${candidateTitles.filter((c) => c.isLikelyAtAddress).length} primary, ${candidateTitles.filter((c) => !c.isLikelyAtAddress).length} postcode siblings)`);
+
+        // Pull ROE / LLP enrichment for the newly-discovered freeholds
+        // in parallel with the Clouseau investigations below. ROE/LLP
+        // are free Companies House calls so the cost-of-error is just
+        // a few hundred ms.
+        const chainEnrich = enrichProprietorChains(candidateTitles);
+
+        // Fold any CCOD-surfaced proprietor company numbers that aren't
+        // already on companyTargets — keeps Clouseau running on each so
+        // the existing flow still produces the full investigation
+        // (officers / PSCs / sanctions). Only the primary, address-
+        // matched titles get auto-queued for Clouseau; postcode
+        // siblings stay as "candidates pending user confirmation" to
+        // avoid spending Clouseau capacity on unrelated neighbours.
+        const existingCompanyNums = new Set(companyTargets.map((c) => c.companyNumber.toUpperCase()));
+        for (const t of candidateTitles.filter((c) => c.isLikelyAtAddress)) {
+          for (const p of t.proprietors) {
+            const num = (p.companyRegistrationNo || "").trim().toUpperCase();
+            if (!num || existingCompanyNums.has(num)) continue;
+            companyTargets.push({
+              companyNumber: num,
+              companyName: p.proprietorName || "Proprietor (CCOD)",
+              role: "proprietor",
+            });
+            existingCompanyNums.add(num);
+            console.log(`[pathway stage4] CCOD added proprietor ${num} (${p.proprietorName}) from ${t.titleNumber}`);
+          }
+        }
+
+        const chains = await chainEnrich;
+        roeFilings = chains.roeFilings;
+        llpMembers = chains.llpMembers;
+        if (roeFilings.length > 0) {
+          const uboCount = roeFilings.reduce((n, r) => n + r.ubos.length, 0);
+          console.log(`[pathway stage4] ROE: ${roeFilings.length} overseas entities → ${uboCount} UBOs`);
+        }
+        if (llpMembers.length > 0) {
+          const memCount = llpMembers.reduce((n, l) => n + l.members.length, 0);
+          console.log(`[pathway stage4] LLP: ${llpMembers.length} partnerships → ${memCount} members`);
+        }
+      }
+    } catch (sweepErr: any) {
+      // Sweep is best-effort — never block Stage 4 on a CCOD hiccup. Log
+      // and continue with whatever companyTargets we had from Stage 1.
+      console.warn("[pathway stage4] CCOD sweep failed:", sweepErr?.message);
+    }
+
     // Reuse-first: if Clouseau already has a recent investigation for this
     // company, read it from kyc_investigations and surface the existing
     // record — including the AI narrative and UBO walk — instead of
@@ -3675,9 +3793,84 @@ async function runStage4(runId: string, req: Request): Promise<void> {
         planningDocs,
         floorPlanUrls,
         companyKyc,
+        candidateTitles,
+        roeFilings,
+        llpMembers,
         proprietorKyc: null,
       },
     });
+
+    // ── Stamp landlord provenance on the linked crm_property ──────────
+    // When CCOD found a primary (address-matched) freehold with a clear
+    // proprietor, set landlord_id + source='HMLR_CCOD' + confidence on
+    // the property record. Lets the UI strike through stale notes
+    // (e.g. the Sugar/Amsprop legend at Haymarket) once HMLR has
+    // verified the current proprietor. Single-proprietor titles get
+    // high confidence; split-freehold or multi-proprietor cases drop
+    // to "medium" so the user can confirm via Stage 3 gate.
+    try {
+      if (run.propertyId && candidateTitles.length > 0) {
+        const primaries = candidateTitles.filter((t) => t.isLikelyAtAddress);
+        if (primaries.length > 0) {
+          // Prefer a single-proprietor primary title for landlord_id
+          // assignment. If multiple primary titles each with their own
+          // proprietor (split freehold), don't pick one — set
+          // confidence to medium and leave landlord_id alone for the
+          // user to confirm on the gate.
+          const single = primaries.length === 1 && primaries[0].proprietors.length === 1
+            ? primaries[0]
+            : null;
+          if (single && single.proprietors[0].companyRegistrationNo) {
+            const propCo = single.proprietors[0];
+            const { pool } = await import("./db");
+            // Find or create the CRM company by Companies House number.
+            const existing = await pool.query<{ id: string }>(
+              `SELECT id FROM crm_companies WHERE LOWER(companies_house_number) = LOWER($1) LIMIT 1`,
+              [propCo.companyRegistrationNo],
+            );
+            let landlordId = existing.rows[0]?.id || null;
+            if (!landlordId && propCo.proprietorName) {
+              const ins = await pool.query<{ id: string }>(
+                `INSERT INTO crm_companies (name, companies_house_number, company_type, created_at, updated_at)
+                 VALUES ($1, $2, 'Landlord', NOW(), NOW())
+                 RETURNING id`,
+                [propCo.proprietorName, propCo.companyRegistrationNo],
+              );
+              landlordId = ins.rows[0]?.id || null;
+            }
+            if (landlordId) {
+              await pool.query(
+                `UPDATE crm_properties
+                    SET landlord_id = $1,
+                        landlord_source = 'HMLR_CCOD',
+                        landlord_confidence = 'high',
+                        landlord_verified_at = NOW(),
+                        updated_at = NOW()
+                  WHERE id = $2`,
+                [landlordId, run.propertyId],
+              );
+              console.log(`[pathway stage4] stamped landlord ${landlordId} (${propCo.proprietorName}) on property ${run.propertyId} from title ${single.titleNumber}`);
+            }
+          } else if (primaries.length > 1) {
+            // Multi-title at the same address — split freehold. Don't
+            // pick; mark for review.
+            const { pool } = await import("./db");
+            await pool.query(
+              `UPDATE crm_properties
+                  SET landlord_source = 'HMLR_CCOD',
+                      landlord_confidence = 'medium',
+                      landlord_verified_at = NOW(),
+                      updated_at = NOW()
+                WHERE id = $1`,
+              [run.propertyId],
+            );
+            console.log(`[pathway stage4] split-freehold detected on property ${run.propertyId} (${primaries.length} primary titles) — left landlord_id unset for user review`);
+          }
+        }
+      }
+    } catch (stampErr: any) {
+      console.warn("[pathway stage4] landlord stamp failed:", stampErr?.message);
+    }
 
     // Informed email sweep — run AFTER Stage 4 so we can use Clouseau's full
     // investigation (officers, PSCs, UBOs, title numbers, company number) as

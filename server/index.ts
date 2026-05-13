@@ -99,6 +99,15 @@ import { pool } from "./db";
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS xero_billing_address JSONB`,
     `CREATE INDEX IF NOT EXISTS crm_deals_xero_contact_id_idx ON crm_deals (xero_contact_id) WHERE xero_contact_id IS NOT NULL`,
     `ALTER TABLE crm_deals DROP COLUMN IF EXISTS invoicing_entity_id`,
+    // Landlord provenance on properties — tells the UI/audit how we got
+    // the landlord_id and how much we trust it. Set by Pathway Stage 4
+    // when CCOD/OCOD matches the proprietor; reset to 'manual' when a
+    // human edits via property-detail. Lets us strikethrough stale
+    // institutional records (e.g. Sugar/Amsprop legend at Haymarket)
+    // when HMLR data contradicts them.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS landlord_source TEXT`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS landlord_confidence TEXT`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS landlord_verified_at TIMESTAMPTZ`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
