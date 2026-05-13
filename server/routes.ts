@@ -8,6 +8,7 @@ import { resolveCompanyScope } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import crypto from "crypto";
 import { saveFile, getFile } from "./file-storage";
 import { saveFile, getFile, recordUserUpload } from "./file-storage";
@@ -2376,6 +2377,60 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });
+    }
+  });
+
+  // HMLR direct upload — fallback for when the gov.uk API is being
+  // stale about our licence (returning example.csv even after licence
+  // signing). User downloads the CCOD/OCOD .csv from the gov.uk
+  // dashboard and posts it here as multipart form-data. Same downstream
+  // ingest as the API-driven sync, just with a local file path instead
+  // of an HMLR download URL.
+  //
+  // 2 GB disk-streamed multer — CCOD's full file is 1.56 GB. Memory
+  // storage would OOM Railway; use disk and stream-parse from there.
+  const hmlrUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+      filename: (_req, file, cb) => cb(null, `hmlr-upload-${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`),
+    }),
+    limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB
+  });
+  app.post("/api/admin/hmlr/upload", requireAuth, hmlrUpload.single("file"), async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const dataset = (req.body?.dataset || req.query?.dataset) as "ccod" | "ocod" | undefined;
+      if (dataset !== "ccod" && dataset !== "ocod") {
+        return res.status(400).json({ error: "dataset must be 'ccod' or 'ocod' (form field or query param)" });
+      }
+      if (!req.file) return res.status(400).json({ error: "no file uploaded (use multipart field 'file')" });
+
+      const localPath = req.file.path;
+      const filename = req.file.originalname;
+      console.log(`[hmlr-upload] received ${filename} (${(req.file.size / 1024 / 1024).toFixed(1)} MB) → ${localPath}`);
+
+      // Background ingest — same pattern as the API sync, returns 202
+      // immediately and writes progress to hmlr_ingest_runs.
+      setImmediate(() => {
+        (async () => {
+          try {
+            const { ingestUploadedCsv } = await import("./hmlr-fetch");
+            await ingestUploadedCsv(localPath, dataset, filename);
+            try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+          } catch (err: any) {
+            console.error(`[hmlr-upload] ingest failed for ${filename}:`, err?.message);
+          }
+        })();
+      });
+      res.status(202).json({ ok: true, message: `${dataset.toUpperCase()} ingest started — poll /api/admin/hmlr/runs for progress`, dataset, sizeBytes: req.file.size });
+    } catch (e: any) {
+      console.error("[hmlr-upload] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
     }
   });
 

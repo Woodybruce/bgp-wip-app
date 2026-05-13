@@ -443,3 +443,64 @@ export async function syncHmlrDataset(dataset: HmlrDataset, batchSize = 500): Pr
     try { if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath); } catch { /* ignore */ }
   }
 }
+
+/**
+ * Direct ingest from a locally-uploaded CSV file. Used by the
+ * /api/admin/hmlr/upload endpoint as a workaround when gov.uk's API is
+ * being stale about licence acceptance and still serving example.csv —
+ * the user downloads the real CSV from the website and uploads it
+ * here. Handles raw CSV directly OR a ZIP-wrapped CSV (gov.uk usually
+ * gives raw .csv but ZIP support is cheap to keep).
+ *
+ * Writes the same hmlr_ingest_runs row + uses the same flushBatch
+ * upsert logic as the API-driven path.
+ */
+export async function ingestUploadedCsv(
+  localPath: string,
+  dataset: HmlrDataset,
+  originalFilename: string,
+): Promise<{ runId: string; processed: number; inserted: number; updated: number; skipped: number }> {
+  console.log(`[hmlr-fetch] uploaded ingest for ${dataset} from ${originalFilename}`);
+  const runRes = await pool.query<{ id: string }>(
+    `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ($1, $2, 'running') RETURNING id`,
+    [dataset, originalFilename],
+  );
+  const runId = runRes.rows[0].id;
+
+  const failRun = async (err: any) => {
+    const msg = err?.message || String(err);
+    console.error(`[hmlr-fetch] uploaded ingest failed for ${dataset}:`, msg);
+    try {
+      await pool.query(
+        `UPDATE hmlr_ingest_runs SET status='error', error=$1, finished_at=now() WHERE id=$2`,
+        [msg, runId],
+      );
+    } catch { /* ignore */ }
+  };
+
+  let csvPath: string | null = null;
+  try {
+    // If the upload is a ZIP, extract the inner CSV first. Otherwise
+    // treat the upload as a raw CSV.
+    if (/\.zip$/i.test(originalFilename)) {
+      const zip = new AdmZip(localPath);
+      const entries = zip.getEntries();
+      const csvEntry = entries.find((e) => /\.csv$/i.test(e.entryName) && !e.isDirectory);
+      if (!csvEntry) throw new Error(`No CSV found inside uploaded ${originalFilename}`);
+      csvPath = path.join(os.tmpdir(), `hmlr-upload-${Date.now()}-${csvEntry.entryName}`);
+      zip.extractEntryTo(csvEntry, path.dirname(csvPath), false, true, false, path.basename(csvPath));
+    } else {
+      csvPath = localPath;
+    }
+    return await ingestCsvFile(csvPath, dataset, originalFilename, "uploaded", 500, runId);
+  } catch (err: any) {
+    await failRun(err);
+    throw err;
+  } finally {
+    // Clean up any extracted CSV (if we unzipped). The original upload
+    // is removed by the route handler after this returns.
+    if (csvPath && csvPath !== localPath) {
+      try { fs.unlinkSync(csvPath); } catch { /* ignore */ }
+    }
+  }
+}
