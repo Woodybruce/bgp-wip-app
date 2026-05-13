@@ -80,20 +80,32 @@ async function getLatestFullFilename(dataset: HmlrDataset): Promise<{ filename: 
     throw new Error(`HMLR list ${dataset} failed: HTTP ${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`);
   }
   const data = (await res.json()) as HmlrDatasetListResponse;
-  const files = data?.result?.public_resources || [];
-  if (files.length === 0) {
+  const allFiles = data?.result?.public_resources || [];
+  if (allFiles.length === 0) {
     throw new Error(`HMLR ${dataset} response had no resources. Response keys: ${Object.keys(data?.result || data || {}).join(", ")}`);
   }
-  const seenNames = files.map((f) => f.file_name);
+  // Filter out HMLR's "example.csv" placeholder — that's what their API
+  // hands back to accounts that haven't yet signed the dataset licence,
+  // or which only have a free-tier preview. Trying to download it gets
+  // us a tiny sample CSV (not a real monthly snapshot) which then fails
+  // ZIP extraction with the unhelpful "No END header found" error. Bail
+  // out with a clear message instead.
+  const seenAllNames = allFiles.map((f) => f.file_name);
+  const realFiles = allFiles.filter((f) => !/^example\.csv$/i.test(f.file_name.trim()));
+  if (realFiles.length === 0) {
+    throw new Error(
+      `HMLR ${dataset} only exposed the placeholder "example.csv" — your account either hasn't signed the dataset licence (Personal-use tier is free, ~2-min sign-up at https://use-land-property-data.service.gov.uk/dataset/${dataset}) or the chosen licence tier doesn't include bulk-data access. After signing, the resource list should include a real monthly file like "${dataset.toUpperCase()}_FULL_YYYY_MM.zip".`,
+    );
+  }
   // Sort newest first.
-  const sorted = [...files].sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
+  const sorted = [...realFiles].sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
   const fulls = sorted.filter((f) => /full/i.test(f.file_name));
   const nonCou = sorted.filter((f) => !/cou|change|delta/i.test(f.file_name));
   const pick = fulls[0] || nonCou[0] || sorted[0];
   if (!pick) {
-    throw new Error(`HMLR ${dataset} response had ${files.length} resources but none looked like a snapshot. Filenames: ${seenNames.join(", ")}`);
+    throw new Error(`HMLR ${dataset} had ${realFiles.length} real resources but none looked like a snapshot. Filenames: ${realFiles.map((f) => f.file_name).join(", ")}`);
   }
-  console.log(`[hmlr-fetch] ${dataset} resources: [${seenNames.join(", ")}] → picked ${pick.file_name}`);
+  console.log(`[hmlr-fetch] ${dataset} resources: [${seenAllNames.join(", ")}] → picked ${pick.file_name}`);
   return { filename: pick.file_name, sizeBytes: pick.size_bytes, lastUpdated: pick.last_updated };
 }
 
@@ -401,13 +413,22 @@ export async function syncHmlrDataset(dataset: HmlrDataset, batchSize = 500): Pr
 
   let csvPath: string | null = null;
   try {
-    const zip = new AdmZip(zipPath);
-    const entries = zip.getEntries();
-    const csvEntry = entries.find((e) => /\.csv$/i.test(e.entryName) && !e.isDirectory);
-    if (!csvEntry) throw new Error(`No CSV found inside ${meta.filename}`);
-    csvPath = path.join(os.tmpdir(), `hmlr-${Date.now()}-${csvEntry.entryName}`);
-    zip.extractEntryTo(csvEntry, path.dirname(csvPath), false, true, false, path.basename(csvPath));
-    console.log(`[hmlr-fetch] extracted CSV to ${csvPath}`);
+    // HMLR mostly ships datasets as ZIP-wrapped CSVs but a few are
+    // delivered as a raw CSV. If the filename ends .csv (and isn't
+    // .zip), skip the unzip step and ingest the file directly.
+    const isRawCsv = /\.csv$/i.test(meta.filename) && !/\.zip$/i.test(meta.filename);
+    if (isRawCsv) {
+      csvPath = zipPath; // already the CSV
+      console.log(`[hmlr-fetch] ${meta.filename} is a raw CSV — ingesting directly`);
+    } else {
+      const zip = new AdmZip(zipPath);
+      const entries = zip.getEntries();
+      const csvEntry = entries.find((e) => /\.csv$/i.test(e.entryName) && !e.isDirectory);
+      if (!csvEntry) throw new Error(`No CSV found inside ${meta.filename}`);
+      csvPath = path.join(os.tmpdir(), `hmlr-${Date.now()}-${csvEntry.entryName}`);
+      zip.extractEntryTo(csvEntry, path.dirname(csvPath), false, true, false, path.basename(csvPath));
+      console.log(`[hmlr-fetch] extracted CSV to ${csvPath}`);
+    }
 
     const result = await ingestCsvFile(csvPath, dataset, meta.filename, downloadUrl, batchSize, runId);
     console.log(`[hmlr-fetch] ${dataset} sync done — processed=${result.processed} inserted=${result.inserted} updated=${result.updated} skipped=${result.skipped}`);
