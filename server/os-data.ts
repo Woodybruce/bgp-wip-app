@@ -169,7 +169,7 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
       point: `${lng},${lat}`,
       key: getOsKey(),
       radius: String(radiusMeters),
-      srs: "WGS84",
+      srs: "EPSG:4326",
       dataset: "DPA",
     });
     const url = `${PLACES_BASE}/radius?${params.toString()}`;
