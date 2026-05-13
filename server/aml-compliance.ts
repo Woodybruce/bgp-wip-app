@@ -610,8 +610,8 @@ router.post("/api/kyc/documents/upload", requireAuth, kycUpload.single("file"), 
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file uploaded" });
     const { companyId, contactId, dealId, docType, certifiedBy, certifiedAt, expiresAt, notes } = req.body;
-    if (!docType || !ALLOWED_DOC_TYPES.has(docType)) {
-      return res.status(400).json({ error: "docType required, one of: " + Array.from(ALLOWED_DOC_TYPES).join(", ") });
+    if (!docType || typeof docType !== "string" || docType.trim().length === 0) {
+      return res.status(400).json({ error: "docType required (free-text). Common types: " + Array.from(ALLOWED_DOC_TYPES).join(", ") });
     }
     if (!companyId && !contactId) {
       return res.status(400).json({ error: "Provide companyId or contactId" });

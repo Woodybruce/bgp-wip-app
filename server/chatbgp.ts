@@ -5380,7 +5380,7 @@ async function executeCrmToolRaw(
       const cmd = fnArgs.recursive
         ? `find "${targetDir}" -maxdepth 3 -type f -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" | sort | head -100`
         : `ls -la "${targetDir}" | head -60`;
-      const output = execSync(cmd, { timeout: 5000 }).toString();
+      const output = execSync(cmd, { timeout: 30000 }).toString();
       return { data: { success: true, directory: safePath, files: output } };
     } catch (err: any) {
       return { data: { success: false, error: `Could not list "${safePath}": ${err.message}` } };
@@ -5569,17 +5569,17 @@ async function executeCrmToolRaw(
     try {
       const output = execSync(command, {
         cwd: process.cwd(),
-        timeout: 30000,
+        timeout: 300000, // 5 min — admin-gated, no point sub-second cap
         env: { ...process.env },
-        maxBuffer: 1024 * 1024,
+        maxBuffer: 10 * 1024 * 1024, // 10 MB — long outputs like npm install fit
       }).toString();
 
       await pool.query(
         `INSERT INTO code_changes (tool_used, shell_command, shell_output, description, status) VALUES ($1, $2, $3, $4, 'applied')`,
-        ["run_shell_command", command, output.substring(0, 10000), description]
+        ["run_shell_command", command, output.substring(0, 50000), description]
       );
 
-      return { data: { success: true, command, output: output.substring(0, 5000) } };
+      return { data: { success: true, command, output: output.substring(0, 50000) } };
     } catch (err: any) {
       const stderr = err.stderr?.toString?.() || err.message;
       await pool.query(
@@ -7206,7 +7206,11 @@ async function executeCrmToolRaw(
         const file = await getFile(`chat-media/${filename}`);
         if (!file) return { data: { error: "File not found in chat media" } };
         ext = path.extname(safeFilename).toLowerCase() || ".mp4";
-        if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
+        if (!allowedExts.includes(ext)) {
+          // Don't reject upfront — Whisper + ffmpeg between them accept
+          // basically anything with audio. Log a warning but let it try.
+          console.warn(`[transcribe_audio] unfamiliar extension ${ext}, attempting anyway`);
+        }
         audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
         fs.writeFileSync(audioFilePath, file.data);
         tmpFiles.push(audioFilePath);
@@ -7230,7 +7234,11 @@ async function executeCrmToolRaw(
         }
         const safeFilename = (meta.name || "recording.mp4").replace(/[^a-zA-Z0-9._-]/g, "_");
         ext = path.extname(safeFilename).toLowerCase() || ".mp4";
-        if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
+        if (!allowedExts.includes(ext)) {
+          // Don't reject upfront — Whisper + ffmpeg between them accept
+          // basically anything with audio. Log a warning but let it try.
+          console.warn(`[transcribe_audio] unfamiliar extension ${ext}, attempting anyway`);
+        }
         audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
         try {
           await streamUrlToFile(meta.downloadUrl, audioFilePath);
@@ -7252,7 +7260,11 @@ async function executeCrmToolRaw(
         const lastSeg = (new URL(fileUrl)).pathname.split("/").pop() || "audio";
         const safeFilename = lastSeg.replace(/[^a-zA-Z0-9._-]/g, "_");
         ext = path.extname(safeFilename).toLowerCase() || guessExt;
-        if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
+        if (!allowedExts.includes(ext)) {
+          // Don't reject upfront — Whisper + ffmpeg between them accept
+          // basically anything with audio. Log a warning but let it try.
+          console.warn(`[transcribe_audio] unfamiliar extension ${ext}, attempting anyway`);
+        }
         audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
         const fsStream = fs.createWriteStream(audioFilePath);
         const { pipeline } = await import("stream/promises");
@@ -7263,6 +7275,23 @@ async function executeCrmToolRaw(
         return { data: { error: "fileUrl must be a chat-media path (/api/chat-media/...), a SharePoint/OneDrive share link, or a public https URL." } };
       }
 
+      // Use bundled ffmpeg / ffprobe binaries via npm packages
+      // (ffmpeg-static, ffprobe-static). Ships the binaries with the
+      // deploy so there's no dependency on the OS having ffmpeg
+      // installed — the previous nixpacks attempt was unreliable on
+      // Railway. Falls back to "ffmpeg"/"ffprobe" on PATH if the
+      // packages aren't loadable for some reason.
+      let ffmpegBin = "ffmpeg";
+      let ffprobeBin = "ffprobe";
+      try {
+        const ffmpegStatic = (await import("ffmpeg-static")).default;
+        if (ffmpegStatic && typeof ffmpegStatic === "string") ffmpegBin = ffmpegStatic;
+      } catch { /* keep PATH fallback */ }
+      try {
+        const ffprobeStatic = (await import("ffprobe-static")).default;
+        if (ffprobeStatic?.path) ffprobeBin = ffprobeStatic.path;
+      } catch { /* keep PATH fallback */ }
+
       const videoExts = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"];
       let whisperInputPath = audioFilePath;
 
@@ -7270,11 +7299,11 @@ async function executeCrmToolRaw(
         const audioOutPath = path.join(tmpDir, `${tmpId}-audio.mp3`);
         tmpFiles.push(audioOutPath);
         try {
-          execFileSync("ffmpeg", ["-i", audioFilePath, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", audioOutPath], { timeout: 120000, stdio: "pipe" });
+          execFileSync(ffmpegBin, ["-i", audioFilePath, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", audioOutPath], { timeout: 240000, stdio: "pipe" });
           whisperInputPath = audioOutPath;
         } catch (ffErr: any) {
           cleanupTmp();
-          return { data: { error: `Failed to extract audio from video: ${ffErr?.message?.substring(0, 200)}` } };
+          return { data: { error: `Failed to extract audio from video (ffmpeg=${ffmpegBin}): ${ffErr?.message?.substring(0, 300)}` } };
         }
       }
 
@@ -7283,10 +7312,10 @@ async function executeCrmToolRaw(
       if (fileStat.size > maxSize) {
         let durationOutput: string;
         try {
-          durationOutput = execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", whisperInputPath], { timeout: 30000, stdio: "pipe" }).toString().trim();
+          durationOutput = execFileSync(ffprobeBin, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", whisperInputPath], { timeout: 30000, stdio: "pipe" }).toString().trim();
         } catch {
           cleanupTmp();
-          return { data: { error: "Could not determine audio duration" } };
+          return { data: { error: `Could not determine audio duration (ffprobe=${ffprobeBin})` } };
         }
         const totalDuration = parseFloat(durationOutput) || 0;
         if (totalDuration === 0) { cleanupTmp(); return { data: { error: "Could not determine audio duration" } }; }
@@ -7298,7 +7327,7 @@ async function executeCrmToolRaw(
           tmpFiles.push(segPath);
           const start = i * segmentDuration;
           try {
-            execFileSync("ffmpeg", ["-i", whisperInputPath, "-ss", String(start), "-t", String(segmentDuration), "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", segPath], { timeout: 60000, stdio: "pipe" });
+            execFileSync(ffmpegBin, ["-i", whisperInputPath, "-ss", String(start), "-t", String(segmentDuration), "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", segPath], { timeout: 120000, stdio: "pipe" });
             segPaths.push(segPath);
           } catch { /* skip failed segment */ }
         }
