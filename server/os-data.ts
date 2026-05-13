@@ -146,18 +146,93 @@ export async function osPlacesByPostcode(postcode: string, maxresults = 100): Pr
 }
 
 /**
- * Lat/lng → closest DPA address(es). Uses OS Places `/radius` (which
- * accepts WGS84 lat/lng via srs) and sorts the results by distance
- * from the input point to mimic `/nearest` semantics. We can't use the
- * real `/nearest` endpoint because it's BNG-only — it interprets the
- * `point` parameter as eastings,northings regardless of any `srs`
- * value, and rejects WGS84 with "Area of data coverage is in BNG and
- * is a minimum of 0,0 to maximum of 700000.00,1300000.00. Provided
- * coordinates fall outside this area."
+ * WGS84 lat/lng → British National Grid eastings/northings.
  *
- * Doing this client-side keeps us free of a proj4 dependency for the
- * WGS84↔BNG conversion. Distance ordering is by haversine — accurate
- * enough at city-block scale.
+ * OS Places API does NOT honour `srs` for input coordinates — the
+ * `point` parameter is always parsed as BNG, no matter what srs we
+ * send. Tried "WGS84" and "EPSG:4326"; both rejected with "Area of
+ * data coverage is in BNG and is a minimum of 0,0 to maximum of
+ * 700000,1300000". So we convert client-side.
+ *
+ * Pipeline: WGS84 lat/lng → Cartesian ECEF → Helmert 7-parameter shift
+ * → OSGB36 lat/lng → transverse Mercator projection → BNG E/N. The
+ * parameter values come from OS technical paper "A Guide to
+ * Coordinate Systems in Great Britain". Accurate to ~5m across the
+ * UK, well inside our 25m address-radius needs.
+ */
+function wgs84ToBng(lat: number, lng: number): { easting: number; northing: number } {
+  // Step 1: WGS84 lat/lng → ECEF Cartesian on WGS84 ellipsoid
+  const aW = 6378137.0;
+  const bW = 6356752.314245;
+  const e2W = 1 - (bW * bW) / (aW * aW);
+  const phiW = (lat * Math.PI) / 180;
+  const lamW = (lng * Math.PI) / 180;
+  const nuW = aW / Math.sqrt(1 - e2W * Math.sin(phiW) ** 2);
+  const xW = nuW * Math.cos(phiW) * Math.cos(lamW);
+  const yW = nuW * Math.cos(phiW) * Math.sin(lamW);
+  const zW = ((1 - e2W) * nuW) * Math.sin(phiW);
+
+  // Step 2: Helmert 7-parameter shift WGS84 → OSGB36
+  const tx = -446.448, ty = 125.157, tz = -542.060;
+  const s = 20.4894e-6;
+  const rx = (-0.1502 / 3600) * (Math.PI / 180);
+  const ry = (-0.2470 / 3600) * (Math.PI / 180);
+  const rz = (-0.8421 / 3600) * (Math.PI / 180);
+  const xO = tx + (1 + s) * xW + -rz * yW + ry * zW;
+  const yO = ty + rz * xW + (1 + s) * yW + -rx * zW;
+  const zO = tz + -ry * xW + rx * yW + (1 + s) * zW;
+
+  // Step 3: ECEF → OSGB36 lat/lng (Airy 1830 ellipsoid)
+  const aA = 6377563.396;
+  const bA = 6356256.909;
+  const e2A = 1 - (bA * bA) / (aA * aA);
+  const p = Math.sqrt(xO * xO + yO * yO);
+  let phiA = Math.atan2(zO, p * (1 - e2A));
+  for (let i = 0; i < 8; i++) {
+    const nuA = aA / Math.sqrt(1 - e2A * Math.sin(phiA) ** 2);
+    phiA = Math.atan2(zO + e2A * nuA * Math.sin(phiA), p);
+  }
+  const lamA = Math.atan2(yO, xO);
+
+  // Step 4: OSGB36 lat/lng → BNG eastings/northings (transverse Mercator)
+  const F0 = 0.9996012717;
+  const phi0 = (49 * Math.PI) / 180;
+  const lam0 = (-2 * Math.PI) / 180;
+  const N0 = -100000;
+  const E0 = 400000;
+  const n = (aA - bA) / (aA + bA);
+  const sinPhi = Math.sin(phiA);
+  const cosPhi = Math.cos(phiA);
+  const nu = (aA * F0) / Math.sqrt(1 - e2A * sinPhi * sinPhi);
+  const rho = (aA * F0 * (1 - e2A)) / Math.pow(1 - e2A * sinPhi * sinPhi, 1.5);
+  const eta2 = nu / rho - 1;
+  const Ma = (1 + n + (5 / 4) * n * n + (5 / 4) * n * n * n) * (phiA - phi0);
+  const Mb = (3 * n + 3 * n * n + (21 / 8) * n * n * n) * Math.sin(phiA - phi0) * Math.cos(phiA + phi0);
+  const Mc = ((15 / 8) * n * n + (15 / 8) * n * n * n) * Math.sin(2 * (phiA - phi0)) * Math.cos(2 * (phiA + phi0));
+  const Md = (35 / 24) * n * n * n * Math.sin(3 * (phiA - phi0)) * Math.cos(3 * (phiA + phi0));
+  const M = bA * F0 * (Ma - Mb + Mc - Md);
+  const tanPhi = Math.tan(phiA);
+  const tan2 = tanPhi * tanPhi;
+  const tan4 = tan2 * tan2;
+  const I = M + N0;
+  const II = (nu / 2) * sinPhi * cosPhi;
+  const III = (nu / 24) * sinPhi * Math.pow(cosPhi, 3) * (5 - tan2 + 9 * eta2);
+  const IIIA = (nu / 720) * sinPhi * Math.pow(cosPhi, 5) * (61 - 58 * tan2 + tan4);
+  const IV = nu * cosPhi;
+  const V = (nu / 6) * Math.pow(cosPhi, 3) * (nu / rho - tan2);
+  const VI = (nu / 120) * Math.pow(cosPhi, 5) * (5 - 18 * tan2 + tan4 + 14 * eta2 - 58 * eta2 * tan2);
+  const dLam = lamA - lam0;
+  const N = I + II * dLam * dLam + III * Math.pow(dLam, 4) + IIIA * Math.pow(dLam, 6);
+  const E = E0 + IV * dLam + V * Math.pow(dLam, 3) + VI * Math.pow(dLam, 5);
+  return { easting: Math.round(E), northing: Math.round(N) };
+}
+
+/**
+ * Lat/lng → closest DPA address(es). Uses OS Places `/radius` with the
+ * input coordinates converted to BNG eastings/northings client-side —
+ * OS Hub's API ignores the `srs` parameter for input and always parses
+ * `point` as BNG. Results are sorted by haversine distance from the
+ * input WGS84 point so the first row is still the true nearest.
  */
 export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 25): Promise<OsPlacesResult[]> {
   if (!isOsConfigured()) return [];
@@ -165,11 +240,11 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
   // Round to ~11m precision to maximise cache hits for nearby clicks
   const key = `os-nearest:${lat.toFixed(4)},${lng.toFixed(4)},${radiusMeters}`;
   return cached(key, async () => {
+    const bng = wgs84ToBng(lat, lng);
     const params = new URLSearchParams({
-      point: `${lng},${lat}`,
+      point: `${bng.easting},${bng.northing}`,
       key: getOsKey(),
       radius: String(radiusMeters),
-      srs: "EPSG:4326",
       dataset: "DPA",
     });
     const url = `${PLACES_BASE}/radius?${params.toString()}`;
