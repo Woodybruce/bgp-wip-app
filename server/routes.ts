@@ -2537,17 +2537,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (scope !== "ccod" && scope !== "ocod" && scope !== "all") {
         return res.status(400).json({ error: "dataset must be 'ccod', 'ocod', or 'all'" });
       }
-      const propsRes = scope === "all"
-        ? await pool.query(`DELETE FROM hmlr_proprietors`)
-        : await pool.query(`DELETE FROM hmlr_proprietors WHERE dataset = $1`, [scope]);
-      const runsRes = scope === "all"
-        ? await pool.query(`DELETE FROM hmlr_ingest_runs`)
-        : await pool.query(`DELETE FROM hmlr_ingest_runs WHERE dataset = $1`, [scope]);
+      // TRUNCATE for the "all" path — DELETE on 4M+ rows can hit
+      // Railway's statement-timeout and 500. TRUNCATE is constant-
+      // time and bypasses MVCC scan. Doesn't give a rowCount back
+      // so we return null in that case.
+      let deletedProprietorRows: number | null;
+      let deletedRunRows: number | null;
+      if (scope === "all") {
+        await pool.query(`TRUNCATE TABLE hmlr_proprietors`);
+        await pool.query(`TRUNCATE TABLE hmlr_ingest_runs`);
+        deletedProprietorRows = null;
+        deletedRunRows = null;
+      } else {
+        const propsRes = await pool.query(`DELETE FROM hmlr_proprietors WHERE dataset = $1`, [scope]);
+        const runsRes = await pool.query(`DELETE FROM hmlr_ingest_runs WHERE dataset = $1`, [scope]);
+        deletedProprietorRows = propsRes.rowCount;
+        deletedRunRows = runsRes.rowCount;
+      }
       res.json({
         ok: true,
-        deletedProprietorRows: propsRes.rowCount,
-        deletedRunRows: runsRes.rowCount,
+        deletedProprietorRows,
+        deletedRunRows,
         scope,
+        note: scope === "all" ? "TRUNCATE used; row counts not reported" : undefined,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
