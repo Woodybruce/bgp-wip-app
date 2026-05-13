@@ -250,14 +250,19 @@ async function flushBatch(batch: ProprietorRow[], runId: string): Promise<{ inse
   return { inserted, updated };
 }
 
-async function ingestCsvFile(csvPath: string, dataset: HmlrDataset, sourceFilename: string, sourceUrl: string, batchSize: number): Promise<{ runId: string; processed: number; inserted: number; updated: number; skipped: number }> {
-  const runRes = await pool.query<{ id: string }>(
-    `INSERT INTO hmlr_ingest_runs (dataset, source_url, source_filename, status)
-     VALUES ($1, $2, $3, 'running')
-     RETURNING id`,
-    [dataset, sourceUrl, sourceFilename],
-  );
-  const runId = runRes.rows[0].id;
+async function ingestCsvFile(csvPath: string, dataset: HmlrDataset, sourceFilename: string, sourceUrl: string, batchSize: number, existingRunId?: string): Promise<{ runId: string; processed: number; inserted: number; updated: number; skipped: number }> {
+  let runId: string;
+  if (existingRunId) {
+    runId = existingRunId;
+  } else {
+    const runRes = await pool.query<{ id: string }>(
+      `INSERT INTO hmlr_ingest_runs (dataset, source_url, source_filename, status)
+       VALUES ($1, $2, $3, 'running')
+       RETURNING id`,
+      [dataset, sourceUrl, sourceFilename],
+    );
+    runId = runRes.rows[0].id;
+  }
 
   let processed = 0, inserted = 0, updated = 0, skipped = 0;
   let batch: ProprietorRow[] = [];
@@ -307,6 +312,13 @@ async function ingestCsvFile(csvPath: string, dataset: HmlrDataset, sourceFilena
  * End-to-end sync for one dataset. Fetches the latest FULL file via
  * the HMLR API, downloads the ZIP, extracts the CSV, runs the ingest,
  * and cleans up tmp files. Returns the run summary.
+ *
+ * Writes a tracking row to hmlr_ingest_runs IMMEDIATELY (status='running')
+ * before doing any work — so if the HMLR API auth fails or the response
+ * shape is wrong, the user can still see the error in /api/admin/hmlr/runs
+ * instead of silence. Without this, every pre-ingest failure (API key
+ * rejected, list-datasets call errored, download failed, ZIP parse
+ * failed) would just disappear into Railway logs.
  */
 export async function syncHmlrDataset(dataset: HmlrDataset, batchSize = 500): Promise<{
   runId: string;
@@ -318,10 +330,58 @@ export async function syncHmlrDataset(dataset: HmlrDataset, batchSize = 500): Pr
   skipped: number;
 }> {
   console.log(`[hmlr-fetch] starting sync for ${dataset}`);
-  const meta = await getLatestFullFilename(dataset);
+
+  // Reserve a run id so any failure below has somewhere to record itself.
+  const runRes = await pool.query<{ id: string }>(
+    `INSERT INTO hmlr_ingest_runs (dataset, status) VALUES ($1, 'running') RETURNING id`,
+    [dataset],
+  );
+  const runId = runRes.rows[0].id;
+
+  const failRun = async (err: any) => {
+    const msg = err?.message || String(err);
+    console.error(`[hmlr-fetch] sync failed for ${dataset}:`, msg);
+    try {
+      await pool.query(
+        `UPDATE hmlr_ingest_runs SET status='error', error=$1, finished_at=now() WHERE id=$2`,
+        [msg, runId],
+      );
+    } catch (e: any) {
+      console.error(`[hmlr-fetch] also failed to write error row:`, e?.message);
+    }
+  };
+
+  let meta: { filename: string; sizeBytes: number; lastUpdated: string };
+  let downloadUrl: string;
+  let zipPath: string;
+  try {
+    meta = await getLatestFullFilename(dataset);
+  } catch (err: any) {
+    await failRun(new Error(`getLatestFullFilename failed (likely HMLR API key / response shape): ${err?.message}`));
+    throw err;
+  }
   console.log(`[hmlr-fetch] latest ${dataset} = ${meta.filename} (${(meta.sizeBytes / 1024 / 1024).toFixed(1)} MB)`);
-  const downloadUrl = await getSignedDownloadUrl(dataset, meta.filename);
-  const zipPath = await downloadToTmp(downloadUrl, meta.filename);
+
+  try {
+    downloadUrl = await getSignedDownloadUrl(dataset, meta.filename);
+  } catch (err: any) {
+    await failRun(new Error(`getSignedDownloadUrl(${meta.filename}) failed: ${err?.message}`));
+    throw err;
+  }
+
+  try {
+    zipPath = await downloadToTmp(downloadUrl, meta.filename);
+  } catch (err: any) {
+    await failRun(new Error(`downloadToTmp failed: ${err?.message}`));
+    throw err;
+  }
+
+  // Now we have the file — update the run row with the source info so
+  // the user can see what we got.
+  await pool.query(
+    `UPDATE hmlr_ingest_runs SET source_url = $1, source_filename = $2 WHERE id = $3`,
+    [downloadUrl, meta.filename, runId],
+  );
   console.log(`[hmlr-fetch] downloaded ${dataset} zip to ${zipPath}`);
 
   let csvPath: string | null = null;
@@ -334,9 +394,12 @@ export async function syncHmlrDataset(dataset: HmlrDataset, batchSize = 500): Pr
     zip.extractEntryTo(csvEntry, path.dirname(csvPath), false, true, false, path.basename(csvPath));
     console.log(`[hmlr-fetch] extracted CSV to ${csvPath}`);
 
-    const result = await ingestCsvFile(csvPath, dataset, meta.filename, downloadUrl, batchSize);
+    const result = await ingestCsvFile(csvPath, dataset, meta.filename, downloadUrl, batchSize, runId);
     console.log(`[hmlr-fetch] ${dataset} sync done — processed=${result.processed} inserted=${result.inserted} updated=${result.updated} skipped=${result.skipped}`);
     return { ...result, filename: meta.filename, sizeBytes: meta.sizeBytes };
+  } catch (err: any) {
+    await failRun(new Error(`ZIP/ingest failed: ${err?.message}`));
+    throw err;
   } finally {
     // Best-effort cleanup. Railway tmpfs is ephemeral so leftovers
     // disappear on restart anyway, but tidy up to avoid filling /tmp.
