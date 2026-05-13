@@ -146,10 +146,18 @@ export async function osPlacesByPostcode(postcode: string, maxresults = 100): Pr
 }
 
 /**
- * Lat/lng → closest DPA address(es). OS accepts a point as "lng,lat" in EPSG:4326
- * and returns ranked matches within a radius. Perfect for resolving a map click
- * to an authoritative UPRN without faffing with Google reverse-geocoded business
- * names.
+ * Lat/lng → closest DPA address(es). Uses OS Places `/radius` (which
+ * accepts WGS84 lat/lng via srs) and sorts the results by distance
+ * from the input point to mimic `/nearest` semantics. We can't use the
+ * real `/nearest` endpoint because it's BNG-only — it interprets the
+ * `point` parameter as eastings,northings regardless of any `srs`
+ * value, and rejects WGS84 with "Area of data coverage is in BNG and
+ * is a minimum of 0,0 to maximum of 700000.00,1300000.00. Provided
+ * coordinates fall outside this area."
+ *
+ * Doing this client-side keeps us free of a proj4 dependency for the
+ * WGS84↔BNG conversion. Distance ordering is by haversine — accurate
+ * enough at city-block scale.
  */
 export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 25): Promise<OsPlacesResult[]> {
   if (!isOsConfigured()) return [];
@@ -164,7 +172,7 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
       srs: "WGS84",
       dataset: "DPA",
     });
-    const url = `${PLACES_BASE}/nearest?${params.toString()}`;
+    const url = `${PLACES_BASE}/radius?${params.toString()}`;
     const resp = await fetch(url, { headers: { Accept: "application/json" } });
     if (resp.status === 401 || resp.status === 404) return [] as OsPlacesResult[];
     if (!resp.ok) {
@@ -172,7 +180,26 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
       throw new Error(`OS Places nearest error ${resp.status}: ${text.slice(0, 200)}`);
     }
     const data = await resp.json();
-    return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+    const results = (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+    // /radius returns results unordered relative to the input point.
+    // Sort by haversine distance so the first item is the true nearest,
+    // matching the old /nearest contract callers expect.
+    const toRad = (v: number) => (v * Math.PI) / 180;
+    const hav = (aLat: number, aLng: number, bLat: number, bLng: number): number => {
+      const dLat = toRad(bLat - aLat);
+      const dLng = toRad(bLng - aLng);
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+      return 2 * 6371000 * Math.asin(Math.sqrt(a));
+    };
+    results.sort((a: OsPlacesResult, b: OsPlacesResult) => {
+      const aLat = Number(a.latitude); const aLng = Number(a.longitude);
+      const bLat = Number(b.latitude); const bLng = Number(b.longitude);
+      if (!isFinite(aLat) || !isFinite(aLng)) return 1;
+      if (!isFinite(bLat) || !isFinite(bLng)) return -1;
+      return hav(lat, lng, aLat, aLng) - hav(lat, lng, bLat, bLng);
+    });
+    return results;
   }, 24 * 30);
 }
 
