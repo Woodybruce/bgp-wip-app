@@ -2379,6 +2379,71 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // HMLR bulk sync — pulls the latest CCOD or OCOD monthly snapshot
+  // from gov.uk's "Use land and property data" service and ingests it
+  // into hmlr_proprietors. Long-running (1.5GB CCOD takes ~10-15 min);
+  // returns 202 immediately and runs in the background. Poll
+  // /api/admin/hmlr/runs to see progress.
+  app.post("/api/admin/hmlr/sync", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const dataset = (req.body?.dataset || "ccod") as "ccod" | "ocod";
+      if (dataset !== "ccod" && dataset !== "ocod") {
+        return res.status(400).json({ error: "dataset must be 'ccod' or 'ocod'" });
+      }
+      if (!process.env.HMLR_API_KEY) {
+        return res.status(400).json({ error: "HMLR_API_KEY not set in environment" });
+      }
+
+      // Fire and forget — the sync writes its own status to
+      // hmlr_ingest_runs, so the client polls that to follow along.
+      const { syncHmlrDataset } = await import("./hmlr-fetch");
+      setImmediate(() => {
+        syncHmlrDataset(dataset).catch((err) => {
+          console.error(`[hmlr-sync] ${dataset} background sync failed:`, err?.message);
+        });
+      });
+      res.status(202).json({ ok: true, message: `${dataset.toUpperCase()} sync started — poll /api/admin/hmlr/runs for progress`, dataset });
+    } catch (e: any) {
+      console.error("[hmlr-sync] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Recent HMLR sync runs, newest first. Used by the admin UI to poll
+  // sync progress (rows_processed updates every 10k rows mid-flight).
+  app.get("/api/admin/hmlr/runs", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const runs = await pool.query(
+        `SELECT id, dataset, status, source_filename, rows_processed, rows_inserted, rows_updated, rows_skipped, error, started_at, finished_at
+           FROM hmlr_ingest_runs
+          ORDER BY started_at DESC
+          LIMIT 20`,
+      );
+      const counts = await pool.query<{ dataset: string; count: string }>(
+        `SELECT dataset, COUNT(*)::text AS count FROM hmlr_proprietors GROUP BY dataset`,
+      );
+      res.json({
+        runs: runs.rows,
+        counts: Object.fromEntries(counts.rows.map((r) => [r.dataset, Number(r.count)])),
+        apiKeySet: !!process.env.HMLR_API_KEY,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Backfill: create CRM deals for any tracker rows that are still missing dealId.
   // Safe to run multiple times — skips rows that already have a dealId.
   app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
