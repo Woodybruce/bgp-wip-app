@@ -11786,6 +11786,11 @@ export function setupChatBGPRoutes(app: Express) {
             try {
               const toolTimeoutMs =
                 tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
+                // Audio/video transcription pipeline: download (can be 100s of MB)
+                // → ffmpeg audio strip → ffprobe duration → Whisper (~1m of audio
+                // per ~5-10s of API time). 30-min Teams recording realistically
+                // needs ~3-5 minutes total. Bucket it with the heavy long-runners.
+                tcName === "transcribe_audio" ? 300000 :
                 tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
                 15000;
               const toolResult = await withTimeout(
@@ -12099,6 +12104,11 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
             try {
               const toolTimeoutMs =
                 tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
+                // Audio/video transcription pipeline: download (can be 100s of MB)
+                // → ffmpeg audio strip → ffprobe duration → Whisper (~1m of audio
+                // per ~5-10s of API time). 30-min Teams recording realistically
+                // needs ~3-5 minutes total. Bucket it with the heavy long-runners.
+                tcName === "transcribe_audio" ? 300000 :
                 tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
                 15000;
               const toolResult = await withTimeout(
