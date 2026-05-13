@@ -2452,6 +2452,74 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Fetch CCOD / OCOD from a SharePoint share link and ingest server-
+  // side. Way better than browser upload for the 1.5 GB CCOD case
+  // because nothing crosses through Railway's edge proxy — server
+  // streams from Microsoft Graph straight to local /tmp, then runs
+  // the existing ingest path. Folder share links are walked
+  // automatically; the matcher picks up files named CCOD_FULL_*.zip
+  // / OCOD_FULL_*.zip / *.csv variants.
+  app.post("/api/admin/hmlr/fetch-from-sharepoint", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+      const shareUrl: string = req.body?.shareUrl;
+      if (!shareUrl) return res.status(400).json({ error: "shareUrl required in body" });
+
+      const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
+      const { ingestUploadedCsv } = await import("./hmlr-fetch");
+
+      const meta = await resolveSharePointShareLinkMetadata(shareUrl);
+      // Figure out the list of {filename, downloadUrl, size} to ingest.
+      // Folder share → all matching children. File share → just that file.
+      const candidates: { filename: string; downloadUrl: string; size: number }[] = meta.isFolder
+        ? (meta.children || [])
+        : meta.downloadUrl
+          ? [{ filename: meta.name, downloadUrl: meta.downloadUrl, size: meta.size || 0 }]
+          : [];
+      const hmlrFiles = candidates.filter((c) => /^(ccod|ocod)/i.test(c.filename) && /\.(zip|csv)$/i.test(c.filename));
+      if (hmlrFiles.length === 0) {
+        return res.status(400).json({
+          error: `No CCOD/OCOD files found at share link. Saw: ${candidates.map((c) => c.filename).join(", ") || "(empty)"}. Expected names like CCOD_FULL_2026_05.zip or OCOD_FULL_2026_05.csv.`,
+        });
+      }
+
+      // Fire-and-forget: stream each file to /tmp then ingest. Returns
+      // 202 immediately. Each file gets its own hmlr_ingest_runs row so
+      // /api/admin/hmlr/runs shows progress per dataset.
+      setImmediate(() => {
+        (async () => {
+          for (const f of hmlrFiles) {
+            const localPath = path.join(os.tmpdir(), `hmlr-sp-${Date.now()}-${f.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+            try {
+              console.log(`[hmlr-sp] streaming ${f.filename} (${(f.size / 1024 / 1024).toFixed(1)} MB) to ${localPath}`);
+              await streamUrlToFile(f.downloadUrl, localPath);
+              // ingestUploadedCsv autodetects the dataset from filename
+              const detected = /^ccod/i.test(f.filename) ? "ccod" : "ocod";
+              await ingestUploadedCsv(localPath, detected, f.filename);
+            } catch (err: any) {
+              console.error(`[hmlr-sp] failed for ${f.filename}:`, err?.message);
+            } finally {
+              try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+            }
+          }
+        })();
+      });
+
+      res.status(202).json({
+        ok: true,
+        message: `Started ingest for ${hmlrFiles.length} file(s) — poll /api/admin/hmlr/runs for progress`,
+        files: hmlrFiles.map((f) => ({ filename: f.filename, sizeMB: Math.round(f.size / 1024 / 1024) })),
+      });
+    } catch (e: any) {
+      console.error("[hmlr-sp] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Clear HMLR ingest data — useful when a mislabelled upload has put
   // bad data into the table and you want to start fresh. Caller passes
   // dataset='ccod' | 'ocod' | 'all' to scope the delete.

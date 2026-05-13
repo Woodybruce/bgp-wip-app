@@ -58,3 +58,57 @@ export async function downloadFolderChild(downloadUrl: string): Promise<Buffer> 
   const ab = await res.arrayBuffer();
   return Buffer.from(ab);
 }
+
+/**
+ * Resolve a share link to the underlying driveItem metadata + (if a
+ * file) a fresh @microsoft.graph.downloadUrl. Returns no bytes. Used
+ * when the caller wants to stream the file to disk rather than buffer
+ * the whole thing in memory — essential for files like HMLR's CCOD
+ * (1.5 GB CSV) which would exhaust Node's heap if buffered.
+ */
+export async function resolveSharePointShareLinkMetadata(shareUrl: string): Promise<{
+  isFolder: boolean;
+  name: string;
+  size?: number;
+  downloadUrl?: string;
+  children?: { filename: string; downloadUrl: string; size: number }[];
+}> {
+  const encoded = encodeShareUrl(shareUrl);
+  const driveItem: any = await graphRequest(`/shares/${encoded}/driveItem`);
+  if (driveItem.folder) {
+    const children: any = await graphRequest(
+      `/shares/${encoded}/driveItem/children?$select=name,size,@microsoft.graph.downloadUrl,folder`,
+    );
+    return {
+      isFolder: true,
+      name: driveItem.name,
+      children: (children?.value || [])
+        .filter((c: any) => !c.folder && c["@microsoft.graph.downloadUrl"])
+        .map((c: any) => ({
+          filename: c.name,
+          downloadUrl: c["@microsoft.graph.downloadUrl"],
+          size: c.size || 0,
+        })),
+    };
+  }
+  return {
+    isFolder: false,
+    name: driveItem.name,
+    size: driveItem.size,
+    downloadUrl: driveItem["@microsoft.graph.downloadUrl"],
+  };
+}
+
+/**
+ * Stream a download URL directly to disk so very large files don't
+ * buffer in memory. Returns the local path.
+ */
+export async function streamUrlToFile(url: string, destPath: string): Promise<void> {
+  const fs = await import("fs");
+  const { pipeline } = await import("stream/promises");
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) throw new Error(`Stream download failed: HTTP ${res.status}`);
+  if (!res.body) throw new Error("Stream download had no response body");
+  const out = fs.createWriteStream(destPath);
+  await pipeline(res.body as any, out);
+}
