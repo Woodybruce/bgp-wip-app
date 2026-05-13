@@ -2483,7 +2483,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const hmlrFiles = candidates.filter((c) => /^(ccod|ocod)/i.test(c.filename) && /\.(zip|csv)$/i.test(c.filename));
       if (hmlrFiles.length === 0) {
         return res.status(400).json({
-          error: `No CCOD/OCOD files found at share link. Saw: ${candidates.map((c) => c.filename).join(", ") || "(empty)"}. Expected names like CCOD_FULL_2026_05.zip or OCOD_FULL_2026_05.csv.`,
+          error: `No CCOD/OCOD files found at share link. Filtered children: ${candidates.map((c) => c.filename).join(", ") || "(empty)"}. Raw folder contents: ${meta.rawChildSummary ? `${meta.rawChildSummary.total} items, sample: ${meta.rawChildSummary.sample.join(", ")}` : "(no folder)"}. Expected names like CCOD_FULL_2026_05.zip or OCOD_FULL_2026_05.csv.`,
+          rawChildSummary: meta.rawChildSummary,
+          candidates: candidates.map((c) => c.filename),
         });
       }
 

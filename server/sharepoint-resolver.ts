@@ -72,23 +72,39 @@ export async function resolveSharePointShareLinkMetadata(shareUrl: string): Prom
   size?: number;
   downloadUrl?: string;
   children?: { filename: string; downloadUrl: string; size: number }[];
+  /** Raw children count + first few filenames — populated even when
+   *  the filtered children[] is empty, so callers can diagnose why
+   *  nothing matched (permissions, sub-folders, etc.). */
+  rawChildSummary?: { total: number; sample: string[] };
 }> {
   const encoded = encodeShareUrl(shareUrl);
   const driveItem: any = await graphRequest(`/shares/${encoded}/driveItem`);
   if (driveItem.folder) {
-    const children: any = await graphRequest(
-      `/shares/${encoded}/driveItem/children?$select=name,size,@microsoft.graph.downloadUrl,folder`,
-    );
+    // No $select — Microsoft Graph treats @microsoft.graph.downloadUrl
+    // as an instance annotation that gets stripped if you $select
+    // explicit fields. The default response already includes it for
+    // file children. Page through all children (folders > 200 items
+    // would need this) — for HMLR's case it's only 2 files but cheap
+    // to keep robust.
+    let all: any[] = [];
+    let next: string | null = `/shares/${encoded}/driveItem/children`;
+    let hops = 0;
+    while (next && hops < 50) {
+      const page: any = await graphRequest(next);
+      all = all.concat(page?.value || []);
+      next = page?.["@odata.nextLink"] ? page["@odata.nextLink"].replace("https://graph.microsoft.com/v1.0", "") : null;
+      hops++;
+    }
+    const childFiles = all.filter((c: any) => !c.folder && c["@microsoft.graph.downloadUrl"]);
     return {
       isFolder: true,
       name: driveItem.name,
-      children: (children?.value || [])
-        .filter((c: any) => !c.folder && c["@microsoft.graph.downloadUrl"])
-        .map((c: any) => ({
-          filename: c.name,
-          downloadUrl: c["@microsoft.graph.downloadUrl"],
-          size: c.size || 0,
-        })),
+      rawChildSummary: { total: all.length, sample: all.slice(0, 10).map((c) => `${c.name}${c.folder ? "/" : ""}`) },
+      children: childFiles.map((c: any) => ({
+        filename: c.name,
+        downloadUrl: c["@microsoft.graph.downloadUrl"],
+        size: c.size || 0,
+      })),
     };
   }
   return {
