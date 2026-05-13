@@ -56,10 +56,20 @@ function requireApiKey(): string {
 }
 
 /**
- * Find the latest "FULL" monthly file for a dataset. CCOD/OCOD also
- * publish "COU" (change-only-update) files between full releases — for
- * v1 we always pull the latest FULL so the local table is a clean
- * snapshot, not a delta chain we have to replay.
+ * Pick the file to download for a dataset. HMLR publishes monthly
+ * snapshots; the API exposes them under public_resources. Historically
+ * each dataset had two files per month — "FULL" (snapshot) + "COU"
+ * (change-only update since last full) — but the naming convention has
+ * varied: sometimes `OCOD_FULL_YYYY_MM.zip`, sometimes a single file
+ * with no FULL/COU token at all.
+ *
+ * Strategy: prefer anything matching /FULL/i (older convention), fall
+ * back to anything that doesn't match /COU/i (newer convention where
+ * only one file is published), then by last_updated DESC. Never picks
+ * a known COU delta unless that's literally the only thing available.
+ *
+ * Always logs the full filename list so a future shape change is
+ * visible in the error message (see the syncHmlrDataset failRun path).
  */
 async function getLatestFullFilename(dataset: HmlrDataset): Promise<{ filename: string; sizeBytes: number; lastUpdated: string }> {
   const apiKey = requireApiKey();
@@ -71,15 +81,20 @@ async function getLatestFullFilename(dataset: HmlrDataset): Promise<{ filename: 
   }
   const data = (await res.json()) as HmlrDatasetListResponse;
   const files = data?.result?.public_resources || [];
-  // FULL files are named like "CCOD_FULL_2025_05.zip" / "OCOD_FULL_2025_05.zip".
-  // Some response shapes use lower-case; match both.
-  const fulls = files.filter((f) => /_FULL_/i.test(f.file_name));
-  if (fulls.length === 0) {
-    throw new Error(`HMLR ${dataset} response had no FULL file (saw ${files.length} resources)`);
+  if (files.length === 0) {
+    throw new Error(`HMLR ${dataset} response had no resources. Response keys: ${Object.keys(data?.result || data || {}).join(", ")}`);
   }
-  // Pick the most recent by last_updated.
-  fulls.sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
-  return { filename: fulls[0].file_name, sizeBytes: fulls[0].size_bytes, lastUpdated: fulls[0].last_updated };
+  const seenNames = files.map((f) => f.file_name);
+  // Sort newest first.
+  const sorted = [...files].sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
+  const fulls = sorted.filter((f) => /full/i.test(f.file_name));
+  const nonCou = sorted.filter((f) => !/cou|change|delta/i.test(f.file_name));
+  const pick = fulls[0] || nonCou[0] || sorted[0];
+  if (!pick) {
+    throw new Error(`HMLR ${dataset} response had ${files.length} resources but none looked like a snapshot. Filenames: ${seenNames.join(", ")}`);
+  }
+  console.log(`[hmlr-fetch] ${dataset} resources: [${seenNames.join(", ")}] → picked ${pick.file_name}`);
+  return { filename: pick.file_name, sizeBytes: pick.size_bytes, lastUpdated: pick.last_updated };
 }
 
 /**
