@@ -234,6 +234,7 @@ const COLUMN_LABELS: Record<string, string> = {
   team: "Team",
   agent: "BGP Contact",
   assetClass: "Asset Class",
+  unit: "Unit",
   clientContact: "Client Contact",
   tenant: "Tenant",
   vendor: "Vendor",
@@ -3760,6 +3761,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     team: true,
     agent: true,
     assetClass: true,
+    unit: true,
     clientContact: true,
     tenant: true,
     vendor: true,
@@ -4522,6 +4524,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
+                    {visibleColumns.unit && <TableHead className="min-w-[120px]">Unit</TableHead>}
                     {visibleColumns.tenant && <TableHead className="min-w-[120px]">Tenant</TableHead>}
                     {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
                     {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
@@ -4652,6 +4655,21 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "team", v.length > 0 ? v : null)}
                             testId={`inline-deal-team-${deal.id}`}
                           />
+                        </TableCell>
+                      )}
+                      {visibleColumns.unit && (
+                        <TableCell className="px-1.5 py-1">
+                          {deal.unitId && unitMap.get(deal.unitId) ? (
+                            <a
+                              href={deal.propertyId ? `/properties/${deal.propertyId}` : "#"}
+                              className="text-xs text-blue-600 hover:underline"
+                              data-testid={`deal-unit-${deal.id}`}
+                            >
+                              {unitMap.get(deal.unitId)}
+                            </a>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.tenant && (

@@ -1044,7 +1044,6 @@ export default function AvailableUnitsPage() {
                 <TableHead className="text-center">Offers</TableHead>
                 <TableHead className="text-right">Fee</TableHead>
                 <TableHead>BGP Contact</TableHead>
-                <TableHead>WIP Deal</TableHead>
                 <TableHead className="w-[110px]">Fee Agreement</TableHead>
                 <TableHead>Marketing</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
@@ -1159,28 +1158,16 @@ export default function AvailableUnitsPage() {
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell className="px-1.5 max-w-[140px]">
-                        <div className="flex items-center gap-1">
-                          <InlineLinkSelect
-                            value={u.unitId}
-                            options={(unitsByProperty[u.propertyId] || []).map(pu => ({ id: pu.id, name: pu.unitName }))}
-                            href={u.propertyId ? `/properties/${u.propertyId}` : undefined}
-                            onSave={(id) => {
-                              if (id) pickOrCreateUnit(u, { unitId: id });
-                            }}
-                            onCreate={(newName) => pickOrCreateUnit(u, { newName })}
-                            placeholder="Pick unit"
-                          />
-                          {deal && (
-                            <a
-                              href={`/deals/${deal.id}`}
-                              title={`Open deal: ${deal.name || u.unitName}`}
-                              className="shrink-0 text-muted-foreground hover:text-primary"
-                              onClick={e => e.stopPropagation()}
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                        </div>
+                        <InlineLinkSelect
+                          value={u.unitId}
+                          options={(unitsByProperty[u.propertyId] || []).map(pu => ({ id: pu.id, name: pu.unitName }))}
+                          href={u.propertyId ? `/properties/${u.propertyId}` : undefined}
+                          onSave={(id) => {
+                            if (id) pickOrCreateUnit(u, { unitId: id });
+                          }}
+                          onCreate={(newName) => pickOrCreateUnit(u, { newName })}
+                          placeholder="Pick unit"
+                        />
                       </TableCell>
                       <TableCell>
                         <InlineSelect
@@ -1344,36 +1331,6 @@ export default function AvailableUnitsPage() {
                           placeholder="Set agent"
                           testId={`inline-agent-${u.id}`}
                         />
-                      </TableCell>
-                      <TableCell>
-                        {deal ? (
-                          <a href={`/deals/${deal.id}`} className="text-xs text-blue-600 hover:underline" data-testid={`link-deal-${u.id}`}>
-                            {deal.name || "View Deal"}
-                          </a>
-                        ) : (
-                          <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-1 text-xs"
-                              onClick={() => { setLinkDealOpen(u); setLinkDealId(""); }}
-                              title="Link existing deal"
-                              data-testid={`button-link-deal-${u.id}`}
-                            >
-                              <Link2 className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-1 text-xs"
-                              onClick={() => createDealMutation.mutate(u.id)}
-                              title="Auto-create deal"
-                              data-testid={`button-create-deal-${u.id}`}
-                            >
-                              <ArrowRightLeft className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        )}
                       </TableCell>
                       <TableCell className="px-1.5 py-1">
                         {deal ? (
