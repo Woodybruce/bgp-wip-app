@@ -29,6 +29,7 @@ import {
   Sparkles,
   Activity,
   TrendingUp,
+  Store,
 } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
@@ -172,6 +173,7 @@ export function PropertyDetail({ id }: { id: string }) {
     team: true,
     clients: false,
     deals: false,
+    availableUnits: true,
     landRegistry: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
@@ -585,7 +587,7 @@ export function PropertyDetail({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="w-[300px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+        <div className="w-[380px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">
@@ -702,8 +704,22 @@ export function PropertyDetail({ id }: { id: string }) {
               </button>
               {sidebarSections.deals && (
                 <div className="px-4 pb-3 space-y-2">
-                  <InlineDeals propertyId={id} dealLinks={dealLinks} allDeals={allDealsForDetail} />
                   <LinkedDealsPanel propertyId={property.id} />
+                </div>
+              )}
+            </div>
+
+            <div className="border-b">
+              <button onClick={() => toggleSection("availableUnits")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-available-units-section">
+                <div className="flex items-center gap-2">
+                  <Store className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Available Units</span>
+                </div>
+                {sidebarSections.availableUnits ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </button>
+              {sidebarSections.availableUnits && (
+                <div className="px-4 pb-3">
+                  <AvailableUnitsPanel propertyId={property.id} />
                 </div>
               )}
             </div>
@@ -725,6 +741,72 @@ export function PropertyDetail({ id }: { id: string }) {
           </ScrollArea>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Available Units panel for the property sidebar ──────────────────────────
+// Shows units from the Letting Tracker that are anchored to this property,
+// with their status, asking rent and a click-through to the linked deal.
+interface AvailableUnitRow {
+  id: string;
+  unitName: string;
+  marketingStatus: string | null;
+  askingRent: number | null;
+  sqft: number | null;
+  dealId: string | null;
+  dealRef: string | null;
+}
+function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
+  const { data: units = [], isLoading } = useQuery<AvailableUnitRow[]>({
+    queryKey: ["/api/available-units", { propertyId }],
+    queryFn: async () => {
+      const r = await fetch(`/api/available-units?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include" });
+      if (!r.ok) throw new Error("failed to load units");
+      return r.json();
+    },
+  });
+
+  if (isLoading) {
+    return <div className="space-y-1.5">{[1, 2].map(i => <Skeleton key={i} className="h-12" />)}</div>;
+  }
+  if (units.length === 0) {
+    return (
+      <div className="text-center py-4">
+        <Store className="w-7 h-7 mx-auto mb-1.5 text-muted-foreground/30" />
+        <p className="text-xs text-muted-foreground">No units on the Letting Tracker yet</p>
+        <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline mt-1 inline-block">
+          Add unit →
+        </a>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1.5" data-testid="available-units-panel">
+      {units.map(u => (
+        <div key={u.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-card hover:bg-muted/40">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium truncate">{u.unitName || "—"}</div>
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              {u.marketingStatus && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{u.marketingStatus}</Badge>}
+              {u.sqft && <span>{u.sqft.toLocaleString()} sqft</span>}
+              {u.askingRent && <span>£{u.askingRent.toLocaleString()}</span>}
+            </div>
+          </div>
+          {u.dealId && (
+            <a
+              href={`/deals/${u.dealId}`}
+              className="text-[11px] font-mono text-blue-600 hover:underline shrink-0"
+              title="Open deal"
+            >
+              {u.dealRef ? `#${u.dealRef}` : "Deal →"}
+            </a>
+          )}
+        </div>
+      ))}
+      <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
+        Open in Letting Tracker →
+      </a>
     </div>
   );
 }
