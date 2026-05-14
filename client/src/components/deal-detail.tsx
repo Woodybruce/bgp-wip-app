@@ -203,6 +203,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({
     queryKey: ["/api/users"],
   });
+
+  // Look up the unit name so we can show breadcrumb context + a back-to-tracker
+  // link. Only fetched when this deal is anchored to a unit (leasing-side).
+  const { data: propertyUnits = [] } = useQuery<Array<{ id: string; unitName: string; propertyId: string }>>({
+    queryKey: ["/api/property-units"],
+    enabled: !!(deal as any)?.unitId,
+  });
+  const linkedUnit = (deal as any)?.unitId
+    ? propertyUnits.find((u) => u.id === (deal as any).unitId)
+    : null;
   const userColorMap = useMemo(() => buildUserColorMap(users as any), [users]);
 
   useEffect(() => {
@@ -403,6 +413,29 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
             )}
           </div>
+          {(linkedProperty || linkedUnit || (deal as any).unitId) && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
+              {linkedProperty && (
+                <Link href={`/properties/${linkedProperty.id}`}>
+                  <a className="hover:underline hover:text-foreground">{linkedProperty.name}</a>
+                </Link>
+              )}
+              {linkedProperty && linkedUnit && <span>·</span>}
+              {linkedUnit && (
+                <Link href={`/properties/${linkedUnit.propertyId}`}>
+                  <a className="hover:underline hover:text-foreground">{linkedUnit.unitName}</a>
+                </Link>
+              )}
+              {(deal as any).unitId && (
+                <>
+                  <span>·</span>
+                  <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`}>
+                    <a className="hover:underline hover:text-foreground" data-testid="link-back-to-tracker">← Back to Letting Tracker</a>
+                  </Link>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Link href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
