@@ -2900,6 +2900,97 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // sequentially. Useful for verifying the unit name shows up consistently across
   // tracker / deal / property views. Cascades to available_units +
   // leasing_schedule_units which carry their own copy of the name.
+  // Entity images — one set of endpoints serving property / unit / deal. Bytes
+  // live in file_blobs; metadata in uploaded_files (kind='entity_image') so the
+  // existing file-serving route can stream them via /api/hr/files/:id/file.
+  const entityImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (/^image\/(png|jpeg|jpg|webp|gif)$/i.test(file.mimetype)) cb(null, true);
+      else cb(new Error("PNG, JPEG, WebP or GIF only"));
+    },
+  });
+
+  app.get("/api/entity-images", requireAuth, async (req: any, res) => {
+    const { entityType, entityId } = req.query;
+    if (!entityType || !entityId) return res.status(400).json({ error: "entityType and entityId required" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT ei.id, ei.entity_type, ei.entity_id, ei.file_id, ei.kind, ei.title, ei.notes,
+                ei.created_at, ei.created_by_user_id, u.name AS created_by_name,
+                f.mime_type
+         FROM entity_images ei
+         LEFT JOIN users u ON u.id = ei.created_by_user_id
+         LEFT JOIN uploaded_files f ON f.id = ei.file_id
+         WHERE ei.entity_type = $1 AND ei.entity_id = $2
+         ORDER BY ei.created_at DESC`,
+        [entityType, entityId]
+      );
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  app.post("/api/entity-images", requireAuth, entityImageUpload.single("file"), async (req: any, res) => {
+    const { entityType, entityId, kind, title, notes } = req.body;
+    if (!entityType || !entityId) return res.status(400).json({ error: "entityType and entityId required" });
+    if (!req.file) return res.status(400).json({ error: "file required (multipart 'file')" });
+    try {
+      const userId = req.user?.id ?? null;
+      const fileMeta = await pool.query(
+        `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+         VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+        [userId, req.file.originalname, req.file.mimetype, req.file.size]
+      );
+      const fileId = fileMeta.rows[0].id;
+      await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, req.file.buffer]);
+      const ins = await pool.query(
+        `INSERT INTO entity_images (entity_type, entity_id, file_id, kind, title, notes, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [entityType, entityId, fileId, kind || null, title || null, notes || null, userId]
+      );
+      res.json({ id: ins.rows[0].id, fileId });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Public-ish read for entity images — any signed-in BGP user. Mirrors the
+  // /api/hr/photo route's reasoning (these aren't sensitive personal data).
+  app.get("/api/entity-images/:id/file", requireAuth, async (req, res) => {
+    try {
+      const meta = await pool.query(
+        `SELECT f.id, f.mime_type FROM entity_images ei
+         JOIN uploaded_files f ON f.id = ei.file_id
+         WHERE ei.id = $1`,
+        [req.params.id]
+      );
+      if (!meta.rows[0]) return res.status(404).end();
+      const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [meta.rows[0].id]);
+      if (!blob.rows[0]) return res.status(404).end();
+      res.setHeader("Content-Type", meta.rows[0].mime_type || "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(blob.rows[0].data);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  app.delete("/api/entity-images/:id", requireAuth, async (req: any, res) => {
+    try {
+      const meta = await pool.query("SELECT file_id FROM entity_images WHERE id = $1", [req.params.id]);
+      if (!meta.rows[0]) return res.status(404).end();
+      await pool.query("DELETE FROM entity_images WHERE id = $1", [req.params.id]);
+      await pool.query("DELETE FROM file_blobs WHERE file_id = $1", [meta.rows[0].file_id]);
+      await pool.query("DELETE FROM uploaded_files WHERE id = $1", [meta.rows[0].file_id]);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);

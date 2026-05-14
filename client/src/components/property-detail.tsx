@@ -31,7 +31,7 @@ import {
   TrendingUp,
   Store,
 } from "lucide-react";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
@@ -175,6 +175,7 @@ export function PropertyDetail({ id }: { id: string }) {
     deals: false,
     availableUnits: true,
     landRegistry: false,
+    images: true,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -738,6 +739,21 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               )}
             </div>
+
+            <div className="border-b">
+              <button onClick={() => toggleSection("images")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-images-section">
+                <div className="flex items-center gap-2">
+                  <ImageIcon className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Images</span>
+                </div>
+                {sidebarSections.images ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </button>
+              {sidebarSections.images && (
+                <div className="px-4 pb-3">
+                  <EntityImagesPanel entityType="property" entityId={property.id} />
+                </div>
+              )}
+            </div>
           </ScrollArea>
         </div>
       </div>
@@ -807,6 +823,117 @@ function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
       <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
         Open in Letting Tracker →
       </a>
+    </div>
+  );
+}
+
+// ── Entity images panel ─────────────────────────────────────────────────────
+// Drop-zone for photos + Street View captures, plus a thumbnail grid. Same
+// component serves property / unit / deal — pass entityType + entityId.
+interface EntityImageRow {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  file_id: string;
+  kind: string | null;
+  title: string | null;
+  notes: string | null;
+  created_at: string;
+  created_by_name: string | null;
+  mime_type: string | null;
+}
+function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | "unit" | "deal"; entityId: string }) {
+  const { toast } = useToast();
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: images = [], isLoading } = useQuery<EntityImageRow[]>({
+    queryKey: ["/api/entity-images", entityType, entityId],
+    queryFn: async () => {
+      const r = await fetch(`/api/entity-images?entityType=${entityType}&entityId=${encodeURIComponent(entityId)}`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const uploadFile = async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("entityType", entityType);
+    fd.append("entityId", entityId);
+    fd.append("kind", "photo");
+    const r = await fetch("/api/entity-images", { method: "POST", body: fd, credentials: "include" });
+    if (!r.ok) throw new Error(await r.text());
+  };
+
+  const uploadMutation = useMutation({
+    mutationFn: async (files: FileList) => {
+      const list = Array.from(files).filter(f => /^image\//.test(f.type));
+      for (const f of list) await uploadFile(f);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/entity-images", entityType, entityId] });
+      toast({ title: "Image saved" });
+    },
+    onError: (err: any) => toast({ title: "Upload failed", description: err?.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/entity-images/${id}`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error(await r.text());
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/entity-images", entityType, entityId] }),
+  });
+
+  return (
+    <div className="space-y-2" data-testid="entity-images-panel">
+      <div
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => {
+          e.preventDefault();
+          setDragOver(false);
+          if (e.dataTransfer.files.length > 0) uploadMutation.mutate(e.dataTransfer.files);
+        }}
+        onClick={() => fileInputRef.current?.click()}
+        className={`border-2 border-dashed rounded-md p-3 text-center text-xs cursor-pointer transition-colors ${dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/60"}`}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={e => { if (e.target.files && e.target.files.length > 0) uploadMutation.mutate(e.target.files); }}
+        />
+        {uploadMutation.isPending ? "Uploading…" : "Drop images here or click to upload"}
+      </div>
+
+      {isLoading ? (
+        <div className="grid grid-cols-3 gap-1.5">{[1, 2, 3].map(i => <Skeleton key={i} className="aspect-square" />)}</div>
+      ) : images.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground italic">No images yet.</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-1.5">
+          {images.map(img => (
+            <div key={img.id} className="relative group aspect-square rounded overflow-hidden border bg-muted">
+              <img
+                src={`/api/entity-images/${img.id}/file`}
+                alt={img.title || "image"}
+                className="w-full h-full object-cover"
+              />
+              <button
+                onClick={() => deleteMutation.mutate(img.id)}
+                className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Delete"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

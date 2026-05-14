@@ -1241,6 +1241,22 @@ import { pool } from "./db";
     `ALTER TABLE property_units ADD COLUMN IF NOT EXISTS unit_postcode TEXT`,
     `ALTER TABLE property_units ADD COLUMN IF NOT EXISTS unit_uprn TEXT`,
     `ALTER TABLE property_units ADD COLUMN IF NOT EXISTS unit_address_free_text TEXT`,
+    // Entity images — single table that attaches an image to a property, unit
+    // or deal. Bytes live in file_blobs (same pattern as profile photos /
+    // payslips). Captured from Street View, dropped in from disk, or
+    // produced by Image Studio.
+    `CREATE TABLE IF NOT EXISTS entity_images (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_type TEXT NOT NULL,
+      entity_id VARCHAR NOT NULL,
+      file_id VARCHAR NOT NULL,
+      kind TEXT,
+      title TEXT,
+      notes TEXT,
+      created_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS entity_images_entity_idx ON entity_images (entity_type, entity_id, created_at DESC)`,
     // Compliance overrides — captured when someone promotes a deal to SOL
     // without AML / fee agreement being complete. Lets us produce a compliance
     // report and chase the gaps before exchange.

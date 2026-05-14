@@ -1584,6 +1584,19 @@ export const propertyUnits = pgTable("property_units", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const entityImages = pgTable("entity_images", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityType: text("entity_type").notNull(),   // property | unit | deal
+  entityId: varchar("entity_id").notNull(),
+  fileId: varchar("file_id").notNull(),         // → file_blobs
+  kind: text("kind"),                           // street_view | photo | floor_plan | other
+  title: text("title"),
+  notes: text("notes"),
+  createdByUserId: varchar("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type EntityImage = typeof entityImages.$inferSelect;
+
 export const insertPropertyUnitSchema = createInsertSchema(propertyUnits).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertPropertyUnit = z.infer<typeof insertPropertyUnitSchema>;
 export type PropertyUnit = typeof propertyUnits.$inferSelect;
