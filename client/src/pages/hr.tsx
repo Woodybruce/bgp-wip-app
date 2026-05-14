@@ -370,6 +370,8 @@ interface CvDataResponse {
   ricsPathway: string | null;
   ricsNumber: string | null;
   apcStatus: string | null;
+  apcPlannedSitting: string | null;
+  apcAssessmentDate: string | null;
   linkedinUrl: string | null;
   summary: string | null;
   specialisms: string[];
@@ -515,19 +517,21 @@ function CvTab({ userId, canEdit }: { userId: string; canEdit: boolean }) {
           </div>
         )}
 
-        {(data.education || data.ricsNumber || data.ricsPathway || data.apcStatus === "completed") && (
+        {(data.education || data.ricsNumber || data.ricsPathway || data.apcStatus === "completed" || data.apcStatus === "in_progress") && (
           <div className="mb-2">
             <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Qualifications</h3>
             {data.education && <p className="text-sm">{data.education}</p>}
-            {(data.ricsNumber || data.ricsPathway || data.apcStatus === "completed") && (
-              <p className="text-sm">
-                {[
-                  data.apcStatus === "completed" ? "MRICS" : null,
-                  data.ricsPathway,
-                  data.ricsNumber ? `Member ${data.ricsNumber}` : null,
-                ].filter(Boolean).join(" · ")}
-              </p>
-            )}
+            {(() => {
+              const sittingLabel = data.apcPlannedSitting
+                || (data.apcAssessmentDate ? new Date(data.apcAssessmentDate).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null);
+              const apcBit = data.apcStatus === "completed"
+                ? "MRICS"
+                : data.apcStatus === "in_progress"
+                  ? (sittingLabel ? `APC candidate (sitting ${sittingLabel})` : "APC candidate")
+                  : null;
+              const bits = [apcBit, data.ricsPathway, data.ricsNumber ? `Member ${data.ricsNumber}` : null].filter(Boolean);
+              return bits.length > 0 ? <p className="text-sm">{bits.join(" · ")}</p> : null;
+            })()}
           </div>
         )}
 
