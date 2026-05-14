@@ -1089,7 +1089,16 @@ export default function AvailableUnitsPage() {
                         </button>
                       </TableCell>
                       <TableCell className="text-xs font-mono text-muted-foreground">
-                        {deal?.dealRef ? `#${deal.dealRef}` : "—"}
+                        {deal?.dealRef ? (
+                          <a
+                            href={`/deals/${deal.id}`}
+                            className="text-blue-600 hover:underline"
+                            title={`Open deal ${deal.dealRef}`}
+                            data-testid={`link-deal-ref-${u.id}`}
+                          >
+                            #{deal.dealRef}
+                          </a>
+                        ) : "—"}
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-medium max-w-[200px]">
                         <InlineLinkSelect
