@@ -166,6 +166,7 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
 interface UnitFormState {
   unitName: string;
   propertyId: string;
+  dealType: string;
   floor: string;
   sqft: string;
   askingRent: string;
@@ -187,6 +188,7 @@ interface UnitFormState {
 const emptyForm: UnitFormState = {
   unitName: "",
   propertyId: "",
+  dealType: "New Letting",
   floor: "",
   sqft: "",
   askingRent: "",
@@ -209,6 +211,7 @@ function formToPayload(f: UnitFormState) {
   return {
     unitName: f.unitName,
     propertyId: f.propertyId,
+    dealType: f.dealType || "New Letting",
     floor: f.floor || null,
     sqft: f.sqft ? parseFloat(f.sqft) : null,
     askingRent: f.askingRent ? parseFloat(f.askingRent) : null,
@@ -228,10 +231,11 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
+    dealType: dealType || "New Letting",
     floor: u.floor || "",
     sqft: u.sqft?.toString() || "",
     askingRent: u.askingRent?.toString() || "",
@@ -321,6 +325,8 @@ export default function AvailableUnitsPage() {
     leaseLength: "",
     rentFree: "",
     comments: "",
+    amlChecked: "",      // YES | NO | N-A — soft-required at SOL
+    overrideCompliance: false, // user-acknowledged shipping despite incomplete AML/fee agreement
   });
   const { toast } = useToast();
 
@@ -692,6 +698,8 @@ export default function AvailableUnitsPage() {
       leaseLength: existingDeal?.leaseLength?.toString() || "",
       rentFree: existingDeal?.rentFree?.toString() || "",
       comments: existingDeal?.comments || `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
+      amlChecked: existingDeal?.amlCheckCompleted || "",
+      overrideCompliance: false,
     });
     setWipUnit(unit);
   };
@@ -1410,7 +1418,7 @@ export default function AvailableUnitsPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
-                            onClick={() => { setForm(unitToForm(u)); setEditItem(u); }}
+                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }}
                             data-testid={`button-edit-${u.id}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -1565,7 +1573,7 @@ export default function AvailableUnitsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1">Agent</Label>
+                <Label className="text-xs mb-1">Agent *</Label>
                 <Select value={wipForm.agent} onValueChange={v => setWipForm(f => ({ ...f, agent: v }))}>
                   <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
                   <SelectContent>
@@ -1576,7 +1584,7 @@ export default function AvailableUnitsPage() {
                 </Select>
               </div>
               <div>
-                <Label className="text-xs mb-1">Tenant / Applicant</Label>
+                <Label className="text-xs mb-1">Tenant / Applicant *</Label>
                 <Input
                   value={wipForm.tenantName}
                   onChange={e => setWipForm(f => ({ ...f, tenantName: e.target.value }))}
@@ -1587,7 +1595,7 @@ export default function AvailableUnitsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1">Fee (£)</Label>
+                <Label className="text-xs mb-1">Fee (£) *</Label>
                 <CurrencyInput
                   value={wipForm.fee}
                   onChange={v => setWipForm(f => ({ ...f, fee: v }))}
@@ -1597,14 +1605,29 @@ export default function AvailableUnitsPage() {
                 />
               </div>
               <div>
-                <Label className="text-xs mb-1">Fee Agreement</Label>
-                <Input
-                  value={wipForm.feeAgreement}
-                  onChange={e => setWipForm(f => ({ ...f, feeAgreement: e.target.value }))}
-                  placeholder="e.g. 10% of rent"
-                  data-testid="wip-fee-agreement"
-                />
+                <Label className="text-xs mb-1">Fee Agreement signed</Label>
+                <Select value={wipForm.feeAgreement} onValueChange={v => setWipForm(f => ({ ...f, feeAgreement: v }))}>
+                  <SelectTrigger data-testid="wip-fee-agreement"><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YES">YES</SelectItem>
+                    <SelectItem value="NO">NO</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1">AML / KYC checked</Label>
+                <Select value={wipForm.amlChecked} onValueChange={v => setWipForm(f => ({ ...f, amlChecked: v }))}>
+                  <SelectTrigger data-testid="wip-aml"><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YES">YES</SelectItem>
+                    <SelectItem value="NO">NO</SelectItem>
+                    <SelectItem value="N-A">N/A</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -1661,16 +1684,51 @@ export default function AvailableUnitsPage() {
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
-            <Button
-              onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm })}
-              disabled={wipDealMutation.isPending}
-              data-testid="wip-submit"
-            >
-              {wipDealMutation.isPending ? "Saving..." : "Promote to Solicitors"}
-            </Button>
-          </DialogFooter>
+          {(() => {
+            const hardMissing: string[] = [];
+            if (!wipForm.tenantName.trim()) hardMissing.push("Tenant");
+            if (!wipForm.fee.trim()) hardMissing.push("Fee");
+            if (!wipForm.agent.trim()) hardMissing.push("Agent");
+            const softMissing: string[] = [];
+            if (wipForm.feeAgreement !== "YES") softMissing.push("Fee agreement signed");
+            if (wipForm.amlChecked !== "YES" && wipForm.amlChecked !== "N-A") softMissing.push("AML / KYC checked");
+            const canSubmit = hardMissing.length === 0 && (softMissing.length === 0 || wipForm.overrideCompliance);
+            return (
+              <>
+                {(hardMissing.length > 0 || softMissing.length > 0) && (
+                  <div className="rounded-md border p-2 bg-amber-50 dark:bg-amber-900/10 mt-2 space-y-1.5">
+                    {hardMissing.length > 0 && (
+                      <p className="text-xs text-rose-700 dark:text-rose-400">Required before saving: {hardMissing.join(", ")}</p>
+                    )}
+                    {hardMissing.length === 0 && softMissing.length > 0 && (
+                      <>
+                        <p className="text-xs text-amber-700 dark:text-amber-400">Missing compliance: {softMissing.join(", ")}</p>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={wipForm.overrideCompliance}
+                            onChange={e => setWipForm(f => ({ ...f, overrideCompliance: e.target.checked }))}
+                            data-testid="wip-override"
+                          />
+                          <span>Promote anyway — I'll complete these before exchange</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
+                  <Button
+                    onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm })}
+                    disabled={wipDealMutation.isPending || !canSubmit}
+                    data-testid="wip-submit"
+                  >
+                    {wipDealMutation.isPending ? "Saving..." : "Promote to Solicitors"}
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -2206,7 +2264,16 @@ function UnitFormDialog({
             </Select>
           </div>
           <div>
-            <Label>Unit Name / Number</Label>
+            <Label>Deal Type *</Label>
+            <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
+              <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
+              <SelectContent>
+                {CRM_OPTIONS.dealType.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Unit Name / Number *</Label>
             <Popover open={unitPickerOpen} onOpenChange={setUnitPickerOpen}>
               <PopoverTrigger asChild>
                 <div>
@@ -2352,7 +2419,7 @@ function UnitFormDialog({
             <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
           </div>
           <div className="col-span-2">
-            <Label>Agents</Label>
+            <Label>Agents *</Label>
             <div className="flex flex-wrap gap-1.5 p-2 border rounded-md min-h-[38px]">
               {bgpUsers.map(u => {
                 const selected = form.agentUserIds.includes(u.id);
@@ -2386,7 +2453,7 @@ function UnitFormDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId}>
+          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType || form.agentUserIds.length === 0} title={!form.dealType ? "Pick a deal type" : form.agentUserIds.length === 0 ? "Pick at least one BGP agent" : ""}>
             {isPending ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

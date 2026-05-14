@@ -587,7 +587,7 @@ export function PropertyDetail({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="w-[380px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+        <div className="w-[500px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">

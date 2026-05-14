@@ -2329,7 +2329,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             propertyId: unit.propertyId || undefined,
             unitId: unitMasterId || undefined,
             status: unit.marketingStatus || "AVA",
-            dealType: "Leasing",
+            dealType: (req.body as any).dealType || "New Letting",
             internalAgent: unit.agentUserIds || [],
             fee: unit.fee ?? undefined,
             rentPa: unit.askingRent ?? undefined,
@@ -2933,6 +2933,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         leaseLength: body.leaseLength ? parseFloat(body.leaseLength) : undefined,
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
         comments: body.comments || undefined,
+        amlCheckCompleted: body.amlChecked || undefined,
       };
 
       let deal;
