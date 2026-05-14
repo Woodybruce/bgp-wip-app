@@ -4595,21 +4595,24 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-mono text-muted-foreground text-xs">
-                        {deal.dealRef ? `#${deal.dealRef}` : "—"}
+                        {deal.dealRef ? (
+                          <Link
+                            href={`/deals/${deal.id}`}
+                            className="text-blue-600 hover:underline"
+                            data-testid={`link-deal-${deal.id}`}
+                          >
+                            #{deal.dealRef}
+                          </Link>
+                        ) : "—"}
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-medium text-sm max-w-[200px]">
-                        <div className="flex items-center gap-2">
-                          <Link href={`/deals/${deal.id}`} data-testid={`link-deal-${deal.id}`}>
-                            <Handshake className="w-3.5 h-3.5 text-muted-foreground shrink-0 cursor-pointer hover:text-primary" />
-                          </Link>
-                          <InlineLinkSelect
-                            value={deal.propertyId}
-                            options={properties.map(p => ({ id: p.id, name: p.name }))}
-                            href={deal.propertyId ? `/properties/${deal.propertyId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "propertyId", v || null)}
-                            placeholder="Link property"
-                          />
-                        </div>
+                        <InlineLinkSelect
+                          value={deal.propertyId}
+                          options={properties.map(p => ({ id: p.id, name: p.name }))}
+                          href={deal.propertyId ? `/properties/${deal.propertyId}` : undefined}
+                          onSave={(v) => handleInlineSave(deal.id, "propertyId", v || null)}
+                          placeholder="Link property"
+                        />
                       </TableCell>
                       {visibleColumns.landlord && (
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
