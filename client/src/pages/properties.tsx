@@ -1997,6 +1997,9 @@ function CreatePropertyDialog({
         const updates: any = { ...formData };
         if (updates.sqft) updates.sqft = parseFloat(updates.sqft);
         else delete updates.sqft;
+        if (Array.isArray(updates.assetClass)) {
+          updates.assetClass = updates.assetClass.length > 0 ? updates.assetClass.join(", ") : null;
+        }
         // Don't overwrite the resolver-set address with the same payload
         Object.keys(updates).forEach((k) => {
           if (updates[k] === "" || (Array.isArray(updates[k]) && updates[k].length === 0)) delete updates[k];
@@ -2007,6 +2010,12 @@ function CreatePropertyDialog({
       const payload: any = { ...formData };
       if (payload.sqft) payload.sqft = parseFloat(payload.sqft);
       else delete payload.sqft;
+      // Asset class is a single text column on crm_properties. The form allows
+      // multi-select for properties that genuinely serve multiple uses (Retail
+      // + F&B + Leisure on a shopping centre) — flatten to CSV before send.
+      if (Array.isArray(payload.assetClass)) {
+        payload.assetClass = payload.assetClass.length > 0 ? payload.assetClass.join(", ") : null;
+      }
       Object.keys(payload).forEach((k) => {
         if (payload[k] === "" || (Array.isArray(payload[k]) && payload[k].length === 0)) delete payload[k];
       });
