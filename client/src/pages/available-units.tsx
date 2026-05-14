@@ -1044,7 +1044,6 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[140px]">Client</TableHead>
                 <TableHead className="w-[140px]">Tenant</TableHead>
                 <TableHead className="w-[140px]">Team</TableHead>
-                <TableHead className="w-[140px]">Unit</TableHead>
                 <TableHead>Floor</TableHead>
                 <TableHead className="min-w-[140px]">Floor Areas</TableHead>
                 <TableHead className="text-right">Asking Rent</TableHead>
@@ -1189,18 +1188,6 @@ export default function AvailableUnitsPage() {
                             onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell className="px-1.5 max-w-[140px]">
-                        <InlineLinkSelect
-                          value={u.unitId}
-                          options={(unitsByProperty[u.propertyId] || []).map(pu => ({ id: pu.id, name: pu.unitName }))}
-                          href={u.propertyId ? `/properties/${u.propertyId}` : undefined}
-                          onSave={(id) => {
-                            if (id) pickOrCreateUnit(u, { unitId: id });
-                          }}
-                          onCreate={(newName) => pickOrCreateUnit(u, { newName })}
-                          placeholder="Pick unit"
-                        />
                       </TableCell>
                       <TableCell>
                         <InlineSelect
