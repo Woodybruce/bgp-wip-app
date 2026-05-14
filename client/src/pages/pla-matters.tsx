@@ -42,18 +42,37 @@ const MATTER_TYPES: Array<{ value: string; label: string }> = [
   { value: "general", label: "General Advisory" },
 ];
 
-const STATUSES: Array<{ value: string; label: string; color: string }> = [
-  { value: "open",            label: "Open",            color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
-  { value: "in_negotiation",  label: "In negotiation",  color: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
-  { value: "agreed",          label: "Agreed",          color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" },
-  { value: "settled",         label: "Settled",         color: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
-  { value: "on_hold",         label: "On hold",         color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400" },
-  { value: "closed",          label: "Closed",          color: "bg-zinc-100 text-zinc-500 dark:bg-zinc-900/30 dark:text-zinc-500" },
+// Lease advisory now shares the standard deal lifecycle codes — same picker
+// as Letting Tracker and Deal CRM. AVA / SPEC / LIVE / INV don't really
+// apply to lease advisory work but the codes are shared so the boards stay
+// consistent. Legacy values (open/in_negotiation/...) accepted on read.
+const LEASE_ADVISORY_STATUSES: Array<{ value: string; label: string; color: string }> = [
+  { value: "REP", label: "Instructed",   color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
+  { value: "NEG", label: "Negotiating",  color: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
+  { value: "SOL", label: "Solicitors",   color: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" },
+  { value: "EXC", label: "Exchanged",    color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" },
+  { value: "COM", label: "Completed",    color: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
+  { value: "WIT", label: "Withdrawn",    color: "bg-zinc-100 text-zinc-500 dark:bg-zinc-900/30 dark:text-zinc-500" },
 ];
 
+// Legacy-status aliases — old rows that haven't been remapped yet still
+// resolve to a label so the table doesn't render raw "in_negotiation" text.
+const LEGACY_STATUS_LABELS: Record<string, string> = {
+  open: "Instructed",
+  in_negotiation: "Negotiating",
+  agreed: "Exchanged",
+  settled: "Completed",
+  closed: "Withdrawn",
+  on_hold: "Instructed",
+};
+
+const STATUSES = LEASE_ADVISORY_STATUSES;
+
 function statusBadge(status: string | null | undefined) {
-  const s = STATUSES.find((x) => x.value === status);
-  return s ? <Badge className={s.color} variant="secondary">{s.label}</Badge> : <Badge variant="outline">{status}</Badge>;
+  const s = LEASE_ADVISORY_STATUSES.find((x) => x.value === status);
+  if (s) return <Badge className={s.color} variant="secondary">{s.label}</Badge>;
+  const legacy = status ? LEGACY_STATUS_LABELS[status] : null;
+  return legacy ? <Badge variant="outline">{legacy}</Badge> : <Badge variant="outline">{status}</Badge>;
 }
 
 function typeLabel(t: string) {

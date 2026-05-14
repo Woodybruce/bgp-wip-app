@@ -24,6 +24,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
+import { storage } from "./storage";
 import {
   plaMatters,
   plaMatterComps,
@@ -124,14 +125,24 @@ async function syncLeaseEventsForMatter(matter: PlaMatter): Promise<void> {
   }
 }
 
+// Lease advisory now uses the standard deal lifecycle codes — same as
+// leasing tracker — so PLA work shows on the deal CRM kanban alongside
+// leasing deals. Old bespoke values (open/in_negotiation/...) are accepted
+// only for backwards compat reads; new writes must use the standard codes.
 const VALID_STATUSES = new Set([
-  "open",
-  "in_negotiation",
-  "agreed",
-  "settled",
-  "closed",
-  "on_hold",
+  "REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV",
+  // Legacy values still accepted on read for old data; UI remaps via migration 0019.
+  "open", "in_negotiation", "agreed", "settled", "closed", "on_hold",
 ]);
+
+// pla_matters.matter_type → crm_deals.deal_type
+const MATTER_TYPE_TO_DEAL_TYPE: Record<string, string> = {
+  rent_review: "Rent Review",
+  lease_renewal: "Lease Renewal",
+  dilapidations: "Dilapidations",
+  service_charge: "Service Charge",
+  general: "General Advisory",
+};
 
 export function registerPlaMattersRoutes(app: Express): void {
   // ── List ───────────────────────────────────────────────────────────────────
@@ -224,10 +235,34 @@ export function registerPlaMattersRoutes(app: Express): void {
         counterNoticeDeadline: body.counterNoticeDeadline ? new Date(body.counterNoticeDeadline) : null,
         notes: body.notes || null,
         tags: Array.isArray(body.tags) ? body.tags : null,
-        status: VALID_STATUSES.has(body.status) ? body.status : "open",
+        status: VALID_STATUSES.has(body.status) ? body.status : "REP",
       };
 
       const [created] = await db.insert(plaMatters).values(insert).returning();
+
+      // Auto-create the backing crm_deals row so the instruction appears on
+      // the deal CRM kanban with the rest. Mirrors what Add Unit does for
+      // leasing. Deal type derived from matter_type; team = "Lease Advisory".
+      try {
+        const [property] = await db
+          .select({ name: crmProperties.name })
+          .from(crmProperties)
+          .where(eq(crmProperties.id, propertyId));
+        const dealType = MATTER_TYPE_TO_DEAL_TYPE[matterType] || "General Advisory";
+        const deal = await storage.createCrmDeal({
+          name: property?.name ? `${property.name} — ${dealType}` : dealType,
+          propertyId,
+          status: created.status,
+          dealType,
+          team: ["Lease Advisory"],
+          internalAgent: created.leadUserId ? [created.leadUserId] : [],
+          fee: typeof body.fee === "number" ? body.fee : undefined,
+        } as any);
+        await db.update(plaMatters).set({ dealId: deal.id }).where(eq(plaMatters.id, created.id));
+        (created as any).dealId = deal.id;
+      } catch (e: any) {
+        console.warn(`[pla-matters POST] auto-create deal failed for matter ${created.id}:`, e?.message);
+      }
 
       // Sync lease_events so this matter's key dates surface on dashboards
       syncLeaseEventsForMatter(created).catch(() => {});

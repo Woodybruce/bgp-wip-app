@@ -2805,8 +2805,11 @@ export const plaMatters = pgTable("pla_matters", {
   noticeServedBy: text("notice_served_by"),             // us | them
   counterNoticeDeadline: timestamp("counter_notice_deadline"),
   counterNoticeServedAt: timestamp("counter_notice_served_at"),
-  // Workflow
-  status: text("status").notNull().default("open"),     // open | in_negotiation | agreed | settled | closed | on_hold
+  // Workflow — now uses standard DEAL_STATUS_CODES (REP/NEG/SOL/EXC/COM/WIT/INV)
+  // so lease advisory work shows on the deal CRM kanban alongside leasing.
+  status: text("status").notNull().default("REP"),
+  legacyStatus: text("legacy_status"),                  // preserves pre-2026 status if remapped
+  dealId: varchar("deal_id"),                           // → crm_deals.id (auto-created at instruction creation)
   openedAt: timestamp("opened_at").defaultNow(),
   settledAt: timestamp("settled_at"),
   closedAt: timestamp("closed_at"),

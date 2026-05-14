@@ -1210,6 +1210,29 @@ import { pool } from "./db";
     )`,
     `CREATE INDEX IF NOT EXISTS pla_matter_events_matter_idx ON pla_matter_events (matter_id)`,
     `CREATE INDEX IF NOT EXISTS pla_matter_events_upcoming_idx ON pla_matter_events (event_date) WHERE done = false`,
+    // Lease Advisory status alignment (May 2026):
+    //   • Lease advisory now follows the same lifecycle as Letting Tracker:
+    //     instruction = unit, deal CRM follows the same status codes.
+    //   • Bespoke statuses (open/in_negotiation/agreed/settled/closed/on_hold)
+    //     get remapped to DEAL_STATUS_CODES (REP/NEG/EXC/COM/WIT/REP). Old
+    //     value preserved in legacy_status so we can revert if needed.
+    //   • New deal_id column links the matter to its auto-created crm_deals row.
+    `ALTER TABLE pla_matters ADD COLUMN IF NOT EXISTS legacy_status TEXT`,
+    `ALTER TABLE pla_matters ADD COLUMN IF NOT EXISTS deal_id VARCHAR`,
+    `UPDATE pla_matters
+        SET legacy_status = status,
+            status = CASE status
+              WHEN 'open'           THEN 'REP'
+              WHEN 'in_negotiation' THEN 'NEG'
+              WHEN 'agreed'         THEN 'EXC'
+              WHEN 'settled'        THEN 'COM'
+              WHEN 'closed'         THEN 'WIT'
+              WHEN 'on_hold'        THEN 'REP'
+              ELSE status
+            END
+        WHERE status IN ('open','in_negotiation','agreed','settled','closed','on_hold')
+          AND legacy_status IS NULL`,
+    `CREATE INDEX IF NOT EXISTS pla_matters_deal_idx ON pla_matters (deal_id) WHERE deal_id IS NOT NULL`,
     `CREATE TABLE IF NOT EXISTS bonus_history (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,
