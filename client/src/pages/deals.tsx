@@ -4071,7 +4071,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const filteredDeals = useMemo(() => {
     return baseDeals.filter((deal) => {
+      // Deal CRM only shows promoted deals — anything from SOL onwards.
+      // Pre-SOL stuff (REP/SPEC/LIVE/AVA/NEG) lives in the Letting Tracker
+      // until status hits SOL, at which point the Promote-to-Deal modal
+      // creates / surfaces the deal here.
       const dealCode = legacyToCode(deal.status);
+      const promoted = ["SOL", "EXC", "COM", "WIT", "INV"];
+      if (!dealCode || !promoted.includes(dealCode)) return false;
       const statusMatch = (target: string) =>
         mode === "wip" ? dealCode === target : deal.status === target;
       if (activeGroup !== "all" && !statusMatch(activeGroup)) return false;

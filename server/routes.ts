@@ -2292,30 +2292,34 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
 
-      // Auto-create a backing CRM deal so every tracker row has a source of truth
-      if (!unit.dealId) {
-        try {
-          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
-              : unit.unitName,
-            propertyId: unit.propertyId || undefined,
-            unitId: unitMasterId || undefined,
-            status: unit.marketingStatus || "AVA",
-            dealType: "Leasing",
-            internalAgent: unit.agentUserIds || [],
-            fee: unit.fee ?? undefined,
-            rentPa: unit.askingRent ?? undefined,
-            totalAreaSqft: unit.sqft ?? undefined,
-          } as any);
-          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
-          (unit as any).dealId = deal.id;
-          (unit as any).dealRef = deal.dealRef;
-        } catch (e: any) {
-          console.warn("[available-units POST] auto-create deal failed:", e.message);
+      // Also create a leasing_schedule_units row on the same property so the
+      // unit shows up on the property's Leasing Schedule view automatically.
+      // Pre-SOL units belong on the leasing schedule but NOT on the deal CRM
+      // — the deal row gets created later by the SOL promotion flow.
+      try {
+        const existingLs = await pool.query(
+          `SELECT id FROM leasing_schedule_units
+           WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = lower(trim($2))
+           LIMIT 1`,
+          [parsed.propertyId, parsed.unitName || ""]
+        );
+        if (existingLs.rows.length === 0) {
+          await pool.query(
+            `INSERT INTO leasing_schedule_units
+               (property_id, unit_name, sqft, rent_pa, status)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
+             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
+          );
         }
+      } catch (e: any) {
+        console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
       }
+
+      // NOTE: pre-SOL units no longer auto-create a crm_deals row — the deal
+      // is created when status transitions to SOL via the "Create WIP Deal —
+      // Solicitors" promotion modal in available-units.tsx. Until then the
+      // unit lives only in available_units + property_units + leasing_schedule_units.
 
       res.json(unit);
     } catch (err: any) {
@@ -2839,6 +2843,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ migrated, skipped: skipped.length, message: `Migrated ${migrated} deals to available units` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Migration failed" });
+    }
+  });
+
+  // One-off backfill: create a leasing_schedule_units row for every existing
+  // available_units that doesn't already have one on the same property. Safe
+  // to re-run — only creates rows where none exists (matched by
+  // property_id + unit_name). Returns the count created.
+  app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `WITH inserted AS (
+           INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status)
+           SELECT au.property_id, au.unit_name, au.sqft, au.asking_rent, COALESCE(au.marketing_status, 'AVA')
+           FROM available_units au
+           WHERE NOT EXISTS (
+             SELECT 1 FROM leasing_schedule_units ls
+             WHERE ls.property_id = au.property_id
+               AND lower(trim(coalesce(ls.unit_name, ''))) = lower(trim(coalesce(au.unit_name, '')))
+           )
+           RETURNING id
+         )
+         SELECT COUNT(*)::int AS created FROM inserted`
+      );
+      res.json({ created: rows[0]?.created ?? 0 });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Backfill failed" });
     }
   });
 
