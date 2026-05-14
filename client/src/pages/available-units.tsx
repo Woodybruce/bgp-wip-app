@@ -2211,13 +2211,16 @@ function UnitFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            Saving will auto-create a linked Leasing deal on the <a href="/deals" className="underline">deals board</a>.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
-            <Label>Property (Instruction)</Label>
+            <Label>Property *</Label>
             <Select value={form.propertyId} onValueChange={v => upd("propertyId", v)}>
               <SelectTrigger data-testid="select-property">
                 <SelectValue placeholder="Select property..." />
@@ -2316,7 +2319,7 @@ function UnitFormDialog({
             <CurrencyInput value={form.serviceChargePa} onChange={v => upd("serviceChargePa", v)} placeholder="e.g. 15,000" prefix="£" />
           </div>
           <div>
-            <Label>Asset Class</Label>
+            <Label>Use Class</Label>
             <Select value={form.useClass} onValueChange={v => upd("useClass", v)}>
               <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
               <SelectContent>

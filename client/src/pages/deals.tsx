@@ -736,6 +736,11 @@ export function DealFormDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {!isEdit && form.dealType === "Leasing" && (
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  Tip: for an available unit, start in the <a href="/deals/letting" className="underline">Letting Tracker</a> — adding a unit auto-creates this deal and links them.
+                </p>
+              )}
             </div>
 
             <div>
