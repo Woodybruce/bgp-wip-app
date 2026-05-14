@@ -59,6 +59,10 @@ interface StaffMember {
   apc_submission_deadline?: string | null;
   apc_counsellor_name?: string | null;
   apc_counsellor_email?: string | null;
+  cv_summary?: string | null;
+  cv_specialisms?: string[] | null;
+  cv_notable_clients?: string[] | null;
+  cv_career_history?: Array<{ role: string; employer: string; startYear?: number; endYear?: number }> | null;
   education: string | null;
   bio: string | null;
   emergency_contact_name: string | null;
@@ -352,6 +356,188 @@ function CpdCard({ userId, apcStatus, canEdit }: { userId: string; apcStatus: st
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ── 📄 CV tab — rendered preview + downloads + photo change ────────────────
+interface CvDataResponse {
+  name: string;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  tenureLabel: string | null;
+  education: string | null;
+  ricsPathway: string | null;
+  ricsNumber: string | null;
+  apcStatus: string | null;
+  linkedinUrl: string | null;
+  summary: string | null;
+  specialisms: string[];
+  notableClients: string[];
+  careerHistory: Array<{ role: string; employer: string; startYear?: number; endYear?: number }>;
+  notableDeals: Array<{ name: string; year?: number }>;
+  hasPhoto: boolean;
+}
+
+function CvTab({ userId, canEdit }: { userId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<CvDataResponse>({ queryKey: [`/api/hr/cv/${userId}`] });
+  const [photoVersion, setPhotoVersion] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadPhoto = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("photo", file);
+      const r = await fetch(`/api/hr/staff/${userId}/photo`, { method: "POST", body: fd, credentials: "include" });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    onSuccess: () => {
+      setPhotoVersion(v => v + 1);
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/cv/${userId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/staff/${userId}`] });
+      toast({ title: "Photo updated" });
+    },
+    onError: (e: any) => toast({ title: "Upload failed", description: e?.message, variant: "destructive" }),
+  });
+
+  if (isLoading || !data) return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+
+  const photoUrl = `/api/hr/photo/${userId}?v=${photoVersion}`;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" onClick={() => window.open(`/api/hr/cv/${userId}/pdf`, "_blank")}>
+          <FileText className="w-3 h-3 mr-1" />Download PDF
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => window.open(`/api/hr/cv/${userId}/docx`, "_blank")}>
+          <FileText className="w-3 h-3 mr-1" />Download Word
+        </Button>
+      </div>
+
+      {/* CV preview — mirrors the PDF layout in HTML so what you see ≈ what
+          you download. Photo on the left, header info top-right, sections
+          below the BGP accent rule. */}
+      <div className="border rounded-lg bg-white p-6 shadow-sm">
+        <div className="flex gap-5 items-start mb-4">
+          <div className="relative shrink-0">
+            {data.hasPhoto ? (
+              <img src={photoUrl} alt={data.name} className="w-24 h-24 rounded-md object-cover border" />
+            ) : (
+              <div className="w-24 h-24 rounded-md bg-muted flex items-center justify-center text-muted-foreground text-xs">No photo</div>
+            )}
+            {canEdit && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (f) uploadPhoto.mutate(f);
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="absolute -bottom-1 -right-1 bg-white border rounded-full p-1 shadow-sm hover:bg-muted"
+                  title="Change photo"
+                  disabled={uploadPhoto.isPending}
+                >
+                  {uploadPhoto.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+                </button>
+              </>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-2xl font-serif font-bold text-slate-900">{data.name}</h2>
+            {data.title && <div className="text-base text-[#0F4C75] mt-0.5">{data.title}</div>}
+            <div className="text-xs text-muted-foreground mt-2 space-x-2">
+              {data.email && <span>{data.email}</span>}
+              {data.phone && <span>· {data.phone}</span>}
+              {data.linkedinUrl && <span>· <a href={data.linkedinUrl} target="_blank" rel="noopener noreferrer" className="underline">{data.linkedinUrl.replace(/^https?:\/\//, "")}</a></span>}
+            </div>
+            {data.tenureLabel && <div className="text-xs text-muted-foreground mt-1">Bruce Gillingham Pollard · {data.tenureLabel}</div>}
+          </div>
+        </div>
+        <hr className="border-[#0F4C75] mb-4" />
+
+        {data.summary && (
+          <div className="mb-4">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Profile</h3>
+            <p className="text-sm">{data.summary}</p>
+          </div>
+        )}
+
+        {data.specialisms.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Specialisms</h3>
+            <ul className="text-sm list-disc pl-5 space-y-1">
+              {data.specialisms.map(s => <li key={s}>{s}</li>)}
+            </ul>
+          </div>
+        )}
+
+        {data.notableDeals.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Notable BGP deals</h3>
+            <ul className="text-sm list-disc pl-5 space-y-1">
+              {data.notableDeals.map((d, i) => (
+                <li key={i}>{d.name}{d.year ? ` — ${d.year}` : ""}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {data.notableClients.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Clients</h3>
+            <p className="text-sm">{data.notableClients.join(" · ")}</p>
+          </div>
+        )}
+
+        {data.careerHistory.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Career history</h3>
+            <div className="space-y-1">
+              {data.careerHistory.map((c, i) => (
+                <div key={i} className="flex justify-between text-sm">
+                  <span className="font-medium">{c.role}{c.employer ? `, ${c.employer}` : ""}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {c.startYear ? `${c.startYear}${c.endYear ? `–${c.endYear}` : "–present"}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(data.education || data.ricsNumber || data.ricsPathway || data.apcStatus === "completed") && (
+          <div className="mb-2">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Qualifications</h3>
+            {data.education && <p className="text-sm">{data.education}</p>}
+            {(data.ricsNumber || data.ricsPathway || data.apcStatus === "completed") && (
+              <p className="text-sm">
+                {[
+                  data.apcStatus === "completed" ? "MRICS" : null,
+                  data.ricsPathway,
+                  data.ricsNumber ? `Member ${data.ricsNumber}` : null,
+                ].filter(Boolean).join(" · ")}
+              </p>
+            )}
+          </div>
+        )}
+
+        {!data.summary && data.specialisms.length === 0 && data.notableDeals.length === 0 && (
+          <p className="text-xs text-muted-foreground italic mt-4">
+            CV is empty. {canEdit ? "Hit Edit profile to add a personal statement and specialisms." : "Ask this person to fill out their CV section."}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1533,6 +1719,10 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
     apcSubmissionDeadline: person.apc_submission_deadline || "",
     apcCounsellorName: person.apc_counsellor_name || "",
     apcCounsellorEmail: person.apc_counsellor_email || "",
+    cvSummary: person.cv_summary || "",
+    cvSpecialisms: (person.cv_specialisms || []).join("\n"),
+    cvNotableClients: (person.cv_notable_clients || []).join(", "),
+    cvCareerHistoryRaw: JSON.stringify(person.cv_career_history || [], null, 2),
     education: person.education || "",
     bio: person.bio || "",
     emergencyContactName: person.emergency_contact_name || "",
@@ -1571,6 +1761,13 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         apcSubmissionDeadline: form.apcSubmissionDeadline || undefined,
         apcCounsellorName: form.apcCounsellorName || undefined,
         apcCounsellorEmail: form.apcCounsellorEmail || undefined,
+        cvSummary: form.cvSummary || undefined,
+        cvSpecialisms: form.cvSpecialisms ? form.cvSpecialisms.split("\n").map(s => s.trim()).filter(Boolean) : undefined,
+        cvNotableClients: form.cvNotableClients ? form.cvNotableClients.split(",").map(s => s.trim()).filter(Boolean) : undefined,
+        cvCareerHistory: (() => {
+          if (!form.cvCareerHistoryRaw.trim()) return undefined;
+          try { return JSON.parse(form.cvCareerHistoryRaw); } catch { return undefined; }
+        })(),
         education: form.education || undefined,
         bio: form.bio || undefined,
         emergencyContactName: form.emergencyContactName || undefined,
@@ -1659,6 +1856,29 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
                   <div className="space-y-1.5 col-span-2"><Label>Counsellor email</Label><Input value={form.apcCounsellorEmail} onChange={f("apcCounsellorEmail")} placeholder="mark@apc-training.co.uk" /></div>
                 </>
               )}
+            </div>
+          </div>
+
+          <div className="border-t pt-3">
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">CV content</div>
+            <div className="space-y-2">
+              <div className="space-y-1.5">
+                <Label>Personal statement / summary</Label>
+                <Textarea rows={3} value={form.cvSummary} onChange={f("cvSummary")} placeholder="Short paragraph describing your focus, style and what clients can expect from you." />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Specialisms (one per line)</Label>
+                <Textarea rows={3} value={form.cvSpecialisms} onChange={f("cvSpecialisms")} placeholder={"Central London leasing\nF&B agency\nTenant representation"} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Notable clients (comma-separated)</Label>
+                <Input value={form.cvNotableClients} onChange={f("cvNotableClients")} placeholder="Landsec, Grosvenor, The Portman Estate" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Career history (JSON — array of {`{role, employer, startYear, endYear}`})</Label>
+                <Textarea rows={4} value={form.cvCareerHistoryRaw} onChange={f("cvCareerHistoryRaw")} placeholder={'[{"role":"Surveyor","employer":"CBRE","startYear":2018,"endYear":2022}]'} className="font-mono text-xs" />
+              </div>
+              <p className="text-[11px] text-muted-foreground">Notable BGP deals are pulled automatically from your top fee-earning closed deals.</p>
             </div>
           </div>
 
@@ -1925,6 +2145,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
             {(isAdmin || isOwn) && !isSecretary(person.title) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Card &amp; Expenses</TabsTrigger>}
+            <TabsTrigger value="cv" className="text-xs">CV</TabsTrigger>
           </TabsList>
 
           {!isAdmin && !isOwn && (
@@ -2063,6 +2284,10 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
           <TabsContent value="expenses" className="mt-4 space-y-4">
             {cardholder && <CardTab cardholder={cardholder} isAdmin={isAdmin} person={person} />}
             <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
+          </TabsContent>
+
+          <TabsContent value="cv" className="mt-4">
+            <CvTab userId={person.id} canEdit={isAdmin || isOwn} />
           </TabsContent>
         </Tabs>
       </div>

@@ -2662,6 +2662,10 @@ export const staffProfiles = pgTable("staff_profiles", {
   apcSubmissionDeadline: text("apc_submission_deadline"),
   apcCounsellorName: text("apc_counsellor_name"),       // external counsellor (e.g. Mark Hoffman)
   apcCounsellorEmail: text("apc_counsellor_email"),
+  cvSummary: text("cv_summary"),
+  cvSpecialisms: text("cv_specialisms").array(),
+  cvNotableClients: text("cv_notable_clients").array(),
+  cvCareerHistory: jsonb("cv_career_history"),
   education: text("education"),
   bio: text("bio"),
   emergencyContactName: text("emergency_contact_name"),

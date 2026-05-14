@@ -1122,6 +1122,10 @@ import { pool } from "./db";
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_submission_deadline TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_counsellor_name TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_counsellor_email TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_summary TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_specialisms TEXT[]`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_notable_clients TEXT[]`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_career_history JSONB`,
     `CREATE TABLE IF NOT EXISTS cpd_entries (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,

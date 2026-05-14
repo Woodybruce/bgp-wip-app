@@ -7,6 +7,7 @@ import { resolveSharePointShareLink } from "./sharepoint-resolver";
 import * as XLSX from "xlsx";
 import multer from "multer";
 import mammoth from "mammoth";
+import { renderCvPdf, renderCvDocx, type CvData } from "./cv-renderer";
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
 // using the session/token user id. Used by hybrid (admin-or-self) endpoints
@@ -214,6 +215,7 @@ export function setupHrRoutes(app: Express) {
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.apc_planned_sitting, sp.apc_submission_deadline,
           sp.apc_counsellor_name, sp.apc_counsellor_email,
+          sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history,
           sp.education, sp.bio,
           sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
@@ -258,6 +260,7 @@ export function setupHrRoutes(app: Express) {
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.apc_planned_sitting, sp.apc_submission_deadline,
           sp.apc_counsellor_name, sp.apc_counsellor_email,
+          sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history,
           sp.education, sp.bio,
           sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
@@ -289,6 +292,7 @@ export function setupHrRoutes(app: Express) {
       title, startDate, endDate, status, salaryCurrent, managerId,
       department, ricsPathway, ricsNumber, apcStatus, apcAssessmentDate,
       apcPlannedSitting, apcSubmissionDeadline, apcCounsellorName, apcCounsellorEmail,
+      cvSummary, cvSpecialisms, cvNotableClients, cvCareerHistory,
       education, bio, emergencyContactName, emergencyContactPhone,
       emergencyContactRelation, holidayEntitlement, pensionOptIn, pensionRate,
       contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
@@ -313,9 +317,10 @@ export function setupHrRoutes(app: Express) {
           contract_sharepoint_url, passport_sharepoint_url, linkedin_url, xero_tracking_name,
           dob, address, wfh_days, employment_type, cv_sharepoint_url, board_member, management_team,
           rics_number,
-          apc_planned_sitting, apc_submission_deadline, apc_counsellor_name, apc_counsellor_email
+          apc_planned_sitting, apc_submission_deadline, apc_counsellor_name, apc_counsellor_email,
+          cv_summary, cv_specialisms, cv_notable_clients, cv_career_history
         ) VALUES ($1,$2,$3,$4,COALESCE($5, 'active'),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-                  $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+                  $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
         ON CONFLICT (user_id) DO UPDATE SET
           title = COALESCE(EXCLUDED.title, staff_profiles.title),
           start_date = COALESCE(EXCLUDED.start_date, staff_profiles.start_date),
@@ -351,6 +356,10 @@ export function setupHrRoutes(app: Express) {
           apc_submission_deadline = COALESCE(EXCLUDED.apc_submission_deadline, staff_profiles.apc_submission_deadline),
           apc_counsellor_name = COALESCE(EXCLUDED.apc_counsellor_name, staff_profiles.apc_counsellor_name),
           apc_counsellor_email = COALESCE(EXCLUDED.apc_counsellor_email, staff_profiles.apc_counsellor_email),
+          cv_summary = COALESCE(EXCLUDED.cv_summary, staff_profiles.cv_summary),
+          cv_specialisms = COALESCE(EXCLUDED.cv_specialisms, staff_profiles.cv_specialisms),
+          cv_notable_clients = COALESCE(EXCLUDED.cv_notable_clients, staff_profiles.cv_notable_clients),
+          cv_career_history = COALESCE(EXCLUDED.cv_career_history, staff_profiles.cv_career_history),
           updated_at = now()
       `, [
         userId, title, startDate, endDate, status, salaryCurrent, managerId,
@@ -361,6 +370,8 @@ export function setupHrRoutes(app: Express) {
         dob, address, wfhDays, employmentType, cvSharepointUrl, boardMember, managementTeam,
         ricsNumber,
         apcPlannedSitting, apcSubmissionDeadline, apcCounsellorName, apcCounsellorEmail,
+        cvSummary, cvSpecialisms, cvNotableClients,
+        cvCareerHistory != null ? JSON.stringify(cvCareerHistory) : null,
       ]);
       res.json({ ok: true });
     } catch (e: any) {
@@ -2653,6 +2664,173 @@ Return ONLY JSON.`,
       await pool.query(`DELETE FROM cpd_entries WHERE id = $1 AND user_id = $2`,
         [req.params.entryId, req.params.userId]);
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 📷 Profile photo upload + serve ────────────────────────────────────────
+  // Stored in uploaded_files / file_blobs (kind='profile_photo') so we reuse
+  // the bytes-in-Postgres pattern. After a successful upload we point
+  // users.profile_pic_url at /api/hr/photo/{userId} which streams the latest.
+  const photoUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (/^image\/(png|jpeg|jpg|webp)$/i.test(file.mimetype)) cb(null, true);
+      else cb(new Error("PNG, JPEG or WebP only"));
+    },
+  });
+
+  app.post("/api/hr/staff/:userId/photo", requireAuth, photoUpload.single("photo"), async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!req.file) return res.status(400).json({ error: "photo required (multipart 'photo')" });
+    try {
+      const ins = await pool.query(
+        `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+         VALUES ($1, $2, 'profile_photo', $3, $4, $5, 'public') RETURNING id`,
+        [req.params.userId, actor.userId, req.file.originalname, req.file.mimetype, req.file.size]
+      );
+      await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [ins.rows[0].id, req.file.buffer]);
+      const photoUrl = `/api/hr/photo/${req.params.userId}?v=${ins.rows[0].id.slice(0, 8)}`;
+      await pool.query("UPDATE users SET profile_pic_url = $1 WHERE id = $2", [photoUrl, req.params.userId]);
+      res.json({ ok: true, url: photoUrl });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Public-ish: anyone signed in can fetch any staff photo (they're shown
+  // across the directory anyway). No admin/self gate here.
+  app.get("/api/hr/photo/:userId", requireAuth, async (req: any, res) => {
+    try {
+      const meta = await pool.query(
+        `SELECT id, mime_type FROM uploaded_files
+         WHERE owner_user_id = $1 AND kind = 'profile_photo'
+         ORDER BY created_at DESC LIMIT 1`,
+        [req.params.userId]
+      );
+      if (!meta.rows[0]) return res.status(404).end();
+      const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [meta.rows[0].id]);
+      if (!blob.rows[0]) return res.status(404).end();
+      res.setHeader("Content-Type", meta.rows[0].mime_type || "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(blob.rows[0].data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 📄 Staff CV — data, PDF, Word ─────────────────────────────────────────
+
+  async function loadCvData(userId: string): Promise<CvData | null> {
+    const profileQ = await pool.query(
+      `SELECT u.id, u.name, u.email, u.phone,
+              sp.title, sp.start_date, sp.education, sp.rics_pathway, sp.rics_number,
+              sp.apc_status, sp.linkedin_url,
+              sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history
+       FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+       WHERE u.id = $1`,
+      [userId]
+    );
+    const p = profileQ.rows[0];
+    if (!p) return null;
+
+    // Pull a handful of top-billing completed deals for this person from
+    // crm_deals.internal_agent. Limited to 8 so CVs don't sprawl.
+    const dealsQ = await pool.query(
+      `SELECT name, fee, EXTRACT(YEAR FROM COALESCE(completed_at, exchanged_at, target_date))::int AS year
+       FROM crm_deals
+       WHERE $1 = ANY(COALESCE(internal_agent, ARRAY[]::text[]))
+         AND COALESCE(status, '') IN ('COM', 'INV', 'EXC')
+         AND fee IS NOT NULL AND fee > 0
+       ORDER BY fee DESC NULLS LAST
+       LIMIT 8`,
+      [(await pool.query("SELECT name FROM users WHERE id = $1", [userId])).rows[0]?.name || userId]
+    );
+
+    // Resolve the profile photo bytes (if any) inline so renderers don't
+    // need to know about Postgres.
+    let photoBuffer: Buffer | null = null;
+    const photoMeta = await pool.query(
+      `SELECT id FROM uploaded_files
+       WHERE owner_user_id = $1 AND kind = 'profile_photo'
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+    if (photoMeta.rows[0]) {
+      const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [photoMeta.rows[0].id]);
+      if (blob.rows[0]) photoBuffer = blob.rows[0].data;
+    }
+
+    const bgpStartYear = p.start_date ? new Date(p.start_date).getFullYear() : null;
+    let tenureLabel: string | null = null;
+    if (p.start_date) {
+      const s = new Date(p.start_date);
+      const months = Math.max(0, (new Date().getFullYear() - s.getFullYear()) * 12 + (new Date().getMonth() - s.getMonth()));
+      const yrs = Math.floor(months / 12);
+      const mos = months % 12;
+      tenureLabel = `${s.toLocaleDateString("en-GB", { month: "short", year: "numeric" })} – present (${yrs ? `${yrs}y ` : ""}${mos}m)`;
+    }
+
+    return {
+      name: p.name,
+      title: p.title,
+      email: p.email,
+      phone: p.phone,
+      bgpStartYear,
+      tenureLabel,
+      education: p.education,
+      ricsPathway: p.rics_pathway,
+      ricsNumber: p.rics_number,
+      apcStatus: p.apc_status,
+      linkedinUrl: p.linkedin_url,
+      summary: p.cv_summary,
+      specialisms: Array.isArray(p.cv_specialisms) ? p.cv_specialisms : [],
+      notableClients: Array.isArray(p.cv_notable_clients) ? p.cv_notable_clients : [],
+      careerHistory: Array.isArray(p.cv_career_history) ? p.cv_career_history : [],
+      notableDeals: dealsQ.rows.map((r: any) => ({ name: r.name, year: r.year || undefined })),
+      photoBuffer,
+    };
+  }
+
+  app.get("/api/hr/cv/:userId", requireAuth, async (req: any, res) => {
+    try {
+      const cv = await loadCvData(req.params.userId);
+      if (!cv) return res.status(404).json({ error: "Not found" });
+      // Don't ship binary photo bytes in JSON — the UI loads the photo via
+      // /api/hr/photo/:userId separately.
+      const { photoBuffer, ...rest } = cv;
+      res.json({ ...rest, hasPhoto: !!photoBuffer });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/hr/cv/:userId/pdf", requireAuth, async (req: any, res) => {
+    try {
+      const cv = await loadCvData(req.params.userId);
+      if (!cv) return res.status(404).json({ error: "Not found" });
+      const buf = await renderCvPdf(cv);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${cv.name.replace(/[^a-z0-9]+/gi, "_")}_CV.pdf"`);
+      res.send(buf);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/hr/cv/:userId/docx", requireAuth, async (req: any, res) => {
+    try {
+      const cv = await loadCvData(req.params.userId);
+      if (!cv) return res.status(404).json({ error: "Not found" });
+      const buf = await renderCvDocx(cv);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", `attachment; filename="${cv.name.replace(/[^a-z0-9]+/gi, "_")}_CV.docx"`);
+      res.send(buf);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
