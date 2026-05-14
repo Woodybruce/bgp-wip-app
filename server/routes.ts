@@ -2316,10 +2316,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
       }
 
-      // NOTE: pre-SOL units no longer auto-create a crm_deals row — the deal
-      // is created when status transitions to SOL via the "Create WIP Deal —
-      // Solicitors" promotion modal in available-units.tsx. Until then the
-      // unit lives only in available_units + property_units + leasing_schedule_units.
+      // Auto-create a backing CRM deal so every tracker row has a source of
+      // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
+      // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
+      if (!unit.dealId) {
+        try {
+          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
+              : unit.unitName,
+            propertyId: unit.propertyId || undefined,
+            unitId: unitMasterId || undefined,
+            status: unit.marketingStatus || "AVA",
+            dealType: "Leasing",
+            internalAgent: unit.agentUserIds || [],
+            fee: unit.fee ?? undefined,
+            rentPa: unit.askingRent ?? undefined,
+            totalAreaSqft: unit.sqft ?? undefined,
+          } as any);
+          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
+          (unit as any).dealId = deal.id;
+          (unit as any).dealRef = deal.dealRef;
+        } catch (e: any) {
+          console.warn("[available-units POST] auto-create deal failed:", e.message);
+        }
+      }
 
       res.json(unit);
     } catch (err: any) {

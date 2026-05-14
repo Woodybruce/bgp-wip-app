@@ -984,6 +984,7 @@ function DataHealthSection() {
   const [scanning, setScanning] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
   const [renamingTeams, setRenamingTeams] = useState(false);
+  const [syncingLeasingSchedule, setSyncingLeasingSchedule] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1021,6 +1022,19 @@ function DataHealthSection() {
       toast({ title: "Rename failed", description: err.message, variant: "destructive" });
     } finally {
       setRenamingTeams(false);
+    }
+  };
+
+  const runSyncLeasingSchedule = async () => {
+    setSyncingLeasingSchedule(true);
+    try {
+      const res = await apiRequest("POST", "/api/available-units/backfill-leasing-schedule");
+      const data = await res.json();
+      toast({ title: "Leasing schedule synced", description: `${data.created || 0} unit${data.created === 1 ? "" : "s"} added to property leasing schedules` });
+    } catch (err: any) {
+      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSyncingLeasingSchedule(false);
     }
   };
 
@@ -1074,6 +1088,10 @@ function DataHealthSection() {
             <Button size="sm" variant="outline" onClick={runRenameTeams} disabled={renamingTeams}>
               {renamingTeams ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {renamingTeams ? "Renaming..." : "Rename Legacy Teams"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runSyncLeasingSchedule} disabled={syncingLeasingSchedule} data-testid="button-sync-leasing-schedule">
+              {syncingLeasingSchedule ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {syncingLeasingSchedule ? "Syncing..." : "Sync Tracker → Leasing Schedule"}
             </Button>
             <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
               {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
