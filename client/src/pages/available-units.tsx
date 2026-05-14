@@ -1049,7 +1049,6 @@ export default function AvailableUnitsPage() {
                 <TableHead className="text-right">Rates p.a.</TableHead>
                 <TableHead className="text-right">SC p.a.</TableHead>
                 <TableHead>Asset Class</TableHead>
-                <TableHead>Location</TableHead>
                 <TableHead>Condition</TableHead>
                 <TableHead>EPC</TableHead>
                 <TableHead>Deal Status</TableHead>
@@ -1264,15 +1263,6 @@ export default function AvailableUnitsPage() {
                           colorMap={ASSET_CLASS_COLORS}
                           onSave={v => inlineUpdate(u.id, "useClass", v)}
                           placeholder="Set class"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineLabelSelect
-                          value={u.location || ""}
-                          options={LOCATIONS}
-                          colorMap={LOCATION_COLORS}
-                          onSave={v => inlineUpdate(u.id, "location", v)}
-                          placeholder="Set location"
                         />
                       </TableCell>
                       <TableCell>
