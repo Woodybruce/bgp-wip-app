@@ -1589,6 +1589,7 @@ export const entityImages = pgTable("entity_images", {
   entityType: text("entity_type").notNull(),   // property | unit | deal
   entityId: varchar("entity_id").notNull(),
   fileId: varchar("file_id").notNull(),         // → file_blobs
+  imageStudioId: varchar("image_studio_id"),    // → image_studio_images (set if captured via Street View / Image Studio — enables AI re-edit)
   kind: text("kind"),                           // street_view | photo | floor_plan | other
   title: text("title"),
   notes: text("notes"),

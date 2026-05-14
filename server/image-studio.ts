@@ -1313,7 +1313,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/ai-edit", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/ai-edit", requireAuth, async (req: Request, res: Response) => {
     try {
       const { imageId, editPrompt } = req.body;
       const trimmedEdit = (editPrompt || "").trim();
@@ -1324,7 +1324,7 @@ export function registerImageStudioRoutes(app: Express) {
 
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
       if (!image) return res.status(404).json({ error: "Image not found" });
-      if (image.uploadedBy && image.uploadedBy !== userId) return res.status(403).json({ error: "Not authorised to edit this image" });
+      // Team-shared imagery (property captures, etc.) — anyone signed in can iterate.
       const sourceBuffer = await readPersistedImage(image.localPath);
       if (!sourceBuffer) return res.status(400).json({ error: "Image file not found. The original image was lost on a deploy — re-capture / re-upload the source image and try again." });
 
@@ -1790,9 +1790,9 @@ export function registerImageStudioRoutes(app: Express) {
           const fileId = fileMeta.rows[0].id;
           await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, buffer]);
           await pool.query(
-            `INSERT INTO entity_images (entity_type, entity_id, file_id, kind, title, created_by_user_id)
-             VALUES ('property', $1, $2, 'street_view', $3, $4)`,
-            [propertyId, fileId, `Street View · ${heading || 0}° / ${pitch || 0}° / fov ${fov || 90}`, userId]
+            `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+             VALUES ('property', $1, $2, $3, 'street_view', $4, $5)`,
+            [propertyId, fileId, inserted.id, `Street View · ${heading || 0}° / ${pitch || 0}° / fov ${fov || 90}`, userId]
           );
         } catch (entityErr: any) {
           console.warn("[capture-streetview] entity_images link failed:", entityErr?.message);

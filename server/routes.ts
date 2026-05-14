@@ -2917,7 +2917,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     if (!entityType || !entityId) return res.status(400).json({ error: "entityType and entityId required" });
     try {
       const { rows } = await pool.query(
-        `SELECT ei.id, ei.entity_type, ei.entity_id, ei.file_id, ei.kind, ei.title, ei.notes,
+        `SELECT ei.id, ei.entity_type, ei.entity_id, ei.file_id, ei.image_studio_id, ei.kind, ei.title, ei.notes,
                 ei.created_at, ei.created_by_user_id, u.name AS created_by_name,
                 f.mime_type
          FROM entity_images ei
@@ -2988,6 +2988,52 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // AI-edit an entity image. Routes through Image Studio's ai-edit (in-place
+  // on the imageStudio image) and then refreshes the file_blob bytes so the
+  // entity image thumbnails pick up the new version automatically.
+  app.post("/api/entity-images/:id/ai-edit", requireAuth, async (req: any, res) => {
+    const { editPrompt } = req.body || {};
+    if (!editPrompt?.trim()) return res.status(400).json({ error: "editPrompt required" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT ei.id, ei.image_studio_id, ei.file_id FROM entity_images ei WHERE ei.id = $1`,
+        [req.params.id]
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Image not found" });
+      if (!row.image_studio_id) return res.status(400).json({ error: "AI edit only available for images captured via Street View / Image Studio. Drag-and-drop uploads don't carry the source link yet." });
+
+      // Forward to ai-edit — it'll fetch the source bytes from localPath, run
+      // Gemini, write the result back to the same imageStudio image record.
+      const editRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/ai-edit`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: req.headers.cookie || "" },
+        body: JSON.stringify({ imageId: row.image_studio_id, editPrompt }),
+      });
+      if (!editRes.ok) {
+        const err = await editRes.json().catch(() => ({}));
+        return res.status(editRes.status).json(err);
+      }
+
+      // Pull the now-edited bytes from /api/image-studio/:id/full and refresh
+      // the file_blob so the sidebar thumbnail re-renders with the new view.
+      const fullRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/full`, {
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (fullRes.ok) {
+        const buf = Buffer.from(await fullRes.arrayBuffer());
+        await pool.query("UPDATE file_blobs SET data = $1 WHERE file_id = $2", [buf, row.file_id]);
+        await pool.query(
+          `UPDATE uploaded_files SET mime_type = 'image/png', size_bytes = $1 WHERE id = $2`,
+          [buf.length, row.file_id]
+        );
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "AI edit failed" });
     }
   });
 

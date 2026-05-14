@@ -1257,6 +1257,7 @@ import { pool } from "./db";
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS entity_images_entity_idx ON entity_images (entity_type, entity_id, created_at DESC)`,
+    `ALTER TABLE entity_images ADD COLUMN IF NOT EXISTS image_studio_id VARCHAR`,
     // Compliance overrides — captured when someone promotes a deal to SOL
     // without AML / fee agreement being complete. Lets us produce a compliance
     // report and chase the gaps before exchange.

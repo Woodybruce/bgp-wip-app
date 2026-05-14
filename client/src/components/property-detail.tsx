@@ -40,6 +40,8 @@ import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -836,6 +838,7 @@ interface EntityImageRow {
   entity_type: string;
   entity_id: string;
   file_id: string;
+  image_studio_id: string | null;
   kind: string | null;
   title: string | null;
   notes: string | null;
@@ -847,6 +850,8 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
   const { toast } = useToast();
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [aiEditFor, setAiEditFor] = useState<EntityImageRow | null>(null);
+  const [aiEditPrompt, setAiEditPrompt] = useState("");
 
   const { data: images = [], isLoading } = useQuery<EntityImageRow[]>({
     queryKey: ["/api/entity-images", entityType, entityId],
@@ -887,6 +892,25 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/entity-images", entityType, entityId] }),
   });
 
+  const aiEditMutation = useMutation({
+    mutationFn: async ({ id, prompt }: { id: string; prompt: string }) => {
+      const r = await fetch(`/api/entity-images/${id}/ai-edit`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ editPrompt: prompt }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "AI edit failed");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/entity-images", entityType, entityId] });
+      setAiEditFor(null);
+      setAiEditPrompt("");
+      toast({ title: "Image edited" });
+    },
+    onError: (err: any) => toast({ title: "Edit failed", description: err?.message, variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-2" data-testid="entity-images-panel">
       <div
@@ -924,17 +948,59 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
                 alt={img.title || "image"}
                 className="w-full h-full object-cover"
               />
-              <button
-                onClick={() => deleteMutation.mutate(img.id)}
-                className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Delete"
-              >
-                <X className="w-3 h-3" />
-              </button>
+              <div className="absolute top-0.5 right-0.5 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                {img.image_studio_id && (
+                  <button
+                    onClick={() => { setAiEditFor(img); setAiEditPrompt(""); }}
+                    className="bg-black/60 text-white rounded-full p-1"
+                    title="AI Edit"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                  </button>
+                )}
+                <button
+                  onClick={() => deleteMutation.mutate(img.id)}
+                  className="bg-black/60 text-white rounded-full p-1"
+                  title="Delete"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
+
+      <Dialog open={!!aiEditFor} onOpenChange={(o) => { if (!o) setAiEditFor(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-purple-500" /> AI Edit</DialogTitle>
+            <DialogDescription>Describe the change. The image gets re-rendered in place — saves to this Images panel.</DialogDescription>
+          </DialogHeader>
+          {aiEditFor && (
+            <div className="space-y-3">
+              <img src={`/api/entity-images/${aiEditFor.id}/file`} alt="" className="w-full rounded border" />
+              <Input
+                value={aiEditPrompt}
+                onChange={e => setAiEditPrompt(e.target.value)}
+                placeholder="e.g. brighten sky, remove watermark, add awnings…"
+                autoFocus
+              />
+              <p className="text-[11px] text-muted-foreground">Quick prompts: "remove watermark", "blue sky", "sunny day", "marketing-ready".</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAiEditFor(null)}>Cancel</Button>
+            <Button
+              onClick={() => aiEditFor && aiEditMutation.mutate({ id: aiEditFor.id, prompt: aiEditPrompt })}
+              disabled={!aiEditPrompt.trim() || aiEditMutation.isPending}
+            >
+              {aiEditMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+              {aiEditMutation.isPending ? "Editing…" : "Apply"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
