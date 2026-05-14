@@ -234,7 +234,6 @@ const COLUMN_LABELS: Record<string, string> = {
   team: "Team",
   agent: "BGP Contact",
   assetClass: "Asset Class",
-  unit: "Unit",
   clientContact: "Client Contact",
   tenant: "Tenant",
   vendor: "Vendor",
@@ -3761,7 +3760,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     team: true,
     agent: true,
     assetClass: true,
-    unit: true,
     clientContact: true,
     tenant: true,
     vendor: true,
@@ -4524,7 +4522,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.unit && <TableHead className="min-w-[120px]">Unit</TableHead>}
                     {visibleColumns.tenant && <TableHead className="min-w-[120px]">Tenant</TableHead>}
                     {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
                     {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
@@ -4657,19 +4654,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             placeholder="Set team"
                             onSave={(v) => handleInlineSave(deal.id, "team", v.length > 0 ? v : null)}
                             testId={`inline-deal-team-${deal.id}`}
-                          />
-                        </TableCell>
-                      )}
-                      {visibleColumns.unit && (
-                        <TableCell className="px-1.5 py-1">
-                          <InlineLinkSelect
-                            value={deal.unitId}
-                            options={propertyUnits
-                              .filter(pu => !deal.propertyId || pu.propertyId === deal.propertyId)
-                              .map(pu => ({ id: pu.id, name: pu.unitName }))}
-                            href={deal.propertyId ? `/properties/${deal.propertyId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "unitId", v || null)}
-                            placeholder={deal.propertyId ? "Pick unit" : "Pick property first"}
                           />
                         </TableCell>
                       )}
