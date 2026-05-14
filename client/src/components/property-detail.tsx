@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -942,62 +943,91 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
       ) : (
         <div className="grid grid-cols-3 gap-1.5">
           {images.map(img => (
-            <div key={img.id} className="relative group aspect-square rounded overflow-hidden border bg-muted">
+            <button
+              key={img.id}
+              type="button"
+              onClick={() => { setAiEditFor(img); setAiEditPrompt(""); }}
+              className="relative group aspect-square rounded overflow-hidden border bg-muted text-left"
+              data-testid={`entity-image-${img.id}`}
+              title="Click to preview & AI edit"
+            >
               <img
                 src={`/api/entity-images/${img.id}/file`}
                 alt={img.title || "image"}
                 className="w-full h-full object-cover"
               />
-              <div className="absolute top-0.5 right-0.5 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                {img.image_studio_id && (
-                  <button
-                    onClick={() => { setAiEditFor(img); setAiEditPrompt(""); }}
-                    className="bg-black/60 text-white rounded-full p-1"
-                    title="AI Edit"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                  </button>
-                )}
-                <button
-                  onClick={() => deleteMutation.mutate(img.id)}
-                  className="bg-black/60 text-white rounded-full p-1"
-                  title="Delete"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(img.id); }}
+                className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Delete"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </button>
           ))}
         </div>
       )}
 
       <Dialog open={!!aiEditFor} onOpenChange={(o) => { if (!o) setAiEditFor(null); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-purple-500" /> AI Edit</DialogTitle>
-            <DialogDescription>Describe the change. The image gets re-rendered in place — saves to this Images panel.</DialogDescription>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-purple-500" /> {aiEditFor?.title || "Image"}</DialogTitle>
+            <DialogDescription>Preview and AI-edit. Edits write back to this image (and into Image Studio).</DialogDescription>
           </DialogHeader>
           {aiEditFor && (
             <div className="space-y-3">
-              <img src={`/api/entity-images/${aiEditFor.id}/file`} alt="" className="w-full rounded border" />
-              <Input
-                value={aiEditPrompt}
-                onChange={e => setAiEditPrompt(e.target.value)}
-                placeholder="e.g. brighten sky, remove watermark, add awnings…"
-                autoFocus
+              <img
+                src={`/api/entity-images/${aiEditFor.id}/file`}
+                alt={aiEditFor.title || ""}
+                className="w-full max-h-[60vh] object-contain rounded border bg-muted"
               />
-              <p className="text-[11px] text-muted-foreground">Quick prompts: "remove watermark", "blue sky", "sunny day", "marketing-ready".</p>
+              {aiEditFor.image_studio_id ? (
+                <>
+                  <div>
+                    <Label className="text-xs">AI Edit prompt</Label>
+                    <Input
+                      value={aiEditPrompt}
+                      onChange={e => setAiEditPrompt(e.target.value)}
+                      placeholder="e.g. blue sky, sunny day, remove pedestrians, add awnings…"
+                      autoFocus
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Quick prompts: "remove watermark", "brighten sky", "marketing-ready", "sharpen building", "remove car".
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[11px] text-muted-foreground italic">
+                  AI edit is only available for images captured via Street View or Image Studio. Drag-and-drop uploads can be replaced via delete + re-upload.
+                </p>
+              )}
             </div>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAiEditFor(null)}>Cancel</Button>
+          <DialogFooter className="flex-wrap gap-2">
             <Button
-              onClick={() => aiEditFor && aiEditMutation.mutate({ id: aiEditFor.id, prompt: aiEditPrompt })}
-              disabled={!aiEditPrompt.trim() || aiEditMutation.isPending}
+              variant="outline"
+              onClick={() => aiEditFor && window.open(`/api/entity-images/${aiEditFor.id}/file`, "_blank")}
             >
-              {aiEditMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
-              {aiEditMutation.isPending ? "Editing…" : "Apply"}
+              Download
             </Button>
+            <Button
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => { if (aiEditFor) { deleteMutation.mutate(aiEditFor.id); setAiEditFor(null); } }}
+            >
+              <X className="w-3 h-3 mr-1" /> Delete
+            </Button>
+            <div className="flex-1" />
+            <Button variant="outline" onClick={() => setAiEditFor(null)}>Close</Button>
+            {aiEditFor?.image_studio_id && (
+              <Button
+                onClick={() => aiEditFor && aiEditMutation.mutate({ id: aiEditFor.id, prompt: aiEditPrompt })}
+                disabled={!aiEditPrompt.trim() || aiEditMutation.isPending}
+              >
+                {aiEditMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                {aiEditMutation.isPending ? "Editing…" : "Apply AI Edit"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
