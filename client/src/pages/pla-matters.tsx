@@ -279,9 +279,25 @@ function NewMatterDialog({
 }: { open: boolean; onClose: () => void; onCreated: (id: string) => void }) {
   const { toast } = useToast();
   const [property, setProperty] = useState<{ id: string; name: string; postcode: string | null } | null>(null);
+  const [unitId, setUnitId] = useState<string>("");
   const [matterType, setMatterType] = useState<string>("rent_review");
   const [actingFor, setActingFor] = useState<string>("landlord");
   const [notes, setNotes] = useState("");
+
+  // Pull units for the chosen property — picker shows only after the resolver
+  // gives us a propertyId. Required for unit-level matter types.
+  const { data: propertyUnits = [] } = useQuery<Array<{ id: string; unitName: string; propertyId: string }>>({
+    queryKey: ["/api/property-units", property?.id],
+    queryFn: async () => {
+      if (!property?.id) return [];
+      const r = await fetch(`/api/property-units?propertyId=${encodeURIComponent(property.id)}`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!property?.id,
+  });
+  const UNIT_REQUIRED_TYPES = new Set(["rent_review", "lease_renewal", "regear", "dilapidations", "service_charge"]);
+  const unitRequired = UNIT_REQUIRED_TYPES.has(matterType);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -294,6 +310,7 @@ function NewMatterDialog({
           propertyId: property.id,
           matterType,
           actingFor,
+          unitId: unitId || undefined,
           notes: notes.trim() || undefined,
         }),
       });
@@ -303,6 +320,7 @@ function NewMatterDialog({
     onSuccess: (m) => {
       toast({ title: "Instruction created", description: typeLabel(m.matterType) });
       setProperty(null);
+      setUnitId("");
       setNotes("");
       onCreated(m.id);
     },
@@ -323,9 +341,28 @@ function NewMatterDialog({
             <label className="text-sm font-medium block mb-2">Property</label>
             <PropertyResolverBar
               current={property}
-              onResolve={(id, prop) => setProperty({ id, name: prop.name, postcode: prop.postcode })}
+              onResolve={(id, prop) => { setProperty({ id, name: prop.name, postcode: prop.postcode }); setUnitId(""); }}
             />
           </div>
+          {property && (
+            <div className="min-w-0">
+              <label className="text-sm font-medium block mb-2">Unit{unitRequired ? " *" : " (optional)"}</label>
+              <Select value={unitId || undefined} onValueChange={(v) => setUnitId(v === "__clear__" ? "" : v)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={propertyUnits.length === 0 ? "No units on this property yet" : "Pick unit"} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__clear__">None</SelectItem>
+                  {propertyUnits.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {unitRequired && !unitId && (
+                <p className="text-[11px] text-rose-600 mt-1">{typeLabel(matterType)} requires a unit on this property.</p>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
             <div className="min-w-0">
               <label className="text-sm font-medium block mb-2">Instruction type</label>
@@ -356,7 +393,7 @@ function NewMatterDialog({
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => create.mutate()} disabled={!property || create.isPending}>
+          <Button onClick={() => create.mutate()} disabled={!property || (unitRequired && !unitId) || create.isPending}>
             {create.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
             Create instruction
           </Button>

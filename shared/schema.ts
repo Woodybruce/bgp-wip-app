@@ -2785,6 +2785,7 @@ export type HrDocument = typeof hrDocuments.$inferSelect;
 export const plaMatters = pgTable("pla_matters", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),         // → crm_properties (resolver-canonical)
+  unitId: varchar("unit_id"),                           // → property_units (optional for "general", required for rent_review / lease_renewal / regear / dilapidations / service_charge)
   matterType: text("matter_type").notNull(),            // rent_review | lease_renewal | dilapidations | service_charge | general
   clientContactId: varchar("client_contact_id"),        // → crm_contacts
   clientCompanyId: varchar("client_company_id"),        // → crm_companies

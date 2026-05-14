@@ -375,6 +375,7 @@ interface DealFormData {
   team: string[];
   internalAgent: string[];
   propertyId: string;
+  unitId: string;
   landlordId: string;
   tenantId: string;
   vendorId: string;
@@ -422,6 +423,7 @@ const emptyForm: DealFormData = {
   team: [],
   internalAgent: [],
   propertyId: "",
+  unitId: "",
   landlordId: "",
   tenantId: "",
   vendorId: "",
@@ -470,6 +472,7 @@ function dealToForm(deal: CrmDeal): DealFormData {
     team: Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : [],
     internalAgent: Array.isArray(deal.internalAgent) ? deal.internalAgent : deal.internalAgent ? [deal.internalAgent] : [],
     propertyId: deal.propertyId || "",
+    unitId: deal.unitId || "",
     landlordId: deal.landlordId || "",
     tenantId: deal.tenantId || "",
     vendorId: deal.vendorId || "",
@@ -520,6 +523,7 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     team: form.team.length > 0 ? form.team : null,
     internalAgent: form.internalAgent.length > 0 ? form.internalAgent : null,
     propertyId: form.propertyId || null,
+    unitId: form.unitId || null,
     landlordId: form.landlordId || null,
     tenantId: form.tenantId || null,
     vendorId: form.vendorId || null,
@@ -577,6 +581,7 @@ export function DealFormDialog({
   onOpenChange,
   deal,
   properties,
+  propertyUnits = [],
   companies,
   users,
 }: {
@@ -584,6 +589,7 @@ export function DealFormDialog({
   onOpenChange: (open: boolean) => void;
   deal?: CrmDeal;
   properties: CrmProperty[];
+  propertyUnits?: PropertyUnit[];
   companies: CrmCompany[];
   users: { id: number; name: string; email: string }[];
 }) {
@@ -666,6 +672,14 @@ export function DealFormDialog({
       toast({ title: "Either a property or deal name is required", variant: "destructive" });
       return;
     }
+    const UNIT_LEVEL_TYPES = new Set([
+      "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
+      "Sub-Letting", "New Letting", "Lease Acquisition",
+    ]);
+    if (UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
+      toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
+      return;
+    }
     mutation.mutate();
   };
 
@@ -701,6 +715,39 @@ export function DealFormDialog({
                 </SelectContent>
               </Select>
             </div>
+
+            {(() => {
+              const UNIT_LEVEL_TYPES = new Set([
+                "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
+                "Sub-Letting", "New Letting", "Lease Acquisition",
+                "Dilapidations", "Service Charge",
+              ]);
+              const needsUnit = UNIT_LEVEL_TYPES.has(form.dealType);
+              const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
+              return (
+                <div className="sm:col-span-2">
+                  <Label>Unit{needsUnit ? " *" : " (optional for property-level deals)"}</Label>
+                  <Select
+                    value={form.unitId || undefined}
+                    onValueChange={(v) => set("unitId", v === "__clear__" ? "" : v)}
+                    disabled={!form.propertyId}
+                  >
+                    <SelectTrigger data-testid="select-deal-unit">
+                      <SelectValue placeholder={form.propertyId ? "Select unit" : "Pick a property first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__clear__">None</SelectItem>
+                      {unitOptions.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {needsUnit && !form.unitId && form.propertyId && (
+                    <p className="text-[11px] text-rose-600 mt-1">A {form.dealType} requires a specific unit on the property.</p>
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="sm:col-span-2">
               <Label htmlFor="deal-name">Deal Name (optional — auto-fills from property)</Label>
@@ -5038,6 +5085,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             open={createOpen}
             onOpenChange={setCreateOpen}
             properties={properties}
+            propertyUnits={propertyUnits}
             companies={companies}
             users={users}
           />

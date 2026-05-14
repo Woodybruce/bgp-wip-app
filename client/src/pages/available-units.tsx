@@ -1037,7 +1037,6 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                <TableHead className="w-10 px-1"><Star className="w-3.5 h-3.5 text-muted-foreground" /></TableHead>
                 <TableHead className="w-[50px]">Ref</TableHead>
                 <TableHead className="w-[180px]">Property</TableHead>
                 <TableHead className="w-[120px]">Deal Type</TableHead>
@@ -1090,16 +1089,6 @@ export default function AvailableUnitsPage() {
                           aria-label={`Select ${u.unitName || "unit"}`}
                           data-testid={`checkbox-unit-${u.id}`}
                         />
-                      </TableCell>
-                      <TableCell className="px-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleFavoriteMutation.mutate(u.propertyId); }}
-                          className="p-1 hover:bg-muted rounded transition-colors"
-                          data-testid={`star-unit-${u.id}`}
-                          title={favoriteIds.includes(u.propertyId) ? "Remove from dashboard" : "Pin to dashboard"}
-                        >
-                          <Star className={`w-4 h-4 ${favoriteIds.includes(u.propertyId) ? "text-amber-500 fill-amber-500" : "text-muted-foreground/40 hover:text-amber-400"}`} />
-                        </button>
                       </TableCell>
                       <TableCell className="text-xs font-mono text-muted-foreground">
                         {deal?.dealRef ? (
@@ -2424,7 +2413,7 @@ function UnitFormDialog({
             <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
           </div>
           <div className="col-span-2">
-            <Label>Agents *</Label>
+            <Label>BGP Contact *</Label>
             <div className="flex flex-wrap gap-1.5 p-2 border rounded-md min-h-[38px]">
               {bgpUsers.map(u => {
                 const selected = form.agentUserIds.includes(u.id);

@@ -135,13 +135,15 @@ const VALID_STATUSES = new Set([
   "open", "in_negotiation", "agreed", "settled", "closed", "on_hold",
 ]);
 
-// pla_matters.matter_type → crm_deals.deal_type
+// pla_matters.matter_type → crm_deals.deal_type. Dilaps / SC / General all
+// roll up under "Consultancy" on the deal board — the matter_type stays
+// granular on pla_matters for filtering inside the Lease Advisory views.
 const MATTER_TYPE_TO_DEAL_TYPE: Record<string, string> = {
   rent_review: "Rent Review",
   lease_renewal: "Lease Renewal",
-  dilapidations: "Dilapidations",
-  service_charge: "Service Charge",
-  general: "General Advisory",
+  dilapidations: "Consultancy",
+  service_charge: "Consultancy",
+  general: "Consultancy",
 };
 
 export function registerPlaMattersRoutes(app: Express): void {
@@ -218,6 +220,7 @@ export function registerPlaMattersRoutes(app: Express): void {
       const userId = (req as any).user?.id;
       const insert: InsertPlaMatter = {
         propertyId,
+        unitId: body.unitId || null,
         matterType,
         clientContactId: body.clientContactId || null,
         clientCompanyId: body.clientCompanyId || null,
@@ -252,6 +255,7 @@ export function registerPlaMattersRoutes(app: Express): void {
         const deal = await storage.createCrmDeal({
           name: property?.name ? `${property.name} — ${dealType}` : dealType,
           propertyId,
+          unitId: created.unitId || undefined,
           status: created.status,
           dealType,
           team: ["Lease Advisory"],

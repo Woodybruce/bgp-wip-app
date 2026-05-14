@@ -1233,6 +1233,8 @@ import { pool } from "./db";
         WHERE status IN ('open','in_negotiation','agreed','settled','closed','on_hold')
           AND legacy_status IS NULL`,
     `CREATE INDEX IF NOT EXISTS pla_matters_deal_idx ON pla_matters (deal_id) WHERE deal_id IS NOT NULL`,
+    `ALTER TABLE pla_matters ADD COLUMN IF NOT EXISTS unit_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS pla_matters_unit_idx ON pla_matters (unit_id) WHERE unit_id IS NOT NULL`,
     // Compliance overrides — captured when someone promotes a deal to SOL
     // without AML / fee agreement being complete. Lets us produce a compliance
     // report and chase the gaps before exchange.
