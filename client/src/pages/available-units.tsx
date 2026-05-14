@@ -669,34 +669,41 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
       setWipUnit(null);
-      toast({ title: "Solicitors — WIP deal created" });
+      toast({ title: "Promoted to Solicitors" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const openWipDialog = (unit: AvailableUnit) => {
     const prop = propertyMap[unit.propertyId];
+    // Pre-fill from the linked deal if there is one — that's the common path
+    // now that Add Unit auto-creates a deal at AVA. User just updates the
+    // fields that matter at the SOL handover.
+    const existingDeal = unit.dealId ? dealMap[unit.dealId] : null;
     setWipForm({
-      dealType: "Letting",
-      team: [],
-      agent: unit.agent || "",
+      dealType: existingDeal?.dealType || "Letting",
+      team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
+      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "",
       tenantName: "",
-      fee: unit.fee?.toString() || "",
-      feeAgreement: "",
-      askingRent: unit.askingRent?.toString() || "",
-      totalAreaSqft: unit.sqft?.toString() || "",
-      leaseLength: "",
-      rentFree: "",
-      comments: `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
+      fee: (existingDeal?.fee ?? unit.fee)?.toString() || "",
+      feeAgreement: existingDeal?.feeAgreement || "",
+      askingRent: (existingDeal?.rentPa ?? unit.askingRent)?.toString() || "",
+      totalAreaSqft: (existingDeal?.totalAreaSqft ?? unit.sqft)?.toString() || "",
+      leaseLength: existingDeal?.leaseLength?.toString() || "",
+      rentFree: existingDeal?.rentFree?.toString() || "",
+      comments: existingDeal?.comments || `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
     });
     setWipUnit(unit);
   };
 
   const inlineUpdate = (id: string, field: string, value: any) => {
     if (typeof value === "number" && isNaN(value)) value = null;
+    // Status → SOL always fires the promotion modal so the user captures the
+    // SOL-handover fields (fee, fee agreement, tenant, lease length, rent free).
+    // Pre-fill comes from the linked deal if it already exists.
     if (field === "marketingStatus" && legacyToCode(value) === "SOL") {
       const unit = units.find(u => u.id === id);
-      if (unit && !unit.dealId) {
+      if (unit) {
         openWipDialog(unit);
         return;
       }
@@ -1525,7 +1532,7 @@ export default function AvailableUnitsPage() {
       <Dialog open={!!wipUnit} onOpenChange={v => { if (!v) setWipUnit(null); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create WIP Deal — Solicitors</DialogTitle>
+            <DialogTitle>Promote to Solicitors</DialogTitle>
             <DialogDescription>
               {wipUnit ? `${propertyMap[wipUnit.propertyId]?.name || "Property"} — ${wipUnit.unitName}` : ""}
               . Fill in the deal details below.
@@ -1661,7 +1668,7 @@ export default function AvailableUnitsPage() {
               disabled={wipDealMutation.isPending}
               data-testid="wip-submit"
             >
-              {wipDealMutation.isPending ? "Creating..." : "Create WIP Deal"}
+              {wipDealMutation.isPending ? "Saving..." : "Promote to Solicitors"}
             </Button>
           </DialogFooter>
         </DialogContent>

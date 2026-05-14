@@ -2915,13 +2915,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const property = await storage.getCrmProperty(unit.propertyId);
       const body = req.body || {};
-      const deal = await storage.createCrmDeal({
-        name: `${property?.name || "Property"} - ${unit.unitName}`,
+
+      // Build the field set from the form. Used to either UPDATE an existing
+      // linked deal (the common case now that Add Unit auto-creates a deal)
+      // or CREATE a new one (only when the unit was somehow orphaned).
+      const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
         status: "SOL",
         dealType: body.dealType || "Letting",
-        groupName: "Leasing - Active",
         team: body.team || [],
         internalAgent: body.agent ? [body.agent] : [],
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
@@ -2931,8 +2933,24 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         leaseLength: body.leaseLength ? parseFloat(body.leaseLength) : undefined,
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
         comments: body.comments || undefined,
-      } as any);
-      if (body.tenantName) {
+      };
+
+      let deal;
+      if (unit.dealId) {
+        // Promote: existing deal gets the SOL-handover fields applied and
+        // status flipped. Don't change the deal name (it might have been
+        // edited).
+        deal = await storage.updateCrmDeal(unit.dealId, dealFields as any);
+      } else {
+        // Orphan unit (no auto-create ran) — fresh deal.
+        deal = await storage.createCrmDeal({
+          name: `${property?.name || "Property"} - ${unit.unitName}`,
+          groupName: "Leasing - Active",
+          ...dealFields,
+        } as any);
+      }
+
+      if (body.tenantName && deal) {
         try {
           const { crmContacts } = await import("@shared/schema");
           const existing = await db.select().from(crmContacts).where(sql`LOWER(name) = LOWER(${body.tenantName})`).limit(1);
@@ -2941,10 +2959,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           }
         } catch (_) {}
       }
-      await storage.updateAvailableUnit(req.params.id, { dealId: deal.id, marketingStatus: "SOL" });
-      res.json({ deal, unit: { ...unit, dealId: deal.id, marketingStatus: "SOL" } });
+
+      await storage.updateAvailableUnit(req.params.id, {
+        dealId: deal?.id ?? unit.dealId,
+        marketingStatus: "SOL",
+      });
+      res.json({ deal, unit: { ...unit, dealId: deal?.id ?? unit.dealId, marketingStatus: "SOL" } });
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to create deal" });
+      res.status(500).json({ message: err?.message || "Failed to promote unit" });
     }
   });
 
