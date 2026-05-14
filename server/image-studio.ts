@@ -1681,7 +1681,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.get("/api/image-studio/streetview-proxy", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/image-studio/streetview-proxy", requireAuth, async (req: Request, res: Response) => {
     try {
       const { location, heading, pitch, fov, size } = req.query;
       if (!location) return res.status(400).json({ error: "location required" });
