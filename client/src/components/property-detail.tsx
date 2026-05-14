@@ -46,6 +46,7 @@ import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import type { CrmProperty, CrmCompany, User } from "@shared/schema";
 import {
@@ -938,76 +939,88 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
   );
 }
 
-// ── Interactive Street View + Save This View ────────────────────────────────
-// Embeds the Image Studio panorama component, tracks the user's current POV
-// and position, and offers a one-click "Save this view" that pulls a static
-// snapshot via /api/image-studio/streetview-proxy and posts it to
-// /api/entity-images for this property. Saved snapshots show up in the
-// Images panel on the right sidebar.
+// ── Google Street View Capture — embedded inline ────────────────────────────
+// Mirrors the Image Studio capture dialog UI exactly (panorama + "Enhance
+// with AI" checkbox + Save button) but rendered inline on the property page
+// at ~max-w-3xl. Saves via /api/image-studio/capture-streetview (or
+// /capture-and-enhance) with propertyId — the endpoint links into
+// property_imagery_assets AND entity_images, so the new image appears on
+// both the Image Studio library and the property's Images sidebar panel.
 function StreetViewSection({ address, propertyId, onClose }: { address: string; propertyId: string; onClose: () => void }) {
   const { toast } = useToast();
   const [pov, setPov] = useState({ heading: 0, pitch: 0, fov: 90 });
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [enhanceAi, setEnhanceAi] = useState(true);
 
-  const saveSnapshot = useMutation({
+  const captureMutation = useMutation({
     mutationFn: async () => {
-      if (!pos) throw new Error("Move the panorama to a position first");
-      // Fetch the static snapshot via our proxy (server-side Google API key).
-      const params = new URLSearchParams({
-        location: `${pos.lat},${pos.lng}`,
-        heading: String(pov.heading),
-        pitch: String(pov.pitch),
-        fov: String(pov.fov),
-        size: "1024x768",
+      const endpoint = enhanceAi
+        ? "/api/image-studio/capture-and-enhance"
+        : "/api/image-studio/capture-streetview";
+      const location = pos ? `${pos.lat},${pos.lng}` : address;
+      const r = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          location,
+          heading: pov.heading,
+          pitch: pov.pitch,
+          fov: pov.fov,
+          area: address,
+          propertyId,
+        }),
       });
-      const imgRes = await fetch(`/api/image-studio/streetview-proxy?${params}`, { credentials: "include" });
-      if (!imgRes.ok) throw new Error("Couldn't fetch Street View snapshot");
-      const blob = await imgRes.blob();
-      const fd = new FormData();
-      fd.append("file", new File([blob], `street-view-${Date.now()}.jpg`, { type: "image/jpeg" }));
-      fd.append("entityType", "property");
-      fd.append("entityId", propertyId);
-      fd.append("kind", "street_view");
-      fd.append("title", `Street View — ${pov.heading}° / ${pov.pitch}° / fov ${pov.fov}`);
-      const r = await fetch("/api/entity-images", { method: "POST", body: fd, credentials: "include" });
       if (!r.ok) throw new Error(await r.text());
+      return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/entity-images", "property", propertyId] });
-      toast({ title: "View saved", description: "Find it under Images on the right sidebar." });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      toast({
+        title: data?.enhanced ? "Captured & AI-enhanced" : "Captured",
+        description: data?.enhanced ? "Saved raw + enhanced versions" : "Street View image saved",
+      });
     },
-    onError: (err: any) => toast({ title: "Couldn't save view", description: err?.message, variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Capture failed", description: err?.message, variant: "destructive" }),
   });
 
   return (
-    <div className="relative">
+    <div className="rounded-lg border bg-card p-3 max-w-3xl space-y-3">
+      <div className="flex items-center gap-2">
+        <ImageIcon className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-semibold flex-1">Google Street View Capture</span>
+        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onClose}>
+          <X className="w-3 h-3 mr-1" /> Hide
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Drag the panorama to aim the camera, then save. We capture exactly the view you see.
+      </p>
       <StreetViewPanoramaCapture
         address={address}
         onPovChange={setPov}
         onPositionChange={setPos}
       />
-      <div className="absolute top-2 right-2 flex gap-1.5">
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs bg-background/90 backdrop-blur"
-          onClick={() => saveSnapshot.mutate()}
-          disabled={saveSnapshot.isPending || !pos}
-          data-testid="button-save-streetview"
-        >
-          {saveSnapshot.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ImageIcon className="w-3 h-3 mr-1" />}
-          {saveSnapshot.isPending ? "Saving…" : "Save this view"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs bg-background/90 backdrop-blur"
-          onClick={onClose}
-          data-testid="button-collapse-street-view"
-        >
-          <X className="w-3 h-3 mr-1" /> Hide
-        </Button>
-      </div>
+      <label className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm cursor-pointer">
+        <Checkbox checked={enhanceAi} onCheckedChange={(c) => setEnhanceAi(!!c)} />
+        <span>
+          <span className="font-medium">Enhance with AI for marketing</span>
+          <span className="block text-xs text-muted-foreground">
+            Removes Google watermarks, improves lighting and sky, sharpens the building.
+            Saves both raw and enhanced versions to the library.
+          </span>
+        </span>
+      </label>
+      <Button
+        onClick={() => captureMutation.mutate()}
+        className="w-full"
+        disabled={captureMutation.isPending}
+        data-testid="button-streetview-capture"
+      >
+        {captureMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+        {captureMutation.isPending ? "Capturing…" : enhanceAi ? "Save + AI Enhance" : "Save"}
+      </Button>
     </div>
   );
 }

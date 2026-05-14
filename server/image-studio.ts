@@ -1710,7 +1710,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/capture-streetview", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/capture-streetview", requireAuth, async (req: Request, res: Response) => {
     try {
       const { location, heading, pitch, fov, category, area, tags, propertyId, kind } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
@@ -1777,6 +1777,26 @@ export function registerImageStudioRoutes(app: Express) {
         } catch (linkErr: any) {
           console.warn("[capture-streetview] property_imagery_assets link failed:", linkErr?.message);
         }
+
+        // Also save into entity_images so the Images panel on the property
+        // sidebar picks it up. file_blobs gets a copy of the bytes; the same
+        // file_id is referenced from uploaded_files + entity_images.
+        try {
+          const fileMeta = await pool.query(
+            `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+             VALUES ($1, $1, 'entity_image', $2, 'image/jpeg', $3, 'team') RETURNING id`,
+            [userId, filename, buffer.length]
+          );
+          const fileId = fileMeta.rows[0].id;
+          await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, buffer]);
+          await pool.query(
+            `INSERT INTO entity_images (entity_type, entity_id, file_id, kind, title, created_by_user_id)
+             VALUES ('property', $1, $2, 'street_view', $3, $4)`,
+            [propertyId, fileId, `Street View · ${heading || 0}° / ${pitch || 0}° / fov ${fov || 90}`, userId]
+          );
+        } catch (entityErr: any) {
+          console.warn("[capture-streetview] entity_images link failed:", entityErr?.message);
+        }
       }
 
       res.json(inserted);
@@ -1786,7 +1806,7 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   // Combined capture + AI enhance endpoint — one-click professional property photography
-  app.post("/api/image-studio/capture-and-enhance", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/capture-and-enhance", requireAuth, async (req: Request, res: Response) => {
     try {
       const { location, heading, pitch, fov, category, area, tags } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
