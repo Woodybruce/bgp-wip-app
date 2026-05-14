@@ -527,7 +527,7 @@ export function InlineAgents({
                 onClick={() => addMutation.mutate(String(user.id))}
                 data-testid={`assign-agent-${user.id}`}
               >
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
                   {getInitials(user.name)}
                 </div>
                 {user.name}
@@ -616,7 +616,7 @@ export function InlineLandlord({
         </div>
         {parentCompany ? (
           <div className="flex items-center gap-1 ml-3">
-            <span className="text-[9px] text-muted-foreground">Parent:</span>
+            <span className="text-[10px] text-muted-foreground">Parent:</span>
             <Link href={`/companies/${parentCompany.id}`}>
               <Badge
                 variant="secondary"
@@ -630,7 +630,7 @@ export function InlineLandlord({
           </div>
         ) : landlord.companiesHouseNumber && !landlord.parentCompanyId ? (
           <button
-            className="ml-3 text-[9px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 flex items-center gap-0.5 transition-colors"
+            className="ml-3 text-[10px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 flex items-center gap-0.5 transition-colors"
             onClick={() => discoverParentMutation.mutate()}
             disabled={discoverParentMutation.isPending}
             data-testid={`discover-parent-${propertyId}`}
@@ -830,7 +830,7 @@ export function InlineBillingEntity({
             <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
           </button>
         </div>
-        <span className="text-[9px] text-muted-foreground ml-1">Invoice to this entity</span>
+        <span className="text-[10px] text-muted-foreground ml-1">Invoice to this entity</span>
       </div>
     );
   }
@@ -839,7 +839,7 @@ export function InlineBillingEntity({
     <div className="flex flex-col gap-0.5">
       {landlordIsBillingEntity && !billingEntityId && (
         <button
-          className="text-[9px] text-amber-600 hover:text-amber-800 dark:text-amber-400 flex items-center gap-0.5 mb-0.5"
+          className="text-[10px] text-amber-600 hover:text-amber-800 dark:text-amber-400 flex items-center gap-0.5 mb-0.5"
           onClick={() => updateMutation.mutate(landlordId)}
         >
           <FileText className="w-2.5 h-2.5" />
@@ -875,7 +875,7 @@ export function InlineBillingEntity({
                   <FileText className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
                   <span className="truncate">{company.name}</span>
                   {company.companyType === "Billing Entity" && (
-                    <Badge variant="secondary" className="ml-auto text-[8px] px-1">SPV</Badge>
+                    <Badge variant="secondary" className="ml-auto text-[10px] px-1">SPV</Badge>
                   )}
                 </DropdownMenuItem>
               ))
@@ -2563,11 +2563,11 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
   };
 
   const getKycBadge = () => {
-    if (kycStatus === "pass") return <Badge className="text-[9px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Passed</Badge>;
-    if (kycStatus === "warning") return <Badge className="text-[9px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>;
-    if (kycStatus === "fail") return <Badge className="text-[9px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Failed</Badge>;
-    if (kycStatus === "individual") return <Badge className="text-[9px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Individual</Badge>;
-    if (kycStatus === "not_found") return <Badge variant="outline" className="text-[9px]">Not found</Badge>;
+    if (kycStatus === "pass") return <Badge className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Passed</Badge>;
+    if (kycStatus === "warning") return <Badge className="text-[10px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>;
+    if (kycStatus === "fail") return <Badge className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Failed</Badge>;
+    if (kycStatus === "individual") return <Badge className="text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Individual</Badge>;
+    if (kycStatus === "not_found") return <Badge variant="outline" className="text-[10px]">Not found</Badge>;
     return null;
   };
 
@@ -2700,7 +2700,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                       <div className="flex gap-x-4 text-[11px]">
                         <span className="text-muted-foreground">Proprietor:</span>
                         <span className="font-medium">{property.proprietorName || "—"}</span>
-                        <Badge variant="outline" className="text-[9px]">{property.proprietorType === "individual" ? "Individual" : "Company"}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{property.proprietorType === "individual" ? "Individual" : "Company"}</Badge>
                       </div>
                       {property.proprietorCompanyNumber && (
                         <div className="flex gap-x-4 text-[11px]">
@@ -2787,13 +2787,13 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                             <div className="flex-1 min-w-0">
                               <span className="font-mono font-medium">{tn}</span>
                               {t.address && <span className="text-muted-foreground ml-2 truncate">{t.address}</span>}
-                              {t.ownership_type && <Badge variant="outline" className="text-[8px] ml-1">{t.ownership_type}</Badge>}
+                              {t.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{t.ownership_type}</Badge>}
                             </div>
                             <div className="flex items-center gap-0.5 shrink-0">
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-5 px-1 text-[9px] gap-0.5"
+                                className="h-5 px-1 text-[10px] gap-0.5"
                                 onClick={() => downloadKycDocument(tn, "register")}
                                 disabled={downloadingKycDoc === `${tn}-register`}
                                 data-testid={`button-download-freehold-${idx}`}
@@ -2831,13 +2831,13 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                             {ld.ownership?.details?.owner && (
                               <span className="text-muted-foreground ml-2 truncate">{ld.ownership.details.owner}</span>
                             )}
-                            <Badge variant="outline" className="text-[8px] ml-1">{ld.class || "Leasehold"}</Badge>
+                            <Badge variant="outline" className="text-[10px] ml-1">{ld.class || "Leasehold"}</Badge>
                           </div>
                           <div className="flex items-center gap-0.5 shrink-0">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-5 px-1 text-[9px] gap-0.5"
+                              className="h-5 px-1 text-[10px] gap-0.5"
                               onClick={() => downloadKycDocument(ld.titleNumber, "register")}
                               disabled={downloadingKycDoc === `${ld.titleNumber}-register`}
                               data-testid={`button-download-leasehold-${idx}`}
@@ -3037,7 +3037,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <Building2 className="w-4 h-4" />
             Leasing Tracker
-            <Badge variant="outline" className="text-[9px]">{totalUnits} unit{totalUnits !== 1 ? "s" : ""}</Badge>
+            <Badge variant="outline" className="text-[10px]">{totalUnits} unit{totalUnits !== 1 ? "s" : ""}</Badge>
           </h3>
           {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </button>
@@ -3092,7 +3092,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
                       {unit.askingRent && <span className="text-[10px] text-muted-foreground">£{unit.askingRent.toLocaleString()}/pa</span>}
                       {vc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" />{vc}</span>}
                       {oc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{oc}</span>}
-                      <Badge className={`text-[9px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
+                      <Badge className={`text-[10px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
                     </div>
                   </div>
                 );
@@ -3397,7 +3397,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <Sparkles className="w-3 h-3 text-green-600" />
                           <span className="text-[10px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
-                          <Badge variant="outline" className={`text-[8px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
+                          <Badge variant="outline" className={`text-[10px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
                             {aiMatch.confidence} confidence
                           </Badge>
                         </div>
@@ -3425,11 +3425,11 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                               <div className="min-w-0 flex-1">
                                 <span className="font-mono font-medium text-[11px]">{tn}</span>
                                 {fh.address && <span className="text-[10px] text-muted-foreground ml-2">{fh.address}</span>}
-                                {fh.ownership_type && <Badge variant="outline" className="text-[8px] ml-1">{fh.ownership_type}</Badge>}
-                                {isSelected && <Badge className="text-[8px] ml-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Selected</Badge>}
-                                {isAiRecommended && <Badge className="text-[8px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
+                                {fh.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{fh.ownership_type}</Badge>}
+                                {isSelected && <Badge className="text-[10px] ml-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Selected</Badge>}
+                                {isAiRecommended && <Badge className="text-[10px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
                                 {lhCount > 0 && (
-                                  <Badge variant="outline" className="text-[8px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
+                                  <Badge variant="outline" className="text-[10px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
                                     {lhCount} lease{lhCount !== 1 ? "s" : ""}
                                     {isExpanded ? " ▾" : " ▸"}
                                   </Badge>
@@ -3488,7 +3488,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[9px] gap-0.5"
+                                        className="h-5 text-[10px] gap-0.5"
                                         onClick={() => downloadTitleDocument(ld.titleNumber, "register")}
                                         disabled={downloadingDoc === `${ld.titleNumber}-register`}
                                         data-testid={`button-download-leasehold-intel-${li}`}
@@ -3498,7 +3498,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[9px] gap-0.5"
+                                        className="h-5 text-[10px] gap-0.5"
                                         onClick={() => fillTitleFromIntelligence(ld.titleNumber)}
                                         disabled={!!fetchingTitle}
                                         data-testid={`button-fill-leasehold-${li}`}
@@ -3513,7 +3513,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    className="w-full h-5 text-[9px]"
+                                    className="w-full h-5 text-[10px]"
                                     onClick={() => loadLeaseholdDetailBatch(tn, lhData.titles, lhData.page + 1)}
                                     data-testid={`button-more-leaseholds-${i}`}
                                   >
@@ -3521,7 +3521,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   </Button>
                                 )}
                                 {lhData.loading && lhData.details.length > 0 && (
-                                  <div className="flex items-center gap-2 p-1 text-[9px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1 text-[10px] text-muted-foreground">
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                     Loading more...
                                   </div>
@@ -3980,7 +3980,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
             <div className="flex items-center gap-1.5 mb-2">
               <FileText className="w-3.5 h-3.5 text-purple-500" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Matching Requirements</p>
-              <Badge variant="secondary" className="text-[9px]">{data!.matchingRequirements.length}</Badge>
+              <Badge variant="secondary" className="text-[10px]">{data!.matchingRequirements.length}</Badge>
             </div>
             <div className="space-y-1">
               {data!.matchingRequirements.map((r: any) => (
@@ -4002,7 +4002,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
             <div className="flex items-center gap-1.5 mb-2">
               <TrendingUp className="w-3.5 h-3.5 text-orange-500" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Historical Comps</p>
-              <Badge variant="secondary" className="text-[9px]">{data!.comps.length}</Badge>
+              <Badge variant="secondary" className="text-[10px]">{data!.comps.length}</Badge>
             </div>
             <div className="space-y-1">
               {data!.comps.map((c: any) => (
@@ -4025,7 +4025,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
             <div className="flex items-center gap-1.5 mb-2">
               <Newspaper className="w-3.5 h-3.5 text-blue-500" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">News Mentions</p>
-              <Badge variant="secondary" className="text-[9px]">{data!.news.length}</Badge>
+              <Badge variant="secondary" className="text-[10px]">{data!.news.length}</Badge>
             </div>
             <div className="space-y-1">
               {data!.news.map((n: any) => (
@@ -4825,7 +4825,7 @@ function PropertiesList({
                                 const hasEnrichmentData = !!(item.proprietorName || item.landlordId || item.titleNumber);
                                 if (isRecent && !hasEnrichmentData && item.address) {
                                   return (
-                                    <span className="inline-flex items-center gap-1 text-[9px] text-purple-500 animate-pulse" data-testid={`enriching-${item.id}`}>
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-purple-500 animate-pulse" data-testid={`enriching-${item.id}`}>
                                       <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                       Enriching...
                                     </span>

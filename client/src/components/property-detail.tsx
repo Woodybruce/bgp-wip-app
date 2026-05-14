@@ -428,7 +428,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
                       <p className="text-[10px] text-muted-foreground leading-tight">Billing Entity</p>
-                      <Badge variant="outline" className="text-[8px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
                     </div>
                     <InlineBillingEntity propertyId={id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
                   </div>
@@ -441,7 +441,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
                       {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
                         Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
-                          <Badge variant="outline" className="text-[8px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
                         ) : null
                       )}
                     </div>
@@ -788,7 +788,7 @@ function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium truncate">{u.unitName || "—"}</div>
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              {u.marketingStatus && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{u.marketingStatus}</Badge>}
+              {u.marketingStatus && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">{u.marketingStatus}</Badge>}
               {u.sqft && <span>{u.sqft.toLocaleString()} sqft</span>}
               {u.askingRent && <span>£{u.askingRent.toLocaleString()}</span>}
             </div>
