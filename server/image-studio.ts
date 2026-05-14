@@ -1808,7 +1808,7 @@ export function registerImageStudioRoutes(app: Express) {
   // Combined capture + AI enhance endpoint — one-click professional property photography
   app.post("/api/image-studio/capture-and-enhance", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { location, heading, pitch, fov, category, area, tags } = req.body;
+      const { location, heading, pitch, fov, category, area, tags, propertyId } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
 
       const apiKey = process.env.GOOGLE_API_KEY;
@@ -1918,6 +1918,42 @@ export function registerImageStudioRoutes(app: Express) {
 
         enhancedRecord = { ...inserted, provider: enhanceProvider };
         console.log(`[capture-enhance] Enhanced image saved: ${inserted.id}`);
+
+        // Link the enhanced image to the property if propertyId was passed —
+        // shows up in property sidebar Images panel + Pathway imagery picker.
+        if (propertyId && typeof propertyId === "string") {
+          try {
+            await db.insert(propertyImageryAssets).values({
+              propertyId,
+              kind: "secondary_external",
+              source: "street_view",
+              imageStudioId: inserted.id,
+              score: 0.8,
+              width: enhThumb.width,
+              height: enhThumb.height,
+              caption: `Street View · enhanced · ${heading || 0}°`,
+              generatedBy: userId,
+            } as any);
+          } catch (linkErr: any) {
+            console.warn("[capture-enhance] property_imagery_assets link failed:", linkErr?.message);
+          }
+          try {
+            const fileMeta = await pool.query(
+              `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+               VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+              [userId, enhFilename, enhExt === ".png" ? "image/png" : "image/jpeg", enhancedBuffer.length]
+            );
+            const fileId = fileMeta.rows[0].id;
+            await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, enhancedBuffer]);
+            await pool.query(
+              `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+               VALUES ('property', $1, $2, $3, 'street_view', $4, $5)`,
+              [propertyId, fileId, inserted.id, `Street View · enhanced · ${heading || 0}°`, userId]
+            );
+          } catch (entityErr: any) {
+            console.warn("[capture-enhance] entity_images link failed:", entityErr?.message);
+          }
+        }
       } else {
         console.warn(`[capture-enhance] AI enhancement failed for ${location}, returning raw only`);
       }
