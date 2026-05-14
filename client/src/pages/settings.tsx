@@ -985,6 +985,7 @@ function DataHealthSection() {
   const [backfilling, setBackfilling] = useState(false);
   const [renamingTeams, setRenamingTeams] = useState(false);
   const [syncingLeasingSchedule, setSyncingLeasingSchedule] = useState(false);
+  const [numberingUnits, setNumberingUnits] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1035,6 +1036,20 @@ function DataHealthSection() {
       toast({ title: "Sync failed", description: err.message, variant: "destructive" });
     } finally {
       setSyncingLeasingSchedule(false);
+    }
+  };
+
+  const runNumberUnits = async () => {
+    if (!window.confirm("Rename every property's units to 'Unit 1', 'Unit 2'… in creation order? Useful for test data — destroys existing unit names.")) return;
+    setNumberingUnits(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/number-test-units");
+      const data = await res.json();
+      toast({ title: "Units renumbered", description: `${data.renamed || 0} unit${data.renamed === 1 ? "" : "s"} renamed` });
+    } catch (err: any) {
+      toast({ title: "Renumber failed", description: err.message, variant: "destructive" });
+    } finally {
+      setNumberingUnits(false);
     }
   };
 
@@ -1092,6 +1107,10 @@ function DataHealthSection() {
             <Button size="sm" variant="outline" onClick={runSyncLeasingSchedule} disabled={syncingLeasingSchedule} data-testid="button-sync-leasing-schedule">
               {syncingLeasingSchedule ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {syncingLeasingSchedule ? "Syncing..." : "Sync Tracker → Leasing Schedule"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runNumberUnits} disabled={numberingUnits} data-testid="button-number-units">
+              {numberingUnits ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {numberingUnits ? "Renaming..." : "Renumber Units (test)"}
             </Button>
             <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
               {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}

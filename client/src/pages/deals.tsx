@@ -4662,17 +4662,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {visibleColumns.unit && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.unitId && unitMap.get(deal.unitId) ? (
-                            <a
-                              href={deal.propertyId ? `/properties/${deal.propertyId}` : "#"}
-                              className="text-xs text-blue-600 hover:underline"
-                              data-testid={`deal-unit-${deal.id}`}
-                            >
-                              {unitMap.get(deal.unitId)}
-                            </a>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
+                          <InlineLinkSelect
+                            value={deal.unitId}
+                            options={propertyUnits
+                              .filter(pu => !deal.propertyId || pu.propertyId === deal.propertyId)
+                              .map(pu => ({ id: pu.id, name: pu.unitName }))}
+                            href={deal.propertyId ? `/properties/${deal.propertyId}` : undefined}
+                            onSave={(v) => handleInlineSave(deal.id, "unitId", v || null)}
+                            placeholder={deal.propertyId ? "Pick unit" : "Pick property first"}
+                          />
                         </TableCell>
                       )}
                       {visibleColumns.tenant && (

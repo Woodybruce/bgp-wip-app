@@ -2893,6 +2893,40 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Debug / test-data tool: rename every property's units to "Unit 1", "Unit 2"...
+  // sequentially. Useful for verifying the unit name shows up consistently across
+  // tracker / deal / property views. Cascades to available_units +
+  // leasing_schedule_units which carry their own copy of the name.
+  app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);
+      let renamed = 0;
+      for (const p of props.rows) {
+        const units = await pool.query(
+          `SELECT id, unit_name FROM property_units WHERE property_id = $1 ORDER BY created_at ASC, id ASC`,
+          [p.property_id]
+        );
+        for (let i = 0; i < units.rows.length; i++) {
+          const newName = `Unit ${i + 1}`;
+          const oldName = units.rows[i].unit_name;
+          const unitId = units.rows[i].id;
+          if (oldName === newName) continue;
+          await pool.query(`UPDATE property_units SET unit_name = $1 WHERE id = $2`, [newName, unitId]);
+          await pool.query(`UPDATE available_units SET unit_name = $1 WHERE unit_id = $2`, [newName, unitId]);
+          await pool.query(
+            `UPDATE leasing_schedule_units SET unit_name = $1
+             WHERE property_id = $2 AND lower(trim(coalesce(unit_name, ''))) = lower(trim(coalesce($3, '')))`,
+            [newName, p.property_id, oldName]
+          );
+          renamed++;
+        }
+      }
+      res.json({ renamed });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Rename failed" });
+    }
+  });
+
   app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { rows } = await pool.query(
