@@ -25,9 +25,7 @@ export interface CvData {
   education: string | null;
   ricsPathway: string | null;
   ricsNumber: string | null;
-  apcStatus: string | null;          // not_started | in_progress | completed
-  apcPlannedSitting: string | null;  // "Spring 2026" — shown if in_progress
-  apcAssessmentDate: string | null;  // ISO date — shown if in_progress
+  apcStatus: string | null;          // only "completed" surfaces ("MRICS"); in-progress is personal
   linkedinUrl: string | null;
   summary: string | null;            // personal statement (cv_summary)
   specialisms: string[];
@@ -167,16 +165,11 @@ export async function renderCvPdf(cv: CvData): Promise<Buffer> {
     }
   }
 
-  if (cv.education || cv.ricsNumber || cv.ricsPathway || cv.apcStatus === "completed" || cv.apcStatus === "in_progress") {
+  if (cv.education || cv.ricsNumber || cv.ricsPathway || cv.apcStatus === "completed") {
     section("Qualifications");
     if (cv.education) body(cv.education);
     const ricsBits: string[] = [];
     if (cv.apcStatus === "completed") ricsBits.push("MRICS");
-    else if (cv.apcStatus === "in_progress") {
-      const sittingLabel = cv.apcPlannedSitting
-        || (cv.apcAssessmentDate ? new Date(cv.apcAssessmentDate).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null);
-      ricsBits.push(sittingLabel ? `APC candidate (sitting ${sittingLabel})` : "APC candidate");
-    }
     if (cv.ricsPathway) ricsBits.push(cv.ricsPathway);
     if (cv.ricsNumber) ricsBits.push(`Member ${cv.ricsNumber}`);
     if (ricsBits.length) body(ricsBits.join(" · "));
@@ -270,16 +263,11 @@ export async function renderCvDocx(cv: CvData): Promise<Buffer> {
       }));
     }
   }
-  if (cv.education || cv.ricsNumber || cv.ricsPathway || cv.apcStatus === "completed" || cv.apcStatus === "in_progress") {
+  if (cv.education || cv.ricsNumber || cv.ricsPathway || cv.apcStatus === "completed") {
     section("Qualifications");
     if (cv.education) paragraph(cv.education);
     const ricsBits: string[] = [];
     if (cv.apcStatus === "completed") ricsBits.push("MRICS");
-    else if (cv.apcStatus === "in_progress") {
-      const sittingLabel = cv.apcPlannedSitting
-        || (cv.apcAssessmentDate ? new Date(cv.apcAssessmentDate).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null);
-      ricsBits.push(sittingLabel ? `APC candidate (sitting ${sittingLabel})` : "APC candidate");
-    }
     if (cv.ricsPathway) ricsBits.push(cv.ricsPathway);
     if (cv.ricsNumber) ricsBits.push(`Member ${cv.ricsNumber}`);
     if (ricsBits.length) paragraph(ricsBits.join(" · "));

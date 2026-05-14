@@ -2730,7 +2730,7 @@ Return ONLY JSON.`,
     const profileQ = await pool.query(
       `SELECT u.id, u.name, u.email, u.phone,
               sp.title, sp.start_date, sp.education, sp.rics_pathway, sp.rics_number,
-              sp.apc_status, sp.apc_planned_sitting, sp.apc_assessment_date, sp.linkedin_url,
+              sp.apc_status, sp.linkedin_url,
               sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history
        FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
        WHERE u.id = $1`,
@@ -2787,8 +2787,6 @@ Return ONLY JSON.`,
       ricsPathway: p.rics_pathway,
       ricsNumber: p.rics_number,
       apcStatus: p.apc_status,
-      apcPlannedSitting: p.apc_planned_sitting,
-      apcAssessmentDate: p.apc_assessment_date,
       linkedinUrl: p.linkedin_url,
       summary: p.cv_summary,
       specialisms: Array.isArray(p.cv_specialisms) ? p.cv_specialisms : [],
