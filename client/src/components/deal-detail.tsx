@@ -3,6 +3,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
 import {
   Dialog,
@@ -162,6 +164,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const [, navigate] = useLocation();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [unitEditOpen, setUnitEditOpen] = useState(false);
+  const [unitEditForm, setUnitEditForm] = useState({
+    switchToUnitId: "",
+    unitAddress: "",
+    unitPostcode: "",
+    unitUprn: "",
+    unitAddressFreeText: "",
+  });
 
   // Heavy panels — collapsed by default to keep the page scannable.
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
@@ -204,15 +214,21 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     queryKey: ["/api/users"],
   });
 
-  // Look up the unit name so we can show breadcrumb context + a back-to-tracker
-  // link. Only fetched when this deal is anchored to a unit (leasing-side).
-  const { data: propertyUnits = [] } = useQuery<Array<{ id: string; unitName: string; propertyId: string }>>({
+  // Look up units on this deal's property so we can show breadcrumb + power
+  // the "edit unit / address" overlay on the heading.
+  const { data: propertyUnits = [] } = useQuery<Array<{
+    id: string; unitName: string; propertyId: string;
+    unitAddress?: string | null; unitPostcode?: string | null;
+    unitUprn?: string | null; unitAddressFreeText?: string | null;
+  }>>({
     queryKey: ["/api/property-units"],
-    enabled: !!(deal as any)?.unitId,
   });
   const linkedUnit = (deal as any)?.unitId
     ? propertyUnits.find((u) => u.id === (deal as any).unitId)
     : null;
+  const unitsOnThisProperty = (deal as any)?.propertyId
+    ? propertyUnits.filter(u => u.propertyId === (deal as any).propertyId)
+    : [];
   const userColorMap = useMemo(() => buildUserColorMap(users as any), [users]);
 
   useEffect(() => {
@@ -252,6 +268,41 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     const ids = [deal.clientContactId, deal.vendorAgentId, deal.acquisitionAgentId, deal.purchaserAgentId, deal.leasingAgentId].filter(Boolean);
     return contacts.filter((c) => ids.includes(c.id));
   }, [deal, contacts]);
+
+  // Open the unit-edit overlay, pre-filling from the currently linked unit.
+  const openUnitEdit = () => {
+    setUnitEditForm({
+      switchToUnitId: linkedUnit?.id || "",
+      unitAddress: linkedUnit?.unitAddress || "",
+      unitPostcode: linkedUnit?.unitPostcode || "",
+      unitUprn: linkedUnit?.unitUprn || "",
+      unitAddressFreeText: linkedUnit?.unitAddressFreeText || "",
+    });
+    setUnitEditOpen(true);
+  };
+
+  // Save handler: writes any address-field changes to property_units, and if
+  // the user picked a different unit, points the deal's unitId at it.
+  const saveUnitEdit = useMutation({
+    mutationFn: async () => {
+      if (linkedUnit?.id) {
+        await apiRequest("PATCH", `/api/property-units/${linkedUnit.id}`, {
+          unitAddress: unitEditForm.unitAddress || null,
+          unitPostcode: unitEditForm.unitPostcode || null,
+          unitUprn: unitEditForm.unitUprn || null,
+          unitAddressFreeText: unitEditForm.unitAddressFreeText || null,
+        });
+      }
+      if (unitEditForm.switchToUnitId && unitEditForm.switchToUnitId !== linkedUnit?.id) {
+        await apiRequest("PUT", `/api/crm/deals/${id}`, { unitId: unitEditForm.switchToUnitId });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+      setUnitEditOpen(false);
+    },
+  });
 
   const updateAgentsMutation = useMutation({
     mutationFn: async (agents: string[]) => {
@@ -430,7 +481,18 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             return (
               <>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
+                  {headingIsUnit ? (
+                    <button
+                      onClick={openUnitEdit}
+                      className="text-xl font-bold truncate hover:underline hover:text-primary transition-colors"
+                      data-testid="text-deal-name"
+                      title="Click to switch unit or edit unit address"
+                    >
+                      {headingText}
+                    </button>
+                  ) : (
+                    <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
+                  )}
                   {deal.status && (
                     <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
                   )}
@@ -824,6 +886,79 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         companies={companies}
         users={users}
       />
+
+      {/* Unit pick + unit-level address editor — opened from the heading. */}
+      <Dialog open={unitEditOpen} onOpenChange={setUnitEditOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Unit</DialogTitle>
+            <DialogDescription>
+              Switch to a different unit on this property, or edit this unit's address details. The address feeds business-rates and EPC lookups.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs">Switch unit</Label>
+              <Select
+                value={unitEditForm.switchToUnitId || undefined}
+                onValueChange={(v) => setUnitEditForm(f => ({ ...f, switchToUnitId: v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Pick a unit on this property" /></SelectTrigger>
+                <SelectContent>
+                  {unitsOnThisProperty.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="border-t pt-3 space-y-3">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Unit address — for "{linkedUnit?.unitName || "this unit"}"
+              </div>
+              <div>
+                <Label className="text-xs">Address line</Label>
+                <Input
+                  value={unitEditForm.unitAddress}
+                  onChange={e => setUnitEditForm(f => ({ ...f, unitAddress: e.target.value }))}
+                  placeholder="e.g. Unit 4A, Grand Central, Birmingham"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Postcode</Label>
+                  <Input
+                    value={unitEditForm.unitPostcode}
+                    onChange={e => setUnitEditForm(f => ({ ...f, unitPostcode: e.target.value }))}
+                    placeholder="B2 4AB"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">UPRN</Label>
+                  <Input
+                    value={unitEditForm.unitUprn}
+                    onChange={e => setUnitEditForm(f => ({ ...f, unitUprn: e.target.value }))}
+                    placeholder="200012345678"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Free-text fallback <span className="text-muted-foreground">(if not on PAF)</span></Label>
+                <Input
+                  value={unitEditForm.unitAddressFreeText}
+                  onChange={e => setUnitEditForm(f => ({ ...f, unitAddressFreeText: e.target.value }))}
+                  placeholder="Kiosk 12, Market Hall ground floor"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUnitEditOpen(false)}>Cancel</Button>
+            <Button onClick={() => saveUnitEdit.mutate()} disabled={saveUnitEdit.isPending}>
+              {saveUnitEdit.isPending ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex justify-start mt-6 pt-3 border-t">
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">

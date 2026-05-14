@@ -1565,6 +1565,14 @@ export const propertyUnits = pgTable("property_units", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
   unitName: text("unit_name").notNull(),
+  // Unit-level address — anchored so a sub-unit can have its own postal
+  // address / rateable value / EPC, distinct from the parent property.
+  // Free-text fallback for kiosks / pop-ups / shopping-centre sub-units
+  // that aren't on Royal Mail PAF.
+  unitAddress: text("unit_address"),
+  unitPostcode: text("unit_postcode"),
+  unitUprn: text("unit_uprn"),
+  unitAddressFreeText: text("unit_address_free_text"),
   floor: text("floor"),
   sqft: real("sqft"),
   useClass: text("use_class"),

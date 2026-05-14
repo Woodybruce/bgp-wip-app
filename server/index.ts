@@ -1235,6 +1235,12 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS pla_matters_deal_idx ON pla_matters (deal_id) WHERE deal_id IS NOT NULL`,
     `ALTER TABLE pla_matters ADD COLUMN IF NOT EXISTS unit_id VARCHAR`,
     `CREATE INDEX IF NOT EXISTS pla_matters_unit_idx ON pla_matters (unit_id) WHERE unit_id IS NOT NULL`,
+    // Unit-level address — for sub-units that have their own postal address /
+    // rateable value / UPRN distinct from the parent property.
+    `ALTER TABLE property_units ADD COLUMN IF NOT EXISTS unit_address TEXT`,
+    `ALTER TABLE property_units ADD COLUMN IF NOT EXISTS unit_postcode TEXT`,
+    `ALTER TABLE property_units ADD COLUMN IF NOT EXISTS unit_uprn TEXT`,
+    `ALTER TABLE property_units ADD COLUMN IF NOT EXISTS unit_address_free_text TEXT`,
     // Compliance overrides — captured when someone promotes a deal to SOL
     // without AML / fee agreement being complete. Lets us produce a compliance
     // report and chase the gaps before exchange.

@@ -2215,10 +2215,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/property-units/:id", requireAuth, async (req, res) => {
     try {
-      const allowed = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating", "frontage", "notes"];
+      const allowed = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating", "frontage", "notes",
+        "unitAddress", "unitPostcode", "unitUprn", "unitAddressFreeText"];
       const cols: Record<string, string> = {
         unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
         condition: "condition", epcRating: "epc_rating", frontage: "frontage", notes: "notes",
+        unitAddress: "unit_address", unitPostcode: "unit_postcode",
+        unitUprn: "unit_uprn", unitAddressFreeText: "unit_address_free_text",
       };
       const sets: string[] = [];
       const values: any[] = [];
