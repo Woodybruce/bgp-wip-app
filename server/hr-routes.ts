@@ -3120,6 +3120,46 @@ Return ONLY JSON.`,
     }
   });
 
+  // Auto-link review-form numbers from the WIP report.
+  //   target            = current_salary_pence * 3
+  //   achieved          = sum of fee allocations on INV-status deals
+  //   under offer       = sum on SOL-status deals
+  //   negotiating       = sum on NEG-status deals
+  // Single-review variant — used by the "Sync from WIP" button on the
+  // review form. Self or admin only.
+  app.post("/api/hr/reviews/:id/sync-from-wip", requireAuth, async (req: any, res) => {
+    try {
+      const actor = await getActor(req);
+      const owner = await pool.query("SELECT user_id FROM staff_reviews WHERE id = $1", [req.params.id]);
+      if (!owner.rows[0]) return res.status(404).json({ error: "Review not found" });
+      if (!actor.isAdmin && actor.userId !== owner.rows[0].user_id) {
+        return res.status(403).json({ error: "Forbidden — can only sync your own reviews" });
+      }
+      const { syncReviewFromWip } = await import("./review-wip-sync");
+      const result = await syncReviewFromWip(req.params.id);
+      if (!result) return res.status(404).json({ error: "Review not found or has no linked user" });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      console.error("[hr/reviews/sync-from-wip]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Bulk: sync every review whose period matches a substring. Use for
+  // the "all 2027 tax year review forms" sweep. Admin only.
+  app.post("/api/hr/reviews/sync-from-wip-bulk", requireAdmin, async (req: any, res) => {
+    try {
+      const periodMatch = String(req.body?.periodMatch || req.body?.period || "2027").trim();
+      if (!periodMatch) return res.status(400).json({ error: "periodMatch required (substring, e.g. '2027')" });
+      const { syncReviewsFromWipByPeriod } = await import("./review-wip-sync");
+      const result = await syncReviewsFromWipByPeriod(periodMatch);
+      res.json({ ok: true, periodMatch, ...result });
+    } catch (e: any) {
+      console.error("[hr/reviews/sync-from-wip-bulk]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Import a pasted review (e.g. from a SharePoint Word doc) and let Claude
   // extract the structured fields into a staff_reviews row. Lets BGP retire
   // the SharePoint copies and keep everything searchable in-app.

@@ -2792,6 +2792,31 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   const [compEffectiveDate, setCompEffectiveDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [compReason, setCompReason] = useState<string>("");
 
+  // Pull target / achieved / pipeline figures straight from the WIP
+  // report — target = 3 × salary, achieved = INV fees, under offer = SOL,
+  // negotiating = NEG. Maps the user's name to fee allocations server-side.
+  const syncFromWip = useMutation({
+    mutationFn: async ({ id }: { id: string }) =>
+      apiRequest("POST", `/api/hr/reviews/${id}/sync-from-wip`).then(r => r.json()),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
+      const ach = ((data?.changes?.fees_achieved_pence || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
+      const sol = ((data?.changes?.pipeline_under_offer_pence || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
+      const neg = ((data?.changes?.pipeline_negotiating_pence || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
+      toast({
+        title: `Synced from WIP (${data?.matchedAllocations || 0} allocations)`,
+        description: `Achieved £${ach}, Under offer £${sol}, Negotiating £${neg}`,
+      });
+    },
+    onError: (e: any) => {
+      toast({
+        title: "WIP sync failed",
+        description: e?.message?.slice(0, 240) || "",
+        variant: "destructive",
+      });
+    },
+  });
+
   const recordCompensation = useMutation({
     mutationFn: async ({ id }: { id: string }) =>
       apiRequest("POST", `/api/hr/reviews/${id}/record-compensation`, {
@@ -2941,6 +2966,17 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
               <div className="flex gap-1">
                 <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => aiDraft.mutate(editing.id)} disabled={aiDraft.isPending}>
                   {aiDraft.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />} AI draft
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={() => syncFromWip.mutate({ id: editing.id })}
+                  disabled={syncFromWip.isPending}
+                  title="Pull target (3× salary) and fees-achieved / under-offer / negotiating from the WIP report"
+                  data-testid="button-sync-from-wip"
+                >
+                  {syncFromWip.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5 mr-1" />} Sync from WIP
                 </Button>
                 {editing.status === "draft" && isOwn && (
                   <Button size="sm" className="h-7 text-xs" onClick={() => updateReview.mutate({ id: editing.id, body: { status: "submitted" } })}>
