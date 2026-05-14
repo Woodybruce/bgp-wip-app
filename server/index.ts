@@ -1233,6 +1233,18 @@ import { pool } from "./db";
         WHERE status IN ('open','in_negotiation','agreed','settled','closed','on_hold')
           AND legacy_status IS NULL`,
     `CREATE INDEX IF NOT EXISTS pla_matters_deal_idx ON pla_matters (deal_id) WHERE deal_id IS NOT NULL`,
+    // Compliance overrides — captured when someone promotes a deal to SOL
+    // without AML / fee agreement being complete. Lets us produce a compliance
+    // report and chase the gaps before exchange.
+    `CREATE TABLE IF NOT EXISTS deal_compliance_audit (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      deal_id VARCHAR NOT NULL,
+      user_id VARCHAR,
+      missing_fields TEXT[],
+      target_status TEXT,
+      override_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS deal_compliance_audit_deal_idx ON deal_compliance_audit (deal_id, override_at DESC)`,
     `CREATE TABLE IF NOT EXISTS bonus_history (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,

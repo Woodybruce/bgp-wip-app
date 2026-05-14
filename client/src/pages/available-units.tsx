@@ -1104,14 +1104,32 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       <TableCell className="text-xs font-mono text-muted-foreground">
                         {deal?.dealRef ? (
-                          <a
-                            href={`/deals/${deal.id}`}
-                            className="text-blue-600 hover:underline"
-                            title={`Open deal ${deal.dealRef}`}
-                            data-testid={`link-deal-ref-${u.id}`}
-                          >
-                            #{deal.dealRef}
-                          </a>
+                          <div className="flex items-center gap-1.5">
+                            <a
+                              href={`/deals/${deal.id}`}
+                              className="text-blue-600 hover:underline"
+                              title={`Open deal ${deal.dealRef}`}
+                              data-testid={`link-deal-ref-${u.id}`}
+                            >
+                              #{deal.dealRef}
+                            </a>
+                            {(() => {
+                              const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
+                              const feeOk = deal.feeAgreement === "YES";
+                              const code = legacyToCode(deal.status);
+                              // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
+                              const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
+                              if (!promoted) return null;
+                              if (amlOk && feeOk) return null;
+                              return (
+                                <span
+                                  className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"
+                                  title={`Compliance gap: ${[!amlOk && "AML", !feeOk && "Fee agreement"].filter(Boolean).join(" + ")}`}
+                                  data-testid={`compliance-flag-${u.id}`}
+                                />
+                              );
+                            })()}
+                          </div>
                         ) : "—"}
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-medium max-w-[200px]">

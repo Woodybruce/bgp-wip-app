@@ -386,6 +386,18 @@ function MatterDetailView({ id }: { id: string }) {
   const [devaluationOpen, setDevaluationOpen] = useState(false);
   const [briefsOpen, setBriefsOpen] = useState(false);
 
+  // SOL-promotion gate — same rules as Letting Tracker. Status change to SOL
+  // requires Tenant + Fee + Agent (hard) and Fee Agreement + AML (soft, override).
+  const [solOpen, setSolOpen] = useState(false);
+  const [solForm, setSolForm] = useState({
+    tenantName: "",
+    fee: "",
+    agent: "",
+    feeAgreement: "",
+    amlChecked: "",
+    overrideCompliance: false,
+  });
+
   const { data, isLoading, refetch } = useQuery<MatterDetailResponse>({
     queryKey: ["/api/pla/matters", id],
     queryFn: async () => {
@@ -449,7 +461,21 @@ function MatterDetailView({ id }: { id: string }) {
           <Badge variant="outline" className="capitalize">Acting for {matter.actingFor || "—"}</Badge>
           <Select
             value={matter.status}
-            onValueChange={(v) => updateField.mutate({ status: v } as any)}
+            onValueChange={(v) => {
+              if (v === "SOL" && matter.status !== "SOL") {
+                setSolForm({
+                  tenantName: "",
+                  fee: "",
+                  agent: matter.leadUserId || "",
+                  feeAgreement: "",
+                  amlChecked: "",
+                  overrideCompliance: false,
+                });
+                setSolOpen(true);
+                return;
+              }
+              updateField.mutate({ status: v } as any);
+            }}
           >
             <SelectTrigger className="w-44 h-8"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -687,6 +713,151 @@ function MatterDetailView({ id }: { id: string }) {
         defaults={{ annualRentPa: matter.currentRent ?? null }}
         onComputed={() => { setDevaluationOpen(false); refetch(); }}
       />
+
+      {/* SOL promotion — same hard/soft gates as Letting Tracker. Updates the
+          backing crm_deals row and flips the matter status. Override + audit
+          mirror the leasing side. */}
+      <Dialog open={solOpen} onOpenChange={(o) => !o && setSolOpen(false)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Promote to Solicitors</DialogTitle>
+            <DialogDescription>
+              Capture the deal-handover info — fee, counter-party and compliance — before this instruction goes to solicitors.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1">Counter-party *</Label>
+                <Input
+                  value={solForm.tenantName}
+                  onChange={e => setSolForm(f => ({ ...f, tenantName: e.target.value }))}
+                  placeholder="Tenant / landlord name"
+                />
+              </div>
+              <div>
+                <Label className="text-xs mb-1">Fee (£) *</Label>
+                <Input
+                  type="number"
+                  value={solForm.fee}
+                  onChange={e => setSolForm(f => ({ ...f, fee: e.target.value }))}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1">Lead BGP agent *</Label>
+                <Input
+                  value={solForm.agent}
+                  onChange={e => setSolForm(f => ({ ...f, agent: e.target.value }))}
+                  placeholder="User ID"
+                />
+              </div>
+              <div>
+                <Label className="text-xs mb-1">Fee Agreement signed</Label>
+                <Select value={solForm.feeAgreement} onValueChange={v => setSolForm(f => ({ ...f, feeAgreement: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YES">YES</SelectItem>
+                    <SelectItem value="NO">NO</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs mb-1">AML / KYC checked</Label>
+              <Select value={solForm.amlChecked} onValueChange={v => setSolForm(f => ({ ...f, amlChecked: v }))}>
+                <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="YES">YES</SelectItem>
+                  <SelectItem value="NO">NO</SelectItem>
+                  <SelectItem value="N-A">N/A</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {(() => {
+            const hardMissing: string[] = [];
+            if (!solForm.tenantName.trim()) hardMissing.push("Counter-party");
+            if (!solForm.fee.trim()) hardMissing.push("Fee");
+            if (!solForm.agent.trim()) hardMissing.push("Lead agent");
+            const softMissing: string[] = [];
+            if (solForm.feeAgreement !== "YES") softMissing.push("Fee agreement signed");
+            if (solForm.amlChecked !== "YES" && solForm.amlChecked !== "N-A") softMissing.push("AML / KYC checked");
+            const canSubmit = hardMissing.length === 0 && (softMissing.length === 0 || solForm.overrideCompliance);
+            const submit = async () => {
+              if (!matter.dealId) {
+                toast({ title: "No linked deal — can't promote", variant: "destructive" });
+                return;
+              }
+              try {
+                // Update the linked deal with the SOL handover fields.
+                await fetch(`/api/crm/deals/${matter.dealId}`, {
+                  method: "PATCH",
+                  credentials: "include",
+                  headers: { "content-type": "application/json", ...getAuthHeaders() },
+                  body: JSON.stringify({
+                    status: "SOL",
+                    fee: parseFloat(solForm.fee),
+                    internalAgent: [solForm.agent],
+                    feeAgreement: solForm.feeAgreement || null,
+                    amlCheckCompleted: solForm.amlChecked || null,
+                    comments: solForm.tenantName ? `Counter-party: ${solForm.tenantName}` : undefined,
+                  }),
+                });
+                // Flip the matter status.
+                updateField.mutate({ status: "SOL" } as any);
+                // Log compliance override if applicable.
+                if (solForm.overrideCompliance && softMissing.length > 0) {
+                  await fetch(`/api/deal-compliance-audit`, {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "content-type": "application/json", ...getAuthHeaders() },
+                    body: JSON.stringify({
+                      dealId: matter.dealId,
+                      missingFields: softMissing.map(s => s.toLowerCase().replace(/[^a-z]+/g, "_")),
+                      targetStatus: "SOL",
+                    }),
+                  }).catch(() => {});
+                }
+                setSolOpen(false);
+                toast({ title: "Promoted to Solicitors" });
+              } catch (err: any) {
+                toast({ title: "Couldn't promote", description: err?.message, variant: "destructive" });
+              }
+            };
+            return (
+              <>
+                {(hardMissing.length > 0 || softMissing.length > 0) && (
+                  <div className="rounded-md border p-2 bg-amber-50 dark:bg-amber-900/10 mt-2 space-y-1.5">
+                    {hardMissing.length > 0 && (
+                      <p className="text-xs text-rose-700 dark:text-rose-400">Required before saving: {hardMissing.join(", ")}</p>
+                    )}
+                    {hardMissing.length === 0 && softMissing.length > 0 && (
+                      <>
+                        <p className="text-xs text-amber-700 dark:text-amber-400">Missing compliance: {softMissing.join(", ")}</p>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={solForm.overrideCompliance}
+                            onChange={e => setSolForm(f => ({ ...f, overrideCompliance: e.target.checked }))}
+                          />
+                          <span>Promote anyway — I'll complete these before exchange</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setSolOpen(false)}>Cancel</Button>
+                  <Button onClick={submit} disabled={!canSubmit}>Promote to Solicitors</Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -2872,6 +2872,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // available_units that doesn't already have one on the same property. Safe
   // to re-run — only creates rows where none exists (matched by
   // property_id + unit_name). Returns the count created.
+  // Compliance audit — recorded when someone overrides the AML / fee-agreement
+  // gate when promoting a deal to SOL. PLA side calls this directly; Letting
+  // Tracker side writes inline from the promote endpoint above.
+  app.post("/api/deal-compliance-audit", requireAuth, async (req: any, res) => {
+    const { dealId, missingFields, targetStatus } = req.body || {};
+    if (!dealId || !Array.isArray(missingFields)) {
+      return res.status(400).json({ error: "dealId and missingFields[] required" });
+    }
+    try {
+      const userId = req.user?.id ?? null;
+      await pool.query(
+        `INSERT INTO deal_compliance_audit (deal_id, user_id, missing_fields, target_status)
+         VALUES ($1, $2, $3, $4)`,
+        [dealId, userId, missingFields, targetStatus || null]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { rows } = await pool.query(
@@ -2965,6 +2986,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         dealId: deal?.id ?? unit.dealId,
         marketingStatus: "SOL",
       });
+
+      // If user ticked "Promote anyway" to bypass missing AML / fee-agreement,
+      // log it so a future compliance report can chase the gaps before exchange.
+      if (deal && body.overrideCompliance) {
+        const missing: string[] = [];
+        if (body.feeAgreement !== "YES") missing.push("fee_agreement_signed");
+        if (body.amlChecked !== "YES" && body.amlChecked !== "N-A") missing.push("aml_kyc_checked");
+        if (missing.length > 0) {
+          try {
+            const userId = (req as any).user?.id ?? null;
+            await pool.query(
+              `INSERT INTO deal_compliance_audit (deal_id, user_id, missing_fields, target_status)
+               VALUES ($1, $2, $3, $4)`,
+              [deal.id, userId, missing, "SOL"]
+            );
+          } catch (e: any) {
+            console.warn("[promote] compliance audit log failed:", e.message);
+          }
+        }
+      }
+
       res.json({ deal, unit: { ...unit, dealId: deal?.id ?? unit.dealId, marketingStatus: "SOL" } });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to promote unit" });
