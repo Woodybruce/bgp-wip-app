@@ -830,7 +830,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </div>
 
         {/* Right sidebar — linked records, files, comments */}
-        <div className="w-[300px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+        <div className="w-[500px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{linkedProperty?.name || deal.name}</h3>
