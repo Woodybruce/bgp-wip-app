@@ -719,7 +719,7 @@ export function DealFormDialog({
                 const val = v === "__clear__" ? "" : v;
                 set("dealType", val);
                 let autoTeam: string | null = null;
-                if (["Purchase", "Sale", "Investment Sale", "Investment Acquisition"].includes(val)) autoTeam = "Investment";
+                if (["Purchase", "Sale"].includes(val)) autoTeam = "Investment";
                 else if (val === "Lease Acquisition") autoTeam = "Tenant Rep";
                 else if (["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"].includes(val)) autoTeam = "Lease Advisory";
                 if (autoTeam && !form.team.includes(autoTeam)) {
