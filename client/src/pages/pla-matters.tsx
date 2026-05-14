@@ -139,10 +139,10 @@ function MatterListView() {
           <div className="flex items-center gap-2">
             <Scale className="h-5 w-5 text-primary" />
             <h1 className="text-xl font-semibold">Lease Advisory</h1>
-            <Badge variant="outline" className="text-xs">{filtered.length} matters</Badge>
+            <Badge variant="outline" className="text-xs">{filtered.length} instructions</Badge>
           </div>
           <Button onClick={() => setCreateOpen(true)} size="sm" className="gap-1.5">
-            <Plus className="h-4 w-4" /> New Matter
+            <Plus className="h-4 w-4" /> New Instruction
           </Button>
         </div>
         <div className="flex items-center gap-2 mt-3 flex-wrap">
@@ -182,8 +182,8 @@ function MatterListView() {
         ) : filtered.length === 0 ? (
           <Card><CardContent className="p-12 text-center text-muted-foreground">
             <Scale className="h-12 w-12 mx-auto mb-3 opacity-30" />
-            <p className="font-medium mb-1">No matters {statusFilter !== "all" ? `with status "${statusFilter}"` : "yet"}</p>
-            <p className="text-sm">Click "New Matter" to start one — anchor it to a property via the resolver.</p>
+            <p className="font-medium mb-1">No instructions {statusFilter !== "all" ? `with status "${statusFilter}"` : "yet"}</p>
+            <p className="text-sm">Click "New Instruction" to start one — anchor it to a property via the resolver.</p>
           </CardContent></Card>
         ) : (
           <Card>
@@ -282,37 +282,36 @@ function NewMatterDialog({
       return res.json() as Promise<PlaMatter>;
     },
     onSuccess: (m) => {
-      toast({ title: "Matter created", description: typeLabel(m.matterType) });
-      // reset for next use
+      toast({ title: "Instruction created", description: typeLabel(m.matterType) });
       setProperty(null);
       setNotes("");
       onCreated(m.id);
     },
-    onError: (err: any) => toast({ title: "Couldn't create matter", description: err?.message, variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Couldn't create instruction", description: err?.message, variant: "destructive" }),
   });
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>New Matter</DialogTitle>
+          <DialogTitle>New Instruction</DialogTitle>
           <DialogDescription>
-            Anchor this matter to a canonical property — type any address, postcode, UPRN or title number and the resolver will pick it up.
+            Anchor this instruction to a canonical property — type any address, postcode, UPRN or title number and the resolver will pick it up.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div>
+        <div className="space-y-4 py-2 min-w-0">
+          <div className="min-w-0">
             <label className="text-sm font-medium block mb-2">Property</label>
             <PropertyResolverBar
               current={property}
               onResolve={(id, prop) => setProperty({ id, name: prop.name, postcode: prop.postcode })}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium block mb-2">Matter type</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
+            <div className="min-w-0">
+              <label className="text-sm font-medium block mb-2">Instruction type</label>
               <Select value={matterType} onValueChange={setMatterType}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {MATTER_TYPES.map((t) => (
                     <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
@@ -320,10 +319,10 @@ function NewMatterDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div className="min-w-0">
               <label className="text-sm font-medium block mb-2">Acting for</label>
               <Select value={actingFor} onValueChange={setActingFor}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="landlord">Landlord</SelectItem>
                   <SelectItem value="tenant">Tenant</SelectItem>
@@ -331,16 +330,16 @@ function NewMatterDialog({
               </Select>
             </div>
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="text-sm font-medium block mb-2">Notes <span className="text-muted-foreground font-normal">(optional)</span></label>
-            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Brief description of the matter…" />
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Brief description of the instruction…" />
           </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={() => create.mutate()} disabled={!property || create.isPending}>
             {create.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-            Create matter
+            Create instruction
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -407,7 +406,7 @@ function MatterDetailView({ id }: { id: string }) {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Matter closed" });
+      toast({ title: "Instruction closed" });
       refetch();
       queryClient.invalidateQueries({ queryKey: ["/api/pla/matters"] });
     },
@@ -417,7 +416,7 @@ function MatterDetailView({ id }: { id: string }) {
     return <div className="p-6 space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>;
   }
   if (!data) {
-    return <div className="p-6 text-center text-muted-foreground">Matter not found.</div>;
+    return <div className="p-6 text-center text-muted-foreground">Instruction not found.</div>;
   }
   const { matter, comps, events, workbooks } = data;
 
@@ -467,7 +466,7 @@ function MatterDetailView({ id }: { id: string }) {
               </Button>
             )}
             {matter.status !== "closed" && (
-              <Button variant="outline" size="sm" onClick={() => closeMatter.mutate()}>Close matter</Button>
+              <Button variant="outline" size="sm" onClick={() => closeMatter.mutate()}>Close instruction</Button>
             )}
           </div>
         </div>
