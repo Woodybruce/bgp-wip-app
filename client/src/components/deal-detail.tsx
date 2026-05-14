@@ -407,35 +407,61 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </Button>
         </Link>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{linkedProperty?.name || deal.name}</h1>
-            {deal.status && (
-              <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
-            )}
-          </div>
-          {(linkedProperty || linkedUnit || (deal as any).unitId) && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
-              {linkedProperty && (
-                <Link href={`/properties/${linkedProperty.id}`}>
-                  <a className="hover:underline hover:text-foreground">{linkedProperty.name}</a>
-                </Link>
-              )}
-              {linkedProperty && linkedUnit && <span>·</span>}
-              {linkedUnit && (
-                <Link href={`/properties/${linkedUnit.propertyId}`}>
-                  <a className="hover:underline hover:text-foreground">{linkedUnit.unitName}</a>
-                </Link>
-              )}
-              {(deal as any).unitId && (
-                <>
-                  <span>·</span>
-                  <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`}>
-                    <a className="hover:underline hover:text-foreground" data-testid="link-back-to-tracker">← Back to Letting Tracker</a>
-                  </Link>
-                </>
-              )}
-            </div>
-          )}
+          {(() => {
+            // Investment (Sale/Purchase) deals are about the whole property —
+            // heading = property name. Leasing deals are about a specific unit
+            // — heading = unit name, property as subtitle.
+            const isInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
+            const headingIsUnit = !isInvestment && !!linkedUnit;
+            const headingText = headingIsUnit
+              ? linkedUnit!.unitName
+              : (linkedProperty?.name || deal.name);
+            // Counterparty: Purchaser/Vendor for investment, Tenant for leasing.
+            let counterpartyId: string | null = null;
+            let counterpartyLabel = "";
+            if (isInvestment) {
+              if (deal.dealType === "Sale") { counterpartyId = (deal as any).purchaserId; counterpartyLabel = "Purchaser"; }
+              else { counterpartyId = (deal as any).vendorId; counterpartyLabel = "Vendor"; }
+            } else {
+              counterpartyId = (deal as any).tenantId;
+              counterpartyLabel = "Tenant";
+            }
+            const counterparty = counterpartyId ? companies.find((c) => c.id === counterpartyId) : null;
+            return (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
+                  {deal.status && (
+                    <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
+                  {headingIsUnit && linkedProperty && (
+                    <Link href={`/properties/${linkedProperty.id}`}>
+                      <a className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
+                        <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
+                      </a>
+                    </Link>
+                  )}
+                  {counterparty && (
+                    <Link href={`/companies/${counterparty.id}`}>
+                      <a className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`}>
+                        <Users className="w-3.5 h-3.5" /> {counterpartyLabel}: {counterparty.name}
+                      </a>
+                    </Link>
+                  )}
+                  {!counterparty && (
+                    <span className="text-xs italic">{counterpartyLabel} not set</span>
+                  )}
+                  {headingIsUnit && (
+                    <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`}>
+                      <a className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">← Back to Letting Tracker</a>
+                    </Link>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
         <div className="flex items-center gap-2">
           <Link href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
