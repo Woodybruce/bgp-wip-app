@@ -2946,12 +2946,42 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       );
       const fileId = fileMeta.rows[0].id;
       await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, req.file.buffer]);
+
+      // When the image is attached to a property, also store it in Image
+      // Studio's library + property_imagery_assets so it appears in Image
+      // Studio search, the Property Pathway imagery picker, and the
+      // Property Intelligence imagery tab — not just the sidebar.
+      let imageStudioId: string | null = null;
+      if (entityType === "property") {
+        try {
+          const { storeImageFromBuffer } = await import("./image-studio");
+          const stored = await storeImageFromBuffer({
+            buffer: req.file.buffer,
+            fileName: req.file.originalname,
+            category: "Property",
+            tags: ["uploaded", "property"],
+            description: title || `Uploaded for property`,
+            source: "uploaded",
+            propertyId: entityId,
+            mimeType: req.file.mimetype,
+          });
+          imageStudioId = stored.id;
+          await pool.query(
+            `INSERT INTO property_imagery_assets (property_id, kind, source, image_studio_id, caption, generated_by)
+             VALUES ($1, 'secondary_external', 'uploaded', $2, $3, $4)`,
+            [entityId, stored.id, title || null, userId]
+          ).catch(() => {});
+        } catch (syncErr: any) {
+          console.warn("[entity-images POST] Image Studio sync failed:", syncErr?.message);
+        }
+      }
+
       const ins = await pool.query(
-        `INSERT INTO entity_images (entity_type, entity_id, file_id, kind, title, notes, created_by_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [entityType, entityId, fileId, kind || null, title || null, notes || null, userId]
+        `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, notes, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [entityType, entityId, fileId, imageStudioId, kind || null, title || null, notes || null, userId]
       );
-      res.json({ id: ins.rows[0].id, fileId });
+      res.json({ id: ins.rows[0].id, fileId, imageStudioId });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }

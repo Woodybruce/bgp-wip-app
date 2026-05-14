@@ -388,7 +388,7 @@ export async function captureStreetViewForAddress(args: { address: string; prope
 
 type StoredImage = { id: string; localPath: string };
 
-async function storeImageFromBuffer(args: {
+export async function storeImageFromBuffer(args: {
   buffer: Buffer;
   fileName: string;
   category: string;
