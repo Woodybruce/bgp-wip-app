@@ -182,39 +182,59 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
 
     setImmediate(async () => {
       try {
-        for (const brand of brands) {
-          if (!job) break;
-          job.lastBrand = brand.name;
-          job.attempted++;
-          const domain = extractDomain(brand.domain_url || brand.domain);
-          if (!domain) { job.missed++; continue; }
-          try {
-            const hit = await fetchLogoForDomain(domain);
-            if (!hit) {
-              job.missed++;
-              continue;
+        let currentBatch = brands;
+        // Auto-chain: after each batch, re-query for more eligible brands.
+        // Keeps going until none left, so a single POST processes the whole
+        // library overnight. Hard safety stop at 5000 total to avoid runaway.
+        let safetyCap = 5000;
+        while (currentBatch.length > 0 && safetyCap > 0) {
+          for (const brand of currentBatch) {
+            if (!job) break;
+            safetyCap--;
+            job.lastBrand = brand.name;
+            job.attempted++;
+            const domain = extractDomain(brand.domain_url || brand.domain);
+            if (!domain) { job.missed++; continue; }
+            try {
+              const hit = await fetchLogoForDomain(domain);
+              if (!hit) { job.missed++; continue; }
+              await storeImageFromBuffer({
+                buffer: hit.buffer,
+                fileName: `${brand.name} — Logo`,
+                category: "Brands",
+                tags: ["brand-logo", "bulk-import", hit.source],
+                description: `Brand logo for ${brand.name}, sourced from ${hit.source}`,
+                source: `bulk-${hit.source}`,
+                brandName: brand.name,
+                mimeType: hit.mime,
+                filenameHint: brand.name,
+              });
+              job.sourceCounts[hit.source] = (job.sourceCounts[hit.source] || 0) + 1;
+              job.imported++;
+              if (job.imported <= 5 || job.imported % 25 === 0) console.log(`[bulk-logos] imported ${job.imported}: ${brand.name} via ${hit.source}`);
+              await new Promise(r => setTimeout(r, 150));
+            } catch (err: any) {
+              job.errors++;
+              const msg = `${brand.name} (${domain}): ${err?.message || err}`;
+              if (job.errorSamples.length < 5) job.errorSamples.push(msg);
+              console.warn(`[bulk-logos] ${msg}`);
             }
-            await storeImageFromBuffer({
-              buffer: hit.buffer,
-              fileName: `${brand.name} — Logo`,
-              category: "Brands",
-              tags: ["brand-logo", "bulk-import", hit.source],
-              description: `Brand logo for ${brand.name}, sourced from ${hit.source}`,
-              source: `bulk-${hit.source}`,
-              brandName: brand.name,
-              mimeType: hit.mime,
-              filenameHint: brand.name,
-            });
-            job.sourceCounts[hit.source] = (job.sourceCounts[hit.source] || 0) + 1;
-            job.imported++;
-            if (job.imported <= 5 || job.imported % 25 === 0) console.log(`[bulk-logos] imported ${job.imported}: ${brand.name} via ${hit.source}`);
-            await new Promise(r => setTimeout(r, 150));
-          } catch (err: any) {
-            job.errors++;
-            const msg = `${brand.name} (${domain}): ${err?.message || err}`;
-            if (job.errorSamples.length < 5) job.errorSamples.push(msg);
-            console.warn(`[bulk-logos] ${msg}`);
           }
+          if (!job) break;
+          // Re-query for the next batch — skipExisting is true so newly-imported
+          // brands drop out naturally. limit applies per-batch.
+          const { rows: nextBatch } = await pool.query<BrandRow>(
+            `SELECT c.id, c.name, c.domain, c.domain_url
+               FROM crm_companies c
+               ${whereClause}
+               ORDER BY c.is_tracked_brand DESC NULLS LAST, c.name ASC
+               LIMIT $1`,
+            [limit]
+          );
+          if (nextBatch.length === 0) break;
+          currentBatch = nextBatch;
+          job.total += nextBatch.length;
+          console.log(`[bulk-logos] auto-chain: starting next batch of ${nextBatch.length}, total so far ${job.attempted}`);
         }
       } catch (err: any) {
         if (job) job.error = err?.message || String(err);
