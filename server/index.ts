@@ -2077,7 +2077,11 @@ const apiLimiter = rateLimit({
     return (
       p.startsWith("/api/chat") ||
       p.startsWith("/api/ai/") ||
-      p.startsWith("/api/chatbgp")
+      p.startsWith("/api/chatbgp") ||
+      // Brand logo thumbnails fire ~200 per Brand Explorer page load.
+      // Already cached by the browser for 24h on 404, and the rendered
+      // page is unusable if we 429 them.
+      p.startsWith("/api/brand-logo")
     );
   },
   message: { message: "Too many requests. Please slow down and try again." },
