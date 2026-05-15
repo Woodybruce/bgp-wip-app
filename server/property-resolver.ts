@@ -238,8 +238,10 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   }
   if (!placeId) return { kind: "not_found", reason: "empty placeId" };
 
-  // Fetch place details — fields restricted to what we need (cheap)
-  const fields = "geometry,formatted_address,place_id,address_components";
+  // Fetch place details — request `name` too so we keep the establishment
+  // label (e.g. "Hartsfield Manor") rather than ending up with just the
+  // street address from OS Places.
+  const fields = "geometry,formatted_address,place_id,address_components,name,types";
   const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=${fields}&key=${process.env.GOOGLE_API_KEY}`;
   const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!resp.ok) return { kind: "not_found", reason: `Google Place Details ${resp.status}` };
@@ -252,6 +254,13 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   const lng = result?.geometry?.location?.lng;
   const formatted = result?.formatted_address;
   const postcode = (result?.address_components || []).find((c: any) => c.types?.includes("postal_code"))?.long_name;
+  // Only treat as an "establishment" if Google flagged it that way. Pure
+  // street addresses come back with name === formatted_address; we don't
+  // want to prefix those.
+  const types: string[] = Array.isArray(result?.types) ? result.types : [];
+  const isEstablishment = types.includes("establishment") || types.includes("point_of_interest") || types.includes("premise") || types.includes("subpremise");
+  const rawName: string | null = (typeof result?.name === "string" && result.name.trim()) ? result.name.trim() : null;
+  const establishmentName = (isEstablishment && rawName && formatted && !formatted.toLowerCase().startsWith(rawName.toLowerCase())) ? rawName : null;
   if (typeof lat !== "number" || typeof lng !== "number") {
     return { kind: "not_found", reason: "Google Place Details returned no geometry" };
   }
@@ -262,15 +271,15 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   // starts with the street number Google extracted. Deterministic for
   // big West End buildings where lat/lng nearest-radius is unreliable
   // (the building centroid often sits >40m from any entrance UPRN).
+  let resolved: ResolveResult | null = null;
   if (postcode && isOsConfigured()) {
     const streetNumber = extractStreetNumber(formatted);
     if (streetNumber) {
       const all = await osPlacesByPostcode(postcode, 100);
       const matches = filterByStreetNumber(all, streetNumber);
       if (matches.length === 1 && matches[0].uprn) {
-        return resolveByUprn(matches[0].uprn);
-      }
-      if (matches.length > 1) {
+        resolved = await resolveByUprn(matches[0].uprn);
+      } else if (matches.length > 1) {
         return {
           kind: "candidates",
           candidates: await annotateCandidates(matches),
@@ -283,23 +292,46 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   // Fallback: lat/lng nearest with a generous 50m radius. Google-derived
   // building centroids on big West End blocks sit further from individual
   // entrance UPRNs than the 25m default.
-  const llResult = await resolveByLatLng(lat, lng, 50);
-  // Final fallback: OS Places find on the formatted address — don't
-  // re-enter resolveByAddress, which would re-Google and loop.
-  if (llResult.kind === "not_found" && formatted) {
-    const results = await osPlacesFind(formatted, 10);
-    if (results.length === 1 && results[0].uprn) {
-      return resolveByUprn(results[0].uprn);
-    }
-    if (results.length > 1) {
-      return {
-        kind: "candidates",
-        candidates: await annotateCandidates(results),
-        reason: "Google match → OS Places returned multiple — user must pick",
-      };
+  if (!resolved) {
+    const llResult = await resolveByLatLng(lat, lng, 50);
+    if (llResult.kind === "resolved") resolved = llResult;
+    else if (llResult.kind === "not_found" && formatted) {
+      // Final fallback: OS Places find on the formatted address — don't
+      // re-enter resolveByAddress, which would re-Google and loop.
+      const results = await osPlacesFind(formatted, 10);
+      if (results.length === 1 && results[0].uprn) {
+        resolved = await resolveByUprn(results[0].uprn);
+      } else if (results.length > 1) {
+        return {
+          kind: "candidates",
+          candidates: await annotateCandidates(results),
+          reason: "Google match → OS Places returned multiple — user must pick",
+        };
+      } else {
+        return llResult;
+      }
+    } else {
+      return llResult;
     }
   }
-  return llResult;
+
+  // Tack the establishment name onto the property name so pathway / brand
+  // panel / breadcrumb show "Hartsfield Manor, Sandy Ln, Betchworth RH3 7AA"
+  // rather than the bare street.
+  if (resolved && resolved.kind === "resolved" && establishmentName) {
+    const currentName = String((resolved.property as any).name || "");
+    if (!currentName.toLowerCase().includes(establishmentName.toLowerCase())) {
+      const newName = `${establishmentName}, ${currentName}`.trim().replace(/^,\s*/, "");
+      try {
+        await db.update(crmProperties).set({ name: newName }).where(eq(crmProperties.id, (resolved.property as any).id));
+        (resolved.property as any).name = newName;
+      } catch (e: any) {
+        console.warn(`[property-resolver] couldn't prefix establishment name "${establishmentName}":`, e?.message);
+      }
+    }
+  }
+
+  return resolved!;
 }
 
 /** Pull a leading street number / range out of a formatted address. */
