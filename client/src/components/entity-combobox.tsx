@@ -104,45 +104,41 @@ export function EntityCombobox({
         className="p-0 w-[--radix-popover-trigger-width] min-w-[280px]"
         align="start"
       >
-        <Command
-          filter={(value, search, keywords) => {
-            const haystack = [value, ...(keywords ?? [])]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
-            return haystack.includes(search.toLowerCase()) ? 1 : 0;
-          }}
-        >
-          <CommandInput placeholder={searchPlaceholder} />
+        <Command shouldFilter={true}>
+          <CommandInput placeholder={searchPlaceholder} autoFocus />
           <CommandList>
             <CommandEmpty>{loading ? "Loading…" : emptyText}</CommandEmpty>
             <CommandGroup>
-              {items.map((it) => (
-                <CommandItem
-                  key={it.id}
-                  value={it.label}
-                  keywords={it.keywords}
-                  onSelect={() => {
-                    onChange(it.id);
-                    setOpen(false);
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      "h-4 w-4",
-                      value === it.id ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  <div className="flex flex-col min-w-0">
-                    <span className="truncate">{it.label}</span>
-                    {it.subLabel && (
-                      <span className="text-xs text-muted-foreground truncate">
-                        {it.subLabel}
-                      </span>
-                    )}
-                  </div>
-                </CommandItem>
-              ))}
+              {items.map((it) => {
+                const cleanKeywords = (it.keywords ?? []).filter(
+                  (k) => typeof k === "string" && k.length > 0
+                );
+                return (
+                  <CommandItem
+                    key={it.id}
+                    value={`${it.label} ${cleanKeywords.join(" ")}`.trim()}
+                    onSelect={() => {
+                      onChange(it.id);
+                      setOpen(false);
+                    }}
+                  >
+                    <Check
+                      className={cn(
+                        "h-4 w-4",
+                        value === it.id ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="truncate">{it.label}</span>
+                      {it.subLabel && (
+                        <span className="text-xs text-muted-foreground truncate">
+                          {it.subLabel}
+                        </span>
+                      )}
+                    </div>
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           </CommandList>
         </Command>
