@@ -1893,40 +1893,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
-            {/* Active requirements — what this brand is looking for */}
-            {requirements.filter(r => r.status === "Active").length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1">
-                    <FileText className="w-3 h-3" /> Active requirements ({requirements.filter(r => r.status === "Active").length})
-                  </span>
-                  <Link
-                    href={`/requirements?companyId=${c.id}`}
-                    className="text-[10px] text-blue-600 hover:underline"
-                  >
-                    manage →
-                  </Link>
-                </div>
-                <div className="space-y-0.5">
-                  {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
-                    const useClass = r.use?.[0] || null;
-                    const size = r.size?.length ? r.size.join(", ") : null;
-                    const locations = r.requirement_locations?.length ? r.requirement_locations.join(", ") : null;
-                    return (
-                      <Link
-                        key={r.id}
-                        href={`/requirements?companyId=${c.id}`}
-                        className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
-                      >
-                        {useClass && <Badge variant="outline" className="text-[10px] shrink-0">{useClass}</Badge>}
-                        {size && <span className="font-medium shrink-0">{size}</span>}
-                        {locations && <span className="truncate text-muted-foreground">{locations}</span>}
-                      </Link>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {/* Active requirements moved into the unified Expansion intelligence zone below. */}
 
             {/* Pitched-to history */}
             {pitchedTo.length > 0 && (
@@ -1981,16 +1948,75 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── Brand Expansion — sits just above Hunter Intel.
-                 AI narrative paragraph + Represented by + Represents.
-                 Moved May 2026 — was at the top, but the visual banner
-                 and key facts belong with the brand profile summary;
-                 the AI take + agent representation are the real
-                 expansion-intent signals and sit alongside Hunter. */}
+            {/* ── Expansion intelligence — single zone that merges what used
+                 to be Brand Expansion + Hunter Intel + Active requirements.
+                 Same job: gather everything we know about what space the
+                 occupier wants. Order: header (score + scrape buttons) →
+                 AI narrative → flags → internal requirements → Pipnet
+                 requirements → signals feed → represented by → represents. */}
             <div className="border-t border-border/40 mt-3 pt-2 order-9">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Store className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Brand Expansion</span>
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Flame className="w-3.5 h-3.5 text-amber-600" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Expansion intelligence</span>
+                  {hunter && hunter.expansionScore != null && (
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${
+                        hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                        hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                        hunter.expansionScore >= 40 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
+                        "bg-zinc-50 text-zinc-500 border-zinc-200"
+                      }`}
+                      title={hunter.expansionFlags?.join(" · ") || ""}
+                    >
+                      Score {hunter.expansionScore}/100
+                    </Badge>
+                  )}
+                  {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
+                  <Link
+                    href={`/hunter?companyId=${companyId}`}
+                    className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                    title="Open in Hunter dashboard"
+                  >
+                    Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
+                  </Link>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px] gap-1 text-muted-foreground"
+                    onClick={() => refreshIntelMutation.mutate()}
+                    disabled={refreshIntelMutation.isPending}
+                    title="Fetch latest Google News for this brand + re-link signals"
+                  >
+                    <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
+                    {refreshIntelMutation.isPending ? "Fetching…" : "News"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px] gap-1 text-muted-foreground"
+                    onClick={() => perplexityRefreshMutation.mutate()}
+                    disabled={perplexityRefreshMutation.isPending}
+                    title="Ask Perplexity for last 30 days of UK-relevant news and extract signals"
+                  >
+                    <Sparkles className={`w-3 h-3 ${perplexityRefreshMutation.isPending ? "animate-spin" : ""}`} />
+                    {perplexityRefreshMutation.isPending ? "Thinking…" : "Perplexity"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px] gap-1 text-muted-foreground"
+                    onClick={() => scrapeWebsiteMutation.mutate()}
+                    disabled={scrapeWebsiteMutation.isPending || !c.domain}
+                    title={c.domain ? "Scrape careers/press pages for expansion signals" : "No domain set"}
+                  >
+                    <Globe className={`w-3 h-3 ${scrapeWebsiteMutation.isPending ? "animate-spin" : ""}`} />
+                    {scrapeWebsiteMutation.isPending ? "Scraping…" : "Scrape"}
+                  </Button>
+                </div>
               </div>
               <div className="space-y-2.5">
                 {c.brand_analysis ? (
@@ -2020,6 +2046,176 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </Button>
                   </div>
                 )}
+            {/* Expansion flags */}
+            {hunter && hunter.expansionFlags && hunter.expansionFlags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {hunter.expansionFlags.map((flag) => (
+                  <Badge key={flag} variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                    {flag}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            {/* Active internal requirements — what this brand has on our books */}
+            {requirements.filter(r => r.status === "Active").length > 0 && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <FileText className="w-3 h-3" /> BGP requirements ({requirements.filter(r => r.status === "Active").length})
+                  </span>
+                  <Link
+                    href={`/requirements?companyId=${c.id}`}
+                    className="text-[10px] text-blue-600 hover:underline"
+                  >
+                    manage →
+                  </Link>
+                </div>
+                <div className="space-y-0.5">
+                  {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
+                    const useClass = r.use?.[0] || null;
+                    const size = r.size?.length ? r.size.join(", ") : null;
+                    const locations = r.requirement_locations?.length ? r.requirement_locations.join(", ") : null;
+                    return (
+                      <Link
+                        key={r.id}
+                        href={`/requirements?companyId=${c.id}`}
+                        className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
+                      >
+                        {useClass && <Badge variant="outline" className="text-[10px] shrink-0">{useClass}</Badge>}
+                        {size && <span className="font-medium shrink-0">{size}</span>}
+                        {locations && <span className="truncate text-muted-foreground">{locations}</span>}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Pipnet requirements — external feed of what the brand is asking
+                the wider market for. Lazy-fetched, cached server-side 1h. */}
+            <PipnetRequirementsRow companyId={companyId} brandName={c.name} />
+
+            {/* Signals feed — same shape as the old Hunter Intel zone */}
+            <div>
+              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
+                <button
+                  onClick={() => setAddSignalOpen(v => !v)}
+                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Log intel
+                </button>
+              </div>
+              {addSignalOpen && (
+                <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
+                  <Input
+                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
+                    value={newSignal.headline}
+                    onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <select
+                      value={newSignal.signal_type}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      {["opening","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
+                        <option key={t} value={t}>{t.replace(/_/g," ")}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={newSignal.sentiment}
+                      onChange={e => setNewSignal(v => ({ ...v, sentiment: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      <option value="positive">Positive</option>
+                      <option value="neutral">Neutral</option>
+                      <option value="negative">Negative</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={newSignal.signal_date}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_date: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    />
+                  </div>
+                  <Input
+                    placeholder="Source URL (optional)"
+                    value={newSignal.source}
+                    onChange={e => setNewSignal(v => ({ ...v, source: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-6 text-[10px] px-2"
+                      onClick={() => addSignalMutation.mutate()}
+                      disabled={!newSignal.headline || addSignalMutation.isPending}
+                    >
+                      {addSignalMutation.isPending ? "Saving…" : "Save signal"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+              {data.signals.length > 0 && (
+                <div className="space-y-1">
+                  {(signalsShowAll ? data.signals : data.signals.slice(0, 6)).map((s: any) => {
+                    const typeCls: Record<string, string> = {
+                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      closure:     "bg-red-50 text-red-700 border-red-200",
+                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
+                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
+                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
+                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
+                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
+                    };
+                    const sentCls: Record<string, string> = {
+                      positive: "border-l-emerald-400",
+                      negative: "border-l-red-400",
+                      neutral:  "border-l-muted",
+                    };
+                    return (
+                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
+                          {s.signal_type.replace(/_/g, " ")}
+                          {s.magnitude === "large" && " ●●"}
+                          {s.magnitude === "medium" && " ●"}
+                        </Badge>
+                        <div className="flex-1 min-w-0">
+                          {s.source && s.source.startsWith("http") ? (
+                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium truncate block hover:underline">
+                              {s.headline}
+                            </a>
+                          ) : (
+                            <p className="font-medium truncate">{s.headline}</p>
+                          )}
+                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
+                        </div>
+                        <button
+                          onClick={() => deleteSignalMutation.mutate(s.id)}
+                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
+                          title="Remove signal"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {data.signals.length > 6 && (
+                <button
+                  onClick={() => setSignalsShowAll(v => !v)}
+                  className="mt-1.5 text-[10px] text-primary hover:underline"
+                >
+                  {signalsShowAll ? "Show less" : `Show ${data.signals.length - 6} more signal${data.signals.length - 6 === 1 ? "" : "s"}`}
+                </button>
+              )}
+            </div>
+
             {/* Represented by (agents repping this brand) */}
             {(data.representedBy.length > 0 || isBrand) && (
               <div>
@@ -2156,241 +2352,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               </div>
             )}
-              </div>
-            </div>
 
-            {/* ── Zone 3: Hunter Intel ──────────────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-5">
-            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Flame className="w-3.5 h-3.5 text-amber-600" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Hunter Intel</span>
-                {(() => {
-                  const t = (c.company_type || "").toLowerCase();
-                  const isLandlord = t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund");
-                  if (isLandlord) {
-                    return (
-                      <>
-                        {c.letting_hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200"><Flame className="w-2.5 h-2.5 mr-0.5" />Letting Watch</Badge>}
-                        {c.investment_hunter_flag && <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200"><Flame className="w-2.5 h-2.5 mr-0.5" />Investment Watch</Badge>}
-                        <Link
-                          href={`/hunters/letting?companyId=${companyId}`}
-                          className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
-                        >
-                          Letting Hunter <ExternalLink className="w-2.5 h-2.5" />
-                        </Link>
-                        <Link
-                          href={`/hunters/investment?companyId=${companyId}`}
-                          className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
-                        >
-                          Investment Hunter <ExternalLink className="w-2.5 h-2.5" />
-                        </Link>
-                      </>
-                    );
-                  }
-                  return (
-                    <>
-                      {hunter && hunter.expansionScore != null && (
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] ${
-                            hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
-                            hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
-                            hunter.expansionScore >= 40 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
-                            "bg-zinc-50 text-zinc-500 border-zinc-200"
-                          }`}
-                          title={hunter.expansionFlags?.join(" · ") || ""}
-                        >
-                          Score {hunter.expansionScore}/100
-                        </Badge>
-                      )}
-                      {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
-                      <Link
-                        href={`/hunter?companyId=${companyId}`}
-                        className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
-                        title="Open in Hunter dashboard"
-                      >
-                        Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
-                      </Link>
-                    </>
-                  );
-                })()}
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[10px] gap-1 text-muted-foreground"
-                  onClick={() => refreshIntelMutation.mutate()}
-                  disabled={refreshIntelMutation.isPending}
-                  title="Fetch latest Google News for this brand + re-link signals"
-                >
-                  <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
-                  {refreshIntelMutation.isPending ? "Fetching…" : "News"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[10px] gap-1 text-muted-foreground"
-                  onClick={() => perplexityRefreshMutation.mutate()}
-                  disabled={perplexityRefreshMutation.isPending}
-                  title="Ask Perplexity for last 30 days of UK-relevant news and extract signals"
-                >
-                  <Sparkles className={`w-3 h-3 ${perplexityRefreshMutation.isPending ? "animate-spin" : ""}`} />
-                  {perplexityRefreshMutation.isPending ? "Thinking…" : "Perplexity"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[10px] gap-1 text-muted-foreground"
-                  onClick={() => scrapeWebsiteMutation.mutate()}
-                  disabled={scrapeWebsiteMutation.isPending || !c.domain}
-                  title={c.domain ? "Scrape careers/press pages for expansion signals" : "No domain set"}
-                >
-                  <Globe className={`w-3 h-3 ${scrapeWebsiteMutation.isPending ? "animate-spin" : ""}`} />
-                  {scrapeWebsiteMutation.isPending ? "Scraping…" : "Scrape"}
-                </Button>
-              </div>
-            </div>
-            <div className="space-y-2.5">
-            {/* Expansion flags driving the Hunter score */}
-            {hunter && hunter.expansionFlags && hunter.expansionFlags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {hunter.expansionFlags.map((flag) => (
-                  <Badge key={flag} variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
-                    {flag}
-                  </Badge>
-                ))}
-              </div>
-            )}
-            {/* Signals feed */}
-            <div>
-              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
-                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
-                <button
-                  onClick={() => setAddSignalOpen(v => !v)}
-                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
-                >
-                  <Plus className="w-2.5 h-2.5" /> Log intel
-                </button>
-              </div>
-
-              {addSignalOpen && (
-                <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
-                  <Input
-                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
-                    value={newSignal.headline}
-                    onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
-                    className="h-7 text-xs"
-                  />
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <select
-                      value={newSignal.signal_type}
-                      onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    >
-                      {["opening","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
-                        <option key={t} value={t}>{t.replace(/_/g," ")}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={newSignal.sentiment}
-                      onChange={e => setNewSignal(v => ({ ...v, sentiment: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    >
-                      <option value="positive">Positive</option>
-                      <option value="neutral">Neutral</option>
-                      <option value="negative">Negative</option>
-                    </select>
-                    <input
-                      type="date"
-                      value={newSignal.signal_date}
-                      onChange={e => setNewSignal(v => ({ ...v, signal_date: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    />
-                  </div>
-                  <Input
-                    placeholder="Source URL (optional)"
-                    value={newSignal.source}
-                    onChange={e => setNewSignal(v => ({ ...v, source: e.target.value }))}
-                    className="h-7 text-xs"
-                  />
-                  <div className="flex gap-1.5">
-                    <Button
-                      size="sm"
-                      className="h-6 text-[10px] px-2"
-                      onClick={() => addSignalMutation.mutate()}
-                      disabled={!newSignal.headline || addSignalMutation.isPending}
-                    >
-                      {addSignalMutation.isPending ? "Saving…" : "Save signal"}
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
-                  </div>
-                </div>
-              )}
-
-              {data.signals.length > 0 && (
-                <div className="space-y-1">
-                  {(signalsShowAll ? data.signals : data.signals.slice(0, 6)).map((s: any) => {
-                    const typeCls: Record<string, string> = {
-                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
-                      closure:     "bg-red-50 text-red-700 border-red-200",
-                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
-                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
-                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
-                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
-                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
-                    };
-                    const sentCls: Record<string, string> = {
-                      positive: "border-l-emerald-400",
-                      negative: "border-l-red-400",
-                      neutral:  "border-l-muted",
-                    };
-                    return (
-                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
-                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
-                          {s.signal_type.replace(/_/g, " ")}
-                          {s.magnitude === "large" && " ●●"}
-                          {s.magnitude === "medium" && " ●"}
-                        </Badge>
-                        <div className="flex-1 min-w-0">
-                          {s.source && s.source.startsWith("http") ? (
-                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium truncate block hover:underline">
-                              {s.headline}
-                            </a>
-                          ) : (
-                            <p className="font-medium truncate">{s.headline}</p>
-                          )}
-                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
-                        </div>
-                        <button
-                          onClick={() => deleteSignalMutation.mutate(s.id)}
-                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
-                          title="Remove signal"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {data.signals.length > 6 && (
-                <button
-                  onClick={() => setSignalsShowAll(v => !v)}
-                  className="mt-1.5 text-[10px] text-primary hover:underline"
-                >
-                  {signalsShowAll ? "Show less" : `Show ${data.signals.length - 6} more signal${data.signals.length - 6 === 1 ? "" : "s"}`}
-                </button>
-              )}
-            </div>
             {c.last_enriched_at && (
               <div className="text-[10px] text-muted-foreground pt-1 border-t flex items-center gap-1">
                 <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
               </div>
             )}
+              </div>
             </div>
-            </div>
+
 
             {/* News & Media + Documents & Gallery now live on the sidebar */}
           </div>
@@ -2413,6 +2383,60 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
         onClose={() => setOpenMeeting(null)}
       />
     )}
+    </div>
+  );
+}
+
+function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; brandName: string }) {
+  const { data, isLoading, refetch, isFetching } = useQuery<{ rows: any[]; fetched_at: string | null; cached?: boolean; error?: string }>({
+    queryKey: ["/api/brand", companyId, "pipnet-requirements"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/pipnet-requirements`, { credentials: "include" });
+      if (!r.ok) return { rows: [], fetched_at: null };
+      return r.json();
+    },
+    staleTime: 60 * 60_000,
+  });
+
+  const rows = data?.rows || [];
+  const hasRows = rows.length > 0;
+
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+        <span className="flex items-center gap-1">
+          <Search className="w-3 h-3" /> Pipnet requirements {hasRows ? `(${rows.length})` : ""}
+          {data?.fetched_at && (
+            <span className="text-[10px] ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+          )}
+        </span>
+        <button
+          onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include" }).then(() => refetch())}
+          disabled={isFetching}
+          className="text-[10px] text-primary hover:underline disabled:opacity-50"
+        >
+          {isFetching ? "Searching…" : "Refresh"}
+        </button>
+      </div>
+      {isLoading ? (
+        <p className="text-[11px] text-muted-foreground italic">Loading…</p>
+      ) : !hasRows ? (
+        <p className="text-[11px] text-muted-foreground italic">No Pipnet requirements found for "{brandName}".</p>
+      ) : (
+        <div className="space-y-0.5">
+          {rows.slice(0, 6).map((r, i) => (
+            <div key={i} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
+              {r.location && <Badge variant="outline" className="text-[10px] shrink-0">{r.location}</Badge>}
+              {r.size && <span className="font-medium shrink-0">{r.size}</span>}
+              {r.agent && <span className="text-muted-foreground truncate">via {r.agent}</span>}
+              {r.date && <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{r.date}</span>}
+            </div>
+          ))}
+          {rows.length > 6 && (
+            <p className="text-[10px] text-muted-foreground">+{rows.length - 6} more</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
