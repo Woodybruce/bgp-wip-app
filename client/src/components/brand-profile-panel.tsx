@@ -830,7 +830,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   };
 
   return (
-    <Card data-testid="brand-profile-panel">
+    <div className="flex flex-col md:flex-row gap-3 items-start">
+    <Card data-testid="brand-profile-panel" className="flex-1 min-w-0">
       <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
@@ -3098,6 +3099,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       </CardContent>
 
     </Card>
+    <BrandProfileSidebar data={data} companyId={companyId} />
+    </div>
   );
 }
 
@@ -3313,5 +3316,109 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
         Cancel
       </button>
     </div>
+  );
+}
+
+// ── Brand profile sidebar (right-hand 500px) ───────────────────────────────
+// Compact at-a-glance panel that mirrors the deal-detail layout pattern.
+// Surfaces the bits a landlord rep cares about in 10 seconds:
+//   • Covenant RAG (from Companies House until Red Flag is wired)
+//   • Key contacts (top 5 decision-makers)
+//   • BGP relationship (active deals + fees)
+//   • Quick actions (run KYC, run Red Flag — placeholders)
+// All data comes from the same /api/brand/:id/profile payload the main
+// panel already fetched, so no extra requests.
+function BrandProfileSidebar({ data, companyId: _companyId }: { data: BrandProfile; companyId: string }) {
+  const c = data.company;
+  const cov = data.covenant;
+  const ragColor = cov?.trafficLight === "green"
+    ? "bg-emerald-500"
+    : cov?.trafficLight === "amber"
+      ? "bg-amber-500"
+      : cov?.trafficLight === "red"
+        ? "bg-rose-500"
+        : "bg-zinc-300";
+  const activeDeals = data.activeDeals?.length || 0;
+  const completedDeals = data.completedDeals?.length || 0;
+  const totalFee = [...(data.activeDeals || []), ...(data.completedDeals || [])]
+    .reduce((s: number, d: any) => s + (Number(d.fee) || 0), 0);
+  const topContacts = (data.contacts || []).slice(0, 5);
+
+  return (
+    <aside className="w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start">
+      {/* Covenant snapshot */}
+      <Card>
+        <CardHeader className="p-3 pb-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <span className={`inline-block w-2 h-2 rounded-full ${ragColor}`} />
+            Covenant
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 pt-0 text-sm space-y-1.5">
+          {cov ? (
+            <>
+              <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span className="font-medium capitalize">{cov.companyStatus || "—"}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Accounts</span><span className={cov.accountsOverdue ? "text-rose-600 font-medium" : ""}>{cov.accountsOverdue ? "Overdue" : (cov.lastAccountsMadeUpTo || "—")}</span></div>
+              {cov.hasInsolvencyHistory && <div className="text-xs text-rose-600">⚠️ Has insolvency history</div>}
+              {cov.experian?.creditScore != null && (
+                <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Experian</span><span className="font-medium">{cov.experian.creditScore} ({cov.experian.creditBand || ""})</span></div>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">No covenant data — run Companies House lookup via KYC.</p>
+          )}
+          <Button size="sm" variant="outline" className="w-full mt-2 h-7 text-xs" disabled title="Red Flag integration not yet configured">
+            Run Red Flag (coming soon)
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Key contacts */}
+      <Card>
+        <CardHeader className="p-3 pb-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <Users className="w-3.5 h-3.5" /> Key contacts
+            <Badge variant="outline" className="text-[10px]">{(data.contacts || []).length}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 pt-0 space-y-2">
+          {topContacts.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic">No decision-makers logged yet.</p>
+          ) : topContacts.map((dm: any) => (
+            <div key={dm.id} className="flex items-start gap-2 text-xs">
+              <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
+                {dm.avatar_url ? <img src={dm.avatar_url} alt="" className="w-full h-full object-cover" /> : (dm.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-medium truncate">{dm.name}</div>
+                <div className="text-[10px] text-muted-foreground truncate">{dm.role || dm.email || ""}</div>
+              </div>
+            </div>
+          ))}
+          {(data.contacts || []).length > 5 && (
+            <p className="text-[10px] text-muted-foreground">+ {data.contacts.length - 5} more in Representations below</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* BGP relationship */}
+      <Card>
+        <CardHeader className="p-3 pb-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <Briefcase className="w-3.5 h-3.5" /> BGP relationship
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 pt-0 text-sm space-y-1.5">
+          <div className="flex justify-between"><span className="text-muted-foreground">Active deals</span><span className="font-medium tabular-nums">{activeDeals}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Completed deals</span><span className="font-medium tabular-nums">{completedDeals}</span></div>
+          {totalFee > 0 && (
+            <div className="flex justify-between"><span className="text-muted-foreground">Total fees</span><span className="font-medium tabular-nums">£{Math.round(totalFee).toLocaleString()}</span></div>
+          )}
+          {!!c.is_tracked_brand && (
+            <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Tracked brand</span><span className="text-emerald-600 text-xs">✓</span></div>
+          )}
+        </CardContent>
+      </Card>
+    </aside>
   );
 }
