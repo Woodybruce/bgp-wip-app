@@ -3108,6 +3108,43 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // List users by team — used by the "Split London Leasing" admin tool.
+  app.get("/api/admin/users-by-team", requireAuth, requireAdmin, async (req: any, res) => {
+    const team = (req.query.team as string) || "";
+    try {
+      const { rows } = await pool.query(
+        `SELECT u.id, u.name, u.email, u.team, u.profile_pic_url, sp.title
+         FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.is_active = true AND (
+           CASE WHEN $1 = '' OR $1 = '__unassigned__' THEN (u.team IS NULL OR u.team = '')
+                ELSE u.team = $1 END
+         )
+         ORDER BY u.name`,
+        [team]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Bulk reassign — body: { assignments: [{ userId, team }] }
+  app.post("/api/admin/users-bulk-reassign-team", requireAuth, requireAdmin, async (req: any, res) => {
+    const { assignments } = req.body || {};
+    if (!Array.isArray(assignments)) return res.status(400).json({ error: "assignments[] required" });
+    try {
+      let updated = 0;
+      for (const a of assignments) {
+        if (!a?.userId) continue;
+        await pool.query("UPDATE users SET team = $1 WHERE id = $2", [a.team || null, a.userId]);
+        updated++;
+      }
+      res.json({ ok: true, updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);

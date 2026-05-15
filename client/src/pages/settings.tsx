@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -986,6 +987,7 @@ function DataHealthSection() {
   const [renamingTeams, setRenamingTeams] = useState(false);
   const [syncingLeasingSchedule, setSyncingLeasingSchedule] = useState(false);
   const [numberingUnits, setNumberingUnits] = useState(false);
+  const [splitTeamOpen, setSplitTeamOpen] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1112,6 +1114,9 @@ function DataHealthSection() {
               {numberingUnits ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {numberingUnits ? "Renaming..." : "Renumber Units (test)"}
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setSplitTeamOpen(true)} data-testid="button-split-teams">
+              <ShieldCheck className="w-4 h-4 mr-2" />Sort Teams
+            </Button>
             <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
               {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {scanning ? "Scanning..." : "Scan for Duplicates"}
@@ -1232,7 +1237,122 @@ function DataHealthSection() {
           </div>
         )}
       </CardContent>
+      <SortTeamsDialog open={splitTeamOpen} onClose={() => setSplitTeamOpen(false)} />
     </Card>
+  );
+}
+
+// ── Sort Teams dialog ────────────────────────────────────────────────────────
+function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const TEAMS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate"];
+  const [filterTeam, setFilterTeam] = useState<string>("");
+  const [pending, setPending] = useState<Record<string, string>>({});
+
+  const { data: users = [], isLoading, refetch } = useQuery<Array<{ id: string; name: string; email: string; team: string | null; title: string | null }>>({
+    queryKey: ["/api/admin/users-by-team", filterTeam],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/users-by-team?team=${encodeURIComponent(filterTeam)}`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: open,
+  });
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const assignments = Object.entries(pending).map(([userId, team]) => ({ userId, team }));
+      if (assignments.length === 0) return { updated: 0 };
+      const r = await apiRequest("POST", "/api/admin/users-bulk-reassign-team", { assignments });
+      return r.json();
+    },
+    onSuccess: (d: any) => {
+      toast({ title: "Teams updated", description: `${d.updated || 0} reassigned` });
+      setPending({});
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/team-summary"] });
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const { data: allUsers = [] } = useQuery<Array<{ team: string | null }>>({
+    queryKey: ["/api/admin/users-by-team", "__all__"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/users-by-team?team=", { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: open,
+  });
+  const teamCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const u of allUsers) {
+      const k = u.team || "__unassigned__";
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [allUsers]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Sort teams</DialogTitle>
+          <DialogDescription>
+            Reassign people to the canonical team list. Useful after a rename / merge — e.g. splitting "London Leasing" into London Retail and London F&B.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap gap-1 mb-3">
+          {[...teamCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([t, n]) => (
+            <button
+              key={t}
+              onClick={() => setFilterTeam(t === "__unassigned__" ? "__unassigned__" : t)}
+              className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === t || (filterTeam === "__unassigned__" && t === "__unassigned__")
+                ? "bg-amber-100 border-amber-300 text-amber-900"
+                : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              {t === "__unassigned__" ? "Unassigned" : t} <span className="text-muted-foreground">({n})</span>
+            </button>
+          ))}
+        </div>
+
+        {isLoading ? (
+          <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+        ) : users.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No users in this bucket.</p>
+        ) : (
+          <div className="space-y-2">
+            {users.map(u => (
+              <div key={u.id} className="flex items-center gap-2 p-2 border rounded">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{u.name}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">{u.title || u.email || ""}</div>
+                  <div className="text-[10px] text-muted-foreground">Current: {u.team || "(none)"}</div>
+                </div>
+                <select
+                  className="text-xs border rounded p-1 bg-card"
+                  value={pending[u.id] ?? u.team ?? ""}
+                  onChange={e => setPending(p => ({ ...p, [u.id]: e.target.value }))}
+                >
+                  <option value="">— None —</option>
+                  {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || Object.keys(pending).length === 0}>
+            {save.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+            Save {Object.keys(pending).length > 0 ? `(${Object.keys(pending).length})` : ""}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
