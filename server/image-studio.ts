@@ -1400,7 +1400,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/:id/revert", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/:id/revert", requireAuth, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const undoPath = path.join(IMAGE_DIR, `undo-${id}.png`);

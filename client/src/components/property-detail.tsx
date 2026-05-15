@@ -492,11 +492,20 @@ export function PropertyDetail({ id }: { id: string }) {
             </Card>
 
             {streetViewExpanded ? (
-              <StreetViewSection
-                address={formatAddress(property.address) || property.name}
-                propertyId={property.id}
-                onClose={() => setStreetViewExpanded(false)}
-              />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <StreetViewSection
+                  address={formatAddress(property.address) || property.name}
+                  propertyId={property.id}
+                  onClose={() => setStreetViewExpanded(false)}
+                />
+                <div className="rounded-lg border bg-card p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-semibold">Images</span>
+                  </div>
+                  <EntityImagesPanel entityType="property" entityId={property.id} />
+                </div>
+              </div>
             ) : (
               <Button variant="outline" size="sm" className="w-full justify-start gap-2 text-xs" onClick={() => setStreetViewExpanded(true)} data-testid="button-expand-street-view">
                 <ImageIcon className="w-3.5 h-3.5" />
@@ -744,20 +753,6 @@ export function PropertyDetail({ id }: { id: string }) {
               )}
             </div>
 
-            <div className="border-b">
-              <button onClick={() => toggleSection("images")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-images-section">
-                <div className="flex items-center gap-2">
-                  <ImageIcon className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Images</span>
-                </div>
-                {sidebarSections.images ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.images && (
-                <div className="px-4 pb-3">
-                  <EntityImagesPanel entityType="property" entityId={property.id} />
-                </div>
-              )}
-            </div>
           </ScrollArea>
         </div>
       </div>
@@ -853,6 +848,8 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [aiEditFor, setAiEditFor] = useState<EntityImageRow | null>(null);
   const [aiEditPrompt, setAiEditPrompt] = useState("");
+  const [imageVersion, setImageVersion] = useState(0); // cache-buster — bumps after AI edit / revert so the preview reloads
+  const [canRevert, setCanRevert] = useState(false);   // last edit produced an undo snapshot we can roll back to
 
   const { data: images = [], isLoading } = useQuery<EntityImageRow[]>({
     queryKey: ["/api/entity-images", entityType, entityId],
@@ -904,12 +901,33 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "AI edit failed");
     },
     onSuccess: () => {
+      // Stay open so the user sees the new version. Bump cache-buster so the
+      // <img> reloads, enable Undo (Image Studio's ai-edit always writes a
+      // revert snapshot), clear the prompt for the next iteration.
       queryClient.invalidateQueries({ queryKey: ["/api/entity-images", entityType, entityId] });
-      setAiEditFor(null);
+      setImageVersion(v => v + 1);
+      setCanRevert(true);
       setAiEditPrompt("");
       toast({ title: "Image edited" });
     },
     onError: (err: any) => toast({ title: "Edit failed", description: err?.message, variant: "destructive" }),
+  });
+
+  const revertMutation = useMutation({
+    mutationFn: async (entityImageId: string) => {
+      const r = await fetch(`/api/entity-images/${entityImageId}/revert`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Revert failed");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/entity-images", entityType, entityId] });
+      setImageVersion(v => v + 1);
+      setCanRevert(false);
+      toast({ title: "Reverted to previous version" });
+    },
+    onError: (err: any) => toast({ title: "Revert failed", description: err?.message, variant: "destructive" }),
   });
 
   return (
@@ -968,7 +986,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
         </div>
       )}
 
-      <Dialog open={!!aiEditFor} onOpenChange={(o) => { if (!o) setAiEditFor(null); }}>
+      <Dialog open={!!aiEditFor} onOpenChange={(o) => { if (!o) { setAiEditFor(null); setCanRevert(false); setImageVersion(0); } }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-purple-500" /> {aiEditFor?.title || "Image"}</DialogTitle>
@@ -977,9 +995,10 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
           {aiEditFor && (
             <div className="space-y-3">
               <img
-                src={`/api/entity-images/${aiEditFor.id}/file`}
+                src={`/api/entity-images/${aiEditFor.id}/file?v=${imageVersion}`}
                 alt={aiEditFor.title || ""}
                 className="w-full max-h-[60vh] object-contain rounded border bg-muted"
+                key={imageVersion}
               />
               {aiEditFor.image_studio_id ? (
                 <>
@@ -1017,6 +1036,17 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
             >
               <X className="w-3 h-3 mr-1" /> Delete
             </Button>
+            {canRevert && aiEditFor?.image_studio_id && (
+              <Button
+                variant="outline"
+                onClick={() => aiEditFor && revertMutation.mutate(aiEditFor.id)}
+                disabled={revertMutation.isPending}
+                title="Roll back to the version before the last AI edit"
+              >
+                {revertMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ArrowLeft className="w-3 h-3 mr-1" />}
+                Undo
+              </Button>
+            )}
             <div className="flex-1" />
             <Button variant="outline" onClick={() => setAiEditFor(null)}>Close</Button>
             {aiEditFor?.image_studio_id && (

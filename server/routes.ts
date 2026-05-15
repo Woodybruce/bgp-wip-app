@@ -3021,6 +3021,47 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Revert an entity image's last AI edit. Calls Image Studio's revert to
+  // restore the undo snapshot, then resyncs the file_blob bytes so the
+  // sidebar thumbnail reflects the reverted image.
+  app.post("/api/entity-images/:id/revert", requireAuth, async (req: any, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT image_studio_id, file_id FROM entity_images WHERE id = $1`,
+        [req.params.id]
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Image not found" });
+      if (!row.image_studio_id) return res.status(400).json({ error: "Revert only available for AI-edited images." });
+
+      const revertRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/revert`, {
+        method: "POST",
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (!revertRes.ok) {
+        const err = await revertRes.json().catch(() => ({}));
+        return res.status(revertRes.status).json(err);
+      }
+      const fullRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/full`, {
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (fullRes.ok) {
+        const buf = Buffer.from(await fullRes.arrayBuffer());
+        await pool.query("UPDATE file_blobs SET data = $1 WHERE file_id = $2", [buf, row.file_id]);
+        await pool.query(
+          `UPDATE uploaded_files SET mime_type = 'image/png', size_bytes = $1 WHERE id = $2`,
+          [buf.length, row.file_id]
+        );
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Revert failed" });
+    }
+  });
+
+  // Also loosen the Image Studio revert gate (was admin-only)
+  // see server/image-studio.ts
+
   // AI-edit an entity image. Routes through Image Studio's ai-edit (in-place
   // on the imageStudio image) and then refreshes the file_blob bytes so the
   // entity image thumbnails pick up the new version automatically.
