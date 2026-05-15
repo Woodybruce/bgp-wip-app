@@ -1209,7 +1209,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail?.prompt && open) {
+      // Removed the `&& open` gate — when the panel is closed, App.tsx's
+      // listener opens it via setChatOpen(true) but our handler used to bail
+      // here because the panel wasn't open yet, losing the prompt entirely.
+      // Now we accept the prompt regardless; once the panel renders open it
+      // already has the queued question.
+      if (detail?.prompt) {
         setActiveThreadId(null);
         setMessages([]);
         setAttachedFiles([]);
@@ -1220,7 +1225,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     };
     window.addEventListener("open-ai-chat-with-prompt", handler);
     return () => window.removeEventListener("open-ai-chat-with-prompt", handler);
-  }, [open]);
+  }, []);
 
   useEffect(() => {
     if (activeThreadId && view === "chat") {
