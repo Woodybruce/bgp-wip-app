@@ -151,11 +151,17 @@ async function searchRocketReach(opts: {
 
 // Reveal full contact details (email + phone) for a single profile.
 // Costs extra credits — caller must opt in.
+// Returns the full RocketReach profile (job_history, education, validated
+// emails, phones, location, current_employer_*) for a single person.
+// Uses /v2/api/lookupProfileAndCompany — same credit cost as plain
+// /v2/api/lookupProfile but also returns the current_employer_id /
+// current_employer_industry / current_employer_linkedin fields, which help
+// confirm the person works at the right entity.
 async function revealProfile(profileId: string | number): Promise<RocketReachPerson | null> {
   const auth = rrAuthHeader();
   if (!auth) return null;
   try {
-    const res = await fetch(`https://api.rocketreach.co/v2/api/lookupProfile?id=${encodeURIComponent(String(profileId))}`, {
+    const res = await fetch(`https://api.rocketreach.co/v2/api/lookupProfileAndCompany?id=${encodeURIComponent(String(profileId))}`, {
       headers: auth,
       signal: AbortSignal.timeout(20_000),
     });

@@ -54,25 +54,12 @@ async function searchCompany(opts: { domain?: string | null; name?: string | nul
   return list[0] || null;
 }
 
-// Full firmographic record by RocketReach company ID. searchCompany only
-// returns a stub (id, name, country, industry_str, email_domain); the real
-// description/headcount/revenue/funding/socials come from lookupCompany.
-async function lookupCompanyById(id: number | string): Promise<any | null> {
-  const auth = rrAuthHeader();
-  if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
-
-  const res = await fetch(`https://api.rocketreach.co/v2/api/lookupCompany?id=${encodeURIComponent(String(id))}`, {
-    headers: auth,
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    console.error(`[rocketreach-company] lookupCompany ${res.status}:`, text.slice(0, 400));
-    return null;
-  }
-  return await res.json();
-}
+// /v2/api/lookupCompany would return the rich firmographic record
+// (description, revenue, employees, tech stack, competitors) but our current
+// plan returns 403: "You do not have enough company lookups". Until that
+// credit pack is bought from sales@rocketreach.co we only have the
+// searchCompany stub fields: id, name, city, region, country_code,
+// email_domain, industry_str, ticker_symbol.
 
 router.get("/api/brand/:companyId/rocketreach-company", requireAuth, async (req: Request, res: Response) => {
   try {
@@ -121,13 +108,9 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
       return res.json({ payload: null, fetched_at: new Date().toISOString(), note: "No match on RocketReach" });
     }
 
-    // Follow up with lookupCompany to get the full firmographic record.
-    // Fall back to the stub if the lookup fails (better than nothing).
-    let payload: any = stub;
-    if (stub.id) {
-      const full = await lookupCompanyById(stub.id);
-      if (full) payload = { ...stub, ...full };
-    }
+    // Only the search-stub fields are available on the current plan
+    // (lookupCompany is credit-gated). See note above.
+    const payload: any = stub;
 
     await pool.query(
       `INSERT INTO brand_rocketreach_data (company_id, payload, fetched_at)

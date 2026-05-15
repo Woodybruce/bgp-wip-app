@@ -372,7 +372,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   useEffect(() => {
     if (!data || autoContactsRan.current) return;
     autoContactsRan.current = true;
-    if (data.contacts.length === 0) runContactDiscovery();
+    // Auto-discover a RocketReach property contact when the brand has none
+    // yet. "Property contact" = role mentions property / real estate /
+    // acquisition / expansion / portfolio / store-dev. Skip if we already
+    // have one so we don't burn credits on every page open.
+    const hasPropertyContact = (data.contacts || []).some((c: any) => {
+      const r = String(c.role || "").toLowerCase();
+      return /(property|real estate|acquisition|expansion|portfolio|estates|store dev|store development)/.test(r);
+    });
+    if (!hasPropertyContact) runContactDiscovery();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
@@ -2360,59 +2368,26 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
       ) : !p ? (
         <p className="text-xs text-muted-foreground">No data yet. Click Fetch to call RocketReach.</p>
       ) : (
-        <div className="space-y-2 text-xs">
-          {p.description && (
-            <p className="text-foreground leading-relaxed">{p.description}</p>
-          )}
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-            {p.industry && <div><span className="text-muted-foreground">Industry:</span> <span className="font-medium">{p.industry}</span></div>}
-            {p.founded_year && <div><span className="text-muted-foreground">Founded:</span> <span className="font-medium">{p.founded_year}</span></div>}
-            {(p.employees || p.employee_count || p.num_employees) && (
-              <div><span className="text-muted-foreground">Employees:</span> <span className="font-medium">{p.employees ?? p.employee_count ?? p.num_employees}</span></div>
-            )}
-            {(p.revenue || p.annual_revenue) && (
-              <div><span className="text-muted-foreground">Revenue:</span> <span className="font-medium">{p.revenue ?? p.annual_revenue}</span></div>
-            )}
-            {(p.total_funding || p.funding_total) && (
-              <div><span className="text-muted-foreground">Funding:</span> <span className="font-medium">{p.total_funding ?? p.funding_total}</span></div>
-            )}
-            {p.last_funding_round_type && (
-              <div><span className="text-muted-foreground">Last round:</span> <span className="font-medium">{p.last_funding_round_type}</span></div>
-            )}
-            {(p.city || p.country) && (
+        <div className="space-y-1.5 text-xs">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+            {p.industry_str && <div className="col-span-2"><span className="text-muted-foreground">Industry:</span> <span className="font-medium">{p.industry_str}</span></div>}
+            {(p.city || p.region || p.country_code) && (
               <div className="col-span-2">
                 <span className="text-muted-foreground">HQ:</span>{" "}
-                <span className="font-medium">{[p.city, p.state, p.country].filter(Boolean).join(", ")}</span>
+                <span className="font-medium">{[p.city, p.region, p.country_code].filter(Boolean).join(", ")}</span>
               </div>
             )}
-          </div>
-
-          {Array.isArray(p.technology_categories) && p.technology_categories.length > 0 && (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Tech stack</div>
-              <div className="flex flex-wrap gap-1">
-                {p.technology_categories.slice(0, 20).map((t: string) => (
-                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded border bg-card">{t}</span>
-                ))}
+            {p.email_domain && (
+              <div className="col-span-2">
+                <span className="text-muted-foreground">Domain:</span>{" "}
+                <a href={`https://${p.email_domain}`} target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">{p.email_domain}</a>
               </div>
-            </div>
-          )}
-
-          {(p.linkedin_url || p.crunchbase_url || p.twitter_url || p.facebook_url || p.website) && (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {p.website && <a href={p.website} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Website ↗</a>}
-              {p.linkedin_url && <a href={p.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">LinkedIn ↗</a>}
-              {p.crunchbase_url && <a href={p.crunchbase_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Crunchbase ↗</a>}
-              {p.twitter_url && <a href={p.twitter_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Twitter ↗</a>}
-              {p.facebook_url && <a href={p.facebook_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Facebook ↗</a>}
-            </div>
-          )}
-
-          {/* Raw payload for fields we haven't surfaced yet — collapsed */}
-          <details className="mt-2">
-            <summary className="text-[10px] text-muted-foreground cursor-pointer">View raw RocketReach response</summary>
-            <pre className="text-[10px] bg-muted/40 rounded p-2 mt-1 overflow-x-auto max-h-64">{JSON.stringify(p, null, 2)}</pre>
-          </details>
+            )}
+            {p.ticker_symbol && <div className="col-span-2"><span className="text-muted-foreground">Ticker:</span> <span className="font-medium">{p.ticker_symbol}</span></div>}
+          </div>
+          <p className="text-[10px] text-muted-foreground italic pt-1">
+            Full firmographics (description, revenue, employees, tech stack, competitors) require company-lookup credits — contact sales@rocketreach.co.
+          </p>
         </div>
       )}
     </div>
