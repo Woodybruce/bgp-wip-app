@@ -1292,44 +1292,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               );
             })()}
 
-            {/* ── Global brand ─────────────────────────────────────────── */}
-            <div className="space-y-2">
-              {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
-              {(c.brand_analysis || c.description) ? (
-                <div>
-                  {c.brand_analysis ? (
-                    <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
-                      <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">
-                        <Sparkles className="w-3 h-3" /> Brand expansion
-                        {c.brand_analysis_at && (
-                          <span className="text-[10px] text-muted-foreground ml-auto">
-                            {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
-                    </div>
-                  ) : (
-                    <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
-                  )}
-                </div>
-              ) : (
-                <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
-                  <p className="text-xs text-muted-foreground mb-2">No brand summary yet</p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs"
-                    onClick={() => enrichMutation.mutate()}
-                    disabled={enrichMutation.isPending}
-                  >
-                    <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
-                    {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
-                  </Button>
-                </div>
-              )}
-
-            </div>
+            {/* ── Global brand — plain description only.
+                 The AI brand_analysis paragraph moved to sit above Hunter
+                 Intel (more logical home for AI-generated expansion narrative). */}
+            {c.description && (
+              <div className="space-y-2">
+                <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
+              </div>
+            )}
 
             {/* Key facts row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
@@ -1681,11 +1651,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── RocketReach intel — initial sweep on the brand
-                 (description, industry, headcount, revenue band, funding,
-                 tech stack, social URLs). Sits above covenant because covenant
-                 is gated on Experian/Red Flag signup. */}
-            <RocketReachIntelCard companyId={c.id} companyName={c.name} />
+            {/* Brand intel card removed — its fields (industry, HQ, domain,
+                ticker) are now in the Details strip at the top. The card
+                fn is kept in the file for re-use if/when we buy company
+                lookup credits and the rich payload becomes available. */}
 
             {/* ── Stores — restored standalone after the Financial & Covenant
                  zone was scorched. Map + list of UK stores; researched on
@@ -2123,6 +2092,41 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
             </div>
             </div>
+
+            {/* ── Brand expansion AI narrative — sits just above Hunter
+                 Intel because AI-curated expansion intent is the same
+                 signal class as Hunter signals. */}
+            {c.brand_analysis ? (
+              <div className="border-t border-border/40 mt-3 pt-2 order-9">
+                <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
+                  <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">
+                    <Sparkles className="w-3 h-3" /> Brand expansion
+                    {c.brand_analysis_at && (
+                      <span className="text-[10px] text-muted-foreground ml-auto">
+                        {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
+                </div>
+              </div>
+            ) : !c.description ? (
+              <div className="border-t border-border/40 mt-3 pt-2 order-9">
+                <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-2">No brand summary yet</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => enrichMutation.mutate()}
+                    disabled={enrichMutation.isPending}
+                  >
+                    <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
+                    {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
 
             {/* ── Zone 3: Hunter Intel ──────────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-5">
