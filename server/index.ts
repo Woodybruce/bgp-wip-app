@@ -2600,6 +2600,24 @@ app.use("/api/branding/assets", express.static(
           };
           await addColIfMissing("crm_requirements_leasing", "bgp_contact_user_ids", "text[]");
           await addColIfMissing("crm_requirements_investment", "bgp_contact_user_ids", "text[]");
+          // Defensive backfill — anything the Drizzle schema declares but prod might be missing.
+          // db.select() pulls every declared column; a missing one 500s the route.
+          await addColIfMissing("crm_requirements_leasing", "location_data", "text");
+          await addColIfMissing("crm_requirements_leasing", "principal_contact_id", "varchar");
+          await addColIfMissing("crm_requirements_leasing", "agent_contact_id", "varchar");
+          await addColIfMissing("crm_requirements_leasing", "bgp_contact_user_id", "varchar");
+          await addColIfMissing("crm_requirements_leasing", "deal_id", "varchar");
+          await addColIfMissing("crm_requirements_leasing", "landlord_pack", "text");
+          await addColIfMissing("crm_requirements_leasing", "extract", "text");
+          await addColIfMissing("crm_requirements_leasing", "comments", "text");
+          await addColIfMissing("crm_requirements_leasing", "requirement_date", "text");
+          await addColIfMissing("crm_requirements_leasing", "contacted", "boolean");
+          await addColIfMissing("crm_requirements_leasing", "details_sent", "boolean");
+          await addColIfMissing("crm_requirements_leasing", "viewing", "boolean");
+          await addColIfMissing("crm_requirements_leasing", "shortlisted", "boolean");
+          await addColIfMissing("crm_requirements_leasing", "under_offer", "boolean");
+          await addColIfMissing("crm_requirements_leasing", "sources", "text[]");
+          await addColIfMissing("crm_requirements_leasing", "requirement_type", "text[]");
           await addColIfMissing("crm_properties", "website", "text");
           await addColIfMissing("crm_properties", "billing_entity_id", "varchar");
           await addColIfMissing("investment_tracker", "client_id", "varchar");

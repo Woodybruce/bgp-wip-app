@@ -1276,13 +1276,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               })()}
             </div>
 
-            {/* ── Zone 1: Brand Expansion ──────────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-3">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Store className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Brand Expansion</span>
-            </div>
-            <div className="space-y-2.5">
 
             {/* Visual brand banner — street view + first gallery image */}
             {(() => {
@@ -1536,144 +1529,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
-            {/* Represented by (agents repping this brand) */}
-            {(data.representedBy.length > 0 || isBrand) && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Represented by</span>
-                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
-                    <Plus className="w-3 h-3 mr-0.5" /> Add agent
-                  </Button>
-                </div>
-                <div className="space-y-1">
-                  {data.representedBy.map((r: any) => (
-                    <div key={r.id} className="text-xs flex items-center gap-2 group">
-                      <Badge variant="outline" className="text-[10px]">{r.agent_type.replace(/_/g, " ")}</Badge>
-                      <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
-                      {r.region && <span className="text-muted-foreground">({r.region.replace(/_/g, " ")})</span>}
-                      {r.contact_name && <span className="text-muted-foreground">· {r.contact_name}</span>}
-                      <button
-                        type="button"
-                        onClick={() => { if (confirm(`End representation by ${r.agent_name}?`)) endRepMutation.mutate(r.id); }}
-                        className="ml-auto opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                        aria-label="End representation"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                  {data.representedBy.length === 0 && <div className="text-xs text-muted-foreground italic">No agents currently retained.</div>}
-                </div>
-              </div>
-            )}
-
-            {/* Represents (brands this agent reps) */}
-            {(data.representing.length > 0 || isAgent) && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
-                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
-                    <Plus className="w-3 h-3 mr-0.5" /> Add brand
-                  </Button>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {data.representing.slice(0, 12).map((r: any) => (
-                    <span key={r.id} className="inline-flex items-center gap-1 group">
-                      <Link href={`/companies/${r.brand_company_id}`}>
-                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
-                          {r.brand_name}
-                          {r.region && <span className="ml-1 text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
-                        </Badge>
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => { if (confirm(`End representation of ${r.brand_name}?`)) endRepMutation.mutate(r.id); }}
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                        aria-label="End representation"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                  {data.representing.length === 0 && <span className="text-xs text-muted-foreground italic">No brands currently represented.</span>}
-                  {data.representing.length > 12 && <span className="text-[10px] text-muted-foreground">+{data.representing.length - 12} more</span>}
-                </div>
-              </div>
-            )}
-
-            {/* Add-representation inline picker */}
-            {addRep && (
-              <div className="border rounded-md p-2 space-y-2 bg-muted/40" data-testid="add-representation-form">
-                <div className="text-xs font-medium flex items-center justify-between">
-                  <span>{addRep === "agent" ? "Add an agent representing this brand" : "Add a brand this agent represents"}</span>
-                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-                <div className="relative">
-                  <Input
-                    placeholder={addRep === "agent" ? "Search agent company..." : "Search brand company..."}
-                    value={repForm.otherCompanyName || repSearch}
-                    onChange={(e) => { setRepSearch(e.target.value); setRepForm({ ...repForm, otherCompanyId: "", otherCompanyName: "" }); }}
-                    className="h-8 text-xs"
-                  />
-                  {repSearch && !repForm.otherCompanyId && (
-                    <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-40 overflow-y-auto">
-                      {allCompaniesForPicker
-                        .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
-                        .filter(co => addRep === "agent" ? !!co.agent_type : true)
-                        .slice(0, 10)
-                        .map(co => (
-                          <button
-                            type="button"
-                            key={co.id}
-                            onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name }); setRepSearch(""); }}
-                            className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-center gap-2"
-                          >
-                            {addRep === "agent" && <Handshake className="w-3 h-3 text-blue-500" />}
-                            {addRep === "brand" && <Sparkles className="w-3 h-3 text-purple-500" />}
-                            <span className="truncate">{co.name}</span>
-                            {co.agent_type && <Badge variant="outline" className="text-[10px] ml-auto">{co.agent_type.replace(/_/g, " ")}</Badge>}
-                          </button>
-                        ))}
-                    </div>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Select value={repForm.agent_type} onValueChange={(v) => setRepForm({ ...repForm, agent_type: v })}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="tenant_rep">Tenant rep</SelectItem>
-                      <SelectItem value="landlord_rep">Landlord rep</SelectItem>
-                      <SelectItem value="investment">Investment</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    placeholder="Region (optional)"
-                    value={repForm.region}
-                    onChange={(e) => setRepForm({ ...repForm, region: e.target.value })}
-                    className="h-8 text-xs"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    disabled={!repForm.otherCompanyId || addRepMutation.isPending}
-                    onClick={() => {
-                      const vars = addRep === "agent"
-                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId, agentType: repForm.agent_type, region: repForm.region || undefined }
-                        : { brandCompanyId: repForm.otherCompanyId, agentCompanyId: companyId, agentType: repForm.agent_type, region: repForm.region || undefined };
-                      addRepMutation.mutate(vars);
-                    }}
-                  >
-                    <Check className="w-3 h-3 mr-1" /> Add
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>Cancel</Button>
-                </div>
-              </div>
-            )}
-            </div>
-            </div>
 
             {/* Brand intel card removed — its fields (industry, HQ, domain,
                 ticker) are now in the Details strip at the top. The card
@@ -2126,40 +1981,183 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── Brand expansion AI narrative — sits just above Hunter
-                 Intel because AI-curated expansion intent is the same
-                 signal class as Hunter signals. */}
-            {c.brand_analysis ? (
-              <div className="border-t border-border/40 mt-3 pt-2 order-9">
-                <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
-                  <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">
-                    <Sparkles className="w-3 h-3" /> Brand expansion
-                    {c.brand_analysis_at && (
-                      <span className="text-[10px] text-muted-foreground ml-auto">
-                        {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
-                </div>
+            {/* ── Brand Expansion — sits just above Hunter Intel.
+                 AI narrative paragraph + Represented by + Represents.
+                 Moved May 2026 — was at the top, but the visual banner
+                 and key facts belong with the brand profile summary;
+                 the AI take + agent representation are the real
+                 expansion-intent signals and sit alongside Hunter. */}
+            <div className="border-t border-border/40 mt-3 pt-2 order-9">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Store className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Brand Expansion</span>
               </div>
-            ) : !c.description ? (
-              <div className="border-t border-border/40 mt-3 pt-2 order-9">
-                <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
-                  <p className="text-xs text-muted-foreground mb-2">No brand summary yet</p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs"
-                    onClick={() => enrichMutation.mutate()}
-                    disabled={enrichMutation.isPending}
-                  >
-                    <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
-                    {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
+              <div className="space-y-2.5">
+                {c.brand_analysis ? (
+                  <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
+                    <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">
+                      <Sparkles className="w-3 h-3" /> Brand expansion
+                      {c.brand_analysis_at && (
+                        <span className="text-[10px] text-muted-foreground ml-auto">
+                          {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
+                    <p className="text-xs text-muted-foreground mb-2">No brand expansion narrative yet</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      onClick={() => enrichMutation.mutate()}
+                      disabled={enrichMutation.isPending}
+                    >
+                      <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
+                      {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
+                    </Button>
+                  </div>
+                )}
+            {/* Represented by (agents repping this brand) */}
+            {(data.representedBy.length > 0 || isBrand) && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Represented by</span>
+                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
+                    <Plus className="w-3 h-3 mr-0.5" /> Add agent
                   </Button>
                 </div>
+                <div className="space-y-1">
+                  {data.representedBy.map((r: any) => (
+                    <div key={r.id} className="text-xs flex items-center gap-2 group">
+                      <Badge variant="outline" className="text-[10px]">{r.agent_type.replace(/_/g, " ")}</Badge>
+                      <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
+                      {r.region && <span className="text-muted-foreground">({r.region.replace(/_/g, " ")})</span>}
+                      {r.contact_name && <span className="text-muted-foreground">· {r.contact_name}</span>}
+                      <button
+                        type="button"
+                        onClick={() => { if (confirm(`End representation by ${r.agent_name}?`)) endRepMutation.mutate(r.id); }}
+                        className="ml-auto opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                        aria-label="End representation"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {data.representedBy.length === 0 && <div className="text-xs text-muted-foreground italic">No agents currently retained.</div>}
+                </div>
               </div>
-            ) : null}
+            )}
+
+            {/* Represents (brands this agent reps) */}
+            {(data.representing.length > 0 || isAgent) && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
+                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
+                    <Plus className="w-3 h-3 mr-0.5" /> Add brand
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {data.representing.slice(0, 12).map((r: any) => (
+                    <span key={r.id} className="inline-flex items-center gap-1 group">
+                      <Link href={`/companies/${r.brand_company_id}`}>
+                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
+                          {r.brand_name}
+                          {r.region && <span className="ml-1 text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
+                        </Badge>
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => { if (confirm(`End representation of ${r.brand_name}?`)) endRepMutation.mutate(r.id); }}
+                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                        aria-label="End representation"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {data.representing.length === 0 && <span className="text-xs text-muted-foreground italic">No brands currently represented.</span>}
+                  {data.representing.length > 12 && <span className="text-[10px] text-muted-foreground">+{data.representing.length - 12} more</span>}
+                </div>
+              </div>
+            )}
+
+            {/* Add-representation inline picker */}
+            {addRep && (
+              <div className="border rounded-md p-2 space-y-2 bg-muted/40" data-testid="add-representation-form">
+                <div className="text-xs font-medium flex items-center justify-between">
+                  <span>{addRep === "agent" ? "Add an agent representing this brand" : "Add a brand this agent represents"}</span>
+                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+                <div className="relative">
+                  <Input
+                    placeholder={addRep === "agent" ? "Search agent company..." : "Search brand company..."}
+                    value={repForm.otherCompanyName || repSearch}
+                    onChange={(e) => { setRepSearch(e.target.value); setRepForm({ ...repForm, otherCompanyId: "", otherCompanyName: "" }); }}
+                    className="h-8 text-xs"
+                  />
+                  {repSearch && !repForm.otherCompanyId && (
+                    <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-40 overflow-y-auto">
+                      {allCompaniesForPicker
+                        .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
+                        .filter(co => addRep === "agent" ? !!co.agent_type : true)
+                        .slice(0, 10)
+                        .map(co => (
+                          <button
+                            type="button"
+                            key={co.id}
+                            onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name }); setRepSearch(""); }}
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-center gap-2"
+                          >
+                            {addRep === "agent" && <Handshake className="w-3 h-3 text-blue-500" />}
+                            {addRep === "brand" && <Sparkles className="w-3 h-3 text-purple-500" />}
+                            <span className="truncate">{co.name}</span>
+                            {co.agent_type && <Badge variant="outline" className="text-[10px] ml-auto">{co.agent_type.replace(/_/g, " ")}</Badge>}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Select value={repForm.agent_type} onValueChange={(v) => setRepForm({ ...repForm, agent_type: v })}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="tenant_rep">Tenant rep</SelectItem>
+                      <SelectItem value="landlord_rep">Landlord rep</SelectItem>
+                      <SelectItem value="investment">Investment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    placeholder="Region (optional)"
+                    value={repForm.region}
+                    onChange={(e) => setRepForm({ ...repForm, region: e.target.value })}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={!repForm.otherCompanyId || addRepMutation.isPending}
+                    onClick={() => {
+                      const vars = addRep === "agent"
+                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId, agentType: repForm.agent_type, region: repForm.region || undefined }
+                        : { brandCompanyId: repForm.otherCompanyId, agentCompanyId: companyId, agentType: repForm.agent_type, region: repForm.region || undefined };
+                      addRepMutation.mutate(vars);
+                    }}
+                  >
+                    <Check className="w-3 h-3 mr-1" /> Add
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+              </div>
+            </div>
 
             {/* ── Zone 3: Hunter Intel ──────────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-5">
