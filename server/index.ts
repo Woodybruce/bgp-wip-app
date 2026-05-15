@@ -2167,6 +2167,10 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
+      // Skip noisy logs — per-thumbnail brand-logo 404s on Brand Explorer
+      // can fire ~200 times per page load. They're cached by the browser
+      // for 24h on 404, but the first paint is still noisy.
+      if (path.startsWith("/api/brand-logo/") && res.statusCode === 404) return;
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       const safeToLogRoutes = ["/api/config/", "/api/push/", "/api/heartbeat"];
       const isSafeToLog = safeToLogRoutes.some(r => path.startsWith(r));

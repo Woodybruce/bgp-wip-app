@@ -1210,7 +1210,10 @@ export function registerImageStudioRoutes(app: Express) {
       );
 
       const row = rows[0];
-      if (!row) return res.status(404).json({ error: "no logo" });
+      if (!row) {
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.status(404).json({ error: "no logo" });
+      }
 
       const imgBuffer = await readPersistedImage(row.local_path);
       if (imgBuffer) {
@@ -1229,6 +1232,7 @@ export function registerImageStudioRoutes(app: Express) {
         }
       }
 
+      res.setHeader("Cache-Control", "public, max-age=86400");
       return res.status(404).json({ error: "no readable blob" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1237,9 +1241,14 @@ export function registerImageStudioRoutes(app: Express) {
 
   // One-shot stats — client calls this once per session to decide whether
   // /api/brand-logo/:name is worth hitting at all. When the library is
-  // empty (the common case until logo.dev is wired), the client skips the
-  // per-thumbnail lookup and falls straight through to the initials tile.
-  // Eliminates the ~200 404/page-load brand-logo chatter on Brand Explorer.
+  // empty (or very sparse), the client skips the per-thumbnail lookup and
+  // falls straight through to the initials tile. Eliminates the ~200
+  // 404/page-load brand-logo chatter on Brand Explorer.
+  //
+  // Threshold: hasLogos = true only when the library has a meaningful
+  // number of brand rows (>= 50). One stray test row used to flip the flag
+  // and let the spam through — every brand still 404'd because no specific
+  // row matched, just one unrelated row existed.
   app.get("/api/brand-logo-stats", requireAuth, async (_req: Request, res: Response) => {
     try {
       const { rows } = await pool.query<{ count: string }>(
@@ -1250,7 +1259,7 @@ export function registerImageStudioRoutes(app: Express) {
       );
       const count = Number(rows[0]?.count || 0);
       res.setHeader("Cache-Control", "private, max-age=300");
-      res.json({ count, hasLogos: count > 0 });
+      res.json({ count, hasLogos: count >= 50 });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
