@@ -82,11 +82,11 @@ const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Properties", url: "/properties", icon: Building2 },
-  { title: "MAP BGP", url: "/map-bgp", icon: MapPin },
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Requirements", url: "/requirements", icon: FileText },
   // Items below are still being polished — admin-only until ready for the firm
+  { title: "MAP BGP", url: "/map-bgp", icon: MapPin, adminOnly: true },
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
