@@ -40,7 +40,6 @@ const KEYS: KeyDef[] = [
   { name: "PIXABAY_API_KEY", label: "Pixabay", group: "Images" },
 
   // CRM enrichment
-  { name: "APOLLO_API_KEY", label: "Apollo.io", group: "CRM" },
   { name: "ROCKETREACH_API_KEY", label: "RocketReach", group: "CRM" },
   { name: "COMPANIES_HOUSE_API_KEY", label: "Companies House", group: "CRM" },
 

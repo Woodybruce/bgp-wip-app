@@ -1,9 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────
-// RocketReach contact discovery for a brand/company.
-//
-// Mirrors server/apollo-contacts.ts — same discover-then-import flow,
-// different provider. RocketReach is typically better than Apollo for
-// UK retail/hospitality property & real-estate contacts.
+// RocketReach contact discovery for a brand/company. Single provider —
+// Apollo was scorched May 2026.
 //
 // Endpoints:
 //   POST /api/brand/:companyId/rocketreach/discover  → preview

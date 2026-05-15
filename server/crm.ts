@@ -7258,91 +7258,11 @@ async function runAutoEnrichmentCycle() {
   if (autoEnrichRunning) return;
   autoEnrichRunning = true;
 
-  const result: Record<string, any> = { startedAt: new Date().toISOString(), apollo: null, aiCompanies: null, aiContacts: null };
+  const result: Record<string, any> = { startedAt: new Date().toISOString(), aiCompanies: null, aiContacts: null };
 
   try {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-    const apolloKey = process.env.APOLLO_API_KEY;
-    if (apolloKey) {
-      try {
-        const contacts = await pool.query(`
-          SELECT c.id, c.name, c.email, c.phone, c.role, c.linkedin_url, c.avatar_url, c.company_id, c.company_name
-          FROM crm_contacts c
-          WHERE c.email IS NOT NULL AND c.email != ''
-            AND (c.last_enriched_at IS NULL OR c.last_enriched_at < $1)
-          ORDER BY c.last_enriched_at ASC NULLS FIRST
-          LIMIT $2
-        `, [sixMonthsAgo.toISOString(), AUTO_ENRICH_BATCH_SIZE]).then(r => r.rows);
-
-        let enriched = 0;
-        for (const contact of contacts) {
-          try {
-            const nameParts = (contact.name || "").trim().split(/\s+/);
-            const firstName = nameParts[0] || "";
-            const lastName = nameParts.slice(1).join(" ") || "";
-            let companyDomain: string | undefined;
-            let companyName: string | undefined;
-            if (contact.company_id) {
-              const [company] = await pool.query(`SELECT name, domain FROM crm_companies WHERE id = $1`, [contact.company_id]).then(r => r.rows);
-              if (company) { companyName = company.name; companyDomain = company.domain || undefined; }
-            }
-            if (!companyDomain && contact.company_name) companyName = contact.company_name;
-
-            // mixed_people/api_search (replaces deprecated mixed_people/search)
-            const body: Record<string, any> = { page: 1, per_page: 1 };
-            if (contact.email) body.person_emails = [contact.email];
-            if (companyDomain) body.q_organization_domains_list = [companyDomain];
-            else if (companyName) body.organization_names = [companyName];
-            if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
-
-            const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloKey },
-              body: JSON.stringify(body),
-            });
-
-            if (!apolloRes.ok) {
-              if (apolloRes.status === 429) await new Promise(r => setTimeout(r, 3000));
-              await new Promise(r => setTimeout(r, 500));
-              continue;
-            }
-
-            const data = await apolloRes.json() as any;
-            const person = (data.people || data.contacts || [])[0];
-            if (!person) { await new Promise(r => setTimeout(r, 300)); continue; }
-
-            const updates: Record<string, any> = {};
-            if (person.title && !contact.role) updates.role = person.title;
-            if (person.linkedin_url && !contact.linkedin_url) updates.linkedin_url = person.linkedin_url;
-            const phoneNumber = person.phone_numbers?.[0]?.sanitized_number || person.phone_numbers?.[0]?.raw_number || person.organization?.phone;
-            if (phoneNumber && !contact.phone) updates.phone = phoneNumber;
-            if (person.photo_url && !contact.avatar_url) updates.avatar_url = person.photo_url;
-
-            updates.last_enriched_at = new Date();
-            updates.enrichment_source = "apollo-auto";
-            const ALLOWED = new Set(["role", "linkedin_url", "phone", "avatar_url", "last_enriched_at", "enrichment_source"]);
-            const safeUpdates = Object.fromEntries(Object.entries(updates).filter(([k]) => ALLOWED.has(k)));
-
-            if (Object.keys(safeUpdates).length > 0) {
-              const setClauses = Object.keys(safeUpdates).map((k, i) => `${k} = $${i + 2}`);
-              setClauses.push(`updated_at = NOW()`);
-              await pool.query(`UPDATE crm_contacts SET ${setClauses.join(", ")} WHERE id = $1`, [contact.id, ...Object.values(safeUpdates)]);
-              enriched++;
-            }
-            await new Promise(r => setTimeout(r, 300));
-          } catch (err: any) {
-            console.error(`[auto-enrich] Apollo error for ${contact.name}:`, err.message);
-          }
-        }
-        result.apollo = { processed: contacts.length, enriched };
-        if (contacts.length > 0) console.log(`[auto-enrich] Apollo: ${enriched}/${contacts.length} contacts enriched`);
-      } catch (err: any) {
-        result.apollo = { error: err.message };
-        console.error("[auto-enrich] Apollo batch error:", err.message);
-      }
-    }
 
     {
       try {
@@ -7536,12 +7456,12 @@ async function runAutoEnrichmentCycle() {
     autoEnrichLastRun = new Date();
     autoEnrichLastResult = result;
 
-    const hasActivity = (result.apollo?.processed > 0 || result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0 || result.stores?.processed > 0);
+    const hasActivity = (result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0 || result.stores?.processed > 0);
     if (hasActivity) {
-      console.log(`[auto-enrich] Cycle complete — Apollo: ${result.apollo?.enriched || 0}, AI Companies: ${result.aiCompanies?.enriched || 0}, AI Contacts: ${result.aiContacts?.enriched || 0}, Type Classification: ${result.typeClassify?.classified || 0}, Stores: ${result.stores?.researched || 0}`);
-      const totalEnriched = (result.apollo?.enriched || 0) + (result.aiCompanies?.enriched || 0) + (result.aiContacts?.enriched || 0) + (result.typeClassify?.classified || 0) + (result.stores?.researched || 0);
+      console.log(`[auto-enrich] Cycle complete — AI Companies: ${result.aiCompanies?.enriched || 0}, AI Contacts: ${result.aiContacts?.enriched || 0}, Type Classification: ${result.typeClassify?.classified || 0}, Stores: ${result.stores?.researched || 0}`);
+      const totalEnriched = (result.aiCompanies?.enriched || 0) + (result.aiContacts?.enriched || 0) + (result.typeClassify?.classified || 0) + (result.stores?.researched || 0);
       const { logActivity } = await import("./activity-logger");
-      await logActivity("auto-enrich", "enrichment_cycle", `${result.apollo?.enriched || 0} contacts via Apollo, ${result.aiCompanies?.enriched || 0} companies via AI, ${result.aiContacts?.enriched || 0} contact roles via AI, ${result.stores?.researched || 0} brands got stores`, totalEnriched);
+      await logActivity("auto-enrich", "enrichment_cycle", `${result.aiCompanies?.enriched || 0} companies via AI, ${result.aiContacts?.enriched || 0} contact roles via AI, ${result.stores?.researched || 0} brands got stores`, totalEnriched);
     }
   } catch (err: any) {
     console.error("[auto-enrich] Cycle error:", err.message);

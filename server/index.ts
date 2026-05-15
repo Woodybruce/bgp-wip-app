@@ -1777,7 +1777,6 @@ import brandTriggersRouter, { runDailyBrandTriggers } from "./brand-triggers";
 import brandPerplexityRefreshRouter, { runMonthlyPerplexityRefresh } from "./brand-perplexity-refresh";
 import brandScraperRouter, { runDailyBrandScraper } from "./brand-scraper";
 import brandSocialScraperRouter, { runWeeklySocialScrape } from "./brand-social-scraper";
-import apolloContactsRouter from "./apollo-contacts";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
 import rocketreachCompanyRouter from "./rocketreach-company";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
@@ -2262,7 +2261,6 @@ app.use("/api/branding/assets", express.static(
   app.use(brandPerplexityRefreshRouter);
   app.use(brandScraperRouter);
   app.use(brandSocialScraperRouter);
-  app.use(apolloContactsRouter);
   app.use(rocketreachContactsRouter);
   app.use(rocketreachCompanyRouter);
 
