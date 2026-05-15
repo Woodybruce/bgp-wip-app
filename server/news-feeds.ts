@@ -34,6 +34,11 @@ const DEFAULT_SOURCES = [
   { name: "The Industry Beauty", url: "https://www.theindustry.beauty", feedUrl: "https://www.theindustry.beauty/feed/", type: "rss", category: "Retail" },
   { name: "Hospitality Net", url: "https://www.hospitalitynet.org", feedUrl: "https://www.hospitalitynet.org/rss/news.xml", type: "rss", category: "Hospitality" },
   { name: "Big Hospitality", url: "https://www.bighospitality.co.uk", feedUrl: "https://www.bighospitality.co.uk/feed", type: "rss", category: "Hospitality" },
+  // Harry's curated luxury / fashion / lifestyle list — additions Nov 2026
+  { name: "GQ (UK)", url: "https://www.gq-magazine.co.uk", feedUrl: "https://www.gq-magazine.co.uk/feed", type: "rss", category: "Retail" },
+  { name: "Gentleman's Journal", url: "https://www.thegentlemansjournal.com", feedUrl: "https://www.thegentlemansjournal.com/feed/", type: "rss", category: "Retail" },
+  { name: "Vogue (UK)", url: "https://www.vogue.co.uk", feedUrl: "https://www.vogue.co.uk/feed", type: "rss", category: "Retail" },
+  { name: "Vogue Runway", url: "https://www.vogue.com", feedUrl: "https://www.vogue.com/feed/rss", type: "rss", category: "Retail" },
   { name: "Reuters Business", url: "https://www.reuters.com/business", feedUrl: "https://feeds.reuters.com/reuters/businessNews", type: "rss", category: "Retail" },
   { name: "The Guardian — Retail", url: "https://www.theguardian.com/business/retail", feedUrl: "https://www.theguardian.com/business/retail/rss", type: "rss", category: "Retail" },
   // Brand / fashion / retail press — added for Tenant Rep + Leasing brand-hunting
