@@ -25,6 +25,14 @@ const DEFAULT_SOURCES = [
   { name: "Property Investor Today", url: "https://www.propertyinvestortoday.co.uk", feedUrl: "https://www.propertyinvestortoday.co.uk/rss.xml", type: "rss", category: "Investment" },
   { name: "Drapers", url: "https://www.drapersonline.com", feedUrl: "https://www.drapersonline.com/rss", type: "rss", category: "Retail" },
   { name: "Retail Week", url: "https://www.retailweek.com", feedUrl: "https://www.retailweek.com/feed", type: "rss", category: "Retail" },
+  { name: "Modern Retail", url: "https://www.modernretail.co", feedUrl: "https://www.modernretail.co/feed/", type: "rss", category: "Retail" },
+  { name: "Glossy", url: "https://www.glossy.co", feedUrl: "https://www.glossy.co/feed/", type: "rss", category: "Retail" },
+  { name: "Sourcing Journal", url: "https://sourcingjournal.com", feedUrl: "https://sourcingjournal.com/feed/", type: "rss", category: "Retail" },
+  { name: "Retail Dive", url: "https://www.retaildive.com", feedUrl: "https://www.retaildive.com/feeds/news/", type: "rss", category: "Retail" },
+  { name: "WWD", url: "https://wwd.com", feedUrl: "https://wwd.com/feed/", type: "rss", category: "Retail" },
+  { name: "The Industry Beauty", url: "https://www.theindustry.beauty", feedUrl: "https://www.theindustry.beauty/feed/", type: "rss", category: "Retail" },
+  { name: "Hospitality Net", url: "https://www.hospitalitynet.org", feedUrl: "https://www.hospitalitynet.org/rss/news.xml", type: "rss", category: "Hospitality" },
+  { name: "Big Hospitality", url: "https://www.bighospitality.co.uk", feedUrl: "https://www.bighospitality.co.uk/feed", type: "rss", category: "Hospitality" },
   { name: "Reuters Business", url: "https://www.reuters.com/business", feedUrl: "https://feeds.reuters.com/reuters/businessNews", type: "rss", category: "Retail" },
   { name: "The Guardian — Retail", url: "https://www.theguardian.com/business/retail", feedUrl: "https://www.theguardian.com/business/retail/rss", type: "rss", category: "Retail" },
   // Brand / fashion / retail press — added for Tenant Rep + Leasing brand-hunting
@@ -103,16 +111,29 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
       for (const item of items) {
         if (!item.title || !item.link) continue;
 
+        // Unwrap Google News redirect URLs to the real publisher URL. Done up
+        // front so the stored URL is clickable and so og:image extraction has
+        // something real to work with. Falls back to the wrapped URL if the
+        // resolver fails — better than dropping the article.
+        let articleUrl = item.link;
+        if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+          const real = await resolveGoogleNewsUrl(articleUrl);
+          if (real) articleUrl = real;
+        }
+
         const existingArr = await db.select({ id: newsArticles.id })
           .from(newsArticles)
-          .where(eq(newsArticles.url, item.link))
+          .where(eq(newsArticles.url, articleUrl))
           .limit(1);
 
         if (existingArr.length > 0) continue;
 
         let imgUrl = extractImageUrl(item);
-        if (!imgUrl && item.link) {
-          imgUrl = await fetchOgImage(item.link);
+        if (!imgUrl) {
+          imgUrl = await fetchOgImage(articleUrl);
+        }
+        if (!imgUrl) {
+          imgUrl = faviconForUrl(articleUrl);
         }
 
         await db.insert(newsArticles).values({
@@ -121,7 +142,7 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
           title: item.title,
           summary: item.contentSnippet?.slice(0, 500) || item.content?.slice(0, 500) || null,
           content: item.content || null,
-          url: item.link,
+          url: articleUrl,
           author: item.creator || item.author || null,
           imageUrl: imgUrl,
           publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
@@ -199,29 +220,105 @@ async function fetchOgImage(url: string): Promise<string | null> {
   }
 }
 
+// Publisher favicon fallback. When og:image extraction fails we use a high-res
+// favicon as a thumbnail so cards aren't blank. Better than nothing — the user
+// at least sees the source.
+function faviconForUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (/google\.com|gstatic\.com|googleusercontent\.com/i.test(u.hostname)) return null;
+    // Google's s2 favicons endpoint returns higher-res icons than scraping
+    // /favicon.ico directly. Used for the news-card thumbnail fallback only.
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=128`;
+  } catch {
+    return null;
+  }
+}
+
+// Google News RSS URLs (news.google.com/rss/articles/CBM…) are opaque wrappers
+// that redirect to the real article. Without unwrapping, clicking them often
+// dead-ends and og:image extraction is impossible. This function follows the
+// redirect chain + parses the response for a canonical URL.
+async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
+  if (!/^https?:\/\/(news\.)?google\.com\//i.test(googleUrl)) return googleUrl;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    const resp = await fetch(googleUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; BGPNewsBot/1.0)",
+        "Accept": "text/html",
+      },
+      redirect: "follow",
+    });
+    clearTimeout(timeout);
+    // If the server-side redirect actually landed off Google, we have the real URL.
+    if (!/^https?:\/\/(news\.)?google\.com\//i.test(resp.url)) return resp.url;
+    const html = await resp.text();
+    // Google's article stub embeds the real URL in JS — pull the first non-Google
+    // http(s) URL out of the response body.
+    const m = html.match(/data-n-au=["']([^"']+)["']/i)
+      || html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
+      || html.match(/"((?:https?:\/\/(?!(?:news\.)?google\.com\/)[^"\s]+)"/);
+    if (m?.[1]) return m[1];
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function backfillMissingImages(): Promise<number> {
+  // Pull articles where either the thumbnail is missing OR the URL is still a
+  // raw Google News wrapper (so we can unwrap + thumb in one pass).
   const missing = await db.select({ id: newsArticles.id, url: newsArticles.url })
     .from(newsArticles)
-    .where(sql`${newsArticles.imageUrl} IS NULL`)
+    .where(sql`${newsArticles.imageUrl} IS NULL OR ${newsArticles.url} ILIKE 'https://news.google.com/%' OR ${newsArticles.url} ILIKE 'https://www.google.com/%'`)
     .orderBy(desc(newsArticles.publishedAt))
-    .limit(30);
+    .limit(200);
 
   if (missing.length === 0) return 0;
   let updated = 0;
 
   for (const article of missing) {
     if (!article.url) continue;
-    const img = await fetchOgImage(article.url);
-    if (img) {
-      await db.update(newsArticles)
-        .set({ imageUrl: img })
-        .where(eq(newsArticles.id, article.id));
-      updated++;
+    let articleUrl = article.url;
+    const updateFields: Record<string, any> = {};
+
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+      const real = await resolveGoogleNewsUrl(articleUrl);
+      if (real && real !== articleUrl) {
+        articleUrl = real;
+        updateFields.url = real;
+      }
     }
-    await new Promise(r => setTimeout(r, 500));
+
+    let img = await fetchOgImage(articleUrl);
+    if (!img) img = faviconForUrl(articleUrl);
+    if (img) updateFields.imageUrl = img;
+
+    if (Object.keys(updateFields).length > 0) {
+      try {
+        await db.update(newsArticles)
+          .set(updateFields)
+          .where(eq(newsArticles.id, article.id));
+        updated++;
+      } catch {
+        // URL UNIQUE constraint — another article with the unwrapped URL
+        // already exists. Just set the favicon on this row and move on.
+        if (updateFields.imageUrl && !updateFields.url) continue;
+        try {
+          await db.update(newsArticles)
+            .set({ imageUrl: updateFields.imageUrl })
+            .where(eq(newsArticles.id, article.id));
+        } catch {}
+      }
+    }
+    await new Promise(r => setTimeout(r, 200));
   }
 
-  console.log(`[news] Backfilled ${updated}/${missing.length} article images`);
+  console.log(`[news] Backfilled ${updated}/${missing.length} articles (images + Google News unwraps)`);
   return updated;
 }
 
