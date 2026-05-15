@@ -4288,11 +4288,15 @@ Use the language and tone of BGP's review docs.`,
       location: string;
       bodyPreview: string;
       internalAttendees: string[];
+      attendeeEmails: string[];
       attendeeCount: number;
       source: "outlook" | "team_events_table";
       teamEventId?: string;
     };
     const byKey = new Map<string, TeamEvent>();
+    // The whole-company invite list. Events have to include this address as
+    // an attendee for us to surface them as team events.
+    const COMPANY_INVITE = "team@brucegillinghampollard.com";
 
     if (token) {
       try {
@@ -4321,9 +4325,17 @@ Use the language and tone of BGP's review docs.`,
               const start = e.start?.dateTime || e.start || "";
               if (!start) continue;
               const k = keyOf(subject, start);
+              const attendeeEmails: string[] = Array.isArray(e.attendees)
+                ? e.attendees
+                    .map((a: any) => String(a?.emailAddress?.address || "").toLowerCase())
+                    .filter(Boolean)
+                : [];
               const existing = byKey.get(k);
               if (existing) {
                 if (!existing.internalAttendees.includes(u.name)) existing.internalAttendees.push(u.name);
+                for (const ae of attendeeEmails) {
+                  if (!existing.attendeeEmails.includes(ae)) existing.attendeeEmails.push(ae);
+                }
               } else {
                 const loc = (typeof e.location === "object" ? e.location?.displayName : e.location) || "";
                 byKey.set(k, {
@@ -4335,6 +4347,7 @@ Use the language and tone of BGP's review docs.`,
                   location: loc,
                   bodyPreview: (e.bodyPreview || "").slice(0, 280),
                   internalAttendees: [u.name],
+                  attendeeEmails,
                   attendeeCount: Array.isArray(e.attendees) ? e.attendees.length : 0,
                   source: "outlook",
                 });
@@ -4366,6 +4379,7 @@ Use the language and tone of BGP's review docs.`,
           location: t.location || "",
           bodyPreview: t.notes || "",
           internalAttendees: Array.isArray(t.attendees) ? t.attendees : [],
+          attendeeEmails: [],
           attendeeCount: Array.isArray(t.attendees) ? t.attendees.length : 0,
           source: "team_events_table",
           teamEventId: t.id,
@@ -4375,18 +4389,15 @@ Use the language and tone of BGP's review docs.`,
       console.warn("[hr/calendar/team-events] team_events query failed:", e?.message);
     }
 
-    const COMPANY_KEYWORDS = /\b(party|drinks|leaving|farewell|birthday|anniversary|away day|christmas|summer party|social|team lunch|team dinner|all[- ]hands|townhall|town hall|conference|awards|bgp|firm[- ]wide|new joiner|induction|retirement)\b/i;
-
     // A "team event" is one of:
-    //   - From the team_events table (always)
-    //   - In ≥ 3 BGP calendars (high confidence)
-    //   - Has a company keyword in subject AND in ≥ 2 calendars
+    //   - From the curated team_events table (always)
+    //   - Has team@brucegillinghampollard.com in its attendee list
+    //     (the whole-company invite — the only way the diary stops surfacing
+    //     things like "1:1 with Pete" or "Investment team standup" as team events)
     const events = Array.from(byKey.values())
       .filter(e => {
         if (e.source === "team_events_table") return true;
-        if (e.internalAttendees.length >= 3) return true;
-        if (e.internalAttendees.length >= 2 && COMPANY_KEYWORDS.test(e.subject)) return true;
-        return false;
+        return e.attendeeEmails.some(a => a === COMPANY_INVITE);
       })
       .sort((a, b) => a.start.localeCompare(b.start));
 
