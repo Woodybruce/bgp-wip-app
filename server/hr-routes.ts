@@ -4298,6 +4298,45 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
+  // Reset the current period's spin so it can be run again. Removes the
+  // brucey_winners row + the auto-created Watch House award. Admin-only.
+  app.delete("/api/hr/brucey-winners/current", requireAuth, requireAdmin, async (req: any, res) => {
+    const period = (req.query.period as string) === "quarter" ? "quarter" : "month";
+    const now = new Date();
+    let periodStart: Date;
+    if (period === "quarter") {
+      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      periodStart = new Date(now.getFullYear(), qStartMonth, 1);
+    } else {
+      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    try {
+      const isoDate = periodStart.toISOString().slice(0, 10);
+      // Find the winner row so we can clean up the linked Watch House award too.
+      const { rows: existing } = await pool.query(
+        `SELECT id, user_id, spun_at FROM brucey_winners
+         WHERE period_type = $1 AND period_start = $2`,
+        [period, isoDate]
+      );
+      if (existing.length === 0) return res.json({ ok: true, removed: 0 });
+      const winner = existing[0];
+      await pool.query("DELETE FROM brucey_winners WHERE id = $1", [winner.id]);
+      // Best-effort: delete the matching staff_awards row created by the spin
+      // (kind = brucey_month / brucey_quarter, same user, created near spin time).
+      await pool.query(
+        `DELETE FROM staff_awards
+         WHERE user_id = $1
+           AND kind = $2
+           AND created_at >= $3 - INTERVAL '5 minutes'
+           AND created_at <= $3 + INTERVAL '5 minutes'`,
+        [winner.user_id, `brucey_${period}`, winner.spun_at]
+      ).catch(() => {});
+      res.json({ ok: true, removed: 1 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/hr/brucey-winners", requireAuth, async (_req, res) => {
     try {
       const { rows } = await pool.query(

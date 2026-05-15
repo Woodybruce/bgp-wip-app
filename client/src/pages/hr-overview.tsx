@@ -567,9 +567,35 @@ function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSe
             </button>
           ))}
           {data?.alreadySpun && (
-            <span className="ml-auto text-[10px] text-amber-700 dark:text-amber-300 italic">
-              🏆 Spun: {data.alreadySpun.prize_label}
-            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-[10px] text-amber-700 dark:text-amber-300 italic">
+                🏆 Spun: {data.alreadySpun.prize_label}
+              </span>
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-5 text-[10px] px-1.5 text-amber-700 hover:text-amber-900 hover:bg-amber-100"
+                  onClick={() => {
+                    if (!window.confirm(`Reset the ${period} spin? The recorded winner + Watch House award will be removed.`)) return;
+                    fetch(`/api/hr/brucey-winners/current?period=${period === "quarter" ? "quarter" : "month"}`, {
+                      method: "DELETE", credentials: "include",
+                    })
+                      .then(r => r.ok ? r.json() : Promise.reject(r))
+                      .then(() => {
+                        queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/hr/awards"] });
+                        toast({ title: "Spin reset", description: "You can spin again now." });
+                      })
+                      .catch(() => toast({ title: "Reset failed", variant: "destructive" }));
+                  }}
+                  data-testid="brucey-reset-spin"
+                  title="Admin: clear the recorded winner so the wheel can be spun again"
+                >
+                  ↻ Reset
+                </Button>
+              )}
+            </div>
           )}
           {isAdmin && !data?.alreadySpun && (data?.winnerUserId) && (
             <Button
