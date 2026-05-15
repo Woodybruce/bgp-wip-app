@@ -1257,7 +1257,7 @@ async function getUserPersonalisationContext(userId: string): Promise<string> {
   }
 }
 
-async function getMemoryContext(userId: string): Promise<string> {
+export async function getMemoryContext(userId: string): Promise<string> {
   try {
     const memories = await storage.getMemories(userId);
     if (!memories || memories.length === 0) return "";
