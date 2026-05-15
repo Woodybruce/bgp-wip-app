@@ -1600,6 +1600,32 @@ import { pool } from "./db";
        ON document_design_preferences (scope) WHERE enabled = true`,
     `CREATE INDEX IF NOT EXISTS document_design_preferences_added_at_idx
        ON document_design_preferences (added_at DESC)`,
+
+    // ── Migration 0023 (news tag vocabulary) — controlled list the AI
+    // scorer uses to tag every article. Editable by any logged-in user
+    // via the news settings UI. Seeded with Harry's initial wishlist.
+    `CREATE TABLE IF NOT EXISTS news_tags (
+      id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      name        TEXT NOT NULL UNIQUE,
+      label       TEXT NOT NULL,
+      active      BOOLEAN DEFAULT true,
+      sort_order  INTEGER DEFAULT 0,
+      created_by  VARCHAR,
+      created_at  TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS news_tags_active_idx ON news_tags (sort_order) WHERE active = true`,
+    `INSERT INTO news_tags (name, label, sort_order) VALUES
+       ('new openings',      'New openings',      10),
+       ('flagships',         'Flagships',         20),
+       ('dtc',               'DTC',               30),
+       ('brand performance', 'Brand performance', 40),
+       ('global retail',     'Global retail',     50),
+       ('retail',            'Retail',            60),
+       ('fashion',           'Fashion',           70),
+       ('high street',       'High street',       80),
+       ('wellness',          'Wellness',          90),
+       ('new operators',     'New operators',    100)
+     ON CONFLICT (name) DO NOTHING`,
   ];
 
   let ok = 0, skipped = 0;
