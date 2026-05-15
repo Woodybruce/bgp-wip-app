@@ -52,7 +52,7 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
 
   // Build ordered list of logo URLs to try — local Image Studio first, Clearbit fallback.
   const logoSources: string[] = [];
-  const local = localBrandLogoUrl(company.name);
+  const local = localBrandLogoUrl(company.name, domain);
   if (local) logoSources.push(local);
   if (d) {
     logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(px * 3, 512)}`);

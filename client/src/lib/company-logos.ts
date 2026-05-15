@@ -522,10 +522,12 @@ export function extractDomain(raw: string | null | undefined): string | null {
 // Clearbit's logo.clearbit.com was deprecated by HubSpot on 18 Mar 2025 and
 // shuts down completely Dec 2025. We have 768 logos saved locally already
 // (category='Brands' in image_studio_images) so always try them first.
-export function localBrandLogoUrl(name: string | null | undefined): string | null {
+export function localBrandLogoUrl(name: string | null | undefined, domain?: string | null | undefined): string | null {
   const trimmed = (name || "").trim();
   if (!trimmed) return null;
-  return `/api/brand-logo/${encodeURIComponent(trimmed)}`;
+  const d = extractDomain(domain ?? null);
+  const qs = d ? `?domain=${encodeURIComponent(d)}` : "";
+  return `/api/brand-logo/${encodeURIComponent(trimmed)}${qs}`;
 }
 
 export function getCompanyLogoUrl(
@@ -533,7 +535,7 @@ export function getCompanyLogoUrl(
   name: string | null | undefined,
   size: number = 40
 ): string | null {
-  const local = localBrandLogoUrl(name);
+  const local = localBrandLogoUrl(name, domain);
   if (local) return local;
   const d = extractDomain(domain);
   if (d) return `https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`;

@@ -123,7 +123,7 @@ function BrandLogo({ name, domain, size = 28 }: { name: string; domain?: string 
   const [failCount, setFailCount] = useState(0);
   const d = extractDomain(domain ?? null);
   const sources: string[] = [];
-  const local = localBrandLogoUrl(name);
+  const local = localBrandLogoUrl(name, domain);
   if (local) sources.push(local);
   if (d) sources.push(`https://logo.clearbit.com/${d}?size=${size * 2}`);
   if (failCount < sources.length) {

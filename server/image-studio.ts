@@ -1178,28 +1178,40 @@ export function registerImageStudioRoutes(app: Express) {
     try {
       const name = String(req.params.name || "").trim();
       if (!name) return res.status(400).json({ error: "name required" });
+      const domain = String(req.query.domain || "").trim().toLowerCase().replace(/^www\./, "");
 
-      // Match by brand_name first; fall back to file_name on category='Brands'
-      // (some of the 768 bulk-imported logos have the brand name in file_name only).
-      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null }>(
-        `SELECT id, local_path, mime_type, thumbnail_data
+      // Build a set of name variants to try matching against. Brand names in
+      // crm_companies often have suffixes ("Ltd", "Limited", "Group", "plc")
+      // that aren't in the logo library filenames. We strip those and also
+      // try the first significant word as a loose fallback.
+      const stripped = name.replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp)\b\.?/gi, "").replace(/\s+/g, " ").trim();
+      const firstWord = name.split(/\s+/)[0] || name;
+      const variants = Array.from(new Set([name, stripped, firstWord].filter(Boolean).map(s => s.toLowerCase().trim())));
+
+      // Domain stem: "pretamanger.com" → "pretamanger"
+      const domainStem = domain ? domain.split(".")[0] : "";
+
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null; brand_name: string | null; file_name: string }>(
+        `SELECT id, local_path, mime_type, thumbnail_data, brand_name, file_name
          FROM image_studio_images
-         WHERE lower(trim(brand_name)) = lower(trim($1))
-            OR (category = 'Brands' AND lower(trim(file_name)) = lower(trim($1)))
-            OR (category = 'Brands' AND lower(file_name) LIKE lower($1) || '%')
+         WHERE lower(trim(brand_name)) = ANY($1::text[])
+            OR (category = 'Brands' AND lower(trim(file_name)) = ANY($1::text[]))
+            OR (category = 'Brands' AND lower(file_name) LIKE lower($2) || '%')
+            OR (category = 'Brands' AND $3 <> '' AND lower(file_name) LIKE '%' || $3 || '%')
+            OR (category = 'Brands' AND $3 <> '' AND lower(trim(brand_name)) LIKE '%' || $3 || '%')
          ORDER BY
-           CASE WHEN lower(trim(brand_name)) = lower(trim($1)) THEN 0
-                WHEN lower(trim(file_name))  = lower(trim($1)) THEN 1
-                ELSE 2 END,
+           CASE WHEN lower(trim(brand_name)) = lower(trim($4)) THEN 0
+                WHEN lower(trim(file_name))  = lower(trim($4)) THEN 1
+                WHEN $3 <> '' AND lower(file_name) LIKE $3 || '%' THEN 2
+                ELSE 3 END,
            created_at DESC
          LIMIT 1`,
-        [name]
+        [variants, name, domainStem, name]
       );
 
       const row = rows[0];
       if (!row) return res.status(404).json({ error: "no logo" });
 
-      // Try full image from disk or DB file_storage first
       const imgBuffer = await readPersistedImage(row.local_path);
       if (imgBuffer) {
         res.setHeader("Content-Type", row.mime_type || "image/jpeg");
@@ -1207,7 +1219,6 @@ export function registerImageStudioRoutes(app: Express) {
         return res.end(imgBuffer);
       }
 
-      // Fall back to the thumbnail (base64 stored in DB)
       if (row.thumbnail_data) {
         const b64Match = row.thumbnail_data.match(/^data:([^;]+);base64,(.+)$/);
         if (b64Match) {
@@ -1218,7 +1229,63 @@ export function registerImageStudioRoutes(app: Express) {
         }
       }
 
-      return res.status(404).json({ error: "no logo" });
+      return res.status(404).json({ error: "no readable blob" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Diagnostic — shows what's in the brand library and whether a given name
+  // matches anything. Hit /api/brand-logo-debug?name=Pret to test from the
+  // browser. Auth required, but anyone can use.
+  app.get("/api/brand-logo-debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.query.name || "").trim();
+      const domain = String(req.query.domain || "").trim().toLowerCase().replace(/^www\./, "");
+
+      const { rows: counts } = await pool.query<{ total: string; with_brand_name: string; brands_category: string }>(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(*) FILTER (WHERE brand_name IS NOT NULL AND brand_name <> '')::text AS with_brand_name,
+           COUNT(*) FILTER (WHERE category = 'Brands')::text AS brands_category
+         FROM image_studio_images`
+      );
+
+      const { rows: samples } = await pool.query<{ brand_name: string | null; file_name: string; category: string | null; created_at: string }>(
+        `SELECT brand_name, file_name, category, created_at
+         FROM image_studio_images
+         WHERE category = 'Brands' OR (brand_name IS NOT NULL AND brand_name <> '')
+         ORDER BY created_at DESC
+         LIMIT 10`
+      );
+
+      let matchInfo: any = null;
+      if (name) {
+        const stripped = name.replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp)\b\.?/gi, "").replace(/\s+/g, " ").trim();
+        const firstWord = name.split(/\s+/)[0] || name;
+        const variants = Array.from(new Set([name, stripped, firstWord].filter(Boolean).map(s => s.toLowerCase().trim())));
+        const domainStem = domain ? domain.split(".")[0] : "";
+
+        const { rows: matches } = await pool.query<{ id: string; brand_name: string | null; file_name: string; category: string | null }>(
+          `SELECT id, brand_name, file_name, category
+           FROM image_studio_images
+           WHERE lower(trim(brand_name)) = ANY($1::text[])
+              OR (category = 'Brands' AND lower(trim(file_name)) = ANY($1::text[]))
+              OR (category = 'Brands' AND lower(file_name) LIKE lower($2) || '%')
+              OR (category = 'Brands' AND $3 <> '' AND lower(file_name) LIKE '%' || $3 || '%')
+              OR (category = 'Brands' AND $3 <> '' AND lower(trim(brand_name)) LIKE '%' || $3 || '%')
+           LIMIT 5`,
+          [variants, name, domainStem]
+        );
+        matchInfo = { variants, domainStem, matches };
+      }
+
+      res.json({
+        counts: counts[0],
+        samples,
+        query: { name, domain },
+        match: matchInfo,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

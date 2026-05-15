@@ -160,7 +160,7 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
   const guessedDomain = guessDomain(name);
 
   const logoSources: string[] = [];
-  const local = localBrandLogoUrl(name);
+  const local = localBrandLogoUrl(name, domain);
   if (local) logoSources.push(local);
   if (d) {
     logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
