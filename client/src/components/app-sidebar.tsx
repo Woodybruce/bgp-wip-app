@@ -92,6 +92,7 @@ const coreNavBase = [
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Users },
+  { title: "People & HR", url: "/hr", icon: Users },
   { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
@@ -116,7 +117,6 @@ const microsoftNav = [
 ];
 
 const adminNavBase = [
-  { title: "People & HR", url: "/hr", icon: Users },
   { title: "Expenses", url: "/expenses", icon: Receipt },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
@@ -435,6 +435,7 @@ const mobileOverlayItems = [
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Users },
+  { title: "People & HR", url: "/hr", icon: Users },
   { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
