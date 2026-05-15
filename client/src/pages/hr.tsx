@@ -2251,6 +2251,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   <SalaryHistoryPanel person={person} readOnly={!isAdmin} />
                 )}
 
+                {/* Recognition panel visible to everyone — same view colleagues see on About. */}
+                <RecognitionPanel userId={person.id} />
+
                 {isAdmin && expenseSummary && (
                   <Card>
                     <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><CreditCard className="w-4 h-4" />Expenses this month</CardTitle></CardHeader>
@@ -4574,18 +4577,47 @@ function RecognitionPanel({ userId }: { userId: string }) {
         <Trophy className="w-3.5 h-3.5" /> Recognition
       </h3>
 
-      {totalsByYear.length > 0 && (
+      {(totalsByYear.length > 0 || bruceyEntries.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Brucey Bonuses</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm space-y-1">
-            {totalsByYear.map(([year, points]) => (
-              <div key={year} className="flex items-center justify-between py-1 border-b last:border-0">
-                <span className="text-muted-foreground">Scheme year {year}</span>
-                <span className="font-medium tabular-nums">{points.toLocaleString()} pts</span>
+          <CardContent className="text-sm space-y-3">
+            {totalsByYear.length > 0 && (
+              <div className="space-y-1">
+                {totalsByYear.map(([year, points]) => (
+                  <div key={year} className="flex items-center justify-between py-1 border-b last:border-0">
+                    <span className="text-muted-foreground">Scheme year {year}</span>
+                    <span className="font-medium tabular-nums">{points.toLocaleString()} pts</span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+            {bruceyEntries.length > 0 && (
+              <details className="border-t pt-2">
+                <summary className="cursor-pointer text-xs font-medium text-muted-foreground select-none hover:text-foreground">
+                  Breakdown — show {bruceyEntries.length} event{bruceyEntries.length === 1 ? "" : "s"} (why + when)
+                </summary>
+                <div className="mt-2 space-y-1 max-h-72 overflow-y-auto">
+                  {bruceyEntries.slice(0, 60).map(e => (
+                    <div key={e.id} className="flex items-start gap-2 text-xs py-1.5 border-b last:border-0">
+                      <span className="text-muted-foreground tabular-nums shrink-0 w-16">
+                        {new Date(e.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" })}
+                      </span>
+                      <span className="font-semibold tabular-nums shrink-0 w-10 text-right text-amber-700 dark:text-amber-400">
+                        +{e.points}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate">{e.reason || e.event_kind || "Award"}</div>
+                        {e.event_kind && e.reason && (
+                          <div className="text-[10px] text-muted-foreground">{e.event_kind.replace(/_/g, " ")}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </CardContent>
         </Card>
       )}
