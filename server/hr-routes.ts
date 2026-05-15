@@ -1128,9 +1128,24 @@ export function setupHrRoutes(app: Express) {
         }
       }
 
-      // Build per-team summaries
-      const summaries = TEAM_ORDER.map(team => {
-        const members = staff.filter((s: any) => s.team === team);
+      // Build per-team summaries. We want every team that has members to
+      // show up — TEAM_ORDER drives display order for known teams; any
+      // extra team values seen in staff records get appended alphabetically
+      // so London Retail / London F&B / new teams don't silently fall off.
+      const presentTeams = new Set<string>();
+      let unassignedCount = 0;
+      for (const s of staff) {
+        if (s.team && String(s.team).trim()) presentTeams.add(String(s.team).trim());
+        else unassignedCount++;
+      }
+      const extraTeams = [...presentTeams].filter(t => !TEAM_ORDER.includes(t)).sort();
+      const allTeams = [...TEAM_ORDER.filter(t => presentTeams.has(t)), ...extraTeams];
+      if (unassignedCount > 0) allTeams.push("Unassigned");
+
+      const summaries = allTeams.map(team => {
+        const members = team === "Unassigned"
+          ? staff.filter((s: any) => !s.team || !String(s.team).trim())
+          : staff.filter((s: any) => s.team === team);
         if (members.length === 0) return null;
         // Head selection (in priority order): explicit "Head ..." title,
         // management_team flag, board_member flag, "Director" in title,
