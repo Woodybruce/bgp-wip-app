@@ -531,16 +531,31 @@ export async function runSearchCalendarTool(opts: {
       const seen = new Set<string>();
       const collected: any[] = [];
       const errors: string[] = [];
+      // Graph rejects $search on /events ("Graph $search isn't supported on
+      // Events at the moment"), so we use /calendarView with a date range
+      // and filter for the query term client-side over subject/body/location/
+      // attendees. CalendarView also expands recurring instances, which is
+      // what we want for "find a meeting about X" anyway.
+      const q = (query || "").toLowerCase().trim();
+      const matchesQuery = (ev: any) => {
+        if (!q) return true;
+        const hay = [
+          ev.subject || "",
+          ev.bodyPreview || "",
+          ev.location?.displayName || "",
+          ...(ev.attendees || []).flatMap((a: any) => [a.emailAddress?.name || "", a.emailAddress?.address || ""]),
+          ev.organizer?.emailAddress?.name || "",
+          ev.organizer?.emailAddress?.address || "",
+        ].join(" ").toLowerCase();
+        return hay.includes(q);
+      };
       for (const mb of mailboxes) {
         try {
-          // Use /events?$search — matches against subject/body/attendees/
-          // location. Combine with $filter on the date range. Graph
-          // rejects $orderby alongside $search, so we sort client-side.
-          const filter = `start/dateTime ge '${startDateTime}' and end/dateTime le '${endDateTime}'`;
-          const url = `/users/${encodeURIComponent(mb.email)}/events?$search=${encodeURIComponent(`"${query}"`)}&$filter=${encodeURIComponent(filter)}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
+          const url = `/users/${encodeURIComponent(mb.email)}/calendarView?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$top=${Math.max(top * 4, 50)}&$select=${encodeURIComponent(selectFields)}&$orderby=${encodeURIComponent("start/dateTime desc")}`;
           const data = await graphRequest(url, { headers: { Prefer: "outlook.timezone=\"Europe/London\"" } });
           for (const ev of data?.value || []) {
             if (seen.has(ev.id)) continue;
+            if (!matchesQuery(ev)) continue;
             seen.add(ev.id);
             collected.push(mapEvent(ev, mailbox === "all" ? mb.owner : undefined, mb.email));
           }
@@ -559,16 +574,29 @@ export async function runSearchCalendarTool(opts: {
     }
   }
 
-  // Default path: delegated /me/events
+  // Default path: delegated /me/calendarView (Graph rejects $search on events)
   try {
     const token = await getValidMsToken(req);
     if (!token) return { error: "Not connected to Microsoft 365. Please sign in first." };
-    const filter = `start/dateTime ge '${startDateTime}' and end/dateTime le '${endDateTime}'`;
-    const url = "https://graph.microsoft.com/v1.0/me/events?" + new URLSearchParams({
-      $search: `"${query}"`,
-      $filter: filter,
-      $top: String(top),
+    const q = (query || "").toLowerCase().trim();
+    const matchesQuery = (ev: any) => {
+      if (!q) return true;
+      const hay = [
+        ev.subject || "",
+        ev.bodyPreview || "",
+        ev.location?.displayName || "",
+        ...(ev.attendees || []).flatMap((a: any) => [a.emailAddress?.name || "", a.emailAddress?.address || ""]),
+        ev.organizer?.emailAddress?.name || "",
+        ev.organizer?.emailAddress?.address || "",
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    };
+    const url = "https://graph.microsoft.com/v1.0/me/calendarView?" + new URLSearchParams({
+      startDateTime,
+      endDateTime,
+      $top: String(Math.max(top * 4, 50)),
       $select: selectFields,
+      $orderby: "start/dateTime desc",
     });
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: "outlook.timezone=\"Europe/London\"", "Content-Type": "application/json" } });
     if (!res.ok) {
@@ -577,7 +605,8 @@ export async function runSearchCalendarTool(opts: {
     }
     const data = await res.json();
     const events = (data.value || [])
-      .sort((a: any, b: any) => new Date(b.start?.dateTime || 0).getTime() - new Date(a.start?.dateTime || 0).getTime())
+      .filter((ev: any) => matchesQuery(ev))
+      .slice(0, top)
       .map((ev: any) => mapEvent(ev));
     return { events, scope: "my calendar" };
   } catch (err: any) {

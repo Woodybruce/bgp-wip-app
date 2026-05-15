@@ -1664,6 +1664,27 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                  is gated on Experian/Red Flag signup. */}
             <RocketReachIntelCard companyId={c.id} companyName={c.name} />
 
+            {/* ── Stores — restored standalone after the Financial & Covenant
+                 zone was scorched. Map + list of UK stores; researched on
+                 demand via the re-scan button. */}
+            {stores.length > 0 && (
+              <div className="border-t border-border/40 mt-3 pt-2 order-5">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Store className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">UK stores</span>
+                  <span className="text-[10px] text-muted-foreground">({stores.length})</span>
+                  <button
+                    onClick={() => researchStoresMutation.mutate()}
+                    disabled={researchStoresMutation.isPending}
+                    className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+                  >
+                    {researchStoresMutation.isPending ? "Researching…" : "Re-scan"}
+                  </button>
+                </div>
+                <BrandPortfolioMap stores={stores as any} height={260} />
+              </div>
+            )}
+
             {/* ── Zone 4: BGP Relationship ──────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
             <div className="flex items-center gap-1.5 mb-2">
