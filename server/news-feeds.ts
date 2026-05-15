@@ -262,7 +262,7 @@ async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
     // http(s) URL out of the response body.
     const m = html.match(/data-n-au=["']([^"']+)["']/i)
       || html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
-      || html.match(/"((?:https?:\/\/(?!(?:news\.)?google\.com\/)[^"\s]+)"/);
+      || html.match(/"(https?:\/\/(?!(?:news\.)?google\.com\/)[^"\s]+)"/);
     if (m?.[1]) return m[1];
     return null;
   } catch {
