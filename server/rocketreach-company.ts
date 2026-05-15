@@ -1,12 +1,13 @@
-// RocketReach company-level lookup. Companion to rocketreach-contacts.ts (which
-// covers the people side).
+// RocketReach company-level lookup. Companion to rocketreach-contacts.ts.
 //
-// Uses /v2/api/lookupCompany — single company by domain or name. Returns the
-// firmographic record (description, industry, headcount, revenue band, funding,
-// HQ, social URLs, tech stack). Cached per-brand in brand_rocketreach_data.
+// Uses /v2/api/searchCompany (POST with a query body) — same pattern as the
+// people search. Picks the best match by domain, falls back to name. Returns
+// the firmographic record (description, industry, headcount, revenue band,
+// funding, HQ, social URLs, tech stack). Cached per-brand in
+// brand_rocketreach_data.
 //
 // Endpoints:
-//   GET  /api/brand/:companyId/rocketreach-company        → cached payload (or null)
+//   GET  /api/brand/:companyId/rocketreach-company        → cached payload
 //   POST /api/brand/:companyId/rocketreach-company/refresh → re-fetch from RR
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
@@ -25,25 +26,32 @@ function extractDomain(raw: string | null | undefined): string | null {
   return String(raw).replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "").toLowerCase();
 }
 
-async function lookupCompany(opts: { domain?: string | null; name?: string | null }): Promise<any | null> {
+async function searchCompany(opts: { domain?: string | null; name?: string | null }): Promise<any | null> {
   const auth = rrAuthHeader();
   if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
 
-  const params = new URLSearchParams();
-  if (opts.domain) params.set("domain", opts.domain);
-  else if (opts.name) params.set("name", opts.name);
-  else return null;
+  const query: Record<string, string[]> = {};
+  if (opts.domain) query.domain = [opts.domain];
+  if (opts.name) query.name = [opts.name];
+  if (!query.domain && !query.name) return null;
 
-  const res = await fetch(`https://api.rocketreach.co/v2/api/lookupCompany?${params.toString()}`, {
-    headers: auth,
+  const body = { query, page_size: 5, start: 1 };
+
+  const res = await fetch("https://api.rocketreach.co/v2/api/searchCompany", {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(20_000),
   });
   if (res.status === 404) return null;
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`RocketReach lookupCompany ${res.status}: ${text.slice(0, 200)}`);
+    console.error(`[rocketreach-company] searchCompany ${res.status}:`, text.slice(0, 400));
+    throw new Error(`RocketReach searchCompany ${res.status}: ${text.slice(0, 200)}`);
   }
-  return await res.json();
+  const data = (await res.json()) as any;
+  const list = (data?.companies || data?.results || data?.profiles || []) as any[];
+  return list[0] || null;
 }
 
 router.get("/api/brand/:companyId/rocketreach-company", requireAuth, async (req: Request, res: Response) => {
@@ -62,6 +70,7 @@ router.get("/api/brand/:companyId/rocketreach-company", requireAuth, async (req:
     }
     res.json({ configured: !!process.env.ROCKETREACH_API_KEY, payload: null, fetched_at: null });
   } catch (err: any) {
+    console.error("[rocketreach-company] GET error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -82,10 +91,10 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
 
     let payload: any = null;
     if (domain) {
-      payload = await lookupCompany({ domain });
+      payload = await searchCompany({ domain });
     }
     if (!payload && company.name) {
-      payload = await lookupCompany({ name: company.name });
+      payload = await searchCompany({ name: company.name });
     }
 
     if (!payload) {
@@ -102,6 +111,7 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
 
     res.json({ payload, fetched_at: new Date().toISOString() });
   } catch (err: any) {
+    console.error("[rocketreach-company] refresh error:", err);
     res.status(500).json({ error: err.message });
   }
 });
