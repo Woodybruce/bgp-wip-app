@@ -586,6 +586,8 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_pep_status TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_competitors JSONB`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_competitors_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_source_of_wealth TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false`,
@@ -1780,6 +1782,7 @@ import brandScraperRouter, { runDailyBrandScraper } from "./brand-scraper";
 import brandSocialScraperRouter, { runWeeklySocialScrape } from "./brand-social-scraper";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
 import rocketreachCompanyRouter from "./rocketreach-company";
+import brandCompetitorsRouter from "./brand-competitors";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
@@ -2264,6 +2267,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandSocialScraperRouter);
   app.use(rocketreachContactsRouter);
   app.use(rocketreachCompanyRouter);
+  app.use(brandCompetitorsRouter);
 
   // Health + lookup endpoints for the two new data providers.
   app.get("/api/rocketreach/health", async (_req, res) => {

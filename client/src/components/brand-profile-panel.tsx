@@ -63,6 +63,8 @@ interface BrandProfile {
     last_enriched_at: string | null;
     brand_analysis: string | null;
     brand_analysis_at: string | null;
+    ai_competitors: Array<{ name: string; reason: string | null; segment: string | null }> | null;
+    ai_competitors_at: string | null;
     kyc_status: string | null;
     kyc_expires_at: string | null;
     aml_risk_level: string | null;
@@ -330,6 +332,28 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [contactsFinding, setContactsFinding] = useState(false);
   const autoContactsRan = useRef(false);
+  const autoBrandIntelRan = useRef(false);
+
+  // Auto-fire RocketReach brand intel on first profile load — sweeps the
+  // industry_str and auto-fills BGP industry / company_type when blank.
+  // Cheap (uses unlimited searchCompany credits, no person reveal).
+  useEffect(() => {
+    if (!data || autoBrandIntelRan.current) return;
+    autoBrandIntelRan.current = true;
+    const hasCategory = !!(data.company.industry && String(data.company.industry).trim());
+    const hasGoodType = !!(data.company.company_type && !["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(data.company.company_type).trim()));
+    if (hasCategory && hasGoodType) return;
+    apiRequest("POST", `/api/brand/${companyId}/rocketreach-company/refresh`)
+      .then(r => r.json())
+      .then((json: any) => {
+        if (json?.auto_filled && Object.keys(json.auto_filled).length > 0) {
+          queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+        }
+      })
+      .catch(() => { /* silent — not critical */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   const [kycRunning, setKycRunning] = useState(false);
   const autoKycRan = useRef(false);
 
@@ -1968,6 +1992,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
+            {/* AI competitors — Claude-researched competitor set. Fills the
+                gap where rent-comps haven't tagged enough similar tenants. */}
+            <AiCompetitorsPanel
+              companyId={companyId}
+              competitors={c.ai_competitors || []}
+              generatedAt={c.ai_competitors_at}
+              allCompaniesForPicker={allCompaniesForPicker}
+            />
+
             {/* Deal ledger + active pipeline */}
             {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (
               <div className="border-t pt-2">
@@ -2386,6 +2419,85 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   );
 }
 
+function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker }: {
+  companyId: string;
+  competitors: Array<{ name: string; reason: string | null; segment: string | null }>;
+  generatedAt: string | null;
+  allCompaniesForPicker: Array<{ id: string; name: string }>;
+}) {
+  const { toast } = useToast();
+  const research = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/brand/${companyId}/competitors/research`);
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "Competitor research failed");
+      return out;
+    },
+    onSuccess: (out) => {
+      toast({ title: `Researched ${out.competitors?.length ?? 0} competitors` });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Competitor research error", description: e.message, variant: "destructive" }),
+  });
+
+  const nameToId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const co of allCompaniesForPicker) {
+      if (co.id !== companyId && co.name) m.set(co.name.toLowerCase(), co.id);
+    }
+    return m;
+  }, [allCompaniesForPicker, companyId]);
+
+  const segmentColor = (seg: string | null): string => {
+    switch ((seg || "").toLowerCase()) {
+      case "direct": return "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-900";
+      case "adjacent": return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900";
+      case "aspirational": return "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-900";
+      case "value": return "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900";
+      default: return "bg-zinc-50 text-zinc-700 border-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800";
+    }
+  };
+
+  return (
+    <div className="border-t pt-2">
+      <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+        <Sparkles className="w-3 h-3 text-purple-500" /> Competitor set
+        {generatedAt && (
+          <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+        )}
+        <button
+          onClick={() => research.mutate()}
+          disabled={research.isPending}
+          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+        >
+          {research.isPending ? "Researching…" : competitors.length > 0 ? "Refresh" : "Research"}
+        </button>
+      </div>
+      {competitors.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground italic">No AI competitors yet — click Research.</p>
+      ) : (
+        <div className="space-y-1">
+          {competitors.map((comp, i) => {
+            const id = nameToId.get(comp.name.toLowerCase());
+            const badge = (
+              <Badge variant="outline" className={`text-[10px] ${segmentColor(comp.segment)}`}>
+                {comp.name}
+                {comp.segment && <span className="ml-1 opacity-70">· {comp.segment}</span>}
+              </Badge>
+            );
+            return (
+              <div key={i} className="flex items-start gap-1.5">
+                {id ? <Link href={`/companies/${id}`} className="hover:opacity-80">{badge}</Link> : badge}
+                {comp.reason && <span className="text-[10px] text-muted-foreground leading-snug flex-1">{comp.reason}</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RocketReachIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -2407,7 +2519,16 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
     },
     onSuccess: (json) => {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "rocketreach-company"] });
-      if (!json.payload) toast({ title: "No brand intel found", description: companyName });
+      // Also refresh the brand profile so auto-filled industry/company_type appears
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      if (!json.payload) {
+        toast({ title: "No brand intel found", description: companyName });
+      } else if (json.auto_filled && Object.keys(json.auto_filled).length > 0) {
+        const bits = [];
+        if (json.auto_filled.industry) bits.push(`industry: ${json.auto_filled.industry}`);
+        if (json.auto_filled.company_type) bits.push(`category: ${json.auto_filled.company_type.replace(/^Tenant - /, "")}`);
+        toast({ title: "Auto-categorised", description: bits.join(" · ") });
+      }
     },
     onError: (e: any) => toast({ title: "Brand intel error", description: e.message, variant: "destructive" }),
   });

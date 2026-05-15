@@ -138,6 +138,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,
               brand_analysis, brand_analysis_at,
+              ai_competitors, ai_competitors_at,
               ai_disabled,
               merged_into_id,
               letting_hunter_flag, letting_hunter_notes,

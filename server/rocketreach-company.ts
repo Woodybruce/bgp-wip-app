@@ -280,4 +280,77 @@ router.get("/api/rocketreach-company-probe", requireAuth, async (req: Request, r
   res.json({ query: { id, domain, name }, results });
 });
 
+// Bulk back-fill — loops over every tenant brand that hasn't been swept yet
+// (or all if forceAll=true) and calls the refresh path inline. Used once to
+// catch up the whole library when categorisation rules change.
+router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!process.env.ROCKETREACH_API_KEY) {
+      return res.status(503).json({ error: "ROCKETREACH_API_KEY not configured" });
+    }
+    const limit = Math.min(Number(req.body?.limit ?? 50), 500);
+    const forceAll: boolean = req.body?.forceAll === true;
+    const where = forceAll
+      ? `WHERE c.merged_into_id IS NULL AND c.company_type ILIKE 'Tenant%'`
+      : `WHERE c.merged_into_id IS NULL
+           AND c.company_type ILIKE 'Tenant%'
+           AND NOT EXISTS (SELECT 1 FROM brand_rocketreach_data b WHERE b.company_id = c.id)`;
+    const { rows } = await pool.query(
+      `SELECT c.id, c.name, c.domain, c.domain_url, c.industry, c.company_type
+         FROM crm_companies c
+         ${where}
+         ORDER BY c.last_enriched_at ASC NULLS FIRST
+         LIMIT $1`,
+      [limit]
+    );
+
+    let attempted = 0, matched = 0, autoFilled = 0, errors = 0;
+    for (const company of rows) {
+      attempted++;
+      try {
+        const domain = extractDomain(company.domain_url || company.domain);
+        let stub: any = null;
+        if (domain) stub = await searchCompany({ domain });
+        if (!stub && company.name) stub = await searchCompany({ name: company.name });
+        if (!stub) continue;
+        matched++;
+        await pool.query(
+          `INSERT INTO brand_rocketreach_data (company_id, payload, fetched_at)
+           VALUES ($1, $2::jsonb, now())
+           ON CONFLICT (company_id) DO UPDATE SET payload = EXCLUDED.payload, fetched_at = now()`,
+          [company.id, JSON.stringify(stub)]
+        );
+        const isBlankIndustry = !company.industry || !String(company.industry).trim();
+        const isGenericType = !company.company_type
+          || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
+        const filled: { industry?: string; company_type?: string } = {};
+        if (isBlankIndustry && stub.industry_str) filled.industry = String(stub.industry_str);
+        if (isGenericType) {
+          const mapped = mapRrIndustryToBgpType(stub.industry_str);
+          if (mapped) filled.company_type = mapped;
+        }
+        if (Object.keys(filled).length > 0) {
+          const sets: string[] = [];
+          const vals: any[] = [company.id];
+          let i = 2;
+          if (filled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(filled.industry); }
+          if (filled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(filled.company_type); }
+          await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
+          autoFilled++;
+        }
+        // Gentle throttle — RR rate limits aren't published but searchCompany is cheap.
+        await new Promise(r => setTimeout(r, 150));
+      } catch (e: any) {
+        errors++;
+        console.warn(`[rocketreach-backfill] ${company.name}: ${e?.message}`);
+      }
+    }
+
+    res.json({ attempted, matched, autoFilled, errors, remaining: rows.length === limit ? "maybe more — re-run" : "done" });
+  } catch (err: any) {
+    console.error("[rocketreach-company] backfill error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
