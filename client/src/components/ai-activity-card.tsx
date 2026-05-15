@@ -329,7 +329,7 @@ interface EmailDetail {
   attachments: Array<{ id: string; name: string; size: number; contentType: string }>;
 }
 
-function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; mailboxEmail: string; onClose: () => void }) {
+export function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; mailboxEmail: string; onClose: () => void }) {
   const [email, setEmail] = useState<EmailDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -432,7 +432,7 @@ interface MeetingDetail {
   categories: string[];
 }
 
-function MeetingViewerDialog({ eventId, mailboxEmail, onClose }: { eventId: string; mailboxEmail: string; onClose: () => void }) {
+export function MeetingViewerDialog({ eventId, mailboxEmail, onClose }: { eventId: string; mailboxEmail: string; onClose: () => void }) {
   const [event, setEvent] = useState<MeetingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

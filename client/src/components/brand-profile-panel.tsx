@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
-import { AIActivityCard } from "@/components/ai-activity-card";
+import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -98,7 +98,7 @@ interface BrandProfile {
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null }>;
-  interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null }>;
+  interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
   socialStats: Array<{ platform: string; followers: number | null; fetched_at: string | null }>;
   covenant: {
     companyStatus: string | null;
@@ -322,6 +322,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
+  const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
+  const [openMeeting, setOpenMeeting] = useState<{ eventId: string; mailboxEmail: string } | null>(null);
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [contactsFinding, setContactsFinding] = useState(false);
@@ -1009,15 +1011,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         ) : (
           <div className="w-full flex flex-col gap-2.5">
-            {/* AI-curated activity — emails + meetings about this brand,
-                pulled from across all 31 mailboxes and filtered by ChatBGP.
-                Same engine as the deal page, contact page, and hunter rows. */}
-            <AIActivityCard
-              subjectType={(c.company_type || "").toLowerCase().includes("landlord") ? "landlord" : "brand"}
-              subjectId={companyId}
-              title={`${c.name} — Activity`}
-              compact
-            />
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a = c.head_office_address;
@@ -1044,6 +1037,26 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <Building2 className="w-3 h-3" /> Details
                   </span>
                   {c.industry && <span className="text-xs text-foreground">{c.industry}</span>}
+                  {(c.domain_url || c.domain) && (
+                    <a
+                      href={c.domain_url || `https://${c.domain}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-primary hover:underline inline-flex items-center gap-0.5"
+                    >
+                      <Globe className="w-2.5 h-2.5 shrink-0" />{(c.domain || c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "")}
+                    </a>
+                  )}
+                  {c.instagram_handle && (
+                    <a
+                      href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-primary hover:underline inline-flex items-center gap-0.5"
+                    >
+                      <Instagram className="w-2.5 h-2.5 shrink-0" />@{c.instagram_handle.replace(/^@/, "")}
+                    </a>
+                  )}
                   {hqShort && (
                     <span className="text-xs text-muted-foreground flex items-center gap-0.5" title={hqFull || hqShort}>
                       <MapPin className="w-2.5 h-2.5 shrink-0" />Global HQ: {hqShort}
@@ -1689,7 +1702,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     {researchStoresMutation.isPending ? "Researching…" : "Re-scan"}
                   </button>
                 </div>
-                <BrandPortfolioMap stores={stores as any} height={260} />
+                <div className="grid grid-cols-1 md:grid-cols-[1fr,200px] gap-3">
+                  <BrandPortfolioMap stores={stores as any} height={260} />
+                  <div className="max-h-[260px] overflow-y-auto space-y-1 pr-1 text-xs">
+                    {stores.map((s: any) => (
+                      <div key={s.id} className="leading-snug">
+                        <div className="font-medium truncate">{s.name}</div>
+                        {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1770,6 +1793,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
             {/* Key contacts now live on the sidebar (populated by RocketReach). */}
 
+            {/* AI activity summary — sits above the raw email/meeting list
+                so the BGP relationship is summarised first, then the source
+                interactions follow. */}
+            <AIActivityCard
+              subjectType={(c.company_type || "").toLowerCase().includes("landlord") ? "landlord" : "brand"}
+              subjectId={companyId}
+              title={`${c.name} — Activity`}
+              compact
+            />
+
             {/* Interactions board — always visible. When empty, surfaces a
                 "possibly incomplete" hint so the user knows the gap might
                 be a sync issue rather than genuinely no contact. */}
@@ -1784,16 +1817,29 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               const emails = recent.filter((it: any) => it.type === "email" || it.type === "call" || it.type === "note");
               const meetings = recent.filter((it: any) => it.type === "meeting");
               const isEmpty = recent.length === 0;
-              const renderRow = (it: any, accent: string) => (
-                <div key={it.id} className="text-xs flex gap-1.5 items-start py-0.5">
-                  <div className={`w-1 self-stretch rounded-full shrink-0 ${accent}`} />
-                  <div className="flex-1 min-w-0">
-                    {it.subject && <div className="font-medium truncate leading-snug">{it.subject}</div>}
-                    {it.preview && <div className="text-[10px] text-muted-foreground truncate leading-snug">{it.preview}</div>}
+              const renderRow = (it: any, accent: string) => {
+                const canOpen = !!(it.microsoft_id && it.bgp_user);
+                const onClick = () => {
+                  if (!canOpen) return;
+                  if (it.type === "meeting") setOpenMeeting({ eventId: it.microsoft_id, mailboxEmail: it.bgp_user });
+                  else setOpenEmail({ msgId: it.microsoft_id, mailboxEmail: it.bgp_user });
+                };
+                return (
+                  <div
+                    key={it.id}
+                    onClick={onClick}
+                    className={`text-xs flex gap-1.5 items-start py-0.5 ${canOpen ? "cursor-pointer hover:bg-muted/50 rounded px-1 -mx-1" : ""}`}
+                    title={canOpen ? "Click to view" : ""}
+                  >
+                    <div className={`w-1 self-stretch rounded-full shrink-0 ${accent}`} />
+                    <div className="flex-1 min-w-0">
+                      {it.subject && <div className="font-medium truncate leading-snug">{it.subject}</div>}
+                      {it.preview && <div className="text-[10px] text-muted-foreground truncate leading-snug">{it.preview}</div>}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground shrink-0">{it.bgp_user || ""} · {ago(it.interaction_date)}</span>
                   </div>
-                  <span className="text-[10px] text-muted-foreground shrink-0">{it.bgp_user || ""} · {ago(it.interaction_date)}</span>
-                </div>
-              );
+                );
+              };
               return (
                 <div className="border-t pt-2">
                   <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
@@ -2311,6 +2357,20 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
     </Card>
     <BrandProfileSidebar data={data} companyId={companyId} />
+    {openEmail && (
+      <EmailViewerDialog
+        msgId={openEmail.msgId}
+        mailboxEmail={openEmail.mailboxEmail}
+        onClose={() => setOpenEmail(null)}
+      />
+    )}
+    {openMeeting && (
+      <MeetingViewerDialog
+        eventId={openMeeting.eventId}
+        mailboxEmail={openMeeting.mailboxEmail}
+        onClose={() => setOpenMeeting(null)}
+      />
+    )}
     </div>
   );
 }

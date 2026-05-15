@@ -365,7 +365,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     );
 
     const bgpInteractionsListQ = pool.query(
-      `SELECT id, type, direction, subject, preview, interaction_date, bgp_user
+      `SELECT id, type, direction, subject, preview, interaction_date, bgp_user, microsoft_id
          FROM crm_interactions
         WHERE company_id = $1
         ORDER BY interaction_date DESC NULLS LAST LIMIT 12`,
