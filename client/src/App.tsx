@@ -66,6 +66,7 @@ const LandRegistry = lazy(() => import("@/pages/land-registry"));
 const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const BoardReport = lazy(() => import("@/pages/board-report"));
 const LeasingSchedule = lazy(() => import("@/pages/leasing-schedule"));
+const TenancyScheduleFull = lazy(() => import("@/pages/tenancy-schedule-full"));
 const UploadPage = lazy(() => import("@/pages/upload"));
 const MarketingFilesPage = lazy(() => import("@/pages/marketing-files"));
 const AddinOutlook = lazy(() => import("@/pages/addin-outlook"));
@@ -189,6 +190,7 @@ function Router() {
       <Route path="/reporting" component={Reporting} />
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
+      <Route path="/tenancy-schedule/:propertyId" component={TenancyScheduleFull} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
       <Route path="/lease-events" component={LeaseEvents} />

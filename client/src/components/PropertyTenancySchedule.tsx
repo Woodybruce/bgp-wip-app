@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -312,6 +313,11 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
               <Plus className="w-3 h-3 mr-1" />Add Unit
             </Button>
+            <Link href={`/tenancy-schedule/${propertyId}`}>
+              <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
+                <ExternalLink className="w-3 h-3" />Full Board
+              </span>
+            </Link>
           </div>
         </div>
         <div className="text-center py-8 text-gray-400 border rounded-lg border-dashed">
@@ -345,6 +351,11 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
+          <Link href={`/tenancy-schedule/${propertyId}`}>
+            <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
+              <ExternalLink className="w-3 h-3" />Full Board
+            </span>
+          </Link>
         </div>
       </div>
 
