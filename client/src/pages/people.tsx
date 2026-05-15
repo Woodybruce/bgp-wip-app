@@ -20,7 +20,7 @@ import {
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CRM_OPTIONS } from "@/lib/crm-options";
-import { guessDomain, extractDomain } from "@/lib/company-logos";
+import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
 
 const CompanyDetailPage = lazy(() => import("@/pages/companies"));
@@ -50,8 +50,10 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const d = extractDomain(domain || null);
   const guessed = guessDomain(company.name);
 
-  // Build ordered list of logo URLs to try
+  // Build ordered list of logo URLs to try — local Image Studio first, Clearbit fallback.
   const logoSources: string[] = [];
+  const local = localBrandLogoUrl(company.name);
+  if (local) logoSources.push(local);
   if (d) {
     logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(px * 3, 512)}`);
   }

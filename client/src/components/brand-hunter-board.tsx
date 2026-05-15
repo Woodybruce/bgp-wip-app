@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { extractDomain } from "@/lib/company-logos";
+import { extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import {
   Flame, Search, Crosshair, Star, TrendingUp, Building2,
   Globe2, Zap, Instagram, ChevronRight, MapPin, Filter,
@@ -120,18 +120,21 @@ function scoreBand(score: number): { label: string; color: string } {
 }
 
 function BrandLogo({ name, domain, size = 28 }: { name: string; domain?: string | null; size?: number }) {
-  const [failed, setFailed] = useState(false);
+  const [failCount, setFailCount] = useState(0);
   const d = extractDomain(domain ?? null);
-  const src = d ? `https://logo.clearbit.com/${d}?size=${size * 2}` : null;
-  if (!failed && src) {
+  const sources: string[] = [];
+  const local = localBrandLogoUrl(name);
+  if (local) sources.push(local);
+  if (d) sources.push(`https://logo.clearbit.com/${d}?size=${size * 2}`);
+  if (failCount < sources.length) {
     return (
       <img
-        src={src} alt={name}
+        src={sources[failCount]} alt={name}
         loading="lazy"
         decoding="async"
         className="rounded object-contain bg-white border border-gray-100 shrink-0"
         style={{ width: size, height: size }}
-        onError={() => setFailed(true)}
+        onError={() => setFailCount(c => c + 1)}
       />
     );
   }

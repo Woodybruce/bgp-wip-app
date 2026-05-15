@@ -131,7 +131,12 @@ function formatDate(dateStr: string | null): string {
   return new Date(dateStr).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-function getBrandLogoUrl(domain: string | null): string | null {
+function getBrandLogoUrl(domain: string | null, clientName?: string | null): string | null {
+  // Prefer local Image Studio library when we have a client/brand name (avoids
+  // depending on Clearbit, which HubSpot is shutting down end of 2025).
+  if (clientName && clientName.trim()) {
+    return `/api/brand-logo/${encodeURIComponent(clientName.trim())}`;
+  }
   if (!domain) return null;
   const clean = domain.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
   return `https://logo.clearbit.com/${clean}`;
@@ -175,7 +180,7 @@ function SearchCard({
   colConfig: typeof COLUMNS[number];
 }) {
   const overdue = isOverdue(search.next_action_date);
-  const logoUrl = getBrandLogoUrl(search.company_domain);
+  const logoUrl = getBrandLogoUrl(search.company_domain, search.client_name);
 
   return (
     <Card className={`mb-2 cursor-pointer hover:shadow-md transition-shadow border ${colConfig.border}`} onClick={onEdit}>

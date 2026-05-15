@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { extractDomain, guessDomain } from "@/lib/company-logos";
+import { extractDomain, guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
@@ -99,6 +99,8 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
   const guessed = guessDomain(name);
 
   const sources: string[] = [];
+  const local = localBrandLogoUrl(name);
+  if (local) sources.push(local);
   if (d) {
     sources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
   }

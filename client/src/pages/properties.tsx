@@ -1,5 +1,5 @@
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
-import { guessDomain } from "@/lib/company-logos";
+import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
@@ -160,6 +160,8 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
   const guessedDomain = guessDomain(name);
 
   const logoSources: string[] = [];
+  const local = localBrandLogoUrl(name);
+  if (local) logoSources.push(local);
   if (d) {
     logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
   }

@@ -1,4 +1,4 @@
-import { guessDomain } from "@/lib/company-logos";
+import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -105,6 +105,8 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
   const guessedDomain = guessDomain(name);
 
   const logoSources: string[] = [];
+  const local = localBrandLogoUrl(name);
+  if (local) logoSources.push(local);
   if (d) {
     logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
   }

@@ -1179,11 +1179,19 @@ export function registerImageStudioRoutes(app: Express) {
       const name = String(req.params.name || "").trim();
       if (!name) return res.status(400).json({ error: "name required" });
 
+      // Match by brand_name first; fall back to file_name on category='Brands'
+      // (some of the 768 bulk-imported logos have the brand name in file_name only).
       const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null }>(
         `SELECT id, local_path, mime_type, thumbnail_data
          FROM image_studio_images
          WHERE lower(trim(brand_name)) = lower(trim($1))
-         ORDER BY created_at DESC
+            OR (category = 'Brands' AND lower(trim(file_name)) = lower(trim($1)))
+            OR (category = 'Brands' AND lower(file_name) LIKE lower($1) || '%')
+         ORDER BY
+           CASE WHEN lower(trim(brand_name)) = lower(trim($1)) THEN 0
+                WHEN lower(trim(file_name))  = lower(trim($1)) THEN 1
+                ELSE 2 END,
+           created_at DESC
          LIMIT 1`,
         [name]
       );
