@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,7 @@ import {
   Mail,
   Calendar as CalendarIcon,
   TrendingUp,
+  Landmark,
   FileText,
   MessageSquare,
 } from "lucide-react";
@@ -176,6 +178,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // Heavy panels — collapsed by default to keep the page scannable.
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     pathway: false,
+    planning: false,
     kyc: false,
     brands: false,
     timeline: false,
@@ -810,6 +813,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           postcode={(deal as any).postcode}
         />
       </CollapsibleCard>
+
+      {(deal as any).propertyId && (
+        <CollapsibleCard open={mainSections.planning} onToggle={() => toggleMain("planning")} icon={Landmark} title="Planning" testId="toggle-deal-planning">
+          <PropertyPlanningCard propertyId={(deal as any).propertyId} className="border-0 shadow-none" />
+        </CollapsibleCard>
+      )}
 
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">

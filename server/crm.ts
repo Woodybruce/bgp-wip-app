@@ -33,6 +33,7 @@ import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { searchPipnetRequirements } from "./pipnet";
 import { xeroApi, refreshXeroToken } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
+import { getPlanningSummary } from "./planning-summary";
 
 import { randomUUID } from "crypto";
 import type { Pool } from "pg";
@@ -2102,6 +2103,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const deals = await storage.getCrmDeals({ propertyId: req.params.id });
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/crm/properties/:id/planning-summary", async (req, res) => {
+    try {
+      const force = req.query.force === "true" || req.query.force === "1";
+      const summary = await getPlanningSummary(req.params.id, { force });
+      res.json(summary);
+    } catch (e: any) {
+      console.error("[/api/crm/properties/:id/planning-summary] failed:", e?.message);
+      res.status(500).json({ error: e?.message || "unknown error" });
+    }
   });
 
   app.get("/api/crm/property-deal-links", async (req, res) => {
