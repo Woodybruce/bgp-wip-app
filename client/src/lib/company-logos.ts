@@ -522,9 +522,30 @@ export function extractDomain(raw: string | null | undefined): string | null {
 // Clearbit's logo.clearbit.com was deprecated by HubSpot on 18 Mar 2025 and
 // shuts down completely Dec 2025. We have 768 logos saved locally already
 // (category='Brands' in image_studio_images) so always try them first.
+// Session-cached flag — true once we've confirmed there's at least one row
+// in the brand library. Stays false while the library is empty so we don't
+// spam /api/brand-logo with 404s per thumbnail.
+let _libraryHasLogos: boolean | null = null;
+let _libraryStatsPromise: Promise<boolean> | null = null;
+function probeBrandLibrary(): Promise<boolean> {
+  if (_libraryHasLogos !== null) return Promise.resolve(_libraryHasLogos);
+  if (_libraryStatsPromise) return _libraryStatsPromise;
+  _libraryStatsPromise = fetch("/api/brand-logo-stats", { credentials: "include" })
+    .then(r => r.ok ? r.json() : { hasLogos: false })
+    .then((s: any) => { _libraryHasLogos = !!s?.hasLogos; return _libraryHasLogos; })
+    .catch(() => { _libraryHasLogos = false; return false; });
+  return _libraryStatsPromise;
+}
+// Fire the probe immediately so the first call to localBrandLogoUrl below
+// already knows the answer. Until the probe resolves, treat library as
+// empty so we don't 404-spam on the first paint.
+probeBrandLibrary();
+
 export function localBrandLogoUrl(name: string | null | undefined, domain?: string | null | undefined): string | null {
   const trimmed = (name || "").trim();
   if (!trimmed) return null;
+  // No logos in the library → skip the local lookup entirely.
+  if (_libraryHasLogos !== true) return null;
   const d = extractDomain(domain ?? null);
   const qs = d ? `?domain=${encodeURIComponent(d)}` : "";
   return `/api/brand-logo/${encodeURIComponent(trimmed)}${qs}`;

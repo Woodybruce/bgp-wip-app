@@ -334,26 +334,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const autoContactsRan = useRef(false);
   const autoBrandIntelRan = useRef(false);
 
-  // Auto-fire RocketReach brand intel on first profile load — sweeps the
-  // industry_str and auto-fills BGP industry / company_type when blank.
-  // Cheap (uses unlimited searchCompany credits, no person reveal).
-  useEffect(() => {
-    if (!data || autoBrandIntelRan.current) return;
-    autoBrandIntelRan.current = true;
-    const hasCategory = !!(data.company.industry && String(data.company.industry).trim());
-    const hasGoodType = !!(data.company.company_type && !["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(data.company.company_type).trim()));
-    if (hasCategory && hasGoodType) return;
-    apiRequest("POST", `/api/brand/${companyId}/rocketreach-company/refresh`)
-      .then(r => r.json())
-      .then((json: any) => {
-        if (json?.auto_filled && Object.keys(json.auto_filled).length > 0) {
-          queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-        }
-      })
-      .catch(() => { /* silent — not critical */ });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
-
   const [kycRunning, setKycRunning] = useState(false);
   const autoKycRan = useRef(false);
 
@@ -409,6 +389,26 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       return /(property|real estate|acquisition|expansion|portfolio|estates|store dev|store development)/.test(r);
     });
     if (!hasPropertyContact) runContactDiscovery();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  // Auto-fire RocketReach brand intel on first profile load — sweeps the
+  // industry_str and auto-fills BGP industry / company_type when blank.
+  // Cheap (uses unlimited searchCompany credits, no person reveal).
+  useEffect(() => {
+    if (!data || autoBrandIntelRan.current) return;
+    autoBrandIntelRan.current = true;
+    const hasCategory = !!(data.company.industry && String(data.company.industry).trim());
+    const hasGoodType = !!(data.company.company_type && !["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(data.company.company_type).trim()));
+    if (hasCategory && hasGoodType) return;
+    apiRequest("POST", `/api/brand/${companyId}/rocketreach-company/refresh`)
+      .then(r => r.json())
+      .then((json: any) => {
+        if (json?.auto_filled && Object.keys(json.auto_filled).length > 0) {
+          queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+        }
+      })
+      .catch(() => { /* silent — not critical */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 

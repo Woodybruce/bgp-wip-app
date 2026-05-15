@@ -1235,6 +1235,27 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // One-shot stats — client calls this once per session to decide whether
+  // /api/brand-logo/:name is worth hitting at all. When the library is
+  // empty (the common case until logo.dev is wired), the client skips the
+  // per-thumbnail lookup and falls straight through to the initials tile.
+  // Eliminates the ~200 404/page-load brand-logo chatter on Brand Explorer.
+  app.get("/api/brand-logo-stats", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM image_studio_images
+          WHERE (brand_name IS NOT NULL AND brand_name <> '')
+             OR category = 'Brands'`
+      );
+      const count = Number(rows[0]?.count || 0);
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.json({ count, hasLogos: count > 0 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Diagnostic — shows what's in the brand library and whether a given name
   // matches anything. Hit /api/brand-logo-debug?name=Pret to test from the
   // browser. Auth required, but anyone can use.
