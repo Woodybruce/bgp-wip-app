@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { NewsTagsManager } from "@/components/news-tags-manager";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -135,6 +136,16 @@ export function NewsSourcesTab() {
 
   return (
     <div className="space-y-4">
+      {/* Tag vocabulary — editable by anyone */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Tag vocabulary</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <NewsTagsManager />
+        </CardContent>
+      </Card>
+
       {/* Health + controls */}
       <Card>
         <CardHeader className="pb-2">

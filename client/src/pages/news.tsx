@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
+import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import {
   Select,
   SelectContent,
@@ -196,6 +197,7 @@ function FeedTab() {
   const [activeTeam, setActiveTeam] = useState("For You");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [showStats, setShowStats] = useState(false);
   const [savedArticles, setSavedArticles] = useState<Set<string>>(new Set());
   const [dismissedArticles, setDismissedArticles] = useState<Set<string>>(new Set());
@@ -307,9 +309,17 @@ function FeedTab() {
         const articleCat = (a.category || "").toLowerCase();
         if (!articleCat.includes(categoryFilter.toLowerCase())) return false;
       }
+      if (tagFilter.size > 0) {
+        const articleTags = new Set((a.aiTags || []).map(t => t.toLowerCase()));
+        let matched = false;
+        for (const wanted of tagFilter) {
+          if (articleTags.has(wanted)) { matched = true; break; }
+        }
+        if (!matched) return false;
+      }
       return true;
     });
-  }, [articles, categoryFilter, dismissedArticles]);
+  }, [articles, categoryFilter, tagFilter, dismissedArticles]);
 
   const totalArticles = articles?.length || 0;
   const scoredArticles = articles?.filter((a) => a.processed)?.length || 0;
@@ -432,6 +442,8 @@ function FeedTab() {
           </SelectContent>
         </Select>
       </div>
+
+      <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} />
 
       {isSavedTab ? (
         isSavedLoading ? (

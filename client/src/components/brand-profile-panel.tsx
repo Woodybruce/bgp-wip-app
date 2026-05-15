@@ -24,6 +24,7 @@ import {
   Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { NewsTagFilterChips } from "@/components/news-tags-manager";
 
 interface BrandProfile {
   company: {
@@ -2888,6 +2889,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
   const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
+  const [newsTagFilter, setNewsTagFilter] = useState<Set<string>>(new Set());
   const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
     staleTime: 5 * 60_000,
@@ -3094,11 +3096,18 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             .map((a: any) => a.source_name)
             .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
         )];
-        const filtered = newsTab === "press"
+        const tabFiltered = newsTab === "press"
           ? data.news.filter((a: any) => brandDomain && (a.url?.includes(brandDomain) || a.source_name?.toLowerCase().includes(c.name.toLowerCase().split(" ")[0])))
           : newsTab === "linkedin"
             ? data.news.filter((a: any) => a.url?.includes("linkedin.com") || a.source_name?.toLowerCase().includes("linkedin"))
             : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
+        const filtered = newsTagFilter.size === 0
+          ? tabFiltered
+          : tabFiltered.filter((a: any) => {
+              const tags = (a.ai_tags || a.aiTags || []).map((t: string) => t.toLowerCase());
+              for (const wanted of newsTagFilter) if (tags.includes(wanted)) return true;
+              return false;
+            });
         const visible = newsShowAll ? filtered : filtered.slice(0, 6);
         return (
           <Card>
@@ -3119,6 +3128,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                   </button>
                 ))}
               </div>
+              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[10px]" />
               {newsTab === "industry" && allSources.length > 1 && (
                 <div className="flex items-center gap-1 flex-wrap">
                   {newsSourceFilter && (

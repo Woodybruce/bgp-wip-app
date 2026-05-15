@@ -1,7 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
-import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps } from "@shared/schema";
+import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps, newsTags } from "@shared/schema";
+import { DEFAULT_NEWS_TAGS } from "@shared/news-tags";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
 import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, type SocialPlatform } from "./news-brand-linking";
@@ -322,6 +323,19 @@ async function backfillMissingImages(): Promise<number> {
   return updated;
 }
 
+async function getActiveTagVocabulary(): Promise<string[]> {
+  try {
+    const rows = await db.select({ name: newsTags.name })
+      .from(newsTags)
+      .where(eq(newsTags.active, true))
+      .orderBy(newsTags.sortOrder);
+    if (rows.length > 0) return rows.map(r => r.name);
+  } catch (e: any) {
+    console.warn(`[news] tag vocab read failed, using defaults: ${e?.message}`);
+  }
+  return [...DEFAULT_NEWS_TAGS];
+}
+
 async function scoreArticlesWithAI(): Promise<number> {
   const unprocessed = await db.select()
     .from(newsArticles)
@@ -336,13 +350,16 @@ async function scoreArticlesWithAI(): Promise<number> {
     prefsMap[p.team] = p;
   }
 
+  const tagVocab = await getActiveTagVocabulary();
+  const tagVocabStr = tagVocab.map(t => `"${t}"`).join(", ");
+
   let scored = 0;
 
   const batchSize = 5;
   for (let i = 0; i < unprocessed.length; i += batchSize) {
     const batch = unprocessed.slice(i, i + batchSize);
 
-    const articlesText = batch.map((a, idx) => 
+    const articlesText = batch.map((a, idx) =>
       `Article ${idx + 1}:\nTitle: ${a.title}\nSummary: ${a.summary || "N/A"}\nSource: ${a.sourceName}\nCategory: ${a.category}`
     ).join("\n\n");
 
@@ -357,10 +374,15 @@ async function scoreArticlesWithAI(): Promise<number> {
         messages: [
           {
             role: "system",
-            content: `You are a news relevance scoring engine for BGP, a London property consultancy. Score each article's relevance (0-100) for each team, generate tags, and write a concise AI summary.
+            content: `You are a news relevance scoring engine for BGP, a London property consultancy. Score each article's relevance (0-100) for each team, generate tags from the controlled vocabulary, and write a concise AI summary.
 
 Teams:
 ${teamDescriptions}
+
+TAGS — choose 0-4 from this exact list (use the exact spelling, lower-case):
+[${tagVocabStr}]
+
+Pick only tags that the article genuinely matches. Do not invent tags outside this list. If you also want to add ONE free-text location tag (e.g. "Mayfair", "Birmingham") because the article is geographically specific, append it after the controlled tags.
 
 Respond in JSON format:
 {
@@ -368,7 +390,7 @@ Respond in JSON format:
     {
       "index": 1,
       "relevanceScores": { "Investment": 85, "London Retail": 60, "London F&B": 55, "Lease Advisory": 30, "National Leasing": 20, "Tenant Rep": 45, "Development": 10 },
-      "tags": ["retail", "letting", "Mayfair"],
+      "tags": ["retail", "new openings", "Mayfair"],
       "aiSummary": "Brief 1-2 sentence summary highlighting why this matters for property professionals"
     }
   ]
@@ -932,6 +954,82 @@ export async function searchGreenStreet(query: string, limit: number = 10): Prom
 
 export function setupNewsFeedRoutes(app: Express) {
   seedNewsSources().catch(console.error);
+
+  // ─── Tag vocabulary CRUD ─────────────────────────────────────────────────
+  // requireAuth only — any logged-in user can edit, not admin-gated.
+  app.get("/api/news-feed/tags", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const rows = await db.select().from(newsTags).orderBy(newsTags.sortOrder, newsTags.name);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  app.post("/api/news-feed/tags", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const rawName = String(req.body?.name || "").trim().toLowerCase();
+      if (!rawName) return res.status(400).json({ error: "name is required" });
+      if (rawName.length > 60) return res.status(400).json({ error: "tag too long (max 60 chars)" });
+      const label = String(req.body?.label || rawName).trim().slice(0, 80);
+      const sortOrder = Number(req.body?.sortOrder ?? 1000);
+      const userId = (req as any).user?.id ? String((req as any).user.id) : null;
+      const [created] = await db.insert(newsTags).values({
+        name: rawName,
+        label,
+        sortOrder,
+        createdBy: userId,
+        active: true,
+      }).onConflictDoNothing().returning();
+      if (!created) return res.status(409).json({ error: "tag already exists" });
+      res.json(created);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  app.patch("/api/news-feed/tags/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const patch: any = {};
+      if (req.body?.label !== undefined) patch.label = String(req.body.label).slice(0, 80);
+      if (req.body?.active !== undefined) patch.active = !!req.body.active;
+      if (req.body?.sortOrder !== undefined) patch.sortOrder = Number(req.body.sortOrder);
+      if (Object.keys(patch).length === 0) return res.json({ ok: true });
+      const [updated] = await db.update(newsTags).set(patch).where(eq(newsTags.id, req.params.id)).returning();
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  app.delete("/api/news-feed/tags/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await db.delete(newsTags).where(eq(newsTags.id, req.params.id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  // Re-tag the recent backlog so newly-added tags get applied without waiting
+  // weeks for the cron to churn through. Marks last N articles as unprocessed
+  // — the scoreArticlesWithAI cron will pick them up.
+  app.post("/api/news-feed/retag", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(Number(req.body?.limit ?? 500), 2000);
+      const ids = await db.select({ id: newsArticles.id })
+        .from(newsArticles)
+        .orderBy(desc(newsArticles.publishedAt))
+        .limit(limit);
+      if (ids.length === 0) return res.json({ marked: 0 });
+      await db.update(newsArticles)
+        .set({ processed: false })
+        .where(inArray(newsArticles.id, ids.map(r => r.id)));
+      res.json({ marked: ids.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
 
   app.get("/api/news-feed/sources", requireAuth, async (_req: Request, res: Response) => {
     const sources = await db.select().from(newsSources).orderBy(newsSources.name);

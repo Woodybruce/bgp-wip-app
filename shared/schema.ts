@@ -263,6 +263,23 @@ export const insertNewsSourceSchema = createInsertSchema(newsSources).omit({ id:
 export type InsertNewsSource = z.infer<typeof insertNewsSourceSchema>;
 export type NewsSource = typeof newsSources.$inferSelect;
 
+// Editable controlled vocabulary the AI scorer uses to tag every news article.
+// Any logged-in user can add/remove/disable tags via the news settings UI; the
+// scorer reads this table fresh on each run. Seeded with Harry's wishlist.
+export const newsTags = pgTable("news_tags", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),     // lower-case identifier, e.g. "new openings"
+  label: text("label").notNull(),            // display label, e.g. "New openings"
+  active: boolean("active").default(true),
+  sortOrder: integer("sort_order").default(0),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertNewsTagSchema = createInsertSchema(newsTags).omit({ id: true, createdAt: true });
+export type InsertNewsTag = z.infer<typeof insertNewsTagSchema>;
+export type NewsTag = typeof newsTags.$inferSelect;
+
 export const newsArticles = pgTable("news_articles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   sourceId: varchar("source_id"),
