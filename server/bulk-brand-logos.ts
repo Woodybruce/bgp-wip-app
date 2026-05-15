@@ -72,15 +72,56 @@ async function fetchLogoForDomain(domain: string): Promise<{ buffer: Buffer; mim
   return null;
 }
 
+// Background job state — single global since this is a "once in a while
+// catch-up" operation, not a concurrent thing. POST starts the job and
+// returns immediately; GET status reports progress. Survives Railway proxy
+// timeouts that killed the old synchronous path.
+interface JobState {
+  startedAt: number;
+  finishedAt: number | null;
+  attempted: number;
+  imported: number;
+  missed: number;
+  errors: number;
+  errorSamples: string[];
+  sourceCounts: Record<string, number>;
+  total: number;
+  logoDevConfigured: boolean;
+  lastBrand: string | null;
+  error: string | null;
+}
+let job: JobState | null = null;
+
+router.get("/api/admin/import-brand-logos/status", requireAuth, async (_req: Request, res: Response) => {
+  if (!job) return res.json({ running: false, message: "No job has been started in this process lifetime." });
+  res.json({
+    running: job.finishedAt === null,
+    startedAt: new Date(job.startedAt).toISOString(),
+    finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : null,
+    progress: `${job.attempted}/${job.total}`,
+    attempted: job.attempted,
+    imported: job.imported,
+    missed: job.missed,
+    errors: job.errors,
+    error_samples: job.errorSamples,
+    source_counts: job.sourceCounts,
+    logo_dev_configured: job.logoDevConfigured,
+    last_brand: job.lastBrand,
+    error: job.error,
+  });
+});
+
 router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, res: Response) => {
   try {
     const limit = Math.min(Number(req.body?.limit ?? 500), 2000);
     const skipExisting: boolean = req.body?.skipExisting !== false;
-    const userId = (req as any).user?.id || null;
+    if (job && job.finishedAt === null) {
+      return res.status(409).json({ error: "A bulk import is already running", status: `${job.attempted}/${job.total}` });
+    }
     console.log(`[bulk-logos] starting — limit=${limit}, skipExisting=${skipExisting}, logo_dev_token=${!!process.env.LOGO_DEV_TOKEN}`);
 
-    // Pull tenant brands with a domain. Skip ones that already have a brand
-    // logo in image_studio_images unless caller explicitly forces re-import.
+    // Pull the work list first so the response can report total + early-exit
+    // case (e.g. zero brands matched the filter).
     const whereClause = skipExisting
       ? `WHERE c.company_type ILIKE 'Tenant%'
            AND c.merged_into_id IS NULL
@@ -104,7 +145,6 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
     );
     console.log(`[bulk-logos] ${brands.length} brands to process`);
 
-    // Diagnose if zero — common case: no domains stored on crm_companies.
     if (brands.length === 0) {
       const total = await pool.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM crm_companies WHERE company_type ILIKE 'Tenant%' AND merged_into_id IS NULL`
@@ -114,63 +154,80 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
           WHERE company_type ILIKE 'Tenant%' AND merged_into_id IS NULL
             AND ((domain IS NOT NULL AND domain <> '') OR (domain_url IS NOT NULL AND domain_url <> ''))`
       );
-      const note = `0 brands matched the filter. Total tenants: ${total.rows[0]?.count}, with a domain: ${withDomain.rows[0]?.count}. Most likely no tenant brands have a domain stored in crm_companies — set domain on a brand to test, or set skipExisting=false to force re-import existing.`;
+      const note = `0 brands matched the filter. Total tenants: ${total.rows[0]?.count}, with a domain: ${withDomain.rows[0]?.count}.`;
       console.warn(`[bulk-logos] ${note}`);
-      return res.json({ attempted: 0, imported: 0, missed: 0, errors: 0, note });
+      return res.json({ started: false, note });
     }
 
-    const sourceCounts: Record<string, number> = { "logo.dev": 0, clearbit: 0, google: 0, duckduckgo: 0 };
-    const errorSamples: string[] = [];
-    let imported = 0;
-    let missed = 0;
-    let errors = 0;
+    // Initialise the job and respond immediately. The actual work runs in
+    // the background via setImmediate so the HTTP response isn't blocked
+    // by Railway's ~60s edge timeout.
+    job = {
+      startedAt: Date.now(),
+      finishedAt: null,
+      attempted: 0,
+      imported: 0,
+      missed: 0,
+      errors: 0,
+      errorSamples: [],
+      sourceCounts: { "logo.dev": 0, clearbit: 0, google: 0, duckduckgo: 0 },
+      total: brands.length,
+      logoDevConfigured: !!process.env.LOGO_DEV_TOKEN,
+      lastBrand: null,
+      error: null,
+    };
 
-    for (const brand of brands) {
-      const domain = extractDomain(brand.domain_url || brand.domain);
-      if (!domain) { missed++; continue; }
+    setImmediate(async () => {
       try {
-        const hit = await fetchLogoForDomain(domain);
-        if (!hit) {
-          missed++;
-          if (missed <= 5) console.log(`[bulk-logos] miss: ${brand.name} (${domain})`);
-          continue;
+        for (const brand of brands) {
+          if (!job) break;
+          job.lastBrand = brand.name;
+          job.attempted++;
+          const domain = extractDomain(brand.domain_url || brand.domain);
+          if (!domain) { job.missed++; continue; }
+          try {
+            const hit = await fetchLogoForDomain(domain);
+            if (!hit) {
+              job.missed++;
+              continue;
+            }
+            await storeImageFromBuffer({
+              buffer: hit.buffer,
+              fileName: `${brand.name} — Logo`,
+              category: "Brands",
+              tags: ["brand-logo", "bulk-import", hit.source],
+              description: `Brand logo for ${brand.name}, sourced from ${hit.source}`,
+              source: `bulk-${hit.source}`,
+              brandName: brand.name,
+              mimeType: hit.mime,
+              filenameHint: brand.name,
+            });
+            job.sourceCounts[hit.source] = (job.sourceCounts[hit.source] || 0) + 1;
+            job.imported++;
+            if (job.imported <= 5 || job.imported % 25 === 0) console.log(`[bulk-logos] imported ${job.imported}: ${brand.name} via ${hit.source}`);
+            await new Promise(r => setTimeout(r, 150));
+          } catch (err: any) {
+            job.errors++;
+            const msg = `${brand.name} (${domain}): ${err?.message || err}`;
+            if (job.errorSamples.length < 5) job.errorSamples.push(msg);
+            console.warn(`[bulk-logos] ${msg}`);
+          }
         }
-        await storeImageFromBuffer({
-          buffer: hit.buffer,
-          fileName: `${brand.name} — Logo`,
-          category: "Brands",
-          tags: ["brand-logo", "bulk-import", hit.source],
-          description: `Brand logo for ${brand.name}, sourced from ${hit.source}`,
-          source: `bulk-${hit.source}`,
-          brandName: brand.name,
-          mimeType: hit.mime,
-          filenameHint: brand.name,
-        });
-        sourceCounts[hit.source] = (sourceCounts[hit.source] || 0) + 1;
-        imported++;
-        if (imported <= 5 || imported % 25 === 0) console.log(`[bulk-logos] imported ${imported}: ${brand.name} via ${hit.source}`);
-        // Gentle throttle so we don't slam Clearbit / logo.dev / DDG.
-        await new Promise(r => setTimeout(r, 150));
       } catch (err: any) {
-        errors++;
-        const msg = `${brand.name} (${domain}): ${err?.message || err}`;
-        if (errorSamples.length < 5) errorSamples.push(msg);
-        console.warn(`[bulk-logos] ${msg}`);
+        if (job) job.error = err?.message || String(err);
+        console.error("[bulk-logos] background job crashed:", err);
+      } finally {
+        if (job) {
+          job.finishedAt = Date.now();
+          console.log(`[bulk-logos] done — imported=${job.imported}, missed=${job.missed}, errors=${job.errors}, sources=${JSON.stringify(job.sourceCounts)}`);
+        }
       }
-    }
+    });
 
-    console.log(`[bulk-logos] done — imported=${imported}, missed=${missed}, errors=${errors}, sources=${JSON.stringify(sourceCounts)}`);
     res.json({
-      attempted: brands.length,
-      imported,
-      missed,
-      errors,
-      error_samples: errorSamples,
-      source_counts: sourceCounts,
-      skipped_existing: skipExisting,
-      logo_dev_configured: !!process.env.LOGO_DEV_TOKEN,
-      remaining: brands.length === limit ? "maybe more — re-run" : "done",
-      conducted_by: userId,
+      started: true,
+      total: brands.length,
+      message: "Background import started. Poll /api/admin/import-brand-logos/status for progress.",
     });
   } catch (err: any) {
     console.error("[bulk-logos] error:", err);
