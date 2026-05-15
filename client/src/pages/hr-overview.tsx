@@ -5,7 +5,7 @@ import {
   Trophy, Mountain, TrendingUp, Users, Calendar, Cake, Sparkles,
   Coffee, Beer, Pizza, Star, Flame, Target, ChevronRight, ChevronDown,
   Loader2, Plus, Check, Briefcase, BarChart3, GitBranch, Eye,
-  Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText, Info,
+  Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText, Info, User,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -106,6 +106,71 @@ interface Birthday {
   profilePicUrl: string | null;
   date: string;
   daysUntil: number;
+}
+
+// ── 👤 My profile hero — quick access to the signed-in user's own HR board ───
+// Mirrors the visual weight of the Ski Target hero so they sit nicely side by
+// side at the top of the People & HR overview.
+function MyProfileHero({ user, onSelectPerson }: { user: AuthUser; onSelectPerson?: (id: string, tab?: string) => void }) {
+  const [, navigate] = useLocation();
+  const { data: commission } = useQuery<CommissionData>({ queryKey: [`/api/hr/staff/${user.id}/commission`] });
+  const { data: tasks = [] } = useQuery<UserTask[]>({
+    queryKey: ["/api/tasks", "todo"],
+    queryFn: () => apiRequest("GET", "/api/tasks?status=todo").then(r => r.json()),
+  });
+  const open = (tab: string) => onSelectPerson ? onSelectPerson(user.id, tab) : navigate(`/hr?person=${user.id}&tab=${tab}`);
+
+  const target = commission?.t2 ?? 0;
+  const pctBilled = target > 0 ? Math.min(((commission?.billedPence ?? 0) / target) * 100, 100) : 0;
+  const pctForecast = target > 0 ? Math.min(((commission?.forecastPence ?? 0) / target) * 100, 100) : 0;
+
+  const firstName = user.name?.split(" ")[0] ?? "you";
+  const openTasks = tasks.length;
+
+  return (
+    <button
+      onClick={() => open("personal")}
+      className="relative overflow-hidden rounded-xl border bg-gradient-to-r from-emerald-50 via-teal-50 to-cyan-50 dark:from-emerald-950/40 dark:via-teal-950/40 dark:to-cyan-950/40 p-5 shadow-sm text-left hover:ring-2 hover:ring-emerald-300/60 transition-shadow"
+      data-testid="my-profile-hero"
+    >
+      <div className="flex items-start gap-4">
+        <div className="rounded-full bg-white/70 dark:bg-white/10 p-2.5 backdrop-blur shrink-0">
+          <User className="w-6 h-6 text-emerald-600 dark:text-emerald-300" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <h2 className="text-base font-semibold tracking-tight">Your profile · {firstName}</h2>
+            <span className="text-xs text-muted-foreground">click to open your board</span>
+          </div>
+          {target > 0 ? (
+            <>
+              <div className="mt-2 flex items-baseline gap-3 flex-wrap">
+                <span className="text-2xl font-bold tabular-nums">{fmtMoney(commission?.billedPence ?? 0)}</span>
+                <span className="text-sm text-muted-foreground">billed of {fmtMoney(target)} t2</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-white/60 dark:bg-white/10 text-muted-foreground">+ {fmtMoney(commission?.forecastPence ?? 0)} forecast</span>
+              </div>
+              <div className="relative h-2.5 mt-3 rounded-full bg-white/60 dark:bg-white/10 overflow-hidden">
+                <div className="absolute inset-y-0 left-0 bg-emerald-300 dark:bg-emerald-700/70 rounded-full transition-all" style={{ width: `${pctForecast}%` }} />
+                <div className="absolute inset-y-0 left-0 bg-emerald-600 dark:bg-emerald-400 rounded-full transition-all" style={{ width: `${pctBilled}%` }} />
+              </div>
+              <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>{Math.round(pctBilled)}% of t2 hit</span>
+                <span>{openTasks} open task{openTasks === 1 ? "" : "s"}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground mt-1">View your salary, tasks, reviews, APC, CPD, expenses and more.</p>
+              <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span>{openTasks} open task{openTasks === 1 ? "" : "s"}</span>
+                <span>Personal · Reviews · Career · Card &amp; Expenses</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </button>
+  );
 }
 
 // ── 🎿 Ski-target hero strip ─────────────────────────────────────────────────
@@ -1093,7 +1158,10 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
 
   return (
     <div className="space-y-4 pb-6">
-      <SkiTargetHero />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SkiTargetHero />
+        {currentUser && <MyProfileHero user={currentUser} onSelectPerson={onSelectPerson} />}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1 space-y-4">

@@ -1489,7 +1489,7 @@ function SalaryTimelineChart({ person, history }: { person: StaffMember; history
 // one-off bonuses (annual, retention, spot, etc.) — they show up as orange
 // bars on the chart above and as a list here.
 
-function BonusHistoryPanel({ person }: { person: StaffMember }) {
+function BonusHistoryPanel({ person, readOnly = false }: { person: StaffMember; readOnly?: boolean }) {
   const { toast } = useToast();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ amount: "", effectiveDate: "", kind: "bonus", reason: "" });
@@ -1528,9 +1528,11 @@ function BonusHistoryPanel({ person }: { person: StaffMember }) {
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Bonuses & one-offs</div>
-        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="record-bonus">
-          <Plus className="w-3 h-3 mr-1" /> Record bonus
-        </Button>
+        {!readOnly && (
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="record-bonus">
+            <Plus className="w-3 h-3 mr-1" /> Record bonus
+          </Button>
+        )}
       </div>
       {bonuses.length === 0 ? (
         <div className="text-[11px] text-muted-foreground italic">No bonuses recorded yet.</div>
@@ -1542,11 +1544,13 @@ function BonusHistoryPanel({ person }: { person: StaffMember }) {
               <Badge variant="outline" className="text-[9px] py-0 capitalize">{b.kind.replace(/_/g, " ")}</Badge>
               <span className="text-muted-foreground">{b.effective_date}</span>
               {b.reason && <span className="text-muted-foreground italic truncate">{b.reason}</span>}
-              <div className="ml-auto">
-                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate(b.id)}>
-                  <X className="w-3 h-3" />
-                </Button>
-              </div>
+              {!readOnly && (
+                <div className="ml-auto">
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate(b.id)}>
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1598,7 +1602,7 @@ function BonusHistoryPanel({ person }: { person: StaffMember }) {
 
 // ── Salary history panel ───────────────────────────────────────────────────────
 
-function SalaryHistoryPanel({ person }: { person: StaffMember }) {
+function SalaryHistoryPanel({ person, readOnly = false }: { person: StaffMember; readOnly?: boolean }) {
   const { toast } = useToast();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ salary: "", effectiveDate: "", reason: "annual_review", notes: "" });
@@ -1631,13 +1635,15 @@ function SalaryHistoryPanel({ person }: { person: StaffMember }) {
     <div className="space-y-3">
       <SalaryTimelineChart person={person} history={history} />
 
-      <BonusHistoryPanel person={person} />
+      <BonusHistoryPanel person={person} readOnly={readOnly} />
 
       <div className="flex items-center justify-between">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Salary history</div>
-        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAdd(true)}>
-          <Plus className="w-3 h-3 mr-1" /> Record change
-        </Button>
+        {!readOnly && (
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAdd(true)}>
+            <Plus className="w-3 h-3 mr-1" /> Record change
+          </Button>
+        )}
       </div>
 
       {history.map((entry, i) => (
@@ -2225,8 +2231,8 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   </Card>
                 )}
 
-                {isAdmin && (
-                  <SalaryHistoryPanel person={person} />
+                {(isAdmin || isOwn) && (
+                  <SalaryHistoryPanel person={person} readOnly={!isAdmin} />
                 )}
 
                 {isAdmin && expenseSummary && (
