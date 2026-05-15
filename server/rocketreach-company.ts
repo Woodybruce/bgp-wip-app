@@ -26,6 +26,64 @@ function extractDomain(raw: string | null | undefined): string | null {
   return String(raw).replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "").toLowerCase();
 }
 
+// Map a RocketReach industry_str → BGP company_type (the "Tenant - X" tag
+// the Brand Explorer filters on). Source of truth is BRAND_CATEGORIES in
+// client/src/pages/brands-hub.tsx — keep these aligned.
+//
+// Returns null when no confident mapping exists; caller leaves company_type
+// alone in that case rather than overwriting with a guess.
+function mapRrIndustryToBgpType(industryStr: string | null | undefined): string | null {
+  if (!industryStr) return null;
+  const s = industryStr.toLowerCase();
+
+  // Luxury
+  if (/jewell?ery|watch(es)?/.test(s)) return "Tenant - Jewellery & Watches";
+  if (/luxury/.test(s)) return "Tenant - Luxury";
+
+  // Fashion & retail
+  if (/footwear|shoe/.test(s)) return "Tenant - Footwear";
+  if (/athleisure|sportswear|sporting goods/.test(s)) return "Tenant - Athleisure";
+  if (/textile|apparel|clothing|fashion/.test(s)) return "Tenant - Fashion";
+  if (/cosmetics|personal care|beauty|skin care|skincare/.test(s)) return "Tenant - Beauty";
+  if (/fragrance|perfume/.test(s)) return "Tenant - Fragrance";
+  if (/home(ware)?|furniture|furnishings|interior/.test(s)) return "Tenant - Homewares";
+  if (/gift|specialty stores?/.test(s)) return "Tenant - Gifts & Speciality";
+  if (/department store/.test(s)) return "Tenant - Department Store";
+  if (/electronics|consumer electronics|technology hardware/.test(s)) return "Tenant - Electronics";
+  if (/automotive|automobile|car dealer/.test(s)) return "Tenant - Automotive";
+  if (/telecommunications|wireless|mobile carrier/.test(s)) return "Tenant - Telecoms";
+  if (/books?|stationery|publishing/.test(s)) return "Tenant - Books & Stationery";
+  if (/bank|financial services|insurance|wealth/.test(s)) return "Tenant - Financial Services";
+  if (/optician|eyewear/.test(s)) return "Tenant - Optician";
+
+  // F&B
+  if (/coffee|cafe|café/.test(s)) return "Tenant - Café";
+  if (/bakery|patisserie|pastry/.test(s)) return "Tenant - Bakery";
+  if (/wine|bar|pub/.test(s)) return "Tenant - Bar";
+  if (/fast food|quick service|qsr/.test(s)) return "Tenant - Quick Service";
+  if (/restaurant|food.{0,4}beverage|hospitality/.test(s)) return "Tenant - Restaurant";
+
+  // Leisure
+  if (/cinema|film|motion picture/.test(s)) return "Tenant - Cinema";
+  if (/gaming|video games|amusement|escape room/.test(s)) return "Tenant - Gaming";
+  if (/arts?|museum|gallery|culture/.test(s)) return "Tenant - Arts";
+  if (/entertainment|leisure/.test(s)) return "Tenant - Leisure";
+
+  // Health & Wellness
+  if (/gym|fitness|exercise/.test(s)) return "Tenant - Gym & Fitness";
+  if (/yoga|pilates/.test(s)) return "Tenant - Yoga";
+  if (/spa|wellness|health.{0,4}wellness|salon|nail/.test(s)) return "Tenant - Wellness";
+
+  // National
+  if (/grocery|supermarket|convenience store/.test(s)) return "Tenant - Grocery";
+  if (/hardware|building supply|home improvement|diy/.test(s)) return "Tenant - DIY";
+
+  // Generic retail fallback
+  if (/retail/.test(s)) return "Tenant - Retail";
+
+  return null;
+}
+
 async function searchCompany(opts: { domain?: string | null; name?: string | null }): Promise<any | null> {
   const auth = rrAuthHeader();
   if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
@@ -89,7 +147,7 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
     }
     const companyId = String(req.params.companyId);
     const companyRow = await pool.query(
-      `SELECT id, name, domain, domain_url FROM crm_companies WHERE id = $1`,
+      `SELECT id, name, domain, domain_url, industry, company_type FROM crm_companies WHERE id = $1`,
       [companyId]
     );
     if (!companyRow.rowCount) return res.status(404).json({ error: "Company not found" });
@@ -120,7 +178,31 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
       [companyId, JSON.stringify(payload)]
     );
 
-    res.json({ payload, fetched_at: new Date().toISOString() });
+    // Auto-fill BGP categorisation from RocketReach when we don't already
+    // have it. Never overwrite a manually-set company_type or industry.
+    const autoFilled: { industry?: string; company_type?: string } = {};
+    const isBlankIndustry = !company.industry || !String(company.industry).trim();
+    const isGenericType = !company.company_type
+      || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
+
+    if (isBlankIndustry && stub.industry_str) {
+      autoFilled.industry = String(stub.industry_str);
+    }
+    if (isGenericType) {
+      const mapped = mapRrIndustryToBgpType(stub.industry_str);
+      if (mapped) autoFilled.company_type = mapped;
+    }
+
+    if (Object.keys(autoFilled).length > 0) {
+      const sets: string[] = [];
+      const vals: any[] = [companyId];
+      let i = 2;
+      if (autoFilled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(autoFilled.industry); }
+      if (autoFilled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(autoFilled.company_type); }
+      await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
+    }
+
+    res.json({ payload, fetched_at: new Date().toISOString(), auto_filled: autoFilled });
   } catch (err: any) {
     console.error("[rocketreach-company] refresh error:", err);
     res.status(500).json({ error: err.message });
