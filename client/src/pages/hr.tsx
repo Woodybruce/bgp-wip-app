@@ -2274,6 +2274,10 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> Kit</h3>
                 <KitCard person={person} isAdmin={isAdmin} isOwn={isOwn} />
               </section>
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Heart className="w-3.5 h-3.5" /> My benefits</h3>
+                <MyBenefitsCard userId={person.id} />
+              </section>
             </TabsContent>
           )}
 
@@ -4510,6 +4514,61 @@ function KitCard({ person, isAdmin, isOwn }: { person: StaffMember; isAdmin: boo
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── 🎁 My benefits — read-only summary on the My stuff tab ───────────────────
+// Reflects what the person has ticked on the Benefits page. The tick is a
+// self-declared enrolment flag — for things needing real paperwork (private
+// healthcare, pension changes, season-ticket loan) they still need to loop
+// Wendy / Charlotte in.
+function MyBenefitsCard({ userId: _userId }: { userId: string }) {
+  const { data: benefits = [], isLoading } = useQuery<Array<{ slug: string; name: string; category: string; contact: string | null; enrolment_url: string | null; enrolled: boolean }>>({
+    queryKey: ["/api/hr/benefits"],
+  });
+  const [, navigate] = useLocation();
+  if (isLoading) return <div className="text-xs text-muted-foreground">Loading benefits…</div>;
+  const enrolled = benefits.filter(b => b.enrolled);
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs text-muted-foreground">
+            {enrolled.length === 0 ? "Nothing ticked yet." : `${enrolled.length} of ${benefits.length} ticked.`}
+          </div>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => navigate("/benefits")} data-testid="open-benefits">
+            Manage on Benefits page →
+          </Button>
+        </div>
+        {enrolled.length > 0 && (
+          <div className="space-y-1.5">
+            {enrolled.map(b => (
+              <div key={b.slug} className="flex items-center justify-between gap-2 p-2 rounded border text-sm">
+                <div className="min-w-0">
+                  <div className="font-medium truncate">{b.name}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {b.category}{b.contact ? ` · Contact ${b.contact}` : ""}
+                  </div>
+                </div>
+                {b.enrolment_url && (
+                  <a
+                    href={b.enrolment_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline shrink-0"
+                  >
+                    Provider portal →
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground mt-3 italic">
+          Ticking here just records your interest. Pension changes, season ticket loans, and private healthcare upgrades still need a chat with Wendy.
+        </p>
       </CardContent>
     </Card>
   );
