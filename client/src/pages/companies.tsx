@@ -1243,44 +1243,12 @@ function CompanyDetail({ id }: { id: string }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-3 space-y-4">
-          <Card>
-            <CardContent className="p-3 space-y-2">
-              <h3 className="font-semibold text-xs">Details</h3>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground">BGP Contacts</p>
-                  <div className="mt-0.5" data-testid="text-company-bgp-contacts">
-                    <InlineMultiSelect
-                      value={getCompanyBgpContacts(company)}
-                      options={userOptions}
-                      colorMap={userColorMap}
-                      placeholder="Set contacts"
-                      onSave={(v) => {
-                        apiRequest("PUT", `/api/crm/companies/${company.id}`, {
-                          bgpContactUserIds: v.length > 0 ? v : null,
-                          bgpContactCrm: null,
-                        }).then(() => {
-                          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", company.id] });
-                          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-                        });
-                      }}
-                      testId={`inline-bgp-contact-detail-${company.id}`}
-                    />
-                  </div>
-                </div>
-                {addressText && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">{ukAddressText ? "UK registered office" : "Address"}</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-address"><MapPin className="w-3 h-3 text-teal-500" />{addressText}</p>
-                    {hasGlobalHq && (
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Global HQ: {globalAddressText}</p>
-                    )}
-                  </div>
-                )}
-                <KycInlineSummary company={company} />
-              </div>
-            </CardContent>
-          </Card>
+          {/* Page-level Details card removed May 2026 — BGP Contacts dropdown
+              now lives in the brand profile sidebar (BGP Relationship card),
+              UK registered office + KYC + Ownership (PSCs) moved into the
+              sidebar Covenant card (collapsed). KycInlineSummary component
+              kept in this file for re-use when Red Flag / Experian wiring
+              is finalised. */}
 
           <SubCompaniesPanel parentId={id} parentName={company.name} />
 

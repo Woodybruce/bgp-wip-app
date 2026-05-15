@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
 import { useToast } from "@/hooks/use-toast";
+import { InlineMultiSelect } from "@/components/inline-edit";
+import { buildUserColorMap } from "@/lib/agent-colors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1702,9 +1704,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     {researchStoresMutation.isPending ? "Researching…" : "Re-scan"}
                   </button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-[1fr,200px] gap-3">
-                  <BrandPortfolioMap stores={stores as any} height={260} />
-                  <div className="max-h-[260px] overflow-y-auto space-y-1 pr-1 text-xs">
+                <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
+                  <BrandPortfolioMap stores={stores as any} height={380} />
+                  <div className="max-h-[380px] overflow-y-auto pr-1 text-xs grid grid-cols-2 gap-x-2 gap-y-1 content-start">
                     {stores.map((s: any) => (
                       <div key={s.id} className="leading-snug">
                         <div className="font-medium truncate">{s.name}</div>
@@ -2734,6 +2736,30 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
   const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
+  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["/api/users"],
+    staleTime: 5 * 60_000,
+  });
+  const userColorMap = useMemo(() => buildUserColorMap(allUsers || []), [allUsers]);
+  const userOptions = useMemo(
+    () => (allUsers || []).map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label)),
+    [allUsers]
+  );
+  const currentBgpContacts = (data.coverers || []).map((u: any) => u.name).filter(Boolean);
+  const saveBgpContacts = async (names: string[]) => {
+    const nameToId = new Map((allUsers || []).map(u => [u.name, u.id]));
+    const ids = names.map(n => nameToId.get(n)).filter(Boolean) as string[];
+    try {
+      await apiRequest("PUT", `/api/crm/companies/${companyId}`, {
+        bgpContactUserIds: ids.length > 0 ? ids : null,
+        bgpContactCrm: null,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+    } catch (e: any) {
+      toast({ title: "Couldn't save BGP contacts", description: e?.message, variant: "destructive" });
+    }
+  };
   const { data: credit } = useQuery<{ latest: { score: number | null; band: string | null; risk_level: string | null; fetched_at: string } | null; configured: boolean }>({
     queryKey: ["/api/brand", companyId, "credit-check"],
     queryFn: async () => {
@@ -2769,7 +2795,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 
   return (
     <aside className="w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start">
-      {/* Covenant snapshot */}
+      {/* Covenant snapshot — also hides the legacy page-level KYC/Ownership
+          block (moved here May 2026; collapsed until Red Flag/Experian
+          is wired). */}
       <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
@@ -2785,6 +2813,38 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               {cov.hasInsolvencyHistory && <div className="text-xs text-rose-600">⚠️ Has insolvency history</div>}
               {cov.experian?.creditScore != null && (
                 <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Experian</span><span className="font-medium">{cov.experian.creditScore} ({cov.experian.creditBand || ""})</span></div>
+              )}
+              {(cov.registeredAddress || (cov as any).pscs?.length || (data.company as any).kyc_status) && (
+                <details className="pt-1 border-t mt-1 group/kyc">
+                  <summary className="text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer list-none flex items-center gap-1">
+                    <ChevronRight className="w-3 h-3 transition-transform group-open/kyc:rotate-90" />
+                    KYC &amp; ownership
+                  </summary>
+                  <div className="mt-1.5 space-y-1">
+                    {cov.registeredAddress && (
+                      <div className="text-[11px] text-muted-foreground leading-snug">
+                        <span className="block text-[10px] uppercase tracking-wide">UK registered office</span>
+                        <span className="text-foreground">{cov.registeredAddress}</span>
+                      </div>
+                    )}
+                    {(data.company as any).kyc_status && (
+                      <div className="text-[11px]">
+                        <span className="text-muted-foreground text-[10px] uppercase tracking-wide block">KYC</span>
+                        <span className="font-medium capitalize">{(data.company as any).kyc_status}</span>
+                      </div>
+                    )}
+                    {Array.isArray((cov as any).pscs) && (cov as any).pscs.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground text-[10px] uppercase tracking-wide block">Ownership (PSCs)</span>
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {(cov as any).pscs.filter((p: any) => !p.ceasedOn).map((p: any, i: number) => (
+                            <Badge key={i} variant="outline" className="text-[10px] font-normal">{p.name}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </details>
               )}
             </>
           ) : (
@@ -2829,7 +2889,18 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 text-sm space-y-1.5">
-          <div className="flex justify-between"><span className="text-muted-foreground">Active deals</span><span className="font-medium tabular-nums">{activeDeals}</span></div>
+          <div>
+            <div className="text-[10px] text-muted-foreground mb-1">BGP contacts</div>
+            <InlineMultiSelect
+              value={currentBgpContacts}
+              options={userOptions}
+              colorMap={userColorMap}
+              placeholder="Set contacts"
+              onSave={saveBgpContacts}
+              testId={`sidebar-bgp-contacts-${companyId}`}
+            />
+          </div>
+          <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Active deals</span><span className="font-medium tabular-nums">{activeDeals}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Completed deals</span><span className="font-medium tabular-nums">{completedDeals}</span></div>
           {totalFee > 0 && (
             <div className="flex justify-between"><span className="text-muted-foreground">Total fees</span><span className="font-medium tabular-nums">£{Math.round(totalFee).toLocaleString()}</span></div>
