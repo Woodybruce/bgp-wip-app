@@ -376,14 +376,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  useEffect(() => {
-    if (!data || autoKycRan.current) return;
-    autoKycRan.current = true;
-    const hasCh = !!data.company?.companies_house_number;
-    const hasExperian = !!(data as any).covenant?.experian;
-    if (hasCh && !hasExperian) runKycCheck();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  // Brand-page auto-KYC disabled May 2026 — covenant zone is parked until
+  // Red Flag / Experian are wired. Re-enable by reviving runKycCheck() here.
+  // useEffect(() => {
+  //   if (!data || autoKycRan.current) return;
+  //   autoKycRan.current = true;
+  //   const hasCh = !!data.company?.companies_house_number;
+  //   const hasExperian = !!(data as any).covenant?.experian;
+  //   if (hasCh && !hasExperian) runKycCheck();
+  // }, [data]);
 
   const autoStoresRan = useRef(false);
   useEffect(() => {

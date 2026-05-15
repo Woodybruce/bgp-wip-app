@@ -15,6 +15,12 @@ const BASE_URL = "https://api.mesh.complyadvantage.com";
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
 
+// Circuit breaker — if the API responds with a hard error (405/404/401/403)
+// during a batch, skip the remaining names rather than spamming the logs with
+// one error per contact. Resets on next process restart, or after 10 min.
+let circuitOpenUntil = 0;
+let circuitReason = "";
+
 function getCredentials() {
   const username = process.env.COMPLY_ADVANTAGE_USERNAME?.trim();
   const password = process.env.COMPLY_ADVANTAGE_PASSWORD?.trim();
@@ -100,10 +106,15 @@ export async function screenNames(
   names: Array<{ name: string; role?: string }>,
 ): Promise<ScreeningResult[]> {
   if (!isComplyAdvantageConfigured()) return [];
+  if (Date.now() < circuitOpenUntil) {
+    console.warn(`[ComplyAdvantage] Skipping ${names.length} screens — circuit open: ${circuitReason}`);
+    return names.map(({ name, role }) => ({ name, role, status: "clear", matches: [] }));
+  }
   const token = await getToken();
   const results: ScreeningResult[] = [];
 
-  for (const { name, role } of names) {
+  for (let i = 0; i < names.length; i++) {
+    const { name, role } = names[i];
     try {
       const res = await fetch(`${BASE_URL}/v2/searches`, {
         method: "POST",
@@ -122,6 +133,17 @@ export async function screenNames(
 
       if (!res.ok) {
         const body = await res.text().catch(() => "");
+        // 401/403/404/405 are config/endpoint problems — open the circuit so
+        // we don't spam an error per name. Reset after 10 minutes.
+        if ([401, 403, 404, 405].includes(res.status)) {
+          circuitReason = `${res.status} on /v2/searches`;
+          circuitOpenUntil = Date.now() + 10 * 60_000;
+          console.error(`[ComplyAdvantage] Opening circuit for 10min — ${circuitReason}. Body: ${body.slice(0, 200)}`);
+          for (let j = i; j < names.length; j++) {
+            results.push({ name: names[j].name, role: names[j].role, status: "clear", matches: [] });
+          }
+          break;
+        }
         console.error(`[ComplyAdvantage] Screen failed for "${name}": ${res.status} ${body.slice(0, 200)}`);
         results.push({ name, role, status: "clear", matches: [] });
         continue;
