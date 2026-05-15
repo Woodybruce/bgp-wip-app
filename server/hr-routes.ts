@@ -373,6 +373,16 @@ export function setupHrRoutes(app: Express) {
         cvSummary, cvSpecialisms, cvNotableClients,
         cvCareerHistory != null ? JSON.stringify(cvCareerHistory) : null,
       ]);
+
+      // Team is on the users table itself (not staff_profiles). Admins can
+      // reassign someone via the Team dropdown in Edit Profile — the canonical
+      // list lives in CRM_OPTIONS.dealTeam on the client.
+      if (isAdmin && req.body.team !== undefined) {
+        await pool.query(
+          "UPDATE users SET team = $1 WHERE id = $2",
+          [req.body.team || null, userId]
+        );
+      }
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

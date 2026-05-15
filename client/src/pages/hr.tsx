@@ -27,6 +27,7 @@ import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, C
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
 import type { User as AuthUser } from "@shared/schema";
@@ -1715,7 +1716,8 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
   const [form, setForm] = useState({
     title: person.title || "",
     startDate: person.start_date || "",
-    department: person.hr_department || person.team || "",
+    team: person.team || "",
+    department: person.hr_department || "",
     managerId: person.manager_id || "",
     ricsPathway: person.rics_pathway || "",
     ricsNumber: (person as any).rics_number || "",
@@ -1757,6 +1759,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
       const r = await apiRequest("POST", `/api/hr/staff/${person.id}/profile`, {
         title: form.title || undefined,
         startDate: form.startDate || undefined,
+        team: form.team || null,
         department: form.department || undefined,
         managerId: form.managerId || undefined,
         ricsPathway: form.ricsPathway || undefined,
@@ -1816,7 +1819,19 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>Job title</Label><Input value={form.title} onChange={f("title")} placeholder="e.g. Senior Surveyor" /></div>
-            <div className="space-y-1.5"><Label>Department</Label><Input value={form.department} onChange={f("department")} placeholder="e.g. Leasing" /></div>
+            <div className="space-y-1.5">
+              <Label>Team</Label>
+              <Select value={form.team || "__none__"} onValueChange={v => setForm(p => ({ ...p, team: v === "__none__" ? "" : v }))}>
+                <SelectTrigger data-testid="select-team"><SelectValue placeholder="No team" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— None —</SelectItem>
+                  {CRM_OPTIONS.dealTeam.map(t => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5"><Label>Department (free text)</Label><Input value={form.department} onChange={f("department")} placeholder="Optional — overrides team for HR view" /></div>
             <div className="space-y-1.5"><Label>Start date</Label><Input type="date" value={form.startDate} onChange={f("startDate")} /></div>
             <div className="space-y-1.5">
               <Label>Line manager</Label>
