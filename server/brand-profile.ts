@@ -8,6 +8,35 @@ import { pool } from "./db";
 
 const router = Router();
 
+// Cheap ISO 3166-1 alpha-2 inference from Google Places formatted_address.
+// We only get formatted_address back from Text Search (no structured
+// components without an extra Place Details call), so we parse the tail.
+// Falls back to null when nothing matches — the UI treats null as "Other".
+const COUNTRY_TAIL_TO_ISO: Array<[RegExp, string]> = [
+  [/\b(UK|United Kingdom)\.?$/i, "GB"],
+  [/\bUSA\.?$/i, "US"], [/\bUnited States\.?$/i, "US"],
+  [/\bFrance\.?$/i, "FR"], [/\bItaly\.?$/i, "IT"], [/\bSpain\.?$/i, "ES"],
+  [/\bGermany\.?$/i, "DE"], [/\bNetherlands\.?$/i, "NL"],
+  [/\bBelgium\.?$/i, "BE"], [/\bSwitzerland\.?$/i, "CH"],
+  [/\bAustria\.?$/i, "AT"], [/\bIreland\.?$/i, "IE"],
+  [/\bDenmark\.?$/i, "DK"], [/\bSweden\.?$/i, "SE"],
+  [/\bNorway\.?$/i, "NO"], [/\bFinland\.?$/i, "FI"],
+  [/\bPortugal\.?$/i, "PT"], [/\bPoland\.?$/i, "PL"],
+  [/\b(UAE|United Arab Emirates)\.?$/i, "AE"],
+  [/\bSaudi Arabia\.?$/i, "SA"], [/\bQatar\.?$/i, "QA"],
+  [/\bJapan\.?$/i, "JP"], [/\bSouth Korea\.?$/i, "KR"],
+  [/\bChina\.?$/i, "CN"], [/\bHong Kong\.?$/i, "HK"],
+  [/\bSingapore\.?$/i, "SG"], [/\bThailand\.?$/i, "TH"],
+  [/\bAustralia\.?$/i, "AU"], [/\bNew Zealand\.?$/i, "NZ"],
+  [/\bCanada\.?$/i, "CA"], [/\bBrazil\.?$/i, "BR"], [/\bMexico\.?$/i, "MX"],
+];
+
+function inferCountryFromAddress(addr: string | null | undefined): string | null {
+  if (!addr) return null;
+  for (const [re, iso] of COUNTRY_TAIL_TO_ISO) if (re.test(addr.trim())) return iso;
+  return null;
+}
+
 // ─── Rent affordability helper ───────────────────────────────────────────
 // Returns { avgRentPsf, avgTurnoverPsf, rentToTurnoverPct, peerRentPsf, sample }.
 // Falls back to null on any given field if we don't have matching data.
@@ -935,12 +964,16 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
 // Diagnostics shape mirrors the KYC re-resolver — caller surfaces these in
 // the toast/console so a "0 stores found" result is debuggable without
 // scraping logs.
-export async function researchBrandStores(companyId: string): Promise<{
+export async function researchBrandStores(
+  companyId: string,
+  opts: { scope?: "uk" | "global" } = {},
+): Promise<{
   found: number; upserted: number; openCount: number; companyName: string;
   diagnostics: Array<{ step: string; outcome: string; detail?: string }>;
 }> {
   const googleKey = process.env.GOOGLE_API_KEY;
   if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
+  const scope = opts.scope === "global" ? "global" : "uk";
 
   const { rows } = await pool.query(
     `SELECT id, name, domain FROM crm_companies WHERE id = $1`,
@@ -954,16 +987,35 @@ export async function researchBrandStores(companyId: string): Promise<{
   // any chain with stores outside London. Now: bare brand name (highest
   // yield), then major UK retail cities. Each query is paginated up to
   // 3 pages × 20 = 60 results, deduped by place_id across queries.
-  const cities = [
+  const ukCities = [
     "London", "Manchester", "Birmingham", "Edinburgh", "Glasgow",
     "Leeds", "Liverpool", "Bristol", "Belfast", "Cardiff",
     "Newcastle", "Sheffield", "Nottingham",
   ];
-  const queries = [
-    company.name,
-    `${company.name} UK`,
-    ...cities.map((c) => `${company.name} ${c}`),
+  // Global hubs picked for retail / fashion / hospitality store concentration.
+  // Each query yields up to ~60 results so 25 cities ≈ 1500 candidates per
+  // brand (deduped by place_id). Costs a bit of Google Places quota when run
+  // — that's why this is opt-in via the Research global button.
+  const globalCities = [
+    "New York", "Los Angeles", "Miami", "Chicago", "San Francisco",
+    "Paris", "Milan", "Rome", "Madrid", "Barcelona", "Berlin", "Munich",
+    "Amsterdam", "Brussels", "Zurich", "Geneva", "Vienna", "Copenhagen",
+    "Stockholm", "Dublin",
+    "Tokyo", "Hong Kong", "Singapore", "Seoul", "Shanghai", "Bangkok",
+    "Sydney", "Melbourne", "Toronto", "Vancouver",
+    "Dubai", "Abu Dhabi", "Doha", "Riyadh",
   ];
+  const queries = scope === "global"
+    ? [
+        company.name,
+        `${company.name} flagship store`,
+        ...globalCities.map((c) => `${company.name} ${c}`),
+      ]
+    : [
+        company.name,
+        `${company.name} UK`,
+        ...ukCities.map((c) => `${company.name} ${c}`),
+      ];
   const allResults: any[] = [];
   const seenPlaceIds = new Set<string>();
   // Per-query counters so the diagnostics show exactly where matches came
@@ -1096,14 +1148,17 @@ export async function researchBrandStores(companyId: string): Promise<{
     const status = businessStatus === "OPERATIONAL" ? "open"
       : businessStatus === "CLOSED_PERMANENTLY" ? "closed"
       : "unconfirmed";
+    const country = inferCountryFromAddress(p.formatted_address);
     await pool.query(
-      `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, source_type, researched_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'google_places', now(), now())
+      `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, country, source_type, researched_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'google_places', now(), now())
        ON CONFLICT (brand_company_id, place_id) DO UPDATE SET
          name = EXCLUDED.name, address = EXCLUDED.address,
          lat = EXCLUDED.lat, lng = EXCLUDED.lng,
-         status = EXCLUDED.status, researched_at = now(), updated_at = now()`,
-      [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status]
+         status = EXCLUDED.status,
+         country = COALESCE(EXCLUDED.country, brand_stores.country),
+         researched_at = now(), updated_at = now()`,
+      [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status, country]
     ).catch(async () => {
       const exists = await pool.query(
         `SELECT id FROM brand_stores WHERE brand_company_id = $1 AND place_id = $2`,
@@ -1111,9 +1166,9 @@ export async function researchBrandStores(companyId: string): Promise<{
       );
       if (exists.rowCount === 0) {
         await pool.query(
-          `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, source_type, researched_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'google_places', now())`,
-          [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status]
+          `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, country, source_type, researched_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'google_places', now())`,
+          [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status, country]
         );
       }
     });
@@ -1252,8 +1307,9 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
 router.post("/api/brand/:companyId/research-stores", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
-    const out = await researchBrandStores(companyId);
-    res.json({ ...out, company: { id: companyId, name: out.companyName } });
+    const scope = req.body?.scope === "global" || req.query?.scope === "global" ? "global" : "uk";
+    const out = await researchBrandStores(companyId, { scope });
+    res.json({ ...out, scope, company: { id: companyId, name: out.companyName } });
   } catch (err: any) {
     console.error("[research-stores]", err.message);
     const status = err.message === "Company not found" ? 404 : err.message.includes("GOOGLE_API_KEY") ? 400 : 500;

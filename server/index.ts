@@ -1636,6 +1636,13 @@ import { pool } from "./db";
       profile_data     JSONB NOT NULL,
       fetched_at       TIMESTAMP NOT NULL DEFAULT now()
     )`,
+
+    // brand_stores: country column lets us separate UK from global rows for
+    // brand portfolio maps with a UK / Global toggle. Default 'GB' for the
+    // existing data since the original research function was UK-only.
+    `ALTER TABLE brand_stores ADD COLUMN IF NOT EXISTS country TEXT`,
+    `UPDATE brand_stores SET country = 'GB' WHERE country IS NULL`,
+    `CREATE INDEX IF NOT EXISTS brand_stores_country_idx ON brand_stores (brand_company_id, country)`,
   ];
 
   let ok = 0, skipped = 0;

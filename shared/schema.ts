@@ -605,6 +605,7 @@ export const brandStores = pgTable("brand_stores", {
   crmPropertyId: varchar("crm_property_id"), // → crm_properties.id (resolver-canonical)
   status: text("status").default("open"), // open | closed | unconfirmed
   storeType: text("store_type"),         // flagship | outlet | concession | pop_up | etc.
+  country: text("country"),              // ISO 3166-1 alpha-2, e.g. 'GB', 'US', 'FR'. NULL on legacy rows.
   notes: text("notes"),
   sourceType: text("source_type").default("google_places"), // google_places | manual | goad
   researchedAt: timestamp("researched_at"),
