@@ -31,6 +31,7 @@ import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { InlineNumber, InlineDate } from "@/components/inline-edit";
 import type { PlaMatter, CrmComp } from "@shared/schema";
 
@@ -687,6 +688,9 @@ function MatterDetailView({ id }: { id: string }) {
             kinds={["hero", "secondary_external", "location_plan", "floor_plan", "comps_chart"]}
           />
         </CardContent></Card>
+
+        {/* Planning context — constraints + recent applications */}
+        <PropertyPlanningCard propertyId={matter.propertyId} />
 
         {/* Related Pathway runs — same property */}
         <RelatedPathwayRuns propertyId={matter.propertyId} />

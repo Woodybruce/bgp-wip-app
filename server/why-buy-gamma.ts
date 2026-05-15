@@ -18,6 +18,7 @@ import {
   crmCompanies,
 } from "@shared/schema";
 import { gammaGenerate, gammaWaitFor, gammaDownloadExport } from "./gamma";
+import { getPlanningSummary, getPlanningSummaryForLocation, planningSummaryToMarkdown } from "./planning-summary";
 
 const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy-gamma");
 
@@ -217,6 +218,28 @@ export async function buildBrief(runId: string): Promise<{ brief: string; title:
       }
     }
     lines.push("");
+  }
+
+  // Planning context — sourced live from planning.data.gov.uk + PlanIt so the
+  // brief cites current designations and recent application history regardless
+  // of whether stage 4 of the pathway captured them.
+  try {
+    const planning = run.propertyId
+      ? await getPlanningSummary(run.propertyId)
+      : await getPlanningSummaryForLocation({
+          cacheKey: `pathway:${run.id}`,
+          postcode,
+          lat: (run as any).lat ?? null,
+          lng: (run as any).lng ?? null,
+          propertyName: address,
+        });
+    const planningMd = planningSummaryToMarkdown(planning);
+    if (planningMd && planningMd.split("\n").length > 1) {
+      lines.push(planningMd);
+      lines.push("");
+    }
+  } catch (e: any) {
+    console.warn(`[why-buy-gamma] planning context failed: ${e?.message}`);
   }
 
   // Next Steps

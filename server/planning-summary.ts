@@ -157,6 +157,60 @@ function summariseApplications(apps: PlanningApplication[]) {
   return { total: apps.length, lastYear, pending };
 }
 
+async function buildSummary(
+  cacheKey: string,
+  postcode: string | null,
+  coordinates: { lat: number; lng: number } | null,
+  propertyName: string | null,
+): Promise<PlanningSummary> {
+  if (!coordinates && postcode) {
+    coordinates = await geocodePostcode(postcode);
+  }
+  if (!coordinates) {
+    const empty = emptySummary(cacheKey, postcode);
+    memoryCache.set(cacheKey, { fetchedAt: Date.now(), data: empty });
+    return empty;
+  }
+
+  const datasetResults: Record<string, PlanningConstraint[]> = {};
+  const [, applicationsRaw] = await Promise.all([
+    Promise.all(
+      PLANNING_DATA_DATASETS.map(async (dataset) => {
+        datasetResults[dataset] = await fetchDataset(dataset, coordinates!.lat, coordinates!.lng);
+      })
+    ),
+    postcode
+      ? fetchPlanitPlanning(postcode, propertyName || "", { maxAgeYears: 5, radiusKm: 0.2 }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  const recentApplications: PlanningApplication[] = (applicationsRaw as any[])
+    .slice(0, 20)
+    .map((a) => ({
+      reference: a.reference,
+      description: a.description,
+      status: a.status,
+      receivedAt: a.receivedAt,
+      decidedAt: a.decidedAt,
+      decision: a.decision,
+      lpa: a.lpa,
+      documentUrl: a.documentUrl,
+    }));
+
+  const summary: PlanningSummary = {
+    propertyId: cacheKey,
+    postcode,
+    coordinates,
+    constraints: bucketConstraints(datasetResults),
+    recentApplications,
+    applicationCount: summariseApplications(recentApplications),
+    fetchedAt: new Date().toISOString(),
+  };
+
+  memoryCache.set(cacheKey, { fetchedAt: Date.now(), data: summary });
+  return summary;
+}
+
 export async function getPlanningSummary(
   propertyId: string,
   opts: { force?: boolean } = {},
@@ -178,53 +232,31 @@ export async function getPlanningSummary(
     const lng = parseFloat(property.longitude);
     if (!Number.isNaN(lat) && !Number.isNaN(lng)) coordinates = { lat, lng };
   }
-  if (!coordinates && postcode) {
-    coordinates = await geocodePostcode(postcode);
+
+  return buildSummary(propertyId, postcode, coordinates, property.name || null);
+}
+
+// Variant for callers that don't have a crm_properties.id — e.g. pathway runs
+// where we have postcode + lat/lng directly. Pass a stable cacheKey (e.g. the
+// pathway runId) so we can dedupe repeated lookups.
+export async function getPlanningSummaryForLocation(args: {
+  cacheKey: string;
+  postcode?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  propertyName?: string | null;
+  force?: boolean;
+}): Promise<PlanningSummary> {
+  const { cacheKey, force } = args;
+  if (!force) {
+    const hit = memoryCache.get(cacheKey);
+    if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return hit.data;
   }
-
-  if (!coordinates) {
-    const empty = emptySummary(propertyId, postcode);
-    memoryCache.set(propertyId, { fetchedAt: Date.now(), data: empty });
-    return empty;
-  }
-
-  const datasetResults: Record<string, PlanningConstraint[]> = {};
-  const [, applicationsRaw] = await Promise.all([
-    Promise.all(
-      PLANNING_DATA_DATASETS.map(async (dataset) => {
-        datasetResults[dataset] = await fetchDataset(dataset, coordinates!.lat, coordinates!.lng);
-      })
-    ),
-    postcode
-      ? fetchPlanitPlanning(postcode, property.name || "", { maxAgeYears: 5, radiusKm: 0.2 }).catch(() => [])
-      : Promise.resolve([]),
-  ]);
-
-  const recentApplications: PlanningApplication[] = (applicationsRaw as any[])
-    .slice(0, 20)
-    .map((a) => ({
-      reference: a.reference,
-      description: a.description,
-      status: a.status,
-      receivedAt: a.receivedAt,
-      decidedAt: a.decidedAt,
-      decision: a.decision,
-      lpa: a.lpa,
-      documentUrl: a.documentUrl,
-    }));
-
-  const summary: PlanningSummary = {
-    propertyId,
-    postcode,
-    coordinates,
-    constraints: bucketConstraints(datasetResults),
-    recentApplications,
-    applicationCount: summariseApplications(recentApplications),
-    fetchedAt: new Date().toISOString(),
-  };
-
-  memoryCache.set(propertyId, { fetchedAt: Date.now(), data: summary });
-  return summary;
+  const postcode = args.postcode?.trim() || null;
+  const coordinates = args.lat != null && args.lng != null && !Number.isNaN(args.lat) && !Number.isNaN(args.lng)
+    ? { lat: args.lat as number, lng: args.lng as number }
+    : null;
+  return buildSummary(cacheKey, postcode, coordinates, args.propertyName ?? null);
 }
 
 // Compact markdown block for injection into AI generation prompts

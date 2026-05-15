@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1530,6 +1531,11 @@ export default function AvailableUnitsPage() {
               . Fill in the deal details below.
             </DialogDescription>
           </DialogHeader>
+          {wipUnit && (
+            <div className="pb-2">
+              <PropertyPlanningCard propertyId={wipUnit.propertyId} compact />
+            </div>
+          )}
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>

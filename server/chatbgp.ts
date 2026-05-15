@@ -643,6 +643,7 @@ function getToolProgressLabel(toolName: string): string {
     ingest_url: "Reading page...",
     follow_url: "Adding to news feed...",
     property_lookup: "Looking up property data...",
+    get_property_planning: "Pulling planning constraints + recent applications...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     run_kyc_check: "Running KYC check...",
@@ -2245,7 +2246,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "property_lookup",
-      description: "Look up comprehensive property information by property name, address, place name, or postcode. Aggregates data from multiple sources: EPC energy ratings, VOA rateable values, HMLR price paid transaction history, Environment Agency flood risk, Historic England listed buildings, and planning designations (conservation areas, article 4 directions, tree preservation orders, scheduled monuments). Use when the user asks about a property, wants to research an address, or needs property intelligence. You can pass just a property/place name (e.g. 'Harrods', '10 Downing Street', 'One Hyde Park') and the system will automatically find the postcode.",
+      description: "Look up comprehensive property information by property name, address, place name, or postcode. Aggregates data from multiple sources: EPC energy ratings, VOA rateable values, HMLR price paid transaction history, Environment Agency flood risk, Historic England listed buildings, and planning designations (conservation areas, article 4 directions, tree preservation orders, scheduled monuments). Use when the user asks about a property, wants to research an address, or needs property intelligence. You can pass just a property/place name (e.g. 'Harrods', '10 Downing Street', 'One Hyde Park') and the system will automatically find the postcode. For a focused planning-only query on a CRM property, prefer get_property_planning.",
       parameters: {
         type: "object",
         properties: {
@@ -2256,6 +2257,21 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           address: { type: "string", description: "Full address string for EPC lookup" },
         },
         required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_property_planning",
+      description: "Get a focused planning-data summary for a CRM property: which constraints affect it (Listed Building, Conservation Area, Article 4 Direction, Tree Preservation Order, Scheduled Monument, World Heritage Site, Flood Risk Zone) and recent planning applications nearby (last 5 years). Faster and more focused than property_lookup when the user is asking specifically about planning, designations, or recent applications. Pass the crm_properties.id when known.",
+      parameters: {
+        type: "object",
+        properties: {
+          propertyId: { type: "string", description: "crm_properties.id of the property to look up" },
+        },
+        required: ["propertyId"],
       },
     },
   });
@@ -11420,6 +11436,12 @@ export function setupChatBGPRoutes(app: Express) {
       if (!args.postcode) return { data: { error: "Need a postcode, address, or place name" } };
       const lookupResult = await performPropertyLookup({ ...args, layers: ["core", "extended"], propertyDataLayers: ["core", "market", "area", "planning", "residential"] });
       return { data: formatPropertyReport(lookupResult) };
+    }
+    if (tcName === "get_property_planning") {
+      if (!tcArgs.propertyId) return { data: { error: "propertyId is required" } };
+      const { getPlanningSummary, planningSummaryToMarkdown } = await import("./planning-summary");
+      const summary = await getPlanningSummary(String(tcArgs.propertyId));
+      return { data: planningSummaryToMarkdown(summary) };
     }
     // Financial model
     if (tcName === "run_model") {

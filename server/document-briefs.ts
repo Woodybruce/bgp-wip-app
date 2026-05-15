@@ -48,8 +48,36 @@ import {
   composeErvWalk,
   composeCovenantCard,
 } from "./property-imagery-composers";
+import { getPlanningSummary, planningSummaryToMarkdown } from "./planning-summary";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+// Helper: fetches live planning context (constraints + recent applications)
+// for the property and returns a BriefSection ready to drop into any brief's
+// sections array. Returns null if no propertyId was passed or fetch fails —
+// briefs should treat this as best-effort enrichment.
+async function buildPlanningSection(propertyId: string): Promise<BriefSection | null> {
+  try {
+    const summary = await getPlanningSummary(propertyId);
+    const md = planningSummaryToMarkdown(summary);
+    // planningSummaryToMarkdown always emits "## Planning context" + at least
+    // one bullet; we drop the section heading because BriefSection has its own.
+    const body = md.replace(/^## Planning context\s*\n?/, "").trim();
+    if (!body) return null;
+    return {
+      heading: "Planning context",
+      body,
+      data: {
+        constraints: summary.constraints,
+        recentApplications: summary.recentApplications.slice(0, 10),
+        applicationCount: summary.applicationCount,
+      },
+    };
+  } catch (e: any) {
+    console.warn(`[document-briefs] planning section failed for ${propertyId}: ${e?.message}`);
+    return null;
+  }
+}
 
 export interface BriefContext {
   /** Always set — every brief is anchored to a canonical property. */
@@ -812,7 +840,15 @@ export function listBriefs(): Array<Omit<DocumentBrief, "build">> {
 export async function runBrief(briefId: string, ctx: BriefContext): Promise<BriefOutput> {
   const brief = BRIEF_REGISTRY[briefId];
   if (!brief) throw new Error(`Unknown briefId: ${briefId}`);
-  return brief.build(ctx);
+  const output = await brief.build(ctx);
+  // Append live planning context (constraints + recent applications) to every
+  // brief. Best-effort: if the fetch fails, the section is omitted and the
+  // brief still ships.
+  const planningSection = await buildPlanningSection(ctx.propertyId);
+  if (planningSection) {
+    output.sections = [...output.sections, planningSection];
+  }
+  return output;
 }
 
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
