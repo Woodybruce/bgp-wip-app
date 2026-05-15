@@ -546,58 +546,49 @@ function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSe
       </div>
       <CardContent className="pt-3 pb-3">
         {isLoading ? (
-          <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full rounded-md" />)}</div>
+          <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-8 w-full rounded-md" />)}</div>
         ) : leaders.length === 0 ? (
           <div className="text-xs text-muted-foreground italic text-center py-3">
             No Brucey Bonuses awarded yet this week.{isAdmin ? " Click Scan to let AI find them." : ""}
           </div>
         ) : (
           <>
-            {/* Winner banner */}
-            {winner && (
-              <button
-                onClick={() => onSelectPerson ? onSelectPerson(winner.userId) : navigate(`/hr?person=${winner.userId}`)}
-                className="w-full mb-2 rounded-lg bg-gradient-to-br from-amber-100 to-yellow-100 dark:from-amber-950/60 dark:to-yellow-950/60 border border-amber-300 dark:border-amber-700 p-2.5 flex items-center gap-2.5 hover:shadow-sm transition-shadow text-left"
-              >
-                <span className="text-xl">🥇</span>
-                {winner.profilePicUrl ? (
-                  <img src={winner.profilePicUrl} alt={winner.name} className="w-9 h-9 rounded-full object-cover ring-2 ring-amber-400" />
-                ) : (
-                  <div className="w-9 h-9 rounded-full bg-amber-200 dark:bg-amber-900/40 flex items-center justify-center text-xs font-bold ring-2 ring-amber-400">
-                    {winner.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[9px] uppercase tracking-wider text-amber-800 dark:text-amber-300 font-semibold">This week's leader</div>
-                  <div className="text-sm font-bold truncate">{winner.name}</div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-base font-bold tabular-nums text-amber-700 dark:text-amber-300">{winner.weekPoints}</div>
-                  <div className="text-[9px] uppercase tracking-wider text-amber-700/70">pts</div>
-                </div>
-              </button>
-            )}
-
-            {/* Rest of leaderboard */}
+            {/* Uniform leaderboard — same font sizes throughout. Top 3 get a
+                gold/silver/bronze medal, everyone else gets their rank in #N
+                form. Background tints subtly highlight the podium. */}
             <div className="space-y-1">
-              {leaders.slice(1, 5).map((l, i) => (
-                <button
-                  key={l.userId}
-                  onClick={() => onSelectPerson ? onSelectPerson(l.userId) : navigate(`/hr?person=${l.userId}`)}
-                  className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-amber-50/50 dark:hover:bg-amber-950/20 transition-colors text-left"
-                >
-                  <span className="w-5 text-center text-[11px] text-muted-foreground shrink-0">{medals[i + 1] || `#${i + 2}`}</span>
-                  {l.profilePicUrl ? (
-                    <img src={l.profilePicUrl} alt={l.name} className="w-6 h-6 rounded-full object-cover" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium">
-                      {l.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                  <span className="flex-1 truncate text-xs">{l.name}</span>
-                  <span className="text-xs font-semibold tabular-nums">{l.weekPoints}</span>
-                </button>
-              ))}
+              {leaders.map((l, i) => {
+                const rank = i + 1;
+                const podium = rank <= 3;
+                const rowBg = rank === 1
+                  ? "bg-amber-100/70 dark:bg-amber-950/40 border-amber-300/60 dark:border-amber-700/60"
+                  : rank === 2
+                  ? "bg-slate-100/70 dark:bg-slate-900/40 border-slate-300/60 dark:border-slate-700/60"
+                  : rank === 3
+                  ? "bg-orange-100/70 dark:bg-orange-950/40 border-orange-300/60 dark:border-orange-700/60"
+                  : "hover:bg-amber-50/50 dark:hover:bg-amber-950/20 border-transparent";
+                return (
+                  <button
+                    key={l.userId}
+                    onClick={() => onSelectPerson ? onSelectPerson(l.userId) : navigate(`/hr?person=${l.userId}`)}
+                    className={`w-full flex items-center gap-2 p-1.5 rounded-md transition-colors text-left border ${rowBg}`}
+                    data-testid={`brucey-leader-${rank}`}
+                  >
+                    <span className="w-6 text-center text-xs shrink-0 tabular-nums">
+                      {podium ? medals[i] : `#${rank}`}
+                    </span>
+                    {l.profilePicUrl ? (
+                      <img src={l.profilePicUrl} alt={l.name} className="w-6 h-6 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium">
+                        {l.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <span className="flex-1 truncate text-xs">{l.name}</span>
+                    <span className="text-xs font-semibold tabular-nums">{l.weekPoints}</span>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="mt-2 pt-2 border-t border-amber-200/50 dark:border-amber-900/50 text-[10px] text-muted-foreground italic text-center">
