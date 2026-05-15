@@ -1666,7 +1666,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                  Collapsed by default — headline RAG + Experian summary is on
                  the right sidebar. Open this to see full Companies House
                  history, KYC docs, officers, charges, rent affordability. */}
-            <details className="border-t border-border/40 mt-3 pt-2 order-4 group/cov">
+            <details open className="border-t border-border/40 mt-3 pt-2 order-4 group/cov">
             <summary className="flex items-center gap-1.5 mb-2 cursor-pointer list-none select-none">
               <ChevronRight className="w-3 h-3 text-muted-foreground transition-transform group-open/cov:rotate-90" />
               <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" />
