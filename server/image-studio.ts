@@ -2023,7 +2023,7 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   // Bulk assign property endpoint
-  app.post("/api/image-studio/bulk-assign-property", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/bulk-assign-property", requireAuth, async (req: Request, res: Response) => {
     try {
       const { ids, propertyId, address } = req.body;
       if (!Array.isArray(ids) || !ids.length || !propertyId) {
@@ -2034,6 +2034,62 @@ export function registerImageStudioRoutes(app: Express) {
       await db.update(imageStudioImages)
         .set(updates)
         .where(inArray(imageStudioImages.id, ids));
+
+      // Sync to property_imagery_assets + entity_images so the property
+      // sidebar Images panel + Pathway imagery picker pick the images up
+      // automatically. Idempotent per (image_studio_id, property_id).
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      for (const imgId of ids) {
+        try {
+          const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imgId));
+          if (!img) continue;
+
+          // property_imagery_assets (skip if one already exists for this image+property)
+          const existingAsset = await pool.query(
+            "SELECT id FROM property_imagery_assets WHERE property_id = $1 AND image_studio_id = $2 LIMIT 1",
+            [propertyId, imgId]
+          );
+          if (existingAsset.rows.length === 0) {
+            await pool.query(
+              `INSERT INTO property_imagery_assets (property_id, kind, source, image_studio_id, caption, generated_by)
+               VALUES ($1, 'secondary_external', $2, $3, $4, $5)`,
+              [propertyId, img.source || "uploaded", imgId, img.fileName || null, userId]
+            );
+          }
+
+          // entity_images (skip if already linked)
+          const existingEntity = await pool.query(
+            "SELECT id FROM entity_images WHERE entity_type = 'property' AND entity_id = $1 AND image_studio_id = $2 LIMIT 1",
+            [propertyId, imgId]
+          );
+          if (existingEntity.rows.length === 0 && img.localPath) {
+            // Read bytes from disk so the sidebar thumbnail renders without
+            // a separate Image Studio request.
+            try {
+              const buf = await readPersistedImage(img.localPath);
+              if (buf) {
+                const fileMeta = await pool.query(
+                  `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+                   VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+                  [userId, img.fileName, img.mimeType || "image/jpeg", buf.length]
+                );
+                const fileId = fileMeta.rows[0].id;
+                await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, buf]);
+                await pool.query(
+                  `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+                   VALUES ('property', $1, $2, $3, $4, $5, $6)`,
+                  [propertyId, fileId, imgId, img.source === "streetview" ? "street_view" : "photo", img.fileName, userId]
+                );
+              }
+            } catch (blobErr: any) {
+              console.warn(`[bulk-assign-property] entity_images sync for ${imgId} failed:`, blobErr?.message);
+            }
+          }
+        } catch (linkErr: any) {
+          console.warn(`[bulk-assign-property] link failed for ${imgId}:`, linkErr?.message);
+        }
+      }
+
       res.json({ success: true, updated: ids.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

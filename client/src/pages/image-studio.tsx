@@ -44,6 +44,7 @@ import {
   Library,
   Link,
   RotateCcw,
+  ExternalLink,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
@@ -2097,6 +2098,15 @@ export default function ImageStudio() {
               </div>
               {(selectedImage as any).address && (
                 <p className="text-xs text-white/60"><MapPin className="h-3 w-3 inline mr-1" />{(selectedImage as any).address}</p>
+              )}
+              {(selectedImage as any).propertyId && (
+                <a
+                  href={`/properties/${(selectedImage as any).propertyId}`}
+                  className="text-xs text-blue-300 hover:underline inline-flex items-center gap-1"
+                  data-testid="link-lightbox-property"
+                >
+                  <ExternalLink className="h-3 w-3" /> Open property page
+                </a>
               )}
               {selectedImage.description && (
                 <p className="text-sm text-white/70 max-w-lg">{selectedImage.description}</p>
