@@ -3145,6 +3145,52 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // One-shot tidy applied via a Settings button — May 2026 team reorg.
+  // Splits London Leasing into London Retail + London F&B, parks the 4
+  // unassigned users on Office / Corporate, renames the Accounts mailbox
+  // user to its actual person (Wendy), and marks Daisy + Emily Mitchell as
+  // Contract type so HR views skip them. Safe to re-run — uses name lookups
+  // so it does nothing on rows that already match.
+  app.post("/api/admin/apply-may-2026-team-tidy", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const remap: Array<{ names: string[]; team: string }> = [
+        { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cope", "Emily Cann"] },
+        { team: "London F&B",         names: ["Rupert Bentley-Smith", "Will Penfold", "Evie North"] },
+        { team: "Office / Corporate", names: ["Wendy McKenzie", "Accounts", "Johnny", "Daisy Driscoll", "Emily Mitchell"] },
+      ];
+      let teamUpdates = 0;
+      for (const r of remap) {
+        const result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND name = ANY($2)",
+          [r.team, r.names]
+        );
+        teamUpdates += result.rowCount ?? 0;
+      }
+
+      // Rename the shared mailbox alias to its actual person name.
+      await pool.query(
+        "UPDATE users SET name = 'Wendy McKenzie' WHERE is_active = true AND name = 'Accounts'"
+      );
+
+      // Mark consultants — HR sections (salary, holiday, pension) hide for
+      // anyone tagged Contract type via the client-side gate.
+      const consultants = ["Daisy Driscoll", "Emily Mitchell"];
+      const contractResult = await pool.query(
+        `UPDATE staff_profiles SET employment_type = 'Contract'
+         WHERE user_id IN (SELECT id FROM users WHERE name = ANY($1))`,
+        [consultants]
+      );
+
+      res.json({
+        ok: true,
+        teamUpdates,
+        contractUpdates: contractResult.rowCount ?? 0,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Move everyone currently on fromTeam → toTeam in one go. Empty/null fromTeam
   // means "currently unassigned". Used for tidy-ups like splitting / merging
   // teams without per-user clicking.

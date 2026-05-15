@@ -1246,18 +1246,38 @@ function DataHealthSection() {
 function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const TEAMS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate"];
-  const [filterTeam, setFilterTeam] = useState<string>("");
+  const [filterTeam, setFilterTeam] = useState<string>("__all__"); // default: show everyone
   const [pending, setPending] = useState<Record<string, string>>({});
 
-  const { data: users = [], isLoading, refetch } = useQuery<Array<{ id: string; name: string; email: string; team: string | null; title: string | null }>>({
-    queryKey: ["/api/admin/users-by-team", filterTeam],
+  const { data: allUsersData = [], isLoading, refetch } = useQuery<Array<{ id: string; name: string; email: string; team: string | null; title: string | null }>>({
+    queryKey: ["/api/admin/users-by-team", "__all__"],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/users-by-team?team=${encodeURIComponent(filterTeam)}`, { credentials: "include" });
+      const r = await fetch("/api/admin/users-by-team?team=", { credentials: "include" });
       if (!r.ok) return [];
-      return r.json();
+      // Endpoint returns unassigned when team is empty; fetch everyone in a second pass.
+      const unassigned = await r.json();
+      const teams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec", "London Leasing"];
+      const perTeam = await Promise.all(teams.map(t =>
+        fetch(`/api/admin/users-by-team?team=${encodeURIComponent(t)}`, { credentials: "include" }).then(r2 => r2.ok ? r2.json() : [])
+      ));
+      const seen = new Set<string>();
+      const all: any[] = [];
+      for (const list of [unassigned, ...perTeam]) {
+        for (const u of list) {
+          if (seen.has(u.id)) continue;
+          seen.add(u.id);
+          all.push(u);
+        }
+      }
+      return all.sort((a, b) => (a.team || "").localeCompare(b.team || "") || a.name.localeCompare(b.name));
     },
     enabled: open,
   });
+  const users = filterTeam === "__all__"
+    ? allUsersData
+    : filterTeam === "__unassigned__"
+      ? allUsersData.filter(u => !u.team)
+      : allUsersData.filter(u => u.team === filterTeam);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -1276,22 +1296,14 @@ function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void
     onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
   });
 
-  const { data: allUsers = [] } = useQuery<Array<{ team: string | null }>>({
-    queryKey: ["/api/admin/users-by-team", "__all__"],
-    queryFn: async () => {
-      const r = await fetch("/api/admin/users-by-team?team=", { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: open,
-  });
   const teamCounts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const u of allUsers) {
+    for (const u of allUsersData) {
       const k = u.team || "__unassigned__";
       m.set(k, (m.get(k) || 0) + 1);
     }
     return m;
-  }, [allUsers]);
+  }, [allUsersData]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -1304,11 +1316,20 @@ function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void
         </DialogHeader>
 
         <div className="flex flex-wrap gap-1 mb-3">
+          <button
+            onClick={() => setFilterTeam("__all__")}
+            className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === "__all__"
+              ? "bg-amber-100 border-amber-300 text-amber-900"
+              : "bg-card hover:bg-muted/40"
+            }`}
+          >
+            All <span className="text-muted-foreground">({allUsersData.length})</span>
+          </button>
           {[...teamCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([t, n]) => (
             <button
               key={t}
-              onClick={() => setFilterTeam(t === "__unassigned__" ? "__unassigned__" : t)}
-              className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === t || (filterTeam === "__unassigned__" && t === "__unassigned__")
+              onClick={() => setFilterTeam(t)}
+              className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === t
                 ? "bg-amber-100 border-amber-300 text-amber-900"
                 : "bg-card hover:bg-muted/40"
               }`}

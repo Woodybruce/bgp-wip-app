@@ -2247,7 +2247,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   </Card>
                 )}
 
-                {(isAdmin || isOwn) && (
+                {(isAdmin || isOwn) && person.employment_type !== "Contract" && (
                   <SalaryHistoryPanel person={person} readOnly={!isAdmin} />
                 )}
 
@@ -2277,14 +2277,20 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
           {/* "My stuff" — pension, holiday, kit, files all in one place. */}
           {(isAdmin || isOwn) && (
             <TabsContent value="mystuff" className="mt-4 space-y-6">
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Holiday</h3>
-                <HolidayTab person={person} isAdmin={isAdmin} currentUserId={currentUserId} />
-              </section>
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> Pension</h3>
-                <PensionTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
-              </section>
+              {/* Holiday + Pension only for employed staff. Consultants
+                  (employment_type = "Contract") don't accrue either via BGP. */}
+              {person.employment_type !== "Contract" && (
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Holiday</h3>
+                  <HolidayTab person={person} isAdmin={isAdmin} currentUserId={currentUserId} />
+                </section>
+              )}
+              {person.employment_type !== "Contract" && (
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> Pension</h3>
+                  <PensionTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
+                </section>
+              )}
               <section>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Files</h3>
                 <FilesTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
