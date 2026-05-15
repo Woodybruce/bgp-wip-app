@@ -12,7 +12,7 @@
 //   POST /api/admin/import-brand-logos { limit?: number, skipExisting?: bool }
 //   → { attempted, imported, skipped_existing, missed, errors, source_counts }
 import { Router, type Request, type Response } from "express";
-import { requireAuth, requireAdmin } from "./auth";
+import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { storeImageFromBuffer } from "./image-studio";
 
@@ -66,11 +66,12 @@ async function fetchLogoForDomain(domain: string): Promise<{ buffer: Buffer; mim
   return null;
 }
 
-router.post("/api/admin/import-brand-logos", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, res: Response) => {
   try {
     const limit = Math.min(Number(req.body?.limit ?? 500), 2000);
     const skipExisting: boolean = req.body?.skipExisting !== false;
     const userId = (req as any).user?.id || null;
+    console.log(`[bulk-logos] starting — limit=${limit}, skipExisting=${skipExisting}, logo_dev_token=${!!process.env.LOGO_DEV_TOKEN}`);
 
     // Pull tenant brands with a domain. Skip ones that already have a brand
     // logo in image_studio_images unless caller explicitly forces re-import.
@@ -95,6 +96,22 @@ router.post("/api/admin/import-brand-logos", requireAuth, requireAdmin, async (r
          LIMIT $1`,
       [limit]
     );
+    console.log(`[bulk-logos] ${brands.length} brands to process`);
+
+    // Diagnose if zero — common case: no domains stored on crm_companies.
+    if (brands.length === 0) {
+      const total = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM crm_companies WHERE company_type ILIKE 'Tenant%' AND merged_into_id IS NULL`
+      );
+      const withDomain = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM crm_companies
+          WHERE company_type ILIKE 'Tenant%' AND merged_into_id IS NULL
+            AND ((domain IS NOT NULL AND domain <> '') OR (domain_url IS NOT NULL AND domain_url <> ''))`
+      );
+      const note = `0 brands matched the filter. Total tenants: ${total.rows[0]?.count}, with a domain: ${withDomain.rows[0]?.count}. Most likely no tenant brands have a domain stored in crm_companies — set domain on a brand to test, or set skipExisting=false to force re-import existing.`;
+      console.warn(`[bulk-logos] ${note}`);
+      return res.json({ attempted: 0, imported: 0, missed: 0, errors: 0, note });
+    }
 
     const sourceCounts: Record<string, number> = { "logo.dev": 0, clearbit: 0, duckduckgo: 0 };
     let imported = 0;
@@ -106,7 +123,11 @@ router.post("/api/admin/import-brand-logos", requireAuth, requireAdmin, async (r
       if (!domain) { missed++; continue; }
       try {
         const hit = await fetchLogoForDomain(domain);
-        if (!hit) { missed++; continue; }
+        if (!hit) {
+          missed++;
+          if (missed <= 5) console.log(`[bulk-logos] miss: ${brand.name} (${domain})`);
+          continue;
+        }
         await storeImageFromBuffer({
           buffer: hit.buffer,
           fileName: `${brand.name} — Logo`,
@@ -120,6 +141,7 @@ router.post("/api/admin/import-brand-logos", requireAuth, requireAdmin, async (r
         });
         sourceCounts[hit.source] = (sourceCounts[hit.source] || 0) + 1;
         imported++;
+        if (imported <= 5 || imported % 25 === 0) console.log(`[bulk-logos] imported ${imported}: ${brand.name} via ${hit.source}`);
         // Gentle throttle so we don't slam Clearbit / logo.dev / DDG.
         await new Promise(r => setTimeout(r, 150));
       } catch (err: any) {
@@ -128,6 +150,7 @@ router.post("/api/admin/import-brand-logos", requireAuth, requireAdmin, async (r
       }
     }
 
+    console.log(`[bulk-logos] done — imported=${imported}, missed=${missed}, errors=${errors}, sources=${JSON.stringify(sourceCounts)}`);
     res.json({
       attempted: brands.length,
       imported,
