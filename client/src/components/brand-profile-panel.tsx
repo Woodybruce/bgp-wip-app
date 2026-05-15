@@ -321,9 +321,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [addRep, setAddRep] = useState<"brand" | "agent" | null>(null);
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
-  const [newsShowAll, setNewsShowAll] = useState(false);
-  const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
-  const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
@@ -2887,224 +2884,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── Zone 5: News & Media ──────────────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-7">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">News &amp; Media</span>
-            </div>
-            <div className="space-y-2.5">
-
-            {/* News articles mentioning this brand */}
-            {data.news && data.news.length > 0 && (() => {
-              const newsSourceColor = (name: string | null): string => {
-                if (!name) return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
-                const n = name.toLowerCase();
-                if (n.includes("drapers")) return "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800";
-                if (n.includes("retail week")) return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800";
-                if (n.includes("property week") || n.includes("estates gazette") || n.includes("eg ")) return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
-                if (n.includes("financial times") || n === "ft") return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
-                if (n.includes("reuters")) return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800";
-                if (n.includes("vogue") || n.includes("business of fashion")) return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800";
-                if (n.includes("bbc")) return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800";
-                if (n.includes("guardian") || n.includes("times") || n.includes("telegraph")) return "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800";
-                return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
-              };
-              const relDate = (d: string | null): string => {
-                if (!d) return "";
-                const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
-                if (days === 0) return "Today";
-                if (days === 1) return "Yesterday";
-                if (days < 7) return `${days}d ago`;
-                if (days < 30) return `${Math.floor(days / 7)}w ago`;
-                if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-                return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-              };
-              // Press releases = signals with ai_generated=true (scraped from brand site) or source matching brand domain
-              const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
-              const pressSignals = data.signals.filter((s: any) =>
-                s.ai_generated && s.source && brandDomain && (s.source.includes(brandDomain) || s.source === "perplexity")
-              );
-              const allSources = [...new Set(
-                data.news
-                  .map((a: any) => a.source_name)
-                  .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
-              )];
-              const filtered = newsTab === "press"
-                ? data.news.filter((a: any) => brandDomain && (a.url?.includes(brandDomain) || a.source_name?.toLowerCase().includes(c.name.toLowerCase().split(" ")[0])))
-                : newsTab === "linkedin"
-                  ? data.news.filter((a: any) => a.url?.includes("linkedin.com") || a.source_name?.toLowerCase().includes("linkedin"))
-                  : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
-              const visible = newsShowAll ? filtered : filtered.slice(0, 6);
-              return (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1">
-                      <Newspaper className="w-3 h-3 text-muted-foreground" />
-                      <div className="flex gap-0.5">
-                        {(["industry", "press", "linkedin"] as const).map(t => (
-                          <button
-                            key={t}
-                            onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
-                            className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
-                          >
-                            {t === "industry" ? `Industry (${data.news.length})` : t === "press" ? "Press releases" : "LinkedIn"}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {newsTab === "industry" && allSources.length > 1 && (
-                      <div className="flex items-center gap-1 flex-wrap justify-end">
-                        {newsSourceFilter && (
-                          <button onClick={() => setNewsSourceFilter(null)} className="text-[10px] text-muted-foreground hover:text-foreground underline">All</button>
-                        )}
-                        {allSources.slice(0, 5).map(s => (
-                          <button
-                            key={s}
-                            onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
-                            className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
-                          >
-                            {s}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {newsTab === "press" && pressSignals.length === 0 && filtered.length === 0 && (
-                    <p className="text-xs text-muted-foreground italic">No press releases scraped yet — run "Scrape" from Hunter Intel zone.</p>
-                  )}
-                  {newsTab === "linkedin" && filtered.length === 0 && (
-                    <div className="text-xs text-muted-foreground italic flex items-center gap-1.5 py-2">
-                      <Linkedin className="w-3 h-3" />
-                      No LinkedIn posts captured yet.{c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="text-primary hover:underline not-italic">Visit page →</a>}
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    {visible.map((article) => {
-                      const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
-                      const hasRealImage = !!(article.image_url && !isGoogleProxy);
-                      const domain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
-                      // Suppress generic "Google" / "Google News" labels — use the actual publisher domain instead
-                      const sourceLabel = article.source_name && /^google( news)?$/i.test(article.source_name)
-                        ? (domain || null)
-                        : article.source_name;
-                      const displayText = article.ai_summary || article.summary;
-                      return (
-                        <a
-                          key={article.id}
-                          href={article.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex gap-2.5 group hover:bg-muted/40 rounded-lg p-2 -mx-2 transition-colors border border-transparent hover:border-border/50"
-                        >
-                          <div className="shrink-0">
-                            {hasRealImage ? (
-                              <img
-                                src={article.image_url!}
-                                alt=""
-                                className="w-20 h-14 rounded-md object-cover border"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                              />
-                            ) : (
-                              <div className="w-10 h-10 rounded-md border bg-muted flex items-center justify-center overflow-hidden">
-                                {domain ? (
-                                  <img
-                                    src={`https://logo.clearbit.com/${domain}?size=64`}
-                                    alt=""
-                                    className="w-5 h-5 object-contain"
-                                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                                  />
-                                ) : (
-                                  <span className="text-sm font-bold text-muted-foreground">{(article.source_name || "?")[0].toUpperCase()}</span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                              {sourceLabel && (
-                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${newsSourceColor(sourceLabel)}`}>
-                                  {sourceLabel}
-                                </span>
-                              )}
-                              {article.category && article.category !== "general" && (
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{article.category}</span>
-                              )}
-                              <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
-                            </div>
-                            <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
-                            {displayText && (
-                              <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2 mt-0.5">{displayText}</p>
-                            )}
-                          </div>
-                        </a>
-                      );
-                    })}
-                  </div>
-                  {filtered.length > 6 && (
-                    <button
-                      onClick={() => setNewsShowAll(v => !v)}
-                      className="mt-2 text-[10px] text-primary hover:underline"
-                    >
-                      {newsShowAll ? "Show less" : `Show ${filtered.length - 6} more article${filtered.length - 6 === 1 ? "" : "s"}`}
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
-
-            </div>
-            </div>
-
-            {/* ── Zone 6: Documents & Gallery ──────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-8">
-            <div className="flex items-center gap-1.5 mb-2">
-              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Documents &amp; Gallery</span>
-            </div>
-            <div className="space-y-2.5">
-              {/* SharePoint folder link */}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-                  onClick={() => {
-                    fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
-                      .then(r => r.json())
-                      .then(d => {
-                        const url = d.items?.[0]?.webUrl
-                          ? d.items[0].webUrl.replace(/\/[^/]+$/, "") // strip filename, go to folder
-                          : `https://bgp.sharepoint.com`;
-                        window.open(url, "_blank");
-                      })
-                      .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
-                  }}
-                >
-                  <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
-                </button>
-              </div>
-              {/* Image gallery */}
-              {data.images.length > 1 && (
-                <div>
-                  <div className="text-[10px] text-muted-foreground mb-1.5">{data.images.length} image{data.images.length === 1 ? "" : "s"} in gallery</div>
-                  <div className="grid grid-cols-4 gap-1">
-                    {data.images.slice(0, 8).map((img: any) => (
-                      <div key={img.id} className="aspect-square rounded border border-border/60 overflow-hidden bg-muted">
-                        <img
-                          src={img.thumbnail_data
-                            ? `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`
-                            : `/api/brand/gallery-image/${img.id}`}
-                          alt={img.file_name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            </div>
+            {/* News & Media + Documents & Gallery now live on the sidebar */}
           </div>
         )}
       </CardContent>
@@ -3455,6 +3235,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
+  const [newsShowAll, setNewsShowAll] = useState(false);
+  const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
+  const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
   const { data: credit } = useQuery<{ latest: { score: number | null; band: string | null; risk_level: string | null; fetched_at: string } | null; configured: boolean }>({
     queryKey: ["/api/brand", companyId, "credit-check"],
     queryFn: async () => {
@@ -3582,6 +3365,205 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           )}
           {!!c.is_tracked_brand && (
             <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Tracked brand</span><span className="text-emerald-600 text-xs">✓</span></div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* News & Media */}
+      {data.news && data.news.length > 0 && (() => {
+        const newsSourceColor = (name: string | null): string => {
+          if (!name) return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
+          const n = name.toLowerCase();
+          if (n.includes("drapers")) return "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800";
+          if (n.includes("retail week")) return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800";
+          if (n.includes("property week") || n.includes("estates gazette") || n.includes("eg ")) return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
+          if (n.includes("financial times") || n === "ft") return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
+          if (n.includes("reuters")) return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800";
+          if (n.includes("vogue") || n.includes("business of fashion")) return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800";
+          if (n.includes("bbc")) return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800";
+          if (n.includes("guardian") || n.includes("times") || n.includes("telegraph")) return "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800";
+          return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
+        };
+        const relDate = (d: string | null): string => {
+          if (!d) return "";
+          const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+          if (days === 0) return "Today";
+          if (days === 1) return "Yesterday";
+          if (days < 7) return `${days}d ago`;
+          if (days < 30) return `${Math.floor(days / 7)}w ago`;
+          if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+          return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+        };
+        const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
+        const allSources = [...new Set(
+          data.news
+            .map((a: any) => a.source_name)
+            .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
+        )];
+        const filtered = newsTab === "press"
+          ? data.news.filter((a: any) => brandDomain && (a.url?.includes(brandDomain) || a.source_name?.toLowerCase().includes(c.name.toLowerCase().split(" ")[0])))
+          : newsTab === "linkedin"
+            ? data.news.filter((a: any) => a.url?.includes("linkedin.com") || a.source_name?.toLowerCase().includes("linkedin"))
+            : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
+        const visible = newsShowAll ? filtered : filtered.slice(0, 6);
+        return (
+          <Card>
+            <CardHeader className="p-3 pb-2">
+              <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+                <Newspaper className="w-3.5 h-3.5" /> News &amp; Media
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3 pt-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-1">
+                {(["industry", "press", "linkedin"] as const).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
+                    className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {t === "industry" ? `Industry (${data.news.length})` : t === "press" ? "Press" : "LinkedIn"}
+                  </button>
+                ))}
+              </div>
+              {newsTab === "industry" && allSources.length > 1 && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {newsSourceFilter && (
+                    <button onClick={() => setNewsSourceFilter(null)} className="text-[10px] text-muted-foreground hover:text-foreground underline">All</button>
+                  )}
+                  {allSources.slice(0, 5).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
+                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {newsTab === "press" && filtered.length === 0 && (
+                <p className="text-xs text-muted-foreground italic">No press releases scraped yet.</p>
+              )}
+              {newsTab === "linkedin" && filtered.length === 0 && (
+                <div className="text-xs text-muted-foreground italic flex items-center gap-1.5 py-1">
+                  <Linkedin className="w-3 h-3" />
+                  No LinkedIn posts captured.{c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="text-primary hover:underline not-italic">Visit →</a>}
+                </div>
+              )}
+              <div className="space-y-1.5">
+                {visible.map((article) => {
+                  const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
+                  const hasRealImage = !!(article.image_url && !isGoogleProxy);
+                  const domain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
+                  const sourceLabel = article.source_name && /^google( news)?$/i.test(article.source_name)
+                    ? (domain || null)
+                    : article.source_name;
+                  const displayText = article.ai_summary || article.summary;
+                  return (
+                    <a
+                      key={article.id}
+                      href={article.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex gap-2 group hover:bg-muted/40 rounded-md p-1.5 -mx-1.5 transition-colors"
+                    >
+                      <div className="shrink-0">
+                        {hasRealImage ? (
+                          <img
+                            src={article.image_url!}
+                            alt=""
+                            className="w-14 h-10 rounded object-cover border"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded border bg-muted flex items-center justify-center overflow-hidden">
+                            {domain ? (
+                              <img
+                                src={`https://logo.clearbit.com/${domain}?size=64`}
+                                alt=""
+                                className="w-5 h-5 object-contain"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                              />
+                            ) : (
+                              <span className="text-sm font-bold text-muted-foreground">{(article.source_name || "?")[0].toUpperCase()}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                          {sourceLabel && (
+                            <span className={`text-[9px] font-semibold px-1 py-0.5 rounded border ${newsSourceColor(sourceLabel)}`}>
+                              {sourceLabel}
+                            </span>
+                          )}
+                          <span className="text-[9px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
+                        </div>
+                        <p className="text-[11px] font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
+                        {displayText && (
+                          <p className="text-[10px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
+                        )}
+                      </div>
+                    </a>
+                  );
+                })}
+              </div>
+              {filtered.length > 6 && (
+                <button
+                  onClick={() => setNewsShowAll(v => !v)}
+                  className="text-[10px] text-primary hover:underline"
+                >
+                  {newsShowAll ? "Show less" : `Show ${filtered.length - 6} more`}
+                </button>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
+      {/* Documents & Gallery */}
+      <Card>
+        <CardHeader className="p-3 pb-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <FileText className="w-3.5 h-3.5" /> Documents &amp; Gallery
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 pt-0 space-y-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+            onClick={() => {
+              fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
+                .then(r => r.json())
+                .then(d => {
+                  const url = d.items?.[0]?.webUrl
+                    ? d.items[0].webUrl.replace(/\/[^/]+$/, "")
+                    : `https://bgp.sharepoint.com`;
+                  window.open(url, "_blank");
+                })
+                .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
+            }}
+          >
+            <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
+          </button>
+          {data.images.length > 1 && (
+            <div>
+              <div className="text-[10px] text-muted-foreground mb-1.5">{data.images.length} image{data.images.length === 1 ? "" : "s"}</div>
+              <div className="grid grid-cols-4 gap-1">
+                {data.images.slice(0, 8).map((img: any) => (
+                  <div key={img.id} className="aspect-square rounded border border-border/60 overflow-hidden bg-muted">
+                    <img
+                      src={img.thumbnail_data
+                        ? `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`
+                        : `/api/brand/gallery-image/${img.id}`}
+                      alt={img.file_name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
