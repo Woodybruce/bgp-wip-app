@@ -19,7 +19,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Rocket,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
@@ -2331,14 +2331,14 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/brand/${companyId}/rocketreach-company/refresh`);
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "RocketReach lookup failed");
+      if (!res.ok) throw new Error(json.error || "Brand intel lookup failed");
       return json;
     },
     onSuccess: (json) => {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "rocketreach-company"] });
-      if (!json.payload) toast({ title: "No RocketReach match", description: companyName });
+      if (!json.payload) toast({ title: "No brand intel found", description: companyName });
     },
-    onError: (e: any) => toast({ title: "RocketReach error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Brand intel error", description: e.message, variant: "destructive" }),
   });
 
   if (isLoading) return null;
@@ -2349,8 +2349,8 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
   return (
     <div className="border-t border-border/40 mt-3 pt-2 order-3">
       <div className="flex items-center gap-1.5 mb-2">
-        <Rocket className="w-3.5 h-3.5 text-violet-500" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">RocketReach intel</span>
+        <BadgeInfo className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Brand intel</span>
         {data?.fetched_at && (
           <span className="text-[10px] text-muted-foreground ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB")}</span>
         )}
@@ -2363,11 +2363,7 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
         </button>
       </div>
 
-      {!configured ? (
-        <p className="text-xs text-muted-foreground">RocketReach API key not configured.</p>
-      ) : !p ? (
-        <p className="text-xs text-muted-foreground">No data yet. Click Fetch to call RocketReach.</p>
-      ) : (
+      {!configured || !p ? null : (
         <div className="space-y-1.5 text-xs">
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">
             {p.industry_str && <div className="col-span-2"><span className="text-muted-foreground">Industry:</span> <span className="font-medium">{p.industry_str}</span></div>}
@@ -2385,9 +2381,6 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
             )}
             {p.ticker_symbol && <div className="col-span-2"><span className="text-muted-foreground">Ticker:</span> <span className="font-medium">{p.ticker_symbol}</span></div>}
           </div>
-          <p className="text-[10px] text-muted-foreground italic pt-1">
-            Full firmographics (description, revenue, employees, tech stack, competitors) require company-lookup credits — contact sales@rocketreach.co.
-          </p>
         </div>
       )}
     </div>
@@ -2622,7 +2615,7 @@ function SidebarKeyContacts({ data, companyId, topContacts }: { data: BrandProfi
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {});
       const out = await r.json();
-      if (!r.ok) throw new Error(out?.error || "RocketReach discover failed");
+      if (!r.ok) throw new Error(out?.error || "Contact discovery failed");
       const people = out.people || [];
       if (people.length > 0) {
         await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people });
@@ -2630,10 +2623,10 @@ function SidebarKeyContacts({ data, companyId, topContacts }: { data: BrandProfi
       return { found: people.length };
     },
     onSuccess: (r) => {
-      toast({ title: r.found ? `RocketReach: ${r.found} contacts found` : "RocketReach: no contacts found" });
+      toast({ title: r.found ? `${r.found} new contacts found` : "No new contacts found" });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
-    onError: (e: any) => toast({ title: "RocketReach error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Contact discovery error", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -2647,14 +2640,14 @@ function SidebarKeyContacts({ data, companyId, topContacts }: { data: BrandProfi
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending}
           className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
-          title="Discover contacts via RocketReach"
+          title="Discover key contacts"
         >
           {refresh.isPending ? "Searching…" : "Refresh"}
         </button>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-2">
         {topContacts.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No decision-makers logged yet. Click Refresh to discover via RocketReach.</p>
+          <p className="text-xs text-muted-foreground italic">No decision-makers logged yet. Click Refresh to discover.</p>
         ) : topContacts.map((dm: any) => (
           <div key={dm.id} className="flex items-start gap-2 text-xs">
             <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
