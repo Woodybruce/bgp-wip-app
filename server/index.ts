@@ -1626,6 +1626,16 @@ import { pool } from "./db";
        ('wellness',          'Wellness',          90),
        ('new operators',     'New operators',    100)
      ON CONFLICT (name) DO NOTHING`,
+
+    // Instagram Business Discovery cache (24h TTL). Keyed on brand company id
+    // so we cache one profile (~25 posts + stats) per brand. Lookups are
+    // bypassed with ?force=1 from the brand profile refresh button.
+    `CREATE TABLE IF NOT EXISTS brand_instagram_cache (
+      brand_company_id VARCHAR PRIMARY KEY,
+      username         TEXT NOT NULL,
+      profile_data     JSONB NOT NULL,
+      fetched_at       TIMESTAMP NOT NULL DEFAULT now()
+    )`,
   ];
 
   let ok = 0, skipped = 0;
@@ -1811,6 +1821,7 @@ import rocketreachCompanyRouter from "./rocketreach-company";
 import brandCompetitorsRouter from "./brand-competitors";
 import bulkBrandLogosRouter from "./bulk-brand-logos";
 import brandImagesRouter from "./brand-images";
+import instagramRouter from "./instagram";
 import pipnetRequirementsRouter from "./pipnet-requirements";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
@@ -2307,6 +2318,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandCompetitorsRouter);
   app.use(bulkBrandLogosRouter);
   app.use(brandImagesRouter);
+  app.use(instagramRouter);
   app.use(pipnetRequirementsRouter);
 
   // Health + lookup endpoints for the two new data providers.

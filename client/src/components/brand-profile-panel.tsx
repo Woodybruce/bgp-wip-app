@@ -19,7 +19,7 @@ import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
-  Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
+  Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper, Heart, MessageCircle,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
   Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight,
 } from "lucide-react";
@@ -3225,6 +3225,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         );
       })()}
 
+      <BrandInstagramCard companyId={companyId} />
+
       {/* Documents & Gallery */}
       <Card>
         <CardHeader className="p-3 pb-2">
@@ -3301,5 +3303,113 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         </CardContent>
       </Card>
     </aside>
+  );
+}
+
+// ─── Instagram card — Business Discovery via Meta Graph API ────────────────
+// Returns null silently when:
+//   - the IG integration isn't configured in env (no warning shown to users)
+//   - the brand has no instagram_handle OR isn't a Business/Creator account
+function BrandInstagramCard({ companyId }: { companyId: string }) {
+  const { toast } = useToast();
+  const { data: profile, isLoading } = useQuery<any>({
+    queryKey: ["/api/brand", companyId, "instagram"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/instagram`, { headers: getAuthHeaders() });
+      if (r.status === 204) return null;
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    staleTime: 1000 * 60 * 60, // 1h
+  });
+
+  if (isLoading || !profile) return null;
+
+  const fmt = (n: number | null | undefined) => {
+    if (n == null) return "—";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Instagram className="w-3.5 h-3.5" /> Instagram
+          <span className="ml-auto flex items-center gap-2 normal-case text-[10px] text-muted-foreground font-normal">
+            <a href={`https://instagram.com/${profile.username}`} target="_blank" rel="noreferrer" className="hover:text-foreground">
+              @{profile.username}
+            </a>
+            <button
+              type="button"
+              className="hover:text-foreground underline"
+              onClick={async () => {
+                try {
+                  const r = await fetch(`/api/brand/${companyId}/instagram?force=1`, { headers: getAuthHeaders() });
+                  if (r.ok || r.status === 204) {
+                    queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "instagram"] });
+                    toast({ title: "Instagram refreshed" });
+                  } else {
+                    toast({ title: "Refresh failed", variant: "destructive" });
+                  }
+                } catch (e: any) {
+                  toast({ title: "Refresh failed", description: e?.message, variant: "destructive" });
+                }
+              }}
+            >
+              Refresh
+            </button>
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-2">
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+          <span><strong className="text-foreground">{fmt(profile.followersCount)}</strong> followers</span>
+          <span><strong className="text-foreground">{fmt(profile.mediaCount)}</strong> posts</span>
+          <span><strong className="text-foreground">{fmt(profile.followsCount)}</strong> following</span>
+        </div>
+        {profile.biography && (
+          <p className="text-[11px] text-muted-foreground line-clamp-2">{profile.biography}</p>
+        )}
+        {profile.posts && profile.posts.length > 0 && (
+          <div className="grid grid-cols-3 gap-1">
+            {profile.posts.slice(0, 9).map((p: any) => {
+              const img = p.thumbnailUrl || p.mediaUrl;
+              return (
+                <a
+                  key={p.id}
+                  href={p.permalink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="aspect-square rounded border border-border/60 overflow-hidden bg-muted relative group block"
+                  title={p.caption || ""}
+                >
+                  {img && (p.mediaType === "IMAGE" || p.mediaType === "CAROUSEL_ALBUM") ? (
+                    <img
+                      src={img}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[10px] text-muted-foreground">
+                      {p.mediaType === "VIDEO" ? "▶" : "?"}
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100">
+                    <div className="flex items-center gap-2 text-white text-[10px] font-medium">
+                      <span className="flex items-center gap-0.5"><Heart className="w-3 h-3" />{fmt(p.likeCount)}</span>
+                      <span className="flex items-center gap-0.5"><MessageCircle className="w-3 h-3" />{fmt(p.commentsCount)}</span>
+                    </div>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
