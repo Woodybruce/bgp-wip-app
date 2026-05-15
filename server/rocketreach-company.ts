@@ -421,14 +421,27 @@ router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request
               await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
               backfillJob.autoFilled++;
             }
-            // 1s throttle — burst of 150ms hit RocketReach rate limit hard.
-            await new Promise(r => setTimeout(r, 1000));
+            // 6s throttle — RocketReach's free tier hits an hourly cap
+            // hard (~200/hr observed). 1s was too aggressive. 6s = 10/min
+            // which stays comfortably under both per-minute and per-hour caps.
+            await new Promise(r => setTimeout(r, 6000));
           } catch (e: any) {
             backfillJob.errors++;
             backfillJob.consecutiveErrors++;
             const msg = `${company.name}: ${e?.message || e}`;
             if (backfillJob.errorSamples.length < 5) backfillJob.errorSamples.push(msg);
             console.warn(`[rocketreach-backfill] ${msg}`);
+            // If RocketReach gives us an explicit retry-after, sleep that long
+            // before the next call rather than churning through more 429s.
+            const waitMatch = msg.match(/"wait":\s*"([\d.]+)"/);
+            if (waitMatch) {
+              const waitSec = Math.min(Math.ceil(Number(waitMatch[1])) + 5, 600);
+              console.warn(`[rocketreach-backfill] Sleeping ${waitSec}s per Retry-After`);
+              await new Promise(r => setTimeout(r, waitSec * 1000));
+              // After a long sleep, reset the consecutive counter so we don't
+              // false-trip the circuit breaker.
+              backfillJob.consecutiveErrors = 0;
+            }
           }
         }
       } catch (err: any) {

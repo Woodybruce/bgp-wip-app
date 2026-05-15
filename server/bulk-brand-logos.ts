@@ -120,15 +120,18 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
     }
     console.log(`[bulk-logos] starting — limit=${limit}, skipExisting=${skipExisting}, logo_dev_token=${!!process.env.LOGO_DEV_TOKEN}`);
 
-    // Pull the work list first so the response can report total + early-exit
-    // case (e.g. zero brands matched the filter).
+    // Pull tenant brands with a domain. The skip-existing filter looks ONLY
+    // for category='Brands' rows so we don't false-skip when an unrelated
+    // image-studio row (e.g. a street-view capture) happened to tag the
+    // same brand_name.
     const whereClause = skipExisting
       ? `WHERE c.company_type ILIKE 'Tenant%'
            AND c.merged_into_id IS NULL
            AND (c.domain IS NOT NULL AND c.domain <> '' OR c.domain_url IS NOT NULL AND c.domain_url <> '')
            AND NOT EXISTS (
              SELECT 1 FROM image_studio_images i
-             WHERE i.brand_name IS NOT NULL
+             WHERE i.category = 'Brands'
+               AND i.brand_name IS NOT NULL
                AND lower(trim(i.brand_name)) = lower(trim(c.name))
            )`
       : `WHERE c.company_type ILIKE 'Tenant%'
