@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
@@ -19,7 +19,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Rocket,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
@@ -1662,6 +1662,12 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
+            {/* ── RocketReach intel — initial sweep on the brand
+                 (description, industry, headcount, revenue band, funding,
+                 tech stack, social URLs). Sits above covenant because covenant
+                 is gated on Experian/Red Flag signup. */}
+            <RocketReachIntelCard companyId={c.id} companyName={c.name} />
+
             {/* ── Zone 2: Financial & Covenant ──────────────
                  Collapsed by default — headline RAG + Experian summary is on
                  the right sidebar. Open this to see full Companies House
@@ -3105,6 +3111,118 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
     </Card>
     <BrandProfileSidebar data={data} companyId={companyId} />
+    </div>
+  );
+}
+
+function RocketReachIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<{ configured: boolean; payload: any | null; fetched_at: string | null }>({
+    queryKey: ["/api/brand", companyId, "rocketreach-company"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/brand/${companyId}/rocketreach-company`);
+      return res.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const refresh = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/rocketreach-company/refresh`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "RocketReach lookup failed");
+      return json;
+    },
+    onSuccess: (json) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "rocketreach-company"] });
+      if (!json.payload) toast({ title: "No RocketReach match", description: companyName });
+    },
+    onError: (e: any) => toast({ title: "RocketReach error", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return null;
+
+  const p = data?.payload;
+  const configured = data?.configured;
+
+  return (
+    <div className="border-t border-border/40 mt-3 pt-2 order-3">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Rocket className="w-3.5 h-3.5 text-violet-500" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">RocketReach intel</span>
+        {data?.fetched_at && (
+          <span className="text-[10px] text-muted-foreground ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB")}</span>
+        )}
+        <button
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending || !configured}
+          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+        >
+          {refresh.isPending ? "Fetching…" : p ? "Refresh" : "Fetch"}
+        </button>
+      </div>
+
+      {!configured ? (
+        <p className="text-xs text-muted-foreground">RocketReach API key not configured.</p>
+      ) : !p ? (
+        <p className="text-xs text-muted-foreground">No data yet. Click Fetch to call RocketReach.</p>
+      ) : (
+        <div className="space-y-2 text-xs">
+          {p.description && (
+            <p className="text-foreground leading-relaxed">{p.description}</p>
+          )}
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+            {p.industry && <div><span className="text-muted-foreground">Industry:</span> <span className="font-medium">{p.industry}</span></div>}
+            {p.founded_year && <div><span className="text-muted-foreground">Founded:</span> <span className="font-medium">{p.founded_year}</span></div>}
+            {(p.employees || p.employee_count || p.num_employees) && (
+              <div><span className="text-muted-foreground">Employees:</span> <span className="font-medium">{p.employees ?? p.employee_count ?? p.num_employees}</span></div>
+            )}
+            {(p.revenue || p.annual_revenue) && (
+              <div><span className="text-muted-foreground">Revenue:</span> <span className="font-medium">{p.revenue ?? p.annual_revenue}</span></div>
+            )}
+            {(p.total_funding || p.funding_total) && (
+              <div><span className="text-muted-foreground">Funding:</span> <span className="font-medium">{p.total_funding ?? p.funding_total}</span></div>
+            )}
+            {p.last_funding_round_type && (
+              <div><span className="text-muted-foreground">Last round:</span> <span className="font-medium">{p.last_funding_round_type}</span></div>
+            )}
+            {(p.city || p.country) && (
+              <div className="col-span-2">
+                <span className="text-muted-foreground">HQ:</span>{" "}
+                <span className="font-medium">{[p.city, p.state, p.country].filter(Boolean).join(", ")}</span>
+              </div>
+            )}
+          </div>
+
+          {Array.isArray(p.technology_categories) && p.technology_categories.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Tech stack</div>
+              <div className="flex flex-wrap gap-1">
+                {p.technology_categories.slice(0, 20).map((t: string) => (
+                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded border bg-card">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(p.linkedin_url || p.crunchbase_url || p.twitter_url || p.facebook_url || p.website) && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {p.website && <a href={p.website} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Website ↗</a>}
+              {p.linkedin_url && <a href={p.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">LinkedIn ↗</a>}
+              {p.crunchbase_url && <a href={p.crunchbase_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Crunchbase ↗</a>}
+              {p.twitter_url && <a href={p.twitter_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Twitter ↗</a>}
+              {p.facebook_url && <a href={p.facebook_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline">Facebook ↗</a>}
+            </div>
+          )}
+
+          {/* Raw payload for fields we haven't surfaced yet — collapsed */}
+          <details className="mt-2">
+            <summary className="text-[10px] text-muted-foreground cursor-pointer">View raw RocketReach response</summary>
+            <pre className="text-[10px] bg-muted/40 rounded p-2 mt-1 overflow-x-auto max-h-64">{JSON.stringify(p, null, 2)}</pre>
+          </details>
+        </div>
+      )}
     </div>
   );
 }

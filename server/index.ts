@@ -1321,6 +1321,15 @@ import { pool } from "./db";
       fetched_by_user_id VARCHAR
     )`,
     `CREATE INDEX IF NOT EXISTS brand_credit_reports_company_idx ON brand_credit_reports (company_id, fetched_at DESC)`,
+    // RocketReach company firmographics cache — one row per brand, refreshed on
+    // demand from /api/brand/:id/rocketreach-company/refresh. Stores the raw
+    // lookupCompany payload as JSON so we can pluck fields without re-deploying
+    // when we want to surface a new one.
+    `CREATE TABLE IF NOT EXISTS brand_rocketreach_data (
+      company_id VARCHAR PRIMARY KEY,
+      payload JSONB NOT NULL,
+      fetched_at TIMESTAMP DEFAULT now()
+    )`,
     // Compliance overrides — captured when someone promotes a deal to SOL
     // without AML / fee agreement being complete. Lets us produce a compliance
     // report and chase the gaps before exchange.
@@ -1770,6 +1779,7 @@ import brandScraperRouter, { runDailyBrandScraper } from "./brand-scraper";
 import brandSocialScraperRouter, { runWeeklySocialScrape } from "./brand-social-scraper";
 import apolloContactsRouter from "./apollo-contacts";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
+import rocketreachCompanyRouter from "./rocketreach-company";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
@@ -2254,6 +2264,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandSocialScraperRouter);
   app.use(apolloContactsRouter);
   app.use(rocketreachContactsRouter);
+  app.use(rocketreachCompanyRouter);
 
   // Health + lookup endpoints for the two new data providers.
   app.get("/api/rocketreach/health", async (_req, res) => {
