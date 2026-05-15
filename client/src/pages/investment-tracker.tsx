@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1472,6 +1473,11 @@ export default function InvestmentTrackerPage() {
                       {item.assetType && <Badge className={`${classColor} text-white text-[10px]`}>{item.assetType}</Badge>}
                       {item.tenure && <Badge variant="outline" className="text-[10px]">{item.tenure}</Badge>}
                     </div>
+                    {item.propertyId && (
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <PropertyPlanningCard propertyId={item.propertyId} compact />
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-2 text-xs pt-1 border-t">
                       {item.guidePrice != null && (
                         <div>

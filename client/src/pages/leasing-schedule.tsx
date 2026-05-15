@@ -4,6 +4,7 @@ import { useRoute, useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
@@ -996,6 +997,9 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           </Button>
         </div>
       </div>
+
+      <PropertyPlanningCard propertyId={propertyId} />
+
       <ImportAnythingDialog
         open={showImport}
         onOpenChange={setShowImport}
