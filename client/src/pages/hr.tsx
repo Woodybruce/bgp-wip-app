@@ -13,7 +13,7 @@ import {
   Network, Cake, UserPlus, Trash2, FolderLock, Folder, Upload,
   LayoutGrid, GitBranch, Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
   Train, HeartHandshake, Mountain, Award, Megaphone, Sparkles, Target,
-  MessageSquare, PoundSterling,
+  MessageSquare, PoundSterling, Trophy, Coffee,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -2178,6 +2178,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   </div>
                 )}
               </div>
+              <RecognitionPanel userId={person.id} />
             </TabsContent>
           )}
 
@@ -4516,6 +4517,90 @@ function KitCard({ person, isAdmin, isOwn }: { person: StaffMember; isAdmin: boo
         </Dialog>
       </CardContent>
     </Card>
+  );
+}
+
+// ── 🏆 Recognition panel — Brucey points by year + Watch House awards ───────
+// Shows up on the About tab so colleagues can see someone's track record.
+// Hunger Games positions aren't snapshotted historically — they're computed
+// live from crm_deals each time the leaderboard renders.
+interface BruceyEntry { id: string; points: number; reason: string | null; event_kind: string | null; created_at: string }
+interface AwardEntry { id: string; kind: string; emoji: string | null; reason: string | null; created_at: string; issued_by_name: string | null }
+function RecognitionPanel({ userId }: { userId: string }) {
+  const { data: bruceyEntries = [] } = useQuery<BruceyEntry[]>({
+    queryKey: [`/api/hr/brucey-points/${userId}`],
+  });
+  const { data: awards = [] } = useQuery<AwardEntry[]>({
+    queryKey: ["/api/hr/awards", userId],
+    queryFn: () => fetch(`/api/hr/awards?userId=${userId}&limit=50`, { credentials: "include" }).then(r => r.json()),
+  });
+
+  // Group brucey totals by BGP scheme year (1 May → 30 Apr) — keeps things
+  // consistent with the rest of the firm's reporting.
+  const totalsByYear = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of bruceyEntries) {
+      const d = new Date(e.created_at);
+      const schemeYearStart = d.getMonth() >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+      const label = `${schemeYearStart}/${String(schemeYearStart + 1).slice(2)}`;
+      map.set(label, (map.get(label) || 0) + e.points);
+    }
+    return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [bruceyEntries]);
+
+  const peerKudos = awards.filter(a => a.kind === "kudos");
+  const perkAwards = awards.filter(a => a.kind !== "kudos");
+
+  if (totalsByYear.length === 0 && awards.length === 0) return null;
+
+  return (
+    <div className="mt-6 space-y-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+        <Trophy className="w-3.5 h-3.5" /> Recognition
+      </h3>
+
+      {totalsByYear.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Brucey Bonuses</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-1">
+            {totalsByYear.map(([year, points]) => (
+              <div key={year} className="flex items-center justify-between py-1 border-b last:border-0">
+                <span className="text-muted-foreground">Scheme year {year}</span>
+                <span className="font-medium tabular-nums">{points.toLocaleString()} pts</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {(perkAwards.length > 0 || peerKudos.length > 0) && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-1.5">
+            {[...perkAwards, ...peerKudos].slice(0, 30).map(a => (
+              <div key={a.id} className="flex items-start gap-2 py-1 border-b last:border-0">
+                <span className="text-lg leading-none mt-0.5">{a.emoji || "🏅"}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium capitalize">{a.kind.replace(/_/g, " ")}</div>
+                  {a.reason && <div className="text-xs text-muted-foreground">{a.reason}</div>}
+                  <div className="text-[10px] text-muted-foreground">
+                    {a.issued_by_name ? `by ${a.issued_by_name}` : "system"} · {new Date(a.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <p className="text-[11px] text-muted-foreground italic">
+        Hunger Games positions are computed live from active deals — no historic snapshot is taken yet.
+      </p>
+    </div>
   );
 }
 
