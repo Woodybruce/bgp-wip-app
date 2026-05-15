@@ -1783,6 +1783,7 @@ import brandSocialScraperRouter, { runWeeklySocialScrape } from "./brand-social-
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
 import rocketreachCompanyRouter from "./rocketreach-company";
 import brandCompetitorsRouter from "./brand-competitors";
+import bulkBrandLogosRouter from "./bulk-brand-logos";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
@@ -2272,6 +2273,7 @@ app.use("/api/branding/assets", express.static(
   app.use(rocketreachContactsRouter);
   app.use(rocketreachCompanyRouter);
   app.use(brandCompetitorsRouter);
+  app.use(bulkBrandLogosRouter);
 
   // Health + lookup endpoints for the two new data providers.
   app.get("/api/rocketreach/health", async (_req, res) => {
