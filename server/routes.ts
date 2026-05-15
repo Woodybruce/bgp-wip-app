@@ -3145,6 +3145,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Move everyone currently on fromTeam → toTeam in one go. Empty/null fromTeam
+  // means "currently unassigned". Used for tidy-ups like splitting / merging
+  // teams without per-user clicking.
+  app.post("/api/admin/team-bulk-remap", requireAuth, requireAdmin, async (req: any, res) => {
+    const { fromTeam, toTeam } = req.body || {};
+    if (toTeam === undefined) return res.status(400).json({ error: "toTeam required" });
+    try {
+      let result;
+      if (!fromTeam || fromTeam === "__unassigned__") {
+        result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND (team IS NULL OR team = '')",
+          [toTeam || null]
+        );
+      } else {
+        result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND team = $2",
+          [toTeam || null, fromTeam]
+        );
+      }
+      res.json({ ok: true, updated: result.rowCount ?? 0 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);
