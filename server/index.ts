@@ -1305,6 +1305,22 @@ import { pool } from "./db";
     )`,
     `CREATE INDEX IF NOT EXISTS entity_images_entity_idx ON entity_images (entity_type, entity_id, created_at DESC)`,
     `ALTER TABLE entity_images ADD COLUMN IF NOT EXISTS image_studio_id VARCHAR`,
+    // Brand credit reports — cache for Red Flag (or other third-party credit
+    // provider) reports keyed by company. Sidebar covenant card reads the
+    // newest row. Empty table until Red Flag is wired.
+    `CREATE TABLE IF NOT EXISTS brand_credit_reports (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id VARCHAR NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'red_flag',
+      score INTEGER,
+      band TEXT,
+      risk_level TEXT,
+      credit_limit_pence BIGINT,
+      raw_payload JSONB,
+      fetched_at TIMESTAMP DEFAULT now(),
+      fetched_by_user_id VARCHAR
+    )`,
+    `CREATE INDEX IF NOT EXISTS brand_credit_reports_company_idx ON brand_credit_reports (company_id, fetched_at DESC)`,
     // Compliance overrides — captured when someone promotes a deal to SOL
     // without AML / fee agreement being complete. Lets us produce a compliance
     // report and chase the gaps before exchange.

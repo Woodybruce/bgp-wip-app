@@ -821,6 +821,41 @@ router.delete("/api/brand/signals/:id", requireAuth, async (req: Request, res: R
   }
 });
 
+// ─── Red Flag credit check — stub until the API key is configured ──────
+// When RED_FLAG_API_KEY is set, this would call Red Flag's API, persist
+// the report to brand_credit_reports, and return it. Right now it returns
+// 503 + a friendly message so the UI button can show "not configured yet"
+// without breaking. GET returns the most-recent cached report (if any).
+router.get("/api/brand/:companyId/credit-check", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, provider, score, band, risk_level, credit_limit_pence, raw_payload, fetched_at
+       FROM brand_credit_reports
+       WHERE company_id = $1
+       ORDER BY fetched_at DESC LIMIT 1`,
+      [req.params.companyId]
+    );
+    res.json({ latest: rows[0] || null, configured: !!process.env.RED_FLAG_API_KEY });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/brand/:companyId/credit-check", requireAuth, async (req: any, res: Response) => {
+  const apiKey = process.env.RED_FLAG_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({
+      error: "Red Flag not configured",
+      message: "Set RED_FLAG_API_KEY in the environment to enable credit checks. The brand_credit_reports table is ready when you do.",
+    });
+  }
+  // TODO: when key is set, call Red Flag's API here and write the report.
+  // Shape will be:
+  //   const report = await fetch("https://api.redflagalert.com/...", { headers: { Authorization: `Bearer ${apiKey}` } });
+  //   await pool.query("INSERT INTO brand_credit_reports (...) VALUES (...)", [...]);
+  res.status(501).json({ error: "Red Flag integration not yet implemented — see TODO in brand-profile.ts" });
+});
+
 // ─── Stock snapshot + 3-month price history for a brand ─────────────────
 router.get("/api/brand/:companyId/stock", requireAuth, async (req: Request, res: Response) => {
   try {

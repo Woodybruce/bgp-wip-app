@@ -19,7 +19,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
@@ -1662,12 +1662,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── Zone 2: Financial & Covenant ────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-4">
-            <div className="flex items-center gap-1.5 mb-2">
+            {/* ── Zone 2: Financial & Covenant ──────────────
+                 Collapsed by default — headline RAG + Experian summary is on
+                 the right sidebar. Open this to see full Companies House
+                 history, KYC docs, officers, charges, rent affordability. */}
+            <details className="border-t border-border/40 mt-3 pt-2 order-4 group/cov">
+            <summary className="flex items-center gap-1.5 mb-2 cursor-pointer list-none select-none">
+              <ChevronRight className="w-3 h-3 text-muted-foreground transition-transform group-open/cov:rotate-90" />
               <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Financial &amp; Covenant</span>
-            </div>
+              <span className="text-[10px] text-muted-foreground font-normal">— Companies House · KYC · Officers · Rent affordability</span>
+            </summary>
             <div className="space-y-2.5">
 
             {/* BGP View — AI commentary on covenant + financial health */}
@@ -2192,7 +2197,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
             </div>
-            </div>
+            </details>
 
             {/* ── Zone 4: BGP Relationship ──────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
@@ -3328,9 +3333,30 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
 //   • Quick actions (run KYC, run Red Flag — placeholders)
 // All data comes from the same /api/brand/:id/profile payload the main
 // panel already fetched, so no extra requests.
-function BrandProfileSidebar({ data, companyId: _companyId }: { data: BrandProfile; companyId: string }) {
+function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyId: string }) {
+  const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
+  const { data: credit } = useQuery<{ latest: { score: number | null; band: string | null; risk_level: string | null; fetched_at: string } | null; configured: boolean }>({
+    queryKey: ["/api/brand", companyId, "credit-check"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/credit-check`, { credentials: "include" });
+      return r.ok ? r.json() : { latest: null, configured: false };
+    },
+  });
+  const runCreditCheck = async () => {
+    try {
+      const r = await fetch(`/api/brand/${companyId}/credit-check`, { method: "POST", credentials: "include" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast({ title: body.error || "Couldn't run", description: body.message || "", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Credit check complete" });
+    } catch (e: any) {
+      toast({ title: "Failed", description: e?.message, variant: "destructive" });
+    }
+  };
   const ragColor = cov?.trafficLight === "green"
     ? "bg-emerald-500"
     : cov?.trafficLight === "amber"
@@ -3367,8 +3393,30 @@ function BrandProfileSidebar({ data, companyId: _companyId }: { data: BrandProfi
           ) : (
             <p className="text-xs text-muted-foreground italic">No covenant data — run Companies House lookup via KYC.</p>
           )}
-          <Button size="sm" variant="outline" className="w-full mt-2 h-7 text-xs" disabled title="Red Flag integration not yet configured">
-            Run Red Flag (coming soon)
+          {credit?.latest && (
+            <div className="pt-2 border-t mt-1">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Red Flag</div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">Score</span>
+                <span className="font-medium">{credit.latest.score ?? "—"} {credit.latest.band ? `(${credit.latest.band})` : ""}</span>
+              </div>
+              {credit.latest.risk_level && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Risk</span>
+                  <span className="font-medium capitalize">{credit.latest.risk_level}</span>
+                </div>
+              )}
+              <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(credit.latest.fetched_at).toLocaleDateString("en-GB")}</div>
+            </div>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full mt-2 h-7 text-xs"
+            onClick={runCreditCheck}
+            title={credit?.configured ? "Pull a fresh credit report from Red Flag" : "Red Flag API key not configured — clicking shows the message"}
+          >
+            {credit?.latest ? "Refresh Red Flag" : "Run Red Flag" + (credit?.configured ? "" : " (not configured)")}
           </Button>
         </CardContent>
       </Card>
