@@ -1902,6 +1902,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         status: req.query.status as string | undefined,
         assetClass: req.query.assetClass as string | undefined,
         bgpEngagement: req.query.bgpEngagement as string | undefined,
+        excludeComps: req.query.excludeComps === "true" || req.query.excludeComps === "1",
         page,
         limit,
       };

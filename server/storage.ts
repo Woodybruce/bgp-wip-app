@@ -155,7 +155,7 @@ export interface IStorage {
   updateCrmContact(id: string, updates: Partial<InsertCrmContact>): Promise<CrmContact>;
   deleteCrmContact(id: string): Promise<void>;
 
-  getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]>;
+  getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; excludeComps?: boolean; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]>;
   getCrmProperty(id: string): Promise<CrmProperty | undefined>;
   createCrmProperty(property: InsertCrmProperty): Promise<CrmProperty>;
   updateCrmProperty(id: string, updates: Partial<InsertCrmProperty>): Promise<CrmProperty>;
@@ -878,13 +878,16 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]> {
+  async getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; excludeComps?: boolean; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]> {
     const conditions: any[] = [];
     if (filters?.search) conditions.push(ilike(crmProperties.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmProperties.groupName, filters.groupName));
     if (filters?.status) conditions.push(eq(crmProperties.status, filters.status));
     if (filters?.assetClass) conditions.push(sql`${crmProperties.assetClass} @> ARRAY[${filters.assetClass}]::text[]`);
     if (filters?.bgpEngagement) conditions.push(sql`${crmProperties.bgpEngagement} @> ARRAY[${filters.bgpEngagement}]::text[]`);
+    if (filters?.excludeComps) {
+      conditions.push(sql`(${crmProperties.groupName} IS NULL OR ${crmProperties.groupName} NOT IN ('Investment Comp', 'Investment Comps', 'Leasing Comp', 'Leasing Comps'))`);
+    }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;

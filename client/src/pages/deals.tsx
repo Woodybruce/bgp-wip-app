@@ -112,6 +112,7 @@ import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { EntityCombobox } from "@/components/entity-combobox";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 
@@ -696,24 +697,25 @@ export function DealFormDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <Label>Property *</Label>
-              <Select value={form.propertyId || undefined} onValueChange={(v) => {
-                const val = v === "__clear__" ? "" : v;
-                set("propertyId", val);
-                if (val && !form.name.trim()) {
-                  const prop = properties.find(p => p.id === val);
-                  if (prop) set("name", prop.name);
-                }
-              }}>
-                <SelectTrigger data-testid="select-deal-property-top">
-                  <SelectValue placeholder="Select property" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__clear__">None</SelectItem>
-                  {properties.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <EntityCombobox
+                testId="select-deal-property-top"
+                placeholder="Select property"
+                searchPlaceholder="Type to search properties…"
+                value={form.propertyId}
+                items={properties.map((p) => ({
+                  id: p.id,
+                  label: p.name,
+                  subLabel: p.postcode || undefined,
+                  keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
+                }))}
+                onChange={(val) => {
+                  set("propertyId", val);
+                  if (val && !form.name.trim()) {
+                    const prop = properties.find(p => p.id === val);
+                    if (prop) set("name", prop.name);
+                  }
+                }}
+              />
             </div>
 
             {(() => {
@@ -3860,7 +3862,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   }, [availableUnitsData]);
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
-    queryKey: ["/api/crm/properties"],
+    queryKey: ["/api/crm/properties", { excludeComps: true }],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/properties?excludeComps=true");
+      if (!res.ok) throw new Error("Failed to load properties");
+      const data = await res.json();
+      return Array.isArray(data) ? data : (data?.data ?? []);
+    },
   });
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
