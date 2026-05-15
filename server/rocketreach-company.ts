@@ -54,6 +54,26 @@ async function searchCompany(opts: { domain?: string | null; name?: string | nul
   return list[0] || null;
 }
 
+// Full firmographic record by RocketReach company ID. searchCompany only
+// returns a stub (id, name, country, industry_str, email_domain); the real
+// description/headcount/revenue/funding/socials come from lookupCompany.
+async function lookupCompanyById(id: number | string): Promise<any | null> {
+  const auth = rrAuthHeader();
+  if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
+
+  const res = await fetch(`https://api.rocketreach.co/v2/api/lookupCompany?id=${encodeURIComponent(String(id))}`, {
+    headers: auth,
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error(`[rocketreach-company] lookupCompany ${res.status}:`, text.slice(0, 400));
+    return null;
+  }
+  return await res.json();
+}
+
 router.get("/api/brand/:companyId/rocketreach-company", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
@@ -89,16 +109,24 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
     const company = companyRow.rows[0];
     const domain = extractDomain(company.domain_url || company.domain);
 
-    let payload: any = null;
+    let stub: any = null;
     if (domain) {
-      payload = await searchCompany({ domain });
+      stub = await searchCompany({ domain });
     }
-    if (!payload && company.name) {
-      payload = await searchCompany({ name: company.name });
+    if (!stub && company.name) {
+      stub = await searchCompany({ name: company.name });
     }
 
-    if (!payload) {
+    if (!stub) {
       return res.json({ payload: null, fetched_at: new Date().toISOString(), note: "No match on RocketReach" });
+    }
+
+    // Follow up with lookupCompany to get the full firmographic record.
+    // Fall back to the stub if the lookup fails (better than nothing).
+    let payload: any = stub;
+    if (stub.id) {
+      const full = await lookupCompanyById(stub.id);
+      if (full) payload = { ...stub, ...full };
     }
 
     await pool.query(

@@ -2277,78 +2277,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               );
             })()}
 
-            {/* Decision-makers — tiered: Store Dev → C-suite → Other → Apollo */}
-            <div className="border-t pt-2">
-              <div className="text-xs text-muted-foreground mb-1.5 flex items-center justify-between gap-1">
-                <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Key contacts</span>
-                {contactsFinding && (
-                  <span className="text-[10px] text-purple-500 flex items-center gap-0.5 animate-pulse">
-                    <Sparkles className="w-2.5 h-2.5" /> Finding…
-                  </span>
-                )}
-              </div>
-              {/* UK registered address as contact detail */}
-              {covenant?.registeredAddress && (
-                <div className="text-xs text-muted-foreground flex items-start gap-1 mb-1.5 bg-blue-50/60 dark:bg-blue-950/20 rounded px-1.5 py-1">
-                  <MapPin className="w-3 h-3 shrink-0 mt-0.5 text-blue-600" />
-                  <span><span className="text-blue-700 dark:text-blue-400 font-medium">UK office:</span> {covenant.registeredAddress}</span>
-                </div>
-              )}
-              {decisionMakers.length === 0 ? (
-                <p className="text-xs text-muted-foreground italic">
-                  {contactsFinding ? "Searching Apollo & RocketReach…" : "No contacts found."}
-                </p>
-              ) : (
-                <div className="space-y-2.5">
-                  {/* Tier 1 — Store development / property / UK */}
-                  {decisionMakers.filter(d => d.tier === 1).length > 0 && (
-                    <div>
-                      <div className="text-[10px] font-medium text-emerald-700 dark:text-emerald-400 uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Store className="w-2.5 h-2.5" /> Store development &amp; property
-                      </div>
-                      <div className="space-y-0.5">
-                        {decisionMakers.filter(d => d.tier === 1).map(dm => (
-                          <ContactRow key={dm.id} dm={dm} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {/* Tier 2 — C-suite */}
-                  {decisionMakers.filter(d => d.tier === 2).length > 0 && (
-                    <div>
-                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">C-suite &amp; leadership</div>
-                      <div className="space-y-0.5">
-                        {decisionMakers.filter(d => d.tier === 2).map(dm => (
-                          <ContactRow key={dm.id} dm={dm} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {/* Tier 3 — Directors / VP */}
-                  {decisionMakers.filter(d => d.tier === 3).length > 0 && (
-                    <div>
-                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Directors &amp; VPs</div>
-                      <div className="space-y-0.5">
-                        {decisionMakers.filter(d => d.tier === 3).slice(0, 4).map(dm => (
-                          <ContactRow key={dm.id} dm={dm} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {/* Tier 4 — other contacts, scrollable */}
-                  {decisionMakers.filter(d => d.tier === 4).length > 0 && (
-                    <div>
-                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Other contacts</div>
-                      <div className="max-h-28 overflow-y-auto space-y-0.5 pr-1">
-                        {decisionMakers.filter(d => d.tier === 4).map(dm => (
-                          <ContactRow key={dm.id} dm={dm} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* Key contacts now live on the sidebar (populated by RocketReach). */}
 
             {/* Interactions board — always visible. When empty, surfaces a
                 "possibly incomplete" hint so the user knows the gap might
@@ -3231,6 +3160,65 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
 //   • Quick actions (run KYC, run Red Flag — placeholders)
 // All data comes from the same /api/brand/:id/profile payload the main
 // panel already fetched, so no extra requests.
+function SidebarKeyContacts({ data, companyId, topContacts }: { data: BrandProfile; companyId: string; topContacts: any[] }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const refresh = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {});
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "RocketReach discover failed");
+      const people = out.people || [];
+      if (people.length > 0) {
+        await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people });
+      }
+      return { found: people.length };
+    },
+    onSuccess: (r) => {
+      toast({ title: r.found ? `RocketReach: ${r.found} contacts found` : "RocketReach: no contacts found" });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "RocketReach error", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Users className="w-3.5 h-3.5" /> Key contacts
+          <Badge variant="outline" className="text-[10px]">{(data.contacts || []).length}</Badge>
+        </CardTitle>
+        <button
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+          className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          title="Discover contacts via RocketReach"
+        >
+          {refresh.isPending ? "Searching…" : "Refresh"}
+        </button>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-2">
+        {topContacts.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No decision-makers logged yet. Click Refresh to discover via RocketReach.</p>
+        ) : topContacts.map((dm: any) => (
+          <div key={dm.id} className="flex items-start gap-2 text-xs">
+            <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
+              {dm.avatar_url ? <img src={dm.avatar_url} alt="" className="w-full h-full object-cover" /> : (dm.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate">{dm.name}</div>
+              <div className="text-[10px] text-muted-foreground truncate">{dm.role || dm.email || ""}</div>
+            </div>
+          </div>
+        ))}
+        {(data.contacts || []).length > 5 && (
+          <p className="text-[10px] text-muted-foreground">+ {data.contacts.length - 5} more in Representations below</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyId: string }) {
   const { toast } = useToast();
   const c = data.company;
@@ -3323,32 +3311,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       </Card>
 
       {/* Key contacts */}
-      <Card>
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <Users className="w-3.5 h-3.5" /> Key contacts
-            <Badge variant="outline" className="text-[10px]">{(data.contacts || []).length}</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0 space-y-2">
-          {topContacts.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic">No decision-makers logged yet.</p>
-          ) : topContacts.map((dm: any) => (
-            <div key={dm.id} className="flex items-start gap-2 text-xs">
-              <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
-                {dm.avatar_url ? <img src={dm.avatar_url} alt="" className="w-full h-full object-cover" /> : (dm.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="font-medium truncate">{dm.name}</div>
-                <div className="text-[10px] text-muted-foreground truncate">{dm.role || dm.email || ""}</div>
-              </div>
-            </div>
-          ))}
-          {(data.contacts || []).length > 5 && (
-            <p className="text-[10px] text-muted-foreground">+ {data.contacts.length - 5} more in Representations below</p>
-          )}
-        </CardContent>
-      </Card>
+      <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
 
       {/* BGP relationship */}
       <Card>
