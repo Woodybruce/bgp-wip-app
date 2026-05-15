@@ -3250,9 +3250,38 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           >
             <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
           </button>
-          {data.images.length > 1 && (
-            <div>
-              <div className="text-[10px] text-muted-foreground mb-1.5">{data.images.length} image{data.images.length === 1 ? "" : "s"}</div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[10px] text-muted-foreground">{data.images.length} image{data.images.length === 1 ? "" : "s"}</div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const r = await fetch(`/api/brand/${companyId}/refresh-images`, {
+                      method: "POST",
+                      headers: { ...getAuthHeaders() },
+                    });
+                    const result = await r.json();
+                    if (r.ok) {
+                      toast({
+                        title: result.imported > 0 ? `Imported ${result.imported} new images` : "No new images found",
+                        description: result.skipped || (result.imported > 0 ? Object.entries(result.bySource || {}).map(([s, n]) => `${n} from ${s}`).join(", ") : "Sources: press kit, Wikipedia, homepage, Google search"),
+                      });
+                      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                    } else {
+                      toast({ title: "Refresh failed", description: result.error, variant: "destructive" });
+                    }
+                  } catch (e: any) {
+                    toast({ title: "Refresh failed", description: e?.message, variant: "destructive" });
+                  }
+                }}
+                className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                data-testid="btn-refresh-brand-images"
+              >
+                Refresh images
+              </button>
+            </div>
+            {data.images.length > 0 && (
               <div className="grid grid-cols-4 gap-1">
                 {data.images.slice(0, 8).map((img: any) => (
                   <div key={img.id} className="aspect-square rounded border border-border/60 overflow-hidden bg-muted">
@@ -3267,8 +3296,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </CardContent>
       </Card>
     </aside>
