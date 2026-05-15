@@ -180,10 +180,11 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
 
     // Auto-fill BGP categorisation from RocketReach when we don't already
     // have it. Never overwrite a manually-set company_type or industry.
-    const autoFilled: { industry?: string; company_type?: string } = {};
+    const autoFilled: { industry?: string; company_type?: string; domain?: string } = {};
     const isBlankIndustry = !company.industry || !String(company.industry).trim();
     const isGenericType = !company.company_type
       || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
+    const isBlankDomain = !company.domain && !company.domain_url;
 
     if (isBlankIndustry && stub.industry_str) {
       autoFilled.industry = String(stub.industry_str);
@@ -192,6 +193,12 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
       const mapped = mapRrIndustryToBgpType(stub.industry_str);
       if (mapped) autoFilled.company_type = mapped;
     }
+    // Backfill domain from RocketReach when missing — unlocks the brand for
+    // bulk logo import (which requires a domain) and for downstream sources
+    // that key off email_domain.
+    if (isBlankDomain && stub.email_domain) {
+      autoFilled.domain = String(stub.email_domain).toLowerCase().trim();
+    }
 
     if (Object.keys(autoFilled).length > 0) {
       const sets: string[] = [];
@@ -199,6 +206,7 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
       let i = 2;
       if (autoFilled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(autoFilled.industry); }
       if (autoFilled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(autoFilled.company_type); }
+      if (autoFilled.domain !== undefined) { sets.push(`domain = $${i++}`); vals.push(autoFilled.domain); }
       await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
     }
 
@@ -323,18 +331,21 @@ router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request
         const isBlankIndustry = !company.industry || !String(company.industry).trim();
         const isGenericType = !company.company_type
           || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
-        const filled: { industry?: string; company_type?: string } = {};
+        const isBlankDomain = !company.domain && !company.domain_url;
+        const filled: { industry?: string; company_type?: string; domain?: string } = {};
         if (isBlankIndustry && stub.industry_str) filled.industry = String(stub.industry_str);
         if (isGenericType) {
           const mapped = mapRrIndustryToBgpType(stub.industry_str);
           if (mapped) filled.company_type = mapped;
         }
+        if (isBlankDomain && stub.email_domain) filled.domain = String(stub.email_domain).toLowerCase().trim();
         if (Object.keys(filled).length > 0) {
           const sets: string[] = [];
           const vals: any[] = [company.id];
           let i = 2;
           if (filled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(filled.industry); }
           if (filled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(filled.company_type); }
+          if (filled.domain !== undefined) { sets.push(`domain = $${i++}`); vals.push(filled.domain); }
           await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
           autoFilled++;
         }
