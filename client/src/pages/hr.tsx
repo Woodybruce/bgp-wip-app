@@ -2150,7 +2150,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             {(isAdmin || isOwn) && <TabsTrigger value="mystuff" className="text-xs">My stuff</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
             {(isAdmin || isOwn) && !isSecretary(person.title) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Card &amp; Expenses</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Expenses</TabsTrigger>}
             <TabsTrigger value="cv" className="text-xs">CV</TabsTrigger>
           </TabsList>
 
@@ -2288,7 +2288,6 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
           )}
 
           <TabsContent value="expenses" className="mt-4 space-y-4">
-            {cardholder && <CardTab cardholder={cardholder} isAdmin={isAdmin} person={person} />}
             <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
 
