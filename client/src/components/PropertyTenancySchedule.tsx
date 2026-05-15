@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 interface TenancyUnit {
-  id: number;
+  id: number | string;  // string when synthetic (vacant rows derived from available_units)
   property_id: string;
   premises: string;
   unit_number: string;
@@ -57,8 +57,13 @@ interface TenancyUnit {
   occ_costs_psf: number;
   status: string;
   deal_id: string | null;
+  deal_ref?: string | null;
   letting_tracker_unit_id: string | null;
   sort_order: number;
+  // Synthetic — set true when this row is a vacant derived from
+  // available_units (no real tenancy_schedule_units row backing it).
+  is_vacant?: boolean;
+  available_unit_id?: string | null;
 }
 
 interface DealLink {
@@ -485,7 +490,52 @@ function UnitRow({ unit, isExpanded, onToggle, onUpdate, onDelete, deal, letting
   onDelete: () => void;
   deal?: DealLink; letting?: LettingLink;
 }) {
-  const isVacant = unit.status === "Vacant";
+  const isVacant = unit.status === "Vacant" || unit.is_vacant;
+
+  // Synthetic vacant row sourced from available_units — no DB row to edit,
+  // render a simplified read-only line with a click-through to the deal /
+  // letting tracker entry that owns this unit.
+  if (unit.is_vacant) {
+    return (
+      <tr className="border-b hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-row-${unit.id}`}>
+        <td className="p-1 text-center text-muted-foreground">—</td>
+        <td className="p-1 font-medium">{unit.unit_number || unit.premises || "—"}</td>
+        <td className="p-1 text-amber-700 dark:text-amber-400 font-medium">VACANT</td>
+        <td className="p-1 text-muted-foreground" colSpan={3}>
+          {unit.nia_sqft ? `${unit.nia_sqft.toLocaleString()} sqft` : ""}
+          {unit.nia_sqft && unit.erv_pa ? " · " : ""}
+          {unit.erv_pa ? `£${unit.erv_pa.toLocaleString()} pa asking` : ""}
+        </td>
+        <td className="p-1 text-right text-muted-foreground" colSpan={2}>
+          {unit.erv_pa ? `£${unit.erv_pa.toLocaleString()}` : "—"}
+        </td>
+        <td className="p-1 text-center text-muted-foreground" colSpan={5}>—</td>
+        <td className="p-1 text-center">
+          <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 dark:text-amber-400">
+            {unit.status || "AVA"}
+          </Badge>
+        </td>
+        <td className="p-1 text-center">
+          <div className="flex gap-1 justify-center">
+            {unit.deal_id && (
+              <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
+                <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50">
+                  <Link2 className="w-2.5 h-2.5" />
+                  {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
+                </Badge>
+              </a>
+            )}
+            <a href={`/deals/letting?propertyId=${unit.property_id}`} className="inline-flex items-center" title="Open in Letting Tracker">
+              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50">
+                <ExternalLink className="w-2.5 h-2.5" />LT
+              </Badge>
+            </a>
+          </div>
+        </td>
+        <td className="p-1 text-center text-muted-foreground">—</td>
+      </tr>
+    );
+  }
 
   return (
     <>

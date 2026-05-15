@@ -25,11 +25,55 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
   try {
     const pool = await getPool();
     const { propertyId } = req.params;
-    const result = await pool.query(
+
+    // Real tenancies — passing rent, leases, reviews.
+    const occupied = await pool.query(
       "SELECT * FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY premises, sort_order, id",
       [propertyId]
     );
-    res.json(result.rows);
+
+    // Vacant units — anything on the Letting Tracker that isn't already
+    // represented by a matching tenancy row (matched by unit_name). Treats
+    // the Tenancy Schedule as the source of truth — every unit on the
+    // property appears, occupied or not. The vacant rows carry the
+    // linked available_unit_id so the UI can deep-link into the tracker.
+    const vacant = await pool.query(
+      `SELECT au.id AS available_unit_id, au.unit_name, au.sqft, au.asking_rent,
+              au.marketing_status, au.deal_id, d.deal_ref
+       FROM available_units au
+       LEFT JOIN crm_deals d ON d.id = au.deal_id
+       WHERE au.property_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM tenancy_schedule_units ts
+           WHERE ts.property_id = au.property_id
+             AND lower(trim(coalesce(ts.unit_number, ts.premises, ''))) = lower(trim(coalesce(au.unit_name, '')))
+         )
+       ORDER BY au.unit_name`,
+      [propertyId]
+    );
+
+    // Cast vacant rows into the tenancy shape so the existing client
+    // renderer Just Works. is_vacant: true is the discriminator.
+    const derivedVacant = vacant.rows.map((v: any) => ({
+      id: `vacant-${v.available_unit_id}`,
+      property_id: propertyId,
+      premises: v.unit_name || "—",
+      unit_number: v.unit_name || "",
+      tenant_name: "VACANT",
+      trading_name: "",
+      permitted_use: "",
+      nia_sqft: v.sqft || null,
+      gia_sqft: v.sqft || null,
+      passing_rent_pa: null,
+      erv_pa: v.asking_rent || null,
+      status: v.marketing_status || "AVA",
+      is_vacant: true,
+      available_unit_id: v.available_unit_id,
+      deal_id: v.deal_id,
+      deal_ref: v.deal_ref,
+    }));
+
+    res.json([...occupied.rows, ...derivedVacant]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
