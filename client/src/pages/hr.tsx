@@ -1847,7 +1847,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
                   </SelectContent>
                 </Select>
               </div>
-              {form.apcStatus === "in_progress" && (
+              {form.apcStatus !== "completed" && (
                 <>
                   <div className="space-y-1.5"><Label>Planned sitting</Label><Input value={form.apcPlannedSitting} onChange={f("apcPlannedSitting")} placeholder="e.g. Spring 2026" /></div>
                   <div className="space-y-1.5"><Label>Submission deadline</Label><Input type="date" value={form.apcSubmissionDeadline} onChange={f("apcSubmissionDeadline")} /></div>
