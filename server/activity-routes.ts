@@ -253,22 +253,34 @@ export function registerActivityRoutes(app: Express) {
     const { subjectType, subjectId } = req.params as { subjectType: SubjectType; subjectId: string };
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
 
+    // Long-running (~30–200s ChatBGP). If the client/proxy aborts mid-flight,
+    // skip the final res.json so we don't throw ERR_HTTP_HEADERS_SENT.
+    let clientGone = false;
+    req.on("close", () => { if (!res.writableEnded) clientGone = true; });
+
     try {
       const subject = await buildSubject(subjectType, subjectId);
-      if (!subject) return res.status(404).json({ error: "subject not found" });
+      if (!subject) {
+        if (clientGone || res.headersSent) return;
+        return res.status(404).json({ error: "subject not found" });
+      }
 
       const curated = await curateActivity(subject, req);
-      if (!curated) return res.status(502).json({ error: "ChatBGP returned no usable response" });
+      if (!curated) {
+        if (clientGone || res.headersSent) return;
+        return res.status(502).json({ error: "ChatBGP returned no usable response" });
+      }
 
-      // Persist + denormalise — best effort, don't block the response.
       Promise.all([
         writeCache(subjectType, subjectId, curated),
         writeLastInteraction(subjectType, subjectId, curated.latestActivityDate),
       ]).catch((err) => console.warn(`[activity persist ${subjectType}/${subjectId}]`, err?.message));
 
+      if (clientGone || res.headersSent) return;
       res.json({ ...curated, fromCache: false });
     } catch (err: any) {
       console.error(`[activity curate ${subjectType}/${subjectId}]`, err?.message);
+      if (clientGone || res.headersSent) return;
       res.status(500).json({ error: err?.message || "curation failed" });
     }
   });
