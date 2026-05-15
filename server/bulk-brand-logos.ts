@@ -50,19 +50,25 @@ async function tryFetch(url: string, timeoutMs = 8000): Promise<{ buffer: Buffer
 }
 
 async function fetchLogoForDomain(domain: string): Promise<{ buffer: Buffer; mime: string; source: string } | null> {
-  // 1. logo.dev — best quality if configured.
+  // 1. logo.dev — best quality if configured. Free signup at logo.dev gives
+  //    you a publishable token (pk_...) that goes in LOGO_DEV_TOKEN env.
   const logoDevToken = process.env.LOGO_DEV_TOKEN;
   if (logoDevToken) {
     const hit = await tryFetch(`https://img.logo.dev/${encodeURIComponent(domain)}?token=${logoDevToken}&size=512&format=png`);
     if (hit) return { ...hit, source: "logo.dev" };
   }
-  // 2. Clearbit — deprecated but still serves a lot of brands until Dec 2025.
+  // 2. Clearbit — HubSpot deprecated this March 2025 and is killing it
+  //    completely Dec 2025. Most domains 404 now but a few still serve.
   const cb = await tryFetch(`https://logo.clearbit.com/${encodeURIComponent(domain)}?size=512`);
   if (cb) return { ...cb, source: "clearbit" };
-  // 3. DuckDuckGo icons — free, no key, always responds. Quality is favicon-tier
-  //    but it's something. Skip the .ico tiny fallback by checking size.
+  // 3. Google's favicon API — high-res (sz=128) often serves a real logo, not
+  //    just the tiny favicon. Free, no key. Better hit rate than DuckDuckGo.
+  const google = await tryFetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`);
+  if (google && google.buffer.length > 300) return { ...google, source: "google" };
+  // 4. DuckDuckGo icons — last resort. Lowered threshold to 100 bytes so a
+  //    small but valid ico still gets through.
   const ddg = await tryFetch(`https://icons.duckduckgo.com/ip3/${encodeURIComponent(domain)}.ico`);
-  if (ddg && ddg.buffer.length > 500) return { ...ddg, source: "duckduckgo" };
+  if (ddg && ddg.buffer.length > 100) return { ...ddg, source: "duckduckgo" };
   return null;
 }
 
@@ -113,7 +119,8 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
       return res.json({ attempted: 0, imported: 0, missed: 0, errors: 0, note });
     }
 
-    const sourceCounts: Record<string, number> = { "logo.dev": 0, clearbit: 0, duckduckgo: 0 };
+    const sourceCounts: Record<string, number> = { "logo.dev": 0, clearbit: 0, google: 0, duckduckgo: 0 };
+    const errorSamples: string[] = [];
     let imported = 0;
     let missed = 0;
     let errors = 0;
@@ -146,7 +153,9 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
         await new Promise(r => setTimeout(r, 150));
       } catch (err: any) {
         errors++;
-        console.warn(`[bulk-logos] ${brand.name} (${domain}): ${err?.message || err}`);
+        const msg = `${brand.name} (${domain}): ${err?.message || err}`;
+        if (errorSamples.length < 5) errorSamples.push(msg);
+        console.warn(`[bulk-logos] ${msg}`);
       }
     }
 
@@ -156,6 +165,7 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
       imported,
       missed,
       errors,
+      error_samples: errorSamples,
       source_counts: sourceCounts,
       skipped_existing: skipExisting,
       logo_dev_configured: !!process.env.LOGO_DEV_TOKEN,
