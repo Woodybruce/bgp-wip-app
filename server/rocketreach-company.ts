@@ -290,13 +290,50 @@ router.get("/api/rocketreach-company-probe", requireAuth, async (req: Request, r
 
 // Bulk back-fill — loops over every tenant brand that hasn't been swept yet
 // (or all if forceAll=true) and calls the refresh path inline. Used once to
-// catch up the whole library when categorisation rules change.
+// catch up the whole library when categorisation rules change. Background
+// job because RocketReach searchCompany at scale runs into rate limits and
+// the loop can take 5+ minutes — Railway's 60s edge proxy timeout kills the
+// HTTP response otherwise. Same pattern as bulk-logo import.
+interface BackfillJob {
+  startedAt: number;
+  finishedAt: number | null;
+  total: number;
+  attempted: number;
+  matched: number;
+  autoFilled: number;
+  errors: number;
+  consecutiveErrors: number;
+  errorSamples: string[];
+  lastBrand: string | null;
+  abortedReason: string | null;
+}
+let backfillJob: BackfillJob | null = null;
+
+router.get("/api/brands/rocketreach-backfill/status", requireAuth, async (_req: Request, res: Response) => {
+  if (!backfillJob) return res.json({ running: false, message: "No backfill has been started in this process lifetime." });
+  res.json({
+    running: backfillJob.finishedAt === null,
+    startedAt: new Date(backfillJob.startedAt).toISOString(),
+    finishedAt: backfillJob.finishedAt ? new Date(backfillJob.finishedAt).toISOString() : null,
+    progress: `${backfillJob.attempted}/${backfillJob.total}`,
+    matched: backfillJob.matched,
+    autoFilled: backfillJob.autoFilled,
+    errors: backfillJob.errors,
+    error_samples: backfillJob.errorSamples,
+    last_brand: backfillJob.lastBrand,
+    aborted_reason: backfillJob.abortedReason,
+  });
+});
+
 router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!process.env.ROCKETREACH_API_KEY) {
       return res.status(503).json({ error: "ROCKETREACH_API_KEY not configured" });
     }
-    const limit = Math.min(Number(req.body?.limit ?? 50), 500);
+    if (backfillJob && backfillJob.finishedAt === null) {
+      return res.status(409).json({ error: "A backfill is already running", progress: `${backfillJob.attempted}/${backfillJob.total}` });
+    }
+    const limit = Math.min(Number(req.body?.limit ?? 200), 1000);
     const forceAll: boolean = req.body?.forceAll === true;
     const where = forceAll
       ? `WHERE c.merged_into_id IS NULL AND c.company_type ILIKE 'Tenant%'`
@@ -312,52 +349,104 @@ router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request
       [limit]
     );
 
-    let attempted = 0, matched = 0, autoFilled = 0, errors = 0;
-    for (const company of rows) {
-      attempted++;
-      try {
-        const domain = extractDomain(company.domain_url || company.domain);
-        let stub: any = null;
-        if (domain) stub = await searchCompany({ domain });
-        if (!stub && company.name) stub = await searchCompany({ name: company.name });
-        if (!stub) continue;
-        matched++;
-        await pool.query(
-          `INSERT INTO brand_rocketreach_data (company_id, payload, fetched_at)
-           VALUES ($1, $2::jsonb, now())
-           ON CONFLICT (company_id) DO UPDATE SET payload = EXCLUDED.payload, fetched_at = now()`,
-          [company.id, JSON.stringify(stub)]
-        );
-        const isBlankIndustry = !company.industry || !String(company.industry).trim();
-        const isGenericType = !company.company_type
-          || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
-        const isBlankDomain = !company.domain && !company.domain_url;
-        const filled: { industry?: string; company_type?: string; domain?: string } = {};
-        if (isBlankIndustry && stub.industry_str) filled.industry = String(stub.industry_str);
-        if (isGenericType) {
-          const mapped = mapRrIndustryToBgpType(stub.industry_str);
-          if (mapped) filled.company_type = mapped;
-        }
-        if (isBlankDomain && stub.email_domain) filled.domain = String(stub.email_domain).toLowerCase().trim();
-        if (Object.keys(filled).length > 0) {
-          const sets: string[] = [];
-          const vals: any[] = [company.id];
-          let i = 2;
-          if (filled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(filled.industry); }
-          if (filled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(filled.company_type); }
-          if (filled.domain !== undefined) { sets.push(`domain = $${i++}`); vals.push(filled.domain); }
-          await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
-          autoFilled++;
-        }
-        // Gentle throttle — RR rate limits aren't published but searchCompany is cheap.
-        await new Promise(r => setTimeout(r, 150));
-      } catch (e: any) {
-        errors++;
-        console.warn(`[rocketreach-backfill] ${company.name}: ${e?.message}`);
-      }
+    if (rows.length === 0) {
+      return res.json({ started: false, note: "No brands to backfill — all matched brands already have RocketReach data, or no tenants exist." });
     }
 
-    res.json({ attempted, matched, autoFilled, errors, remaining: rows.length === limit ? "maybe more — re-run" : "done" });
+    backfillJob = {
+      startedAt: Date.now(),
+      finishedAt: null,
+      total: rows.length,
+      attempted: 0,
+      matched: 0,
+      autoFilled: 0,
+      errors: 0,
+      consecutiveErrors: 0,
+      errorSamples: [],
+      lastBrand: null,
+      abortedReason: null,
+    };
+
+    // Run the work async so Railway's 60s proxy timeout doesn't kill the
+    // response. Throttle 1s per call — RocketReach's searchCompany rate
+    // limits aren't documented but bursting at 150ms hit 481 errors / 500.
+    setImmediate(async () => {
+      try {
+        for (const company of rows) {
+          if (!backfillJob) break;
+          backfillJob.lastBrand = company.name;
+          backfillJob.attempted++;
+
+          // Circuit breaker — if we get 10 errors in a row, RocketReach is
+          // clearly blocking us, abort the rest. Better to stop early than
+          // burn through 1000 attempts.
+          if (backfillJob.consecutiveErrors >= 10) {
+            backfillJob.abortedReason = "Circuit breaker — 10 consecutive RocketReach errors. Wait 10 minutes and re-run, or check the key.";
+            console.warn(`[rocketreach-backfill] ${backfillJob.abortedReason}`);
+            break;
+          }
+
+          try {
+            const domain = extractDomain(company.domain_url || company.domain);
+            let stub: any = null;
+            if (domain) stub = await searchCompany({ domain });
+            if (!stub && company.name) stub = await searchCompany({ name: company.name });
+            backfillJob.consecutiveErrors = 0;
+            if (!stub) continue;
+            backfillJob.matched++;
+            await pool.query(
+              `INSERT INTO brand_rocketreach_data (company_id, payload, fetched_at)
+               VALUES ($1, $2::jsonb, now())
+               ON CONFLICT (company_id) DO UPDATE SET payload = EXCLUDED.payload, fetched_at = now()`,
+              [company.id, JSON.stringify(stub)]
+            );
+            const isBlankIndustry = !company.industry || !String(company.industry).trim();
+            const isGenericType = !company.company_type
+              || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
+            const isBlankDomain = !company.domain && !company.domain_url;
+            const filled: { industry?: string; company_type?: string; domain?: string } = {};
+            if (isBlankIndustry && stub.industry_str) filled.industry = String(stub.industry_str);
+            if (isGenericType) {
+              const mapped = mapRrIndustryToBgpType(stub.industry_str);
+              if (mapped) filled.company_type = mapped;
+            }
+            if (isBlankDomain && stub.email_domain) filled.domain = String(stub.email_domain).toLowerCase().trim();
+            if (Object.keys(filled).length > 0) {
+              const sets: string[] = [];
+              const vals: any[] = [company.id];
+              let i = 2;
+              if (filled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(filled.industry); }
+              if (filled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(filled.company_type); }
+              if (filled.domain !== undefined) { sets.push(`domain = $${i++}`); vals.push(filled.domain); }
+              await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
+              backfillJob.autoFilled++;
+            }
+            // 1s throttle — burst of 150ms hit RocketReach rate limit hard.
+            await new Promise(r => setTimeout(r, 1000));
+          } catch (e: any) {
+            backfillJob.errors++;
+            backfillJob.consecutiveErrors++;
+            const msg = `${company.name}: ${e?.message || e}`;
+            if (backfillJob.errorSamples.length < 5) backfillJob.errorSamples.push(msg);
+            console.warn(`[rocketreach-backfill] ${msg}`);
+          }
+        }
+      } catch (err: any) {
+        if (backfillJob) backfillJob.abortedReason = `Job crashed: ${err?.message}`;
+        console.error("[rocketreach-backfill] background job crashed:", err);
+      } finally {
+        if (backfillJob) {
+          backfillJob.finishedAt = Date.now();
+          console.log(`[rocketreach-backfill] done — matched=${backfillJob.matched}, autoFilled=${backfillJob.autoFilled}, errors=${backfillJob.errors}`);
+        }
+      }
+    });
+
+    res.json({
+      started: true,
+      total: rows.length,
+      message: "Background backfill started. Poll /api/brands/rocketreach-backfill/status for progress.",
+    });
   } catch (err: any) {
     console.error("[rocketreach-company] backfill error:", err);
     res.status(500).json({ error: err.message });
