@@ -144,4 +144,75 @@ router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, as
   }
 });
 
+// Diagnostic — tries several candidate RocketReach company endpoints and
+// returns whichever responses came back. RocketReach's web UI shows rich
+// firmographics (description, revenue, employees, tech stack, competitors)
+// for Aesop et al, but /v2/api/lookupCompany returns only the stub. This
+// probe helps identify the right endpoint / parameter combination.
+//
+// Hit /api/rocketreach-company-probe?id=61841 (Aesop) or ?domain=aesop.com.
+router.get("/api/rocketreach-company-probe", requireAuth, async (req: Request, res: Response) => {
+  const auth = rrAuthHeader();
+  if (!auth) return res.status(503).json({ error: "ROCKETREACH_API_KEY not configured" });
+  const id = String(req.query.id || "").trim();
+  const domain = String(req.query.domain || "").trim();
+  const name = String(req.query.name || "").trim();
+
+  const probes: Array<{ label: string; url: string; method: "GET" | "POST"; body?: any }> = [];
+
+  if (id) {
+    probes.push({ label: "GET /v2/api/lookupCompany?id=", url: `https://api.rocketreach.co/v2/api/lookupCompany?id=${encodeURIComponent(id)}`, method: "GET" });
+    probes.push({ label: "GET /v2/api/companyLookup?id=", url: `https://api.rocketreach.co/v2/api/companyLookup?id=${encodeURIComponent(id)}`, method: "GET" });
+    probes.push({ label: "GET /v2/api/company/lookup?id=", url: `https://api.rocketreach.co/v2/api/company/lookup?id=${encodeURIComponent(id)}`, method: "GET" });
+    probes.push({ label: "GET /v2/api/getCompany?id=", url: `https://api.rocketreach.co/v2/api/getCompany?id=${encodeURIComponent(id)}`, method: "GET" });
+    probes.push({ label: "GET /v2/api/company?id=", url: `https://api.rocketreach.co/v2/api/company?id=${encodeURIComponent(id)}`, method: "GET" });
+    probes.push({ label: "GET /v2/person/company/lookup?id=", url: `https://api.rocketreach.co/v2/person/company/lookup?id=${encodeURIComponent(id)}`, method: "GET" });
+    // Suggested by RocketReach's "LookupProfileAndCompany" webhook endpoint name
+    // — implies an API endpoint that returns profile + company firmographics.
+    probes.push({ label: "GET /v2/api/lookupProfileAndCompany?id=", url: `https://api.rocketreach.co/v2/api/lookupProfileAndCompany?id=${encodeURIComponent(id)}`, method: "GET" });
+    probes.push({ label: "GET /v2/api/lookupProfileAndCompany?company_id=", url: `https://api.rocketreach.co/v2/api/lookupProfileAndCompany?company_id=${encodeURIComponent(id)}`, method: "GET" });
+  }
+  if (domain) {
+    probes.push({ label: "GET /v2/api/lookupCompany?domain=", url: `https://api.rocketreach.co/v2/api/lookupCompany?domain=${encodeURIComponent(domain)}`, method: "GET" });
+    probes.push({ label: "GET /v2/api/companyLookup?domain=", url: `https://api.rocketreach.co/v2/api/companyLookup?domain=${encodeURIComponent(domain)}`, method: "GET" });
+  }
+  if (domain || name) {
+    const body: any = { query: {} };
+    if (domain) body.query.domain = [domain];
+    if (name) body.query.name = [name];
+    body.page_size = 1;
+    body.start = 1;
+    probes.push({ label: "POST /v2/api/searchCompany", url: "https://api.rocketreach.co/v2/api/searchCompany", method: "POST", body });
+  }
+
+  const results = await Promise.all(probes.map(async (p) => {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(p.url, {
+        method: p.method,
+        headers: p.method === "POST" ? { ...auth, "Content-Type": "application/json" } : auth,
+        body: p.body ? JSON.stringify(p.body) : undefined,
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await r.text().catch(() => "");
+      let parsed: any = null;
+      try { parsed = JSON.parse(text); } catch {}
+      return {
+        label: p.label,
+        url: p.url,
+        method: p.method,
+        status: r.status,
+        ms: Date.now() - t0,
+        fieldCount: parsed && typeof parsed === "object" ? Object.keys(parsed).length : null,
+        topKeys: parsed && typeof parsed === "object" ? Object.keys(parsed).slice(0, 30) : null,
+        body: parsed ?? text.slice(0, 500),
+      };
+    } catch (err: any) {
+      return { label: p.label, url: p.url, method: p.method, error: err?.message || String(err), ms: Date.now() - t0 };
+    }
+  }));
+
+  res.json({ query: { id, domain, name }, results });
+});
+
 export default router;
