@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -489,7 +490,12 @@ interface BruceyLeaderboard {
 function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
-  const { data, isLoading } = useQuery<BruceyLeaderboard>({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
+  const [period, setPeriod] = useState<"month" | "quarter" | "ytd">("month");
+  const [wheelOpen, setWheelOpen] = useState(false);
+  const { data, isLoading } = useQuery<BruceyLeaderboard & { alreadySpun?: { prize_label: string; spun_at: string } | null }>({
+    queryKey: ["/api/hr/brucey-points/leaderboard", period],
+    queryFn: () => fetch(`/api/hr/brucey-points/leaderboard?period=${period}`, { credentials: "include" }).then(r => r.json()),
+  });
 
   const scan = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/hr/brucey-points/scan").then(r => r.json()),
@@ -545,11 +551,43 @@ function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSe
         )}
       </div>
       <CardContent className="pt-3 pb-3">
+        {/* Period switcher — month is the prize cadence, quarter is the grand. */}
+        <div className="flex items-center gap-1 mb-3" data-testid="brucey-period-tabs">
+          {(["month", "quarter", "ytd"] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium capitalize transition-colors ${
+                period === p
+                  ? "bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200"
+                  : "text-muted-foreground hover:bg-muted/60"
+              }`}
+            >
+              {p === "ytd" ? "YTD" : `This ${p}`}
+            </button>
+          ))}
+          {data?.alreadySpun && (
+            <span className="ml-auto text-[10px] text-amber-700 dark:text-amber-300 italic">
+              🏆 Spun: {data.alreadySpun.prize_label}
+            </span>
+          )}
+          {isAdmin && !data?.alreadySpun && (data?.winnerUserId) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto h-6 text-[10px] px-1.5 bg-amber-100 text-amber-900 hover:bg-amber-200"
+              onClick={() => setWheelOpen(true)}
+              data-testid="brucey-spin-wheel"
+            >
+              🎡 Spin the wheel
+            </Button>
+          )}
+        </div>
         {isLoading ? (
           <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-8 w-full rounded-md" />)}</div>
         ) : leaders.length === 0 ? (
           <div className="text-xs text-muted-foreground italic text-center py-3">
-            No Brucey Bonuses awarded yet this week.{isAdmin ? " Click Scan to let AI find them." : ""}
+            No Brucey Bonuses awarded yet this {period === "ytd" ? "year" : period}.{isAdmin ? " Click Scan to let AI find them." : ""}
           </div>
         ) : (
           <>
@@ -592,13 +630,171 @@ function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSe
             </div>
 
             <div className="mt-2 pt-2 border-t border-amber-200/50 dark:border-amber-900/50 text-[10px] text-muted-foreground italic text-center">
-              Earn points for closing deals, kudos, completing tasks, submitting reviews. Weekly winner gets a prize.
+              Earn points all {period === "quarter" ? "quarter" : period === "ytd" ? "year" : "month"}. Top of the board spins the wheel — bonuses means prizes.
             </div>
           </>
         )}
       </CardContent>
+      {wheelOpen && data?.winnerUserId && (
+        <BruceyWheelDialog
+          open={wheelOpen}
+          onClose={() => setWheelOpen(false)}
+          period={period === "quarter" ? "quarter" : "month"}
+          winnerUserId={data.winnerUserId}
+          winnerName={leaders[0]?.name || "Winner"}
+        />
+      )}
     </Card>
   );
+}
+
+// ── 🎡 Brucey Wheel dialog — animated spinner that lands on a random prize ──
+// Server picks the prize on /api/hr/brucey-winners/spin (so a refresh can't
+// game it). The wheel just animates to the slice the server picked.
+function BruceyWheelDialog({
+  open, onClose, period, winnerUserId, winnerName,
+}: { open: boolean; onClose: () => void; period: "month" | "quarter"; winnerUserId: string; winnerName: string }) {
+  const { toast } = useToast();
+  const { data: prizes = [], isLoading: prizesLoading } = useQuery<Array<{ id: string; label: string; emoji: string | null; tier: string }>>({
+    queryKey: ["/api/hr/brucey-prizes"],
+  });
+  const tierPrizes = prizes.filter(p => p.tier === (period === "quarter" ? "quarterly" : "monthly"));
+  const [spinning, setSpinning] = useState(false);
+  const [rotation, setRotation] = useState(0);
+  const [result, setResult] = useState<{ prizeLabel: string; prizeEmoji: string | null } | null>(null);
+
+  const spin = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/hr/brucey-winners/spin", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ period, userId: winnerUserId }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Spin failed");
+      return r.json() as Promise<{ prize_label: string; prizes: Array<{ id: string; label: string; emoji: string | null }>; prizeIndex: number }>;
+    },
+    onSuccess: (out) => {
+      // Land the wheel on the chosen prize. 5 full rotations + the slice angle
+      // so it's clearly spinning before stopping on the right slice.
+      const sliceCount = out.prizes.length;
+      const sliceAngle = 360 / sliceCount;
+      // Pointer is at the top (0°); spin clockwise so finalAngle = -(prizeIndex * sliceAngle + sliceAngle/2)
+      const target = -(out.prizeIndex * sliceAngle + sliceAngle / 2);
+      const finalRotation = 360 * 5 + target;
+      setSpinning(true);
+      setRotation(finalRotation);
+      const matched = out.prizes[out.prizeIndex];
+      setTimeout(() => {
+        setSpinning(false);
+        setResult({ prizeLabel: matched.label, prizeEmoji: matched.emoji });
+        queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/hr/awards"] });
+      }, 4500);
+    },
+    onError: (e: any) => {
+      toast({ title: "Spin failed", description: e?.message, variant: "destructive" });
+      setSpinning(false);
+    },
+  });
+
+  const sliceCount = tierPrizes.length || 1;
+  const sliceAngle = 360 / sliceCount;
+  const palette = [
+    "#fef3c7", "#fde68a", "#fcd34d", "#fbbf24", "#f59e0b", "#d97706",
+    "#fee2e2", "#fecaca", "#fca5a5", "#f87171", "#ef4444", "#dc2626",
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { onClose(); setResult(null); setRotation(0); } }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            🎡 Brucey {period === "quarter" ? "Quarterly Grand" : "Monthly"} Wheel
+          </DialogTitle>
+          <DialogDescription>
+            {winnerName} is the {period} leader. Spin to claim your prize — selection is random and saved on the server.
+          </DialogDescription>
+        </DialogHeader>
+        {prizesLoading ? (
+          <Skeleton className="aspect-square w-full" />
+        ) : tierPrizes.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No prizes seeded for this tier. Add some via the admin endpoint.</p>
+        ) : (
+          <div className="relative aspect-square w-full max-w-sm mx-auto">
+            {/* Pointer */}
+            <div className="absolute left-1/2 -translate-x-1/2 -top-1 w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[16px] border-t-amber-700 z-10" />
+            <div
+              className="relative w-full h-full rounded-full border-4 border-amber-700 shadow-lg overflow-hidden transition-transform"
+              style={{
+                transform: `rotate(${rotation}deg)`,
+                transitionDuration: spinning ? "4500ms" : "0ms",
+                transitionTimingFunction: "cubic-bezier(0.2, 0.85, 0.3, 1)",
+              }}
+            >
+              {tierPrizes.map((p, i) => {
+                const startAngle = i * sliceAngle - 90;
+                const endAngle = startAngle + sliceAngle;
+                const start = polar(50, 50, 50, startAngle);
+                const end = polar(50, 50, 50, endAngle);
+                const largeArc = sliceAngle > 180 ? 1 : 0;
+                const labelAngle = startAngle + sliceAngle / 2;
+                const label = polar(50, 50, 32, labelAngle);
+                return (
+                  <svg key={p.id} viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
+                    <path
+                      d={`M 50 50 L ${start.x} ${start.y} A 50 50 0 ${largeArc} 1 ${end.x} ${end.y} Z`}
+                      fill={palette[i % palette.length]}
+                      stroke="#92400e"
+                      strokeWidth="0.5"
+                    />
+                    <text
+                      x={label.x}
+                      y={label.y}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      transform={`rotate(${labelAngle + 90}, ${label.x}, ${label.y})`}
+                      fontSize="4"
+                      fontWeight="600"
+                      fill="#78350f"
+                    >
+                      {p.emoji || "🏅"} {p.label.slice(0, 14)}
+                    </text>
+                  </svg>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {result && (
+          <div className="mt-3 p-3 rounded-md border bg-amber-50 dark:bg-amber-950/40 text-center">
+            <div className="text-2xl">{result.prizeEmoji || "🏆"}</div>
+            <div className="text-sm font-medium mt-1">You won {result.prizeLabel}!</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">Woody will confirm and arrange.</div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { onClose(); setResult(null); setRotation(0); }}>
+            {result ? "Close" : "Cancel"}
+          </Button>
+          {!result && (
+            <Button
+              onClick={() => spin.mutate()}
+              disabled={spin.isPending || spinning || tierPrizes.length === 0}
+            >
+              {spinning ? "Spinning…" : spin.isPending ? "Starting…" : "Spin"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Polar-to-cartesian helper for the SVG slice geometry.
+function polar(cx: number, cy: number, r: number, deg: number) {
+  const rad = (deg * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
 }
 
 // ── 🏆 Hunger Games strip ────────────────────────────────────────────────────

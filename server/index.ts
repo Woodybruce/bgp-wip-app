@@ -472,6 +472,53 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS brucey_points_user_idx ON brucey_points (user_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS brucey_points_recent_idx ON brucey_points (created_at DESC)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS brucey_points_dedup_idx ON brucey_points (event_kind, event_ref) WHERE event_ref IS NOT NULL`,
+    // Brucey Bonus Wheel — monthly + quarterly winners record what they
+    // spun, the prize pool itself, and an audit of who spun what when.
+    // Prizes stay in the pool after winning (reusable). Quarterly grand
+    // prize is just a separate period_type entry — same wheel, bigger
+    // prizes if Woody seeds them with a quarterly tag.
+    `CREATE TABLE IF NOT EXISTS brucey_prizes (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      label TEXT NOT NULL,
+      description TEXT,
+      emoji TEXT,
+      tier TEXT NOT NULL DEFAULT 'monthly',
+      sort_order INTEGER DEFAULT 0,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS brucey_prizes_tier_idx ON brucey_prizes (tier, sort_order) WHERE is_active = true`,
+    `CREATE TABLE IF NOT EXISTS brucey_winners (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      period_type TEXT NOT NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      points INTEGER NOT NULL,
+      prize_id VARCHAR,
+      prize_label TEXT,
+      spun_at TIMESTAMP DEFAULT now(),
+      spun_by_user_id VARCHAR,
+      notes TEXT
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS brucey_winners_period_idx ON brucey_winners (period_type, period_start)`,
+    `CREATE INDEX IF NOT EXISTS brucey_winners_user_idx ON brucey_winners (user_id, spun_at DESC)`,
+    // Seed the default prize pool — only fires when the table is empty so
+    // edits made on the admin page survive re-deploys.
+    `INSERT INTO brucey_prizes (label, description, emoji, tier, sort_order)
+     SELECT * FROM (VALUES
+       ('Watch House lunch',   'Sandwich + coffee on the firm',                   '☕'::text, 'monthly'::text,   1),
+       ('Half-day Friday',     'Knock off at lunch on the Friday of your choosing','🌴'::text, 'monthly'::text,   2),
+       ('£50 voucher',         'Amazon / John Lewis / whoever',                   '💷'::text, 'monthly'::text,   3),
+       ('Bottle of bubbles',   'Decent fizz, your desk on Monday',                '🍾'::text, 'monthly'::text,   4),
+       ('Cinema tickets x2',   'Cineworld pair',                                  '🎬'::text, 'monthly'::text,   5),
+       ('Coffee for the team', 'Watch House run on you, on us',                   '🫖'::text, 'monthly'::text,   6),
+       ('Restaurant for two',  'Dinner for two at a Tom-and-Pete-approved spot',  '🍽️'::text, 'quarterly'::text, 1),
+       ('Spa half-day',        'Treat yourself',                                  '💆'::text, 'quarterly'::text, 2),
+       ('Theatre tickets',     'Two tickets to a West End show',                  '🎭'::text, 'quarterly'::text, 3),
+       ('£250 voucher',        'Quarterly grand prize',                           '💰'::text, 'quarterly'::text, 4)
+     ) AS s(label, description, emoji, tier, sort_order)
+     WHERE NOT EXISTS (SELECT 1 FROM brucey_prizes)`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_id TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_url TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_evernote_note_id TEXT`,

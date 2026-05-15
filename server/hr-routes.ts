@@ -4113,49 +4113,192 @@ Use the language and tone of BGP's review docs.`,
   // Weekly leaderboard (Mon→Sun by default) plus running total this scheme year.
   app.get("/api/hr/brucey-points/leaderboard", requireAuth, async (req: any, res) => {
     try {
+      const period = (req.query.period as string) || "month";
       const now = new Date();
-      const day = now.getDay();
-      const diffToMon = (day === 0 ? -6 : 1 - day);
-      const weekStart = new Date(now); weekStart.setHours(0, 0, 0, 0); weekStart.setDate(weekStart.getDate() + diffToMon);
+      let periodStart: Date, periodEnd: Date;
+      if (period === "week") {
+        const day = now.getDay();
+        const diffToMon = (day === 0 ? -6 : 1 - day);
+        periodStart = new Date(now); periodStart.setHours(0, 0, 0, 0); periodStart.setDate(periodStart.getDate() + diffToMon);
+        periodEnd = new Date(periodStart); periodEnd.setDate(periodEnd.getDate() + 7);
+      } else if (period === "quarter") {
+        const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+        periodStart = new Date(now.getFullYear(), qStartMonth, 1);
+        periodEnd = new Date(now.getFullYear(), qStartMonth + 3, 1);
+      } else if (period === "ytd") {
+        periodStart = new Date(now.getFullYear(), 0, 1);
+        periodEnd = new Date(now.getFullYear() + 1, 0, 1);
+      } else {
+        // default: month
+        periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      }
 
-      const { rows: weekly } = await pool.query(
+      const { rows: leaderboard } = await pool.query(
         `SELECT u.id AS user_id, u.name, u.profile_pic_url, sp.title,
-                SUM(bp.points)::int AS week_points,
-                COUNT(*) FILTER (WHERE bp.created_at >= $1)::int AS week_events
+                SUM(bp.points)::int AS period_points,
+                COUNT(*)::int AS period_events
          FROM users u
          JOIN staff_profiles sp ON sp.user_id = u.id
-         LEFT JOIN brucey_points bp ON bp.user_id = u.id AND bp.created_at >= $1
+         LEFT JOIN brucey_points bp ON bp.user_id = u.id AND bp.created_at >= $1 AND bp.created_at < $2
          WHERE u.is_active = true
          GROUP BY u.id, u.name, u.profile_pic_url, sp.title
          HAVING SUM(bp.points) > 0
-         ORDER BY week_points DESC NULLS LAST
-         LIMIT 10`,
-        [weekStart]
+         ORDER BY period_points DESC NULLS LAST
+         LIMIT 20`,
+        [periodStart, periodEnd]
       );
 
-      const { rows: ytd } = await pool.query(
-        `SELECT user_id, SUM(points)::int AS ytd_points
-         FROM brucey_points
-         WHERE created_at >= date_trunc('year', now())
-         GROUP BY user_id`
+      // Has this period already been spun? If yes, freeze the winner record.
+      const periodType = period === "quarter" ? "quarter" : "month";
+      const { rows: spunRows } = await pool.query(
+        `SELECT user_id, points, prize_label, spun_at FROM brucey_winners
+         WHERE period_type = $1 AND period_start = $2 LIMIT 1`,
+        [periodType, periodStart.toISOString().slice(0, 10)]
       );
-      const ytdByUser = new Map<string, number>(ytd.map((r: any) => [r.user_id, r.ytd_points]));
-
-      const leaderboard = weekly.map((r: any) => ({
-        userId: r.user_id,
-        name: r.name,
-        title: r.title,
-        profilePicUrl: r.profile_pic_url,
-        weekPoints: r.week_points,
-        weekEvents: r.week_events,
-        ytdPoints: ytdByUser.get(r.user_id) || 0,
-      }));
 
       res.json({
-        weekStart: weekStart.toISOString(),
-        leaderboard,
-        winnerUserId: leaderboard[0]?.userId || null,
+        period,
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        leaderboard: leaderboard.map((r: any) => ({
+          userId: r.user_id,
+          name: r.name,
+          title: r.title,
+          profilePicUrl: r.profile_pic_url,
+          weekPoints: r.period_points, // kept for backwards-compat with existing UI
+          periodPoints: r.period_points,
+          periodEvents: r.period_events,
+        })),
+        winnerUserId: leaderboard[0]?.user_id || null,
+        alreadySpun: spunRows[0] || null,
       });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 🎡 Brucey prize pool — admin-managed list of monthly/quarterly prizes ──
+  app.get("/api/hr/brucey-prizes", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, label, description, emoji, tier, sort_order, is_active
+         FROM brucey_prizes WHERE is_active = true ORDER BY tier, sort_order, label`
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/brucey-prizes", requireAuth, requireAdmin, async (req: any, res) => {
+    const { label, description, emoji, tier, sortOrder } = req.body || {};
+    if (!label) return res.status(400).json({ error: "label required" });
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO brucey_prizes (label, description, emoji, tier, sort_order)
+         VALUES ($1, $2, $3, COALESCE($4, 'monthly'), COALESCE($5, 0)) RETURNING *`,
+        [label, description || null, emoji || null, tier || null, sortOrder ?? null]
+      );
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/brucey-prizes/:id", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      await pool.query("UPDATE brucey_prizes SET is_active = false WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 🎡 Spin the wheel — finalise a winner for a period ──────────────────────
+  // Admin-only. Picks a random active prize for the given tier, records the
+  // winner, and (optionally) issues a Watch House award so it shows on the
+  // recognition feed. Idempotent on (period_type, period_start) — re-spinning
+  // requires deleting the existing winner row first.
+  app.post("/api/hr/brucey-winners/spin", requireAuth, requireAdmin, async (req: any, res) => {
+    const { period, userId } = req.body || {};
+    if (!period || !userId) return res.status(400).json({ error: "period and userId required" });
+    const now = new Date();
+    let periodStart: Date, periodEnd: Date, tier: string, periodType: string;
+    if (period === "quarter") {
+      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      periodStart = new Date(now.getFullYear(), qStartMonth, 1);
+      periodEnd = new Date(now.getFullYear(), qStartMonth + 3, 1);
+      tier = "quarterly";
+      periodType = "quarter";
+    } else {
+      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      tier = "monthly";
+      periodType = "month";
+    }
+    try {
+      const existing = await pool.query(
+        "SELECT id FROM brucey_winners WHERE period_type = $1 AND period_start = $2",
+        [periodType, periodStart.toISOString().slice(0, 10)]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(409).json({ error: "Already spun for this period" });
+      }
+      // Confirm the user is actually the leader (defensive).
+      const leader = await pool.query(
+        `SELECT SUM(bp.points)::int AS points FROM brucey_points bp
+         WHERE bp.user_id = $1 AND bp.created_at >= $2 AND bp.created_at < $3`,
+        [userId, periodStart, periodEnd]
+      );
+      const points = leader.rows[0]?.points || 0;
+      if (points <= 0) return res.status(400).json({ error: "User has 0 points this period" });
+
+      const prizes = await pool.query(
+        `SELECT id, label, emoji FROM brucey_prizes WHERE tier = $1 AND is_active = true ORDER BY sort_order`,
+        [tier]
+      );
+      if (prizes.rows.length === 0) return res.status(400).json({ error: "No prizes seeded for this tier" });
+      const pick = prizes.rows[Math.floor(Math.random() * prizes.rows.length)];
+
+      const actor = await getActor(req);
+      const ins = await pool.query(
+        `INSERT INTO brucey_winners (user_id, period_type, period_start, period_end, points, prize_id, prize_label, spun_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [userId, periodType, periodStart.toISOString().slice(0, 10), periodEnd.toISOString().slice(0, 10), points, pick.id, pick.label, actor.userId]
+      );
+
+      // Also drop it on the Watch House board so it shows in the recognition feed.
+      try {
+        await pool.query(
+          `INSERT INTO staff_awards (user_id, issued_by_user_id, kind, emoji, reason)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [userId, actor.userId, `brucey_${periodType}`, pick.emoji || "🏆",
+           `Brucey Bonus ${periodType === "quarter" ? "Quarterly" : "Monthly"} winner — ${pick.label} (${points} pts)`]
+        );
+      } catch { /* don't fail the spin if the award log breaks */ }
+
+      // Return prize + index in the original ordered list so the wheel can land
+      // visually on the right slice.
+      const allPrizes = prizes.rows;
+      const prizeIndex = allPrizes.findIndex((p: any) => p.id === pick.id);
+      res.json({ ...ins.rows[0], prizes: allPrizes, prizeIndex });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/hr/brucey-winners", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT w.id, w.user_id, u.name AS user_name, u.profile_pic_url AS user_pic,
+                w.period_type, w.period_start, w.period_end, w.points,
+                w.prize_label, w.spun_at
+         FROM brucey_winners w
+         LEFT JOIN users u ON u.id = w.user_id
+         ORDER BY w.period_start DESC LIMIT 40`
+      );
+      res.json(rows);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
