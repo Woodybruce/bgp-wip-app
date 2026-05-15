@@ -1694,8 +1694,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <div className="border-t border-border/40 mt-3 pt-2 order-5">
                 <div className="flex items-center gap-1.5 mb-2">
                   <Store className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">UK stores</span>
-                  <span className="text-[10px] text-muted-foreground">({stores.length})</span>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">UK stores ({stores.length})</span>
                   <button
                     onClick={() => researchStoresMutation.mutate()}
                     disabled={researchStoresMutation.isPending}
@@ -1820,11 +1819,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               const meetings = recent.filter((it: any) => it.type === "meeting");
               const isEmpty = recent.length === 0;
               const renderRow = (it: any, accent: string) => {
-                const canOpen = !!(it.microsoft_id && it.bgp_user);
+                // crm_interactions.microsoft_id is stored prefixed with
+                // 'email_' / 'cal_' (server/interactions.ts:158,251). Graph
+                // expects the raw ID, so strip the prefix before opening.
+                const rawId: string | null = it.microsoft_id
+                  ? String(it.microsoft_id).replace(/^(email_|cal_)/, "")
+                  : null;
+                const canOpen = !!(rawId && it.bgp_user);
                 const onClick = () => {
-                  if (!canOpen) return;
-                  if (it.type === "meeting") setOpenMeeting({ eventId: it.microsoft_id, mailboxEmail: it.bgp_user });
-                  else setOpenEmail({ msgId: it.microsoft_id, mailboxEmail: it.bgp_user });
+                  if (!canOpen || !rawId) return;
+                  if (it.type === "meeting") setOpenMeeting({ eventId: rawId, mailboxEmail: it.bgp_user });
+                  else setOpenEmail({ msgId: rawId, mailboxEmail: it.bgp_user });
                 };
                 return (
                   <div
