@@ -3,6 +3,7 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps, newsTags } from "@shared/schema";
 import { DEFAULT_NEWS_TAGS } from "@shared/news-tags";
+import { authHeadersForUrl, authCookieStatus } from "./auth-cookies";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
 import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, type SocialPlatform } from "./news-brand-linking";
@@ -207,6 +208,7 @@ async function fetchOgImage(url: string): Promise<string | null> {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; BGPNewsBot/1.0)",
         "Accept": "text/html",
+        ...authHeadersForUrl(url),
       },
       redirect: "follow",
     });
@@ -256,6 +258,7 @@ async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; BGPNewsBot/1.0)",
         "Accept": "text/html",
+        ...authHeadersForUrl(googleUrl),
       },
       redirect: "follow",
     });
@@ -959,6 +962,13 @@ export async function searchGreenStreet(query: string, limit: number = 10): Prom
 
 export function setupNewsFeedRoutes(app: Express) {
   seedNewsSources().catch(console.error);
+
+  // Diagnostic — which paywalled-publication auth cookies are configured.
+  // Returns { label, envVar, configured } per publication; never leaks the
+  // cookie value itself.
+  app.get("/api/news-feed/auth-cookies/health", requireAuth, async (_req: Request, res: Response) => {
+    res.json({ status: authCookieStatus() });
+  });
 
   // ─── Tag vocabulary CRUD ─────────────────────────────────────────────────
   // requireAuth only — any logged-in user can edit, not admin-gated.
