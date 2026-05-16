@@ -121,11 +121,11 @@ function scoreBand(score: number): { label: string; color: string } {
 
 function BrandLogo({ name, domain, size = 28 }: { name: string; domain?: string | null; size?: number }) {
   const [failCount, setFailCount] = useState(0);
-  const d = extractDomain(domain ?? null);
+  // Only source: /api/brand-logo/... — server redirects to logo.dev when no
+  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
   const sources: string[] = [];
   const local = localBrandLogoUrl(name, domain);
   if (local) sources.push(local);
-  if (d) sources.push(`https://logo.clearbit.com/${d}?size=${size * 2}`);
   if (failCount < sources.length) {
     return (
       <img

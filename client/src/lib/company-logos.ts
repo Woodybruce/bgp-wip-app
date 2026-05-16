@@ -557,13 +557,16 @@ export function localBrandLogoUrl(name: string | null | undefined, domain?: stri
 export function getCompanyLogoUrl(
   domain: string | null | undefined,
   name: string | null | undefined,
-  size: number = 40
+  _size: number = 40
 ): string | null {
+  // Always return the /api/brand-logo/... URL — the server now redirects to
+  // logo.dev (or Google favicons) when there's no local image, so this single
+  // endpoint is the one and only logo source. Clearbit's DNS is dead.
   const local = localBrandLogoUrl(name, domain);
   if (local) return local;
-  const d = extractDomain(domain);
-  if (d) return `https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`;
-  const guessed = guessDomain(name);
-  if (guessed) return `https://logo.clearbit.com/${guessed}?size=${Math.min(size * 3, 512)}`;
+  const d = extractDomain(domain) ?? guessDomain(name);
+  if (d && (name || "").trim()) {
+    return `/api/brand-logo/${encodeURIComponent((name || "").trim())}?domain=${encodeURIComponent(d)}`;
+  }
   return null;
 }

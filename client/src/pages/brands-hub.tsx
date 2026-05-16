@@ -98,15 +98,12 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
   const d = extractDomain(domain ?? null);
   const guessed = guessDomain(name);
 
+  // Only source: /api/brand-logo/...  — the server redirects to logo.dev
+  // (or Google favicons) when there's no local image. Clearbit was killed by
+  // HubSpot March 2025 and the domain literally doesn't resolve any more.
   const sources: string[] = [];
-  const local = localBrandLogoUrl(name, domain);
+  const local = localBrandLogoUrl(name, domain ?? guessed ?? null);
   if (local) sources.push(local);
-  if (d) {
-    sources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
-  }
-  if (guessed && guessed !== d) {
-    sources.push(`https://logo.clearbit.com/${guessed}?size=${Math.min(size * 3, 512)}`);
-  }
 
   if (failCount < sources.length) {
     return (

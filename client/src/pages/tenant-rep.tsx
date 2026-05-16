@@ -132,14 +132,15 @@ function formatDate(dateStr: string | null): string {
 }
 
 function getBrandLogoUrl(domain: string | null, clientName?: string | null): string | null {
-  // Prefer local Image Studio library when we have a client/brand name (avoids
-  // depending on Clearbit, which HubSpot is shutting down end of 2025).
-  if (clientName && clientName.trim()) {
-    return `/api/brand-logo/${encodeURIComponent(clientName.trim())}`;
+  // Single source: /api/brand-logo/... — server redirects to logo.dev when no
+  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
+  const cleanDomain = domain ? domain.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] : "";
+  const name = (clientName || "").trim();
+  if (name) {
+    const qs = cleanDomain ? `?domain=${encodeURIComponent(cleanDomain)}` : "";
+    return `/api/brand-logo/${encodeURIComponent(name)}${qs}`;
   }
-  if (!domain) return null;
-  const clean = domain.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
-  return `https://logo.clearbit.com/${clean}`;
+  return null;
 }
 
 // ─── Empty form ───────────────────────────────────────────────────────────────

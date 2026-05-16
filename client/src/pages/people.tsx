@@ -50,16 +50,11 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const d = extractDomain(domain || null);
   const guessed = guessDomain(company.name);
 
-  // Build ordered list of logo URLs to try — local Image Studio first, Clearbit fallback.
+  // Only source: /api/brand-logo/... — server redirects to logo.dev when no
+  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
   const logoSources: string[] = [];
-  const local = localBrandLogoUrl(company.name, domain);
+  const local = localBrandLogoUrl(company.name, domain ?? guessed ?? null);
   if (local) logoSources.push(local);
-  if (d) {
-    logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(px * 3, 512)}`);
-  }
-  if (guessed && guessed !== d) {
-    logoSources.push(`https://logo.clearbit.com/${guessed}?size=${Math.min(px * 3, 512)}`);
-  }
 
   if (failCount >= logoSources.length) {
     const initials = (company.name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);

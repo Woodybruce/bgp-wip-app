@@ -159,15 +159,11 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
   const d = extractDomainForLogo(domain);
   const guessedDomain = guessDomain(name);
 
+  // Only source: /api/brand-logo/... — server redirects to logo.dev when no
+  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
   const logoSources: string[] = [];
-  const local = localBrandLogoUrl(name, domain);
+  const local = localBrandLogoUrl(name, domain ?? guessedDomain ?? null);
   if (local) logoSources.push(local);
-  if (d) {
-    logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
-  }
-  if (guessedDomain && guessedDomain !== d) {
-    logoSources.push(`https://logo.clearbit.com/${guessedDomain}?size=${Math.min(size * 3, 512)}`);
-  }
 
   if (failCount >= logoSources.length) {
     const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);

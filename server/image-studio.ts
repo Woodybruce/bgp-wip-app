@@ -1211,6 +1211,18 @@ export function registerImageStudioRoutes(app: Express) {
 
       const row = rows[0];
       if (!row) {
+        // No local hit. If we have a domain, redirect to a live logo source so
+        // the <img> renders something instead of 404'ing. Clearbit's logo API
+        // was killed by HubSpot March 2025 and the domain no longer resolves;
+        // logo.dev is the new default, with Google favicons as last resort.
+        if (domain) {
+          const token = process.env.LOGO_DEV_TOKEN;
+          const target = token
+            ? `https://img.logo.dev/${encodeURIComponent(domain)}?token=${token}&size=256&format=png`
+            : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+          res.setHeader("Cache-Control", "public, max-age=3600");
+          return res.redirect(302, target);
+        }
         res.setHeader("Cache-Control", "public, max-age=86400");
         return res.status(404).json({ error: "no logo" });
       }
