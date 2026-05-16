@@ -1366,6 +1366,32 @@ function isFoodBrand(companyType: string | null, industry: string | null): boole
   return /(restaurant|cafe|café|food|f\s*&\s*b|fnb|bakery|coffee|qsr|fast.?food|dining|kitchen|pub|bar|brewery|hospitality|takeaway|dessert|ice.?cream|juice|smoothie|sandwich|pizza|burger|chicken|sushi|noodle|ramen)/.test(blob);
 }
 
+// For each menu/best-seller item that came back without a Perplexity-provided
+// image, run a Google CSE image search and pick the first result. Mutates the
+// items array in place. Silently noops if CSE env vars aren't set.
+async function enrichMenuItemImagesWithCse(
+  brandName: string,
+  items: Array<{ name: string; image?: string | null }>,
+): Promise<void> {
+  const key = process.env.GOOGLE_CSE_KEY || process.env.GOOGLE_API_KEY;
+  const cx = process.env.GOOGLE_CSE_ID;
+  if (!key || !cx) return;
+  for (const it of items) {
+    if (it.image && /^https?:\/\//i.test(it.image)) continue;
+    try {
+      const q = `${brandName} ${it.name}`;
+      const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&searchType=image&num=3&safe=active&imgSize=medium`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) continue;
+      const d: any = await r.json();
+      const first = (d?.items || []).find((row: any) => row?.link && /^https?:\/\//i.test(row.link));
+      if (first?.link) it.image = first.link;
+    } catch {
+      // CSE failure is non-fatal — leave image null, the UI will hide it.
+    }
+  }
+}
+
 router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req: Request, res: Response) => {
   try {
     const { companyId } = req.params;
@@ -1384,8 +1410,8 @@ router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req:
     const isFood = isFoodBrand(c.company_type, c.industry);
     const kind: "menu" | "bestsellers" = isFood ? "menu" : "bestsellers";
     const prompt = isFood
-      ? `List 8 to 12 of the most popular / signature menu items at ${c.name} (UK), with a one-line description and approximate price in GBP. Respond as JSON only: {"items":[{"name":"...","description":"...","price":"£X"}],"source_url":"..."} — no prose, no markdown fences.`
-      : `List 8 to 12 of the best-selling or signature products at ${c.name} (UK), with a one-line description and approximate price in GBP. Respond as JSON only: {"items":[{"name":"...","description":"...","price":"£X","category":"..."}],"source_url":"..."} — no prose, no markdown fences.`;
+      ? `List 8 to 12 of the most popular / signature menu items at ${c.name} (UK), with a one-line description, approximate price in GBP, and a direct image URL if one is available on the brand's own website (skip stock photos / supermarket sites). Respond as JSON only: {"items":[{"name":"...","description":"...","price":"£X","image":"https://..."}],"source_url":"..."} — no prose, no markdown fences. Use null for image if you can't find a brand-hosted photo.`
+      : `List 8 to 12 of the best-selling or signature products at ${c.name} (UK), with a one-line description, approximate price in GBP, category, and a direct image URL from the brand's own website if available. Respond as JSON only: {"items":[{"name":"...","description":"...","price":"£X","category":"...","image":"https://..."}],"source_url":"..."} — no prose, no markdown fences. Use null for image if you can't find a brand-hosted photo.`;
 
     const out = await askPerplexity(prompt, {
       systemPrompt: "You are a UK retail / hospitality analyst. Reply with valid JSON only — no markdown code fences, no commentary.",
@@ -1409,6 +1435,13 @@ router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req:
     if (items.length === 0) {
       return res.status(502).json({ error: "Couldn't parse menu items from Perplexity response" });
     }
+
+    // Fill any missing per-item image via Google Custom Search (image mode).
+    // Perplexity often won't return image URLs reliably, so we run a CSE call
+    // per item that came back without one. Skipped silently if CSE isn't
+    // configured. ~10 calls per brand refresh = within the 100/day free tier
+    // for a single refresh; bulk refreshes will burn through fast.
+    await enrichMenuItemImagesWithCse(c.name, items);
 
     const payload = {
       type: kind,

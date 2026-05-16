@@ -69,7 +69,7 @@ interface BrandProfile {
     ai_competitors_at: string | null;
     menu_intel: {
       type: "menu" | "bestsellers";
-      items: Array<{ name: string; description?: string; price?: string; category?: string }>;
+      items: Array<{ name: string; description?: string; price?: string; category?: string; image?: string | null }>;
       source_url?: string | null;
       citations?: Array<{ url: string; title?: string }>;
     } | null;
@@ -2941,8 +2941,17 @@ function MenuIntelCard({
                   <span className="font-medium text-foreground flex-1 truncate">{it.name}</span>
                   {it.price && <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">{it.price}</span>}
                 </div>
+                {it.image && (
+                  <img
+                    src={it.image}
+                    alt={it.name}
+                    loading="lazy"
+                    className="mt-1 w-full max-h-24 object-cover rounded border border-border/40"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                )}
                 {it.description && (
-                  <div className="text-[11px] text-muted-foreground leading-snug">{it.description}</div>
+                  <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">{it.description}</div>
                 )}
                 {it.category && !it.description && (
                   <div className="text-[10px] text-muted-foreground italic">{it.category}</div>
