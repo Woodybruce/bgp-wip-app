@@ -287,13 +287,17 @@ async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
 }
 
 async function backfillMissingImages(): Promise<number> {
+  return backfillMissingImagesUpTo(200);
+}
+
+async function backfillMissingImagesUpTo(limit: number): Promise<number> {
   // Pull articles where either the thumbnail is missing OR the URL is still a
   // raw Google News wrapper (so we can unwrap + thumb in one pass).
   const missing = await db.select({ id: newsArticles.id, url: newsArticles.url })
     .from(newsArticles)
     .where(sql`${newsArticles.imageUrl} IS NULL OR ${newsArticles.url} ILIKE 'https://news.google.com/%' OR ${newsArticles.url} ILIKE 'https://www.google.com/%'`)
     .orderBy(desc(newsArticles.publishedAt))
-    .limit(200);
+    .limit(limit);
 
   if (missing.length === 0) return 0;
   let updated = 0;
@@ -1210,6 +1214,38 @@ export function setupNewsFeedRoutes(app: Express) {
       console.error("News fetch error:", err);
       res.status(500).json({ message: "Failed to fetch news" });
     }
+  });
+
+  // Diagnostic: how many articles currently have a thumbnail vs none?
+  app.get("/api/news-feed/image-stats", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const total = await db.execute(sql`SELECT COUNT(*)::int AS n FROM news_articles`);
+      const withImg = await db.execute(sql`SELECT COUNT(*)::int AS n FROM news_articles WHERE image_url IS NOT NULL AND image_url <> ''`);
+      const stillGoogle = await db.execute(sql`SELECT COUNT(*)::int AS n FROM news_articles WHERE url ILIKE 'https://news.google.com/%' OR url ILIKE 'https://www.google.com/%'`);
+      res.json({
+        total: (total.rows[0] as any).n,
+        with_image: (withImg.rows[0] as any).n,
+        without_image: (total.rows[0] as any).n - (withImg.rows[0] as any).n,
+        still_wrapped_google_news: (stillGoogle.rows[0] as any).n,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Bulk backfill — runs unrestricted (the regular fetch caps at 200 per call).
+  // Async/fire-and-forget so the request doesn't time out on Railway's proxy.
+  app.post("/api/news-feed/backfill-images", requireAuth, async (req: Request, res: Response) => {
+    const limit = Math.min(parseInt(String(req.body?.limit || req.query.limit || 2000), 10) || 2000, 10000);
+    (async () => {
+      try {
+        const updated = await backfillMissingImagesUpTo(limit);
+        console.log(`[news] Bulk backfill done: ${updated} images updated (limit ${limit})`);
+      } catch (e: any) {
+        console.error("[news] Bulk backfill failed:", e?.message || e);
+      }
+    })();
+    res.json({ started: true, limit });
   });
 
   app.get("/api/news-feed/articles", requireAuth, async (req: Request, res: Response) => {
