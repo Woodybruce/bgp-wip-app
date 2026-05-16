@@ -1375,21 +1375,33 @@ async function enrichMenuItemImagesWithCse(
 ): Promise<void> {
   const key = process.env.GOOGLE_CSE_KEY || process.env.GOOGLE_API_KEY;
   const cx = process.env.GOOGLE_CSE_ID;
-  if (!key || !cx) return;
+  if (!key || !cx) {
+    console.warn(`[menu-intel ${brandName}] CSE skipped — env vars missing (cx=${!!cx} key=${!!key})`);
+    return;
+  }
+  let attempted = 0, filled = 0, errors = 0;
   for (const it of items) {
     if (it.image && /^https?:\/\//i.test(it.image)) continue;
+    attempted++;
     try {
       const q = `${brandName} ${it.name}`;
       const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&searchType=image&num=3&safe=active&imgSize=medium`;
       const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (!r.ok) continue;
+      if (!r.ok) {
+        errors++;
+        const errBody = await r.text().catch(() => "");
+        console.warn(`[menu-intel ${brandName}] CSE ${r.status} for "${it.name}": ${errBody.slice(0, 200)}`);
+        continue;
+      }
       const d: any = await r.json();
       const first = (d?.items || []).find((row: any) => row?.link && /^https?:\/\//i.test(row.link));
-      if (first?.link) it.image = first.link;
-    } catch {
-      // CSE failure is non-fatal — leave image null, the UI will hide it.
+      if (first?.link) { it.image = first.link; filled++; }
+    } catch (err: any) {
+      errors++;
+      console.warn(`[menu-intel ${brandName}] CSE exception for "${it.name}": ${err?.message || err}`);
     }
   }
+  console.log(`[menu-intel ${brandName}] CSE: ${filled}/${attempted} filled, ${errors} errors (${items.length} items total)`);
 }
 
 router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req: Request, res: Response) => {
