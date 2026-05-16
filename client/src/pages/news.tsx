@@ -473,6 +473,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (
@@ -618,6 +627,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (
