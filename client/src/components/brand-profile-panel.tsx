@@ -583,9 +583,38 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [storesDiagnostic, setStoresDiagnostic] = useState<string | null>(null);
   const [storesScope, setStoresScope] = useState<"uk" | "global">("uk");
   const researchStoresMutation = useMutation({
+    // Kicks off the background research and polls /status until the job
+    // finishes. For big brands (H&M has hundreds of UK locations) this
+    // can run 1-3 minutes — past Railway's 60s edge timeout.
     mutationFn: async (scope: "uk" | "global" = "uk") => {
       const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope });
-      return res.json();
+      if (!res.ok && res.status !== 202) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const started = Date.now();
+      const MAX_WAIT = 5 * 60_000;
+      const POLL_INTERVAL = 5000;
+      return await new Promise<any>((resolve, reject) => {
+        const poll = async () => {
+          if (Date.now() - started > MAX_WAIT) {
+            return reject(new Error("Store research is taking longer than 5 minutes — try again in a moment"));
+          }
+          try {
+            const s = await fetch(`/api/brand/${companyId}/research-stores/status?scope=${scope}`, {
+              headers: getAuthHeaders(),
+              credentials: "include",
+            });
+            if (s.ok) {
+              const st = await s.json();
+              if (st.state === "done") return resolve(st.result || {});
+              if (st.state === "error") return reject(new Error(st.error || "Store research failed"));
+            }
+          } catch {}
+          setTimeout(poll, POLL_INTERVAL);
+        };
+        setTimeout(poll, POLL_INTERVAL);
+      });
     },
     onSuccess: (out: any) => {
       const summary = Array.isArray(out?.diagnostics)
@@ -3810,21 +3839,49 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               <button
                 type="button"
                 onClick={async () => {
+                  // Fire-and-poll: kicks off background image refresh,
+                  // then polls /status every 5s until done. Avoids
+                  // Railway's 60s edge timeout on image-heavy brands.
                   try {
                     const r = await fetch(`/api/brand/${companyId}/refresh-images`, {
                       method: "POST",
                       headers: { ...getAuthHeaders() },
                     });
-                    const result = await r.json();
-                    if (r.ok) {
-                      toast({
-                        title: result.imported > 0 ? `Imported ${result.imported} new images` : "No new images found",
-                        description: result.skipped || (result.imported > 0 ? Object.entries(result.bySource || {}).map(([s, n]) => `${n} from ${s}`).join(", ") : "Sources: press kit, Wikipedia, homepage, Google search"),
-                      });
-                      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-                    } else {
-                      toast({ title: "Refresh failed", description: result.error, variant: "destructive" });
+                    if (!r.ok && r.status !== 202) {
+                      const result = await r.json().catch(() => ({}));
+                      toast({ title: "Refresh failed", description: result.error || `HTTP ${r.status}`, variant: "destructive" });
+                      return;
                     }
+                    toast({ title: "Searching for images…", description: "This can take 30-90 seconds. We'll update the panel when it's done." });
+                    const started = Date.now();
+                    const MAX_WAIT = 5 * 60_000;
+                    const poll = async () => {
+                      if (Date.now() - started > MAX_WAIT) return;
+                      try {
+                        const s = await fetch(`/api/brand/${companyId}/refresh-images/status`, {
+                          headers: getAuthHeaders(),
+                          credentials: "include",
+                        });
+                        if (s.ok) {
+                          const st = await s.json();
+                          if (st.state === "done") {
+                            const result = st.result || {};
+                            toast({
+                              title: result.imported > 0 ? `Imported ${result.imported} new images` : "No new images found",
+                              description: result.skipped || (result.imported > 0 ? Object.entries(result.bySource || {}).map(([s, n]) => `${n} from ${s}`).join(", ") : "Sources: press kit, Wikipedia, homepage, Google search"),
+                            });
+                            queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                            return;
+                          }
+                          if (st.state === "error") {
+                            toast({ title: "Refresh failed", description: st.error, variant: "destructive" });
+                            return;
+                          }
+                        }
+                      } catch {}
+                      setTimeout(poll, 5000);
+                    };
+                    setTimeout(poll, 5000);
                   } catch (e: any) {
                     toast({ title: "Refresh failed", description: e?.message, variant: "destructive" });
                   }

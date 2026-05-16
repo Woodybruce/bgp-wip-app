@@ -1306,17 +1306,29 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
   }
 });
 
+// Brand store research kicks off in the background so a long Google
+// Places + scrape sweep (e.g. H&M with hundreds of stores) doesn't hit
+// Railway's edge proxy timeout. Client polls /status until done.
 router.post("/api/brand/:companyId/research-stores", requireAuth, async (req: Request, res: Response) => {
-  try {
-    const companyId = String(req.params.companyId);
-    const scope = req.body?.scope === "global" || req.query?.scope === "global" ? "global" : "uk";
+  const { startJob, getJobStatus } = await import("./brand-jobs");
+  const companyId = String(req.params.companyId);
+  const scope = req.body?.scope === "global" || req.query?.scope === "global" ? "global" : "uk";
+  const key = `research-stores:${companyId}:${scope}`;
+  const { alreadyRunning } = startJob(key, async () => {
     const out = await researchBrandStores(companyId, { scope });
-    res.json({ ...out, scope, company: { id: companyId, name: out.companyName } });
-  } catch (err: any) {
-    console.error("[research-stores]", err.message);
-    const status = err.message === "Company not found" ? 404 : err.message.includes("GOOGLE_API_KEY") ? 400 : 500;
-    res.status(status).json({ error: err.message });
-  }
+    return { ...out, scope, company: { id: companyId, name: out.companyName } };
+  });
+  const status = getJobStatus(key);
+  res.status(202).json({ accepted: true, inFlight: true, alreadyRunning, jobKey: key, startedAt: status?.startedAt });
+});
+
+router.get("/api/brand/:companyId/research-stores/status", requireAuth, async (req: Request, res: Response) => {
+  const { getJobStatus } = await import("./brand-jobs");
+  const scope = req.query?.scope === "global" ? "global" : "uk";
+  const key = `research-stores:${req.params.companyId}:${scope}`;
+  const status = getJobStatus(key);
+  if (!status) return res.json({ state: "idle" });
+  res.json(status);
 });
 
 // ─── Brand stores: manual add/update/delete ──────────────────────────────

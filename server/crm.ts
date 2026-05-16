@@ -2067,7 +2067,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.get("/api/crm/companies/:id/sub-companies", async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, name, company_type, kyc_status, aml_risk, companies_house_number, domain_url, domain
+        `SELECT id, name, company_type, kyc_status, aml_risk_level, companies_house_number, domain_url, domain
          FROM crm_companies WHERE parent_company_id = $1 ORDER BY name`,
         [req.params.id]
       );

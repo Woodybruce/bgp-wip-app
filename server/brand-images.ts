@@ -357,14 +357,23 @@ export async function refreshBrandImages(companyId: string): Promise<{
 
 // ─── Routes ───────────────────────────────────────────────────────────────
 
+// Image refresh hits Google Images + downloads each file — can run
+// 60s+ on brands with rich galleries. Backgrounded so Railway's edge
+// proxy doesn't 504 the client. Client polls /status until done.
 router.post("/api/brand/:companyId/refresh-images", requireAuth, async (req: Request, res: Response) => {
-  try {
-    const result = await refreshBrandImages(String(req.params.companyId));
-    res.json(result);
-  } catch (e: any) {
-    console.error("[refresh-brand-images]", e?.message);
-    res.status(500).json({ error: e?.message || "failed" });
-  }
+  const { startJob, getJobStatus } = await import("./brand-jobs");
+  const companyId = String(req.params.companyId);
+  const key = `refresh-images:${companyId}`;
+  const { alreadyRunning } = startJob(key, () => refreshBrandImages(companyId));
+  const status = getJobStatus(key);
+  res.status(202).json({ accepted: true, inFlight: true, alreadyRunning, jobKey: key, startedAt: status?.startedAt });
+});
+
+router.get("/api/brand/:companyId/refresh-images/status", requireAuth, async (req: Request, res: Response) => {
+  const { getJobStatus } = await import("./brand-jobs");
+  const status = getJobStatus(`refresh-images:${req.params.companyId}`);
+  if (!status) return res.json({ state: "idle" });
+  res.json(status);
 });
 
 export default router;
