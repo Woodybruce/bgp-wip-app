@@ -250,7 +250,7 @@ export function InteractionsBoard({ scope, contextId }: Props) {
               {typeFilter === "meeting" ? "No meetings logged. Sync may still be running." : "No interactions in the last 2 years."}
             </p>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-1 max-h-[480px] overflow-y-auto pr-1">
               {filtered.slice(0, 30).map(row => {
                 const canOpen = !!(row.microsoftId && row.bgpUser);
                 const isMeeting = row.type === "meeting";
@@ -261,10 +261,12 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                     className={`rounded-md border border-transparent ${canOpen ? "hover:bg-muted/50 hover:border-border cursor-pointer" : ""} px-2 py-1.5 transition-colors`}
                     title={canOpen ? "Click to view" : ""}
                   >
-                    {/* Line 1: type + BGP contact + relative date */}
+                    {/* Line 1: type + BGP contact + relative date.
+                        BGP user name is bumped to match the subject heading
+                        size and coloured so it pops out of the row. */}
                     <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                       {isMeeting ? <Calendar className="w-3 h-3 text-purple-600 shrink-0" /> : <Mail className="w-3 h-3 text-blue-600 shrink-0" />}
-                      <span className="font-medium text-foreground">{bgpUserDisplay(row.bgpUser, emailToName)}</span>
+                      <span className="text-sm font-semibold text-blue-700 dark:text-blue-300">{bgpUserDisplay(row.bgpUser, emailToName)}</span>
                       <span>· {relDate(row.interactionDate)}</span>
                       {row.direction && <span className="opacity-70">· {row.direction}</span>}
                       {canOpen && <ExternalLink className="w-2.5 h-2.5 ml-auto opacity-0 group-hover:opacity-60" />}
@@ -281,7 +283,7 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                 );
               })}
               {filtered.length > 30 && (
-                <p className="text-[10px] text-muted-foreground italic px-2">+ {filtered.length - 30} more</p>
+                <p className="text-[10px] text-muted-foreground italic px-2 sticky bottom-0 bg-card">+ {filtered.length - 30} more</p>
               )}
             </div>
           )}

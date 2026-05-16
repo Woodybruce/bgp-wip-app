@@ -22,7 +22,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper, Heart, MessageCircle,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Loader2,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
@@ -1347,37 +1347,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
             <div className="mt-2 order-2 space-y-3">
               <BgpTakeStrip companyId={companyId} tab="brand" />
-              {(() => {
-                const topics: { label: string; question: string }[] = [
-                  { label: "Overview", question: `Tell me everything BGP needs to know about ${c.name} before a first call` },
-                  { label: "Covenant", question: `What's ${c.name}'s covenant risk? How should we position this to a landlord?` },
-                  { label: "Signals", question: `What are the key signals about ${c.name} right now and what should BGP do?` },
-                  { label: "Contacts", question: `Who should BGP contact at ${c.name} and what's the best approach?` },
-                  { label: "Expansion", question: `What space would ${c.name} want and what BGP properties could work?` },
-                  { label: "Financials", question: `Walk me through ${c.name}'s UK financials and what they mean for rent affordability` },
-                  { label: "Pitch", question: `Should BGP be pitching ${c.name} new space — if so, where and why?` },
-                  { label: "Email", question: `Draft a brief introductory pitch email from BGP to ${c.name}` },
-                ];
-                return (
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-purple-500" /> Ask ChatBGP
-                    </div>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {topics.map(t => (
-                        <button
-                          key={t.label}
-                          onClick={() => { setChatInput(t.question); window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt: t.question } })); }}
-                          title={t.question}
-                          className="text-xs px-2.5 py-1 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1 leading-tight font-medium"
-                        >
-                          <Sparkles className="w-3 h-3 shrink-0" />{t.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
+              <AskChatBGPInline brandName={c.name} />
             </div>
 
 
@@ -2569,6 +2539,19 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     onError: (e: any) => toast({ title: "Competitor research error", description: e.message, variant: "destructive" }),
   });
 
+  // Auto-trigger research the first time we land on a brand that has no
+  // competitor set yet — saves the user a click and means the panel is
+  // populated by the time they scroll to it.
+  const autoTriggered = useRef(false);
+  useEffect(() => {
+    if (autoTriggered.current) return;
+    if (competitors.length > 0 || generatedAt) return;
+    if (research.isPending) return;
+    autoTriggered.current = true;
+    research.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, competitors.length, generatedAt]);
+
   // Lookup by name: returns the CRM row (with id + domain) if we already
   // track this competitor, else undefined. Used to wire the "View in CRM"
   // + "Visit website" links in the expanded panel.
@@ -2671,7 +2654,13 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                     </a>
                   )}
                   {!crmRow && (
-                    <span className="text-[10px] text-muted-foreground italic ml-1">Not in BGP CRM yet</span>
+                    <CreateCompetitorInCrmButton
+                      name={comp.name}
+                      onCreated={() => {
+                        queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+                      }}
+                    />
                   )}
                 </div>
               </div>
@@ -2680,6 +2669,208 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
         </div>
       )}
     </div>
+  );
+}
+
+// Inline ChatBGP question runner — click a pill, the answer streams in
+// right underneath. Click X to collapse, or "Open in chat" to continue
+// the conversation in the main panel. Avoids context-switch to the full
+// chat for one-shot questions.
+function AskChatBGPInline({ brandName }: { brandName: string }) {
+  const topics: { label: string; question: string }[] = [
+    { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} before a first call` },
+    { label: "Covenant", question: `What's ${brandName}'s covenant risk? How should we position this to a landlord?` },
+    { label: "Signals", question: `What are the key signals about ${brandName} right now and what should BGP do?` },
+    { label: "Contacts", question: `Who should BGP contact at ${brandName} and what's the best approach?` },
+    { label: "Expansion", question: `What space would ${brandName} want and what BGP properties could work?` },
+    { label: "Financials", question: `Walk me through ${brandName}'s UK financials and what they mean for rent affordability` },
+    { label: "Pitch", question: `Should BGP be pitching ${brandName} new space — if so, where and why?` },
+    { label: "Email", question: `Draft a brief introductory pitch email from BGP to ${brandName}` },
+  ];
+  const [active, setActive] = useState<string | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const ask = async (label: string, question: string) => {
+    if (active === label) {
+      // Re-clicking the active pill collapses it.
+      abortRef.current?.abort();
+      setActive(null);
+      setAnswer("");
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setActive(label);
+    setAnswer("");
+    setError(null);
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("bgp_auth_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/api/chatbgp/chat", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ messages: [{ role: "user", content: question }] }),
+        credentials: "include",
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let lastReply = "";
+      let streamed = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const p = JSON.parse(line.slice(6));
+            if (p.delta) { streamed += p.delta; setAnswer(streamed); }
+            if (p.reply) lastReply = p.reply;
+          } catch {}
+        }
+      }
+      if (lastReply) setAnswer(lastReply);
+      else if (!streamed) setError("No response from ChatBGP");
+    } catch (err: any) {
+      if (err?.name !== "AbortError") setError(err?.message || "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openInFullChat = (question: string) => {
+    window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt: question } }));
+  };
+
+  const activeTopic = topics.find(t => t.label === active);
+
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5 flex items-center gap-1">
+        <Sparkles className="w-3 h-3 text-purple-500" /> Ask ChatBGP
+      </div>
+      <div className="flex gap-1.5 flex-wrap">
+        {topics.map(t => {
+          const isActive = active === t.label;
+          return (
+            <button
+              key={t.label}
+              onClick={() => ask(t.label, t.question)}
+              title={t.question}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 leading-tight font-medium ${
+                isActive
+                  ? "bg-purple-100 text-purple-800 border-purple-400 dark:bg-purple-900 dark:text-purple-100 dark:border-purple-600"
+                  : "border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950"
+              }`}
+            >
+              <Sparkles className="w-3 h-3 shrink-0" />{t.label}
+            </button>
+          );
+        })}
+      </div>
+      {active && activeTopic && (
+        <div className="mt-2 p-3 rounded-md border bg-purple-50/40 dark:bg-purple-950/20 border-purple-200 dark:border-purple-800 text-xs space-y-2">
+          <div className="flex items-start gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-purple-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] uppercase tracking-wider text-purple-700 dark:text-purple-300 font-semibold">{activeTopic.label}</div>
+              <div className="text-muted-foreground italic leading-snug">{activeTopic.question}</div>
+            </div>
+            <button
+              onClick={() => { abortRef.current?.abort(); setActive(null); setAnswer(""); setError(null); }}
+              className="text-muted-foreground hover:text-foreground"
+              title="Close"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="border-t border-purple-200/60 dark:border-purple-800/60 pt-2">
+            {loading && !answer && (
+              <p className="text-muted-foreground italic flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />Asking ChatBGP…
+              </p>
+            )}
+            {error && <p className="text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" />{error}</p>}
+            {answer && (
+              <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90 max-h-[420px] overflow-y-auto pr-1">
+                {answer}
+              </div>
+            )}
+          </div>
+          {(answer || error) && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => openInFullChat(activeTopic.question)}
+                className="text-[10px] text-purple-600 dark:text-purple-300 hover:underline"
+              >
+                Open in full chat →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Creates a stub CRM company row for an AI-discovered competitor that
+// isn't yet tracked, so it shows up in lists, can be linked from
+// competitor chips, and starts the same enrichment pipeline every brand
+// gets. Sets company_type='Tenant - Brand' as a sensible default.
+function CreateCompetitorInCrmButton({ name, onCreated }: { name: string; onCreated: () => void }) {
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const create = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name,
+        companyType: "Tenant - Brand",
+        isTrackedBrand: false,
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "Couldn't create CRM record");
+      return out as { id: string; name: string };
+    },
+    onSuccess: (out) => {
+      toast({
+        title: "Added to BGP CRM",
+        description: out.name,
+        action: (
+          <button
+            onClick={() => navigate(`/companies/${out.id}`)}
+            className="text-xs underline"
+          >
+            Open
+          </button>
+        ),
+      });
+      onCreated();
+    },
+    onError: (e: any) => toast({ title: "CRM create failed", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); create.mutate(); }}
+      disabled={create.isPending}
+      className="text-[10px] px-2 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-1 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-300"
+      title={`Create a CRM record for ${name}`}
+    >
+      <Building2 className="w-2.5 h-2.5" />
+      {create.isPending ? "Adding…" : "Add to CRM"}
+    </button>
   );
 }
 

@@ -125,6 +125,13 @@ async function buildSubject(type: SubjectType, id: string): Promise<ActivitySubj
   return null;
 }
 
+// In-flight curation jobs, keyed by `${type}:${id}`. Used to dedupe
+// concurrent curate requests for the same subject and to expose an
+// "is anything cooking?" flag to the GET endpoint so the client can
+// poll instead of holding a 200s HTTP connection open.
+const pendingCurations = new Map<string, Promise<void>>();
+const curationKey = (t: SubjectType, id: string) => `${t}:${id}`;
+
 // Read cached curation. Returns null if no cache row exists.
 async function readCache(type: SubjectType, id: string): Promise<(CuratedActivity & { fromCache: true }) | null> {
   const r = await pool.query(
@@ -185,13 +192,18 @@ async function writeLastInteraction(type: SubjectType, id: string, latest: strin
 }
 
 export function registerActivityRoutes(app: Express) {
-  // Cached read — fast, used by <AIActivityCard> on first render.
+  // Cached read — fast, used by <AIActivityCard> on first render and
+  // by the poll loop after the client kicks off a background curation.
   app.get("/api/activity/:subjectType/:subjectId", requireAuth, async (req: Request, res: Response) => {
     const { subjectType, subjectId } = req.params as { subjectType: SubjectType; subjectId: string };
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
     try {
       const cache = await readCache(subjectType, subjectId);
-      res.json(cache || { fromCache: false, markdown: "", emailHits: [], meetingHits: [], generatedAt: null, latestActivityDate: null });
+      const inFlight = pendingCurations.has(curationKey(subjectType, subjectId));
+      res.json({
+        ...(cache || { fromCache: false, markdown: "", emailHits: [], meetingHits: [], generatedAt: null, latestActivityDate: null }),
+        inFlight,
+      });
     } catch (err: any) {
       console.error(`[activity GET ${subjectType}/${subjectId}]`, err?.message);
       res.status(500).json({ error: err?.message || "failed" });
@@ -247,41 +259,40 @@ export function registerActivityRoutes(app: Express) {
     }
   });
 
-  // Fresh curation — expensive (~30s, full ChatBGP turn). Writes through
-  // to the cache and denormalises lastInteraction onto the record.
+  // Fresh curation — expensive (~30–200s, full ChatBGP turn). We kick the
+  // work off in the background and return 202 immediately so the client
+  // doesn't hold a long HTTP connection open (which Railway's edge proxy
+  // was timing out). The client polls GET to detect when generated_at
+  // updates. Concurrent kicks for the same subject share one job.
   app.post("/api/activity/:subjectType/:subjectId/curate", requireAuth, async (req: Request, res: Response) => {
     const { subjectType, subjectId } = req.params as { subjectType: SubjectType; subjectId: string };
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
 
-    // Long-running (~30–200s ChatBGP). If the client/proxy aborts mid-flight,
-    // skip the final res.json so we don't throw ERR_HTTP_HEADERS_SENT.
-    let clientGone = false;
-    req.on("close", () => { if (!res.writableEnded) clientGone = true; });
-
-    try {
-      const subject = await buildSubject(subjectType, subjectId);
-      if (!subject) {
-        if (clientGone || res.headersSent) return;
-        return res.status(404).json({ error: "subject not found" });
-      }
-
-      const curated = await curateActivity(subject, req);
-      if (!curated) {
-        if (clientGone || res.headersSent) return;
-        return res.status(502).json({ error: "ChatBGP returned no usable response" });
-      }
-
-      Promise.all([
-        writeCache(subjectType, subjectId, curated),
-        writeLastInteraction(subjectType, subjectId, curated.latestActivityDate),
-      ]).catch((err) => console.warn(`[activity persist ${subjectType}/${subjectId}]`, err?.message));
-
-      if (clientGone || res.headersSent) return;
-      res.json({ ...curated, fromCache: false });
-    } catch (err: any) {
-      console.error(`[activity curate ${subjectType}/${subjectId}]`, err?.message);
-      if (clientGone || res.headersSent) return;
-      res.status(500).json({ error: err?.message || "curation failed" });
+    const key = curationKey(subjectType, subjectId);
+    if (pendingCurations.has(key)) {
+      return res.status(202).json({ accepted: true, inFlight: true, alreadyRunning: true });
     }
+
+    const subject = await buildSubject(subjectType, subjectId);
+    if (!subject) return res.status(404).json({ error: "subject not found" });
+
+    const job = (async () => {
+      try {
+        const curated = await curateActivity(subject, req);
+        if (!curated) {
+          console.warn(`[activity curate ${subjectType}/${subjectId}] ChatBGP returned nothing`);
+          return;
+        }
+        await writeCache(subjectType, subjectId, curated);
+        await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
+      } catch (err: any) {
+        console.error(`[activity curate ${subjectType}/${subjectId}]`, err?.message || err);
+      } finally {
+        pendingCurations.delete(key);
+      }
+    })();
+    pendingCurations.set(key, job);
+
+    res.status(202).json({ accepted: true, inFlight: true });
   });
 }

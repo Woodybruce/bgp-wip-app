@@ -103,25 +103,63 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subjectType, subjectId]);
 
+  // Curation runs as a background job on the server (~30–200s). We POST
+  // to kick it off, get 202 immediately, then poll the GET endpoint until
+  // generated_at changes. Avoids Railway's edge-proxy timeout.
   const curate = async () => {
     setCurating(true);
     setError(null);
+    const before = data?.generatedAt || null;
     try {
       const r = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}/curate`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
       });
-      if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
-      const d = await r.json();
-      setData(d);
-      toast({ title: "Activity refreshed", description: `${d.emailHits?.length || 0} emails, ${d.meetingHits?.length || 0} meetings cited.` });
+      if (!r.ok && r.status !== 202) throw new Error(await r.text() || `HTTP ${r.status}`);
     } catch (err: any) {
-      setError(err?.message || "Curation failed");
+      setError(err?.message || "Couldn't start analysis");
       toast({ title: "Re-analyse failed", description: err?.message || "Unknown error", variant: "destructive" });
-    } finally {
       setCurating(false);
+      return;
     }
+
+    const startedAt = Date.now();
+    const MAX_WAIT_MS = 5 * 60_000;
+    const POLL_INTERVAL_MS = 4_000;
+    const poll = async () => {
+      if (Date.now() - startedAt > MAX_WAIT_MS) {
+        setCurating(false);
+        setError("Analysis is taking longer than expected — refresh in a minute to see results.");
+        return;
+      }
+      try {
+        const r = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}`, {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (r.ok) {
+          const d: CuratedActivity & { inFlight?: boolean } = await r.json();
+          const stillCooking = !!d.inFlight;
+          const fresh = d.generatedAt && d.generatedAt !== before;
+          if (fresh) {
+            setData(d);
+            setCurating(false);
+            toast({ title: "Activity refreshed", description: `${d.emailHits?.length || 0} emails, ${d.meetingHits?.length || 0} meetings cited.` });
+            return;
+          }
+          if (!stillCooking && d.generatedAt && d.generatedAt !== before) {
+            setData(d);
+            setCurating(false);
+            return;
+          }
+        }
+      } catch {
+        // transient — keep polling
+      }
+      setTimeout(poll, POLL_INTERVAL_MS);
+    };
+    setTimeout(poll, POLL_INTERVAL_MS);
   };
 
   const lastTouchPill = data?.latestActivityDate ? <LastTouchBadge iso={data.latestActivityDate} /> : null;
