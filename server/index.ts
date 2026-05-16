@@ -2633,6 +2633,17 @@ app.use("/api/branding/assets", express.static(
               console.error("[brand-social-scraper] cron run failed:", err?.message)
             );
           }
+          // Weekly UK trading entity re-scrape — Sunday 02:00. Re-scrapes
+          // every brand with a domain that still has no uk_entity_name.
+          // Brands that already have one (auto-scraped or manually set)
+          // are left alone. Picks up shop closures / new Shopify rebrands
+          // and brands whose T&Cs page was previously bot-blocked.
+          if (now.getDay() === 0 && now.getHours() === 2 && now.getMinutes() < 60) {
+            import("./brand-entity-rescrape")
+              .then(m => m.runWeeklyUkEntityRescrape())
+              .then(r => console.log(`[uk-entity-rescrape] weekly: ${r.found}/${r.total} new, ${r.errored} errors`))
+              .catch(err => console.error("[uk-entity-rescrape] cron run failed:", err?.message));
+          }
           // Monthly Perplexity refresh — 1st of month, 03:00
           if (now.getDate() === 1 && now.getHours() === 3 && now.getMinutes() < 60) {
             runMonthlyPerplexityRefresh().catch(err =>

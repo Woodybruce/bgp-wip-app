@@ -2283,7 +2283,7 @@ Format your response as JSON:
 // legal pages. We try those pages in order and extract the entity name
 // and/or Companies House number using pattern matching, with an AI fallback
 // for legal pages where regex misses (e.g. unusual phrasing in T&Cs).
-async function scrapeUkEntityFromWebsite(
+export async function scrapeUkEntityFromWebsite(
   domain: string,
   brand?: { name: string; parentGroup?: string | null },
   trace?: (step: string, detail: string) => void,
