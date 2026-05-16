@@ -3145,4 +3145,106 @@ router.get("/api/scraper-test", requireAuth, async (req, res) => {
   res.json({ url, results });
 });
 
+// Bulk scrape — fires the website-T&Cs scraper for every CRM company that
+// has a domain but no uk_entity_name yet, throttled to ~1 req/sec so we
+// don't trip rate limits on Cloudflare/Akamai. Runs in the background via
+// brand-jobs so the HTTP request returns immediately; progress is
+// readable on /status. Designed to be a one-off catch-up — once the field
+// is populated, the per-brand auto-scraper handles new additions.
+
+let bulkScrapeProgress = {
+  state: "idle" as "idle" | "running" | "done" | "error",
+  startedAt: null as string | null,
+  finishedAt: null as string | null,
+  total: 0,
+  processed: 0,
+  found: 0,
+  notFound: 0,
+  errored: 0,
+  lastBrand: null as string | null,
+  error: null as string | null,
+};
+
+router.post("/api/companies-house/bulk-scrape-uk-entities", requireAuth, async (req, res) => {
+  if (bulkScrapeProgress.state === "running") {
+    return res.status(202).json({ accepted: true, alreadyRunning: true, progress: bulkScrapeProgress });
+  }
+
+  const onlyMissing = req.body?.onlyMissing !== false;       // default: skip brands that already have one
+  const onlyTracked = req.body?.onlyTracked === true;        // default: scrape ALL brands, not just tracked
+  const limit = Math.min(Number(req.body?.limit ?? 5000), 5000);
+  const delayMs = Math.max(Number(req.body?.delayMs ?? 1200), 250);
+
+  bulkScrapeProgress = {
+    state: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    total: 0, processed: 0, found: 0, notFound: 0, errored: 0,
+    lastBrand: null, error: null,
+  };
+
+  // Don't await — let it run in the background.
+  (async () => {
+    try {
+      const { rows } = await pool.query<{
+        id: string; name: string; domain: string | null; domain_url: string | null;
+        uk_entity_name: string | null; backers: string | null;
+      }>(
+        `SELECT id, name, domain, domain_url, uk_entity_name, backers
+           FROM crm_companies
+          WHERE merged_into_id IS NULL
+            ${onlyTracked ? "AND is_tracked_brand = true" : ""}
+            ${onlyMissing ? "AND (uk_entity_name IS NULL OR uk_entity_name = '')" : ""}
+            AND (domain IS NOT NULL OR domain_url IS NOT NULL)
+          ORDER BY is_tracked_brand DESC, name
+          LIMIT $1`,
+        [limit]
+      );
+      bulkScrapeProgress.total = rows.length;
+
+      for (const row of rows) {
+        bulkScrapeProgress.lastBrand = row.name;
+        const domain = row.domain || row.domain_url;
+        if (!domain) { bulkScrapeProgress.processed++; continue; }
+        try {
+          const scraped = await scrapeUkEntityFromWebsite(domain, { name: row.name, parentGroup: row.backers });
+          if (scraped.entityName) {
+            await pool.query(
+              `UPDATE crm_companies SET uk_entity_name = $1 WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
+              [scraped.entityName, row.id]
+            );
+            bulkScrapeProgress.found++;
+          } else {
+            bulkScrapeProgress.notFound++;
+          }
+        } catch (err: any) {
+          bulkScrapeProgress.errored++;
+          console.warn(`[bulk-scrape] ${row.name}: ${err?.message || err}`);
+        }
+        bulkScrapeProgress.processed++;
+        if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+      }
+
+      bulkScrapeProgress.state = "done";
+      bulkScrapeProgress.finishedAt = new Date().toISOString();
+      console.log(`[bulk-scrape] done — ${bulkScrapeProgress.found}/${bulkScrapeProgress.total} entities found, ${bulkScrapeProgress.errored} errors`);
+    } catch (err: any) {
+      bulkScrapeProgress.state = "error";
+      bulkScrapeProgress.error = err?.message || String(err);
+      bulkScrapeProgress.finishedAt = new Date().toISOString();
+      console.error(`[bulk-scrape] aborted:`, err?.message || err);
+    }
+  })();
+
+  res.status(202).json({
+    accepted: true,
+    message: "Bulk scrape started. Poll /api/companies-house/bulk-scrape-uk-entities/status for progress.",
+    progress: bulkScrapeProgress,
+  });
+});
+
+router.get("/api/companies-house/bulk-scrape-uk-entities/status", requireAuth, async (_req, res) => {
+  res.json(bulkScrapeProgress);
+});
+
 export default router;
