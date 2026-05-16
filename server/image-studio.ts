@@ -1265,6 +1265,69 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // Diagnostic — for a specific brand row, report which storage paths are
+  // populated (disk file? file_storage backup? thumbnailData?). Helps
+  // pinpoint why an existing row 404s even though the SQL match found it.
+  app.get("/api/brand-logo-row-debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.query.name || "").trim();
+      if (!name) return res.status(400).json({ error: "name required" });
+
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null; file_size: number | null; brand_name: string | null; file_name: string }>(
+        `SELECT id, local_path, mime_type, thumbnail_data, file_size, brand_name, file_name
+         FROM image_studio_images
+         WHERE category = 'Brands' AND lower(trim(brand_name)) = lower(trim($1))
+         LIMIT 1`,
+        [name]
+      );
+      const row = rows[0];
+      if (!row) return res.json({ matched: false });
+
+      const onDisk = !!row.local_path && fs.existsSync(row.local_path);
+      let inFileStorage: any = null;
+      if (row.local_path) {
+        try {
+          const f = await getFile(storageKeyForImage(row.local_path));
+          inFileStorage = f ? { size: f.data.length, mimeType: f.mimeType } : null;
+        } catch (e: any) {
+          inFileStorage = { error: e?.message };
+        }
+      }
+      const thumbStartsWithData = !!(row.thumbnail_data && row.thumbnail_data.startsWith("data:"));
+      const thumbLength = row.thumbnail_data ? row.thumbnail_data.length : 0;
+      const thumbHead = row.thumbnail_data ? row.thumbnail_data.slice(0, 50) : null;
+
+      res.json({
+        matched: true,
+        row: {
+          id: row.id,
+          brand_name: row.brand_name,
+          file_name: row.file_name,
+          mime_type: row.mime_type,
+          file_size: row.file_size,
+          local_path: row.local_path,
+        },
+        on_disk: onDisk,
+        in_file_storage: inFileStorage,
+        thumbnail: {
+          present: !!row.thumbnail_data,
+          starts_with_data_url: thumbStartsWithData,
+          length: thumbLength,
+          head: thumbHead,
+        },
+        verdict: onDisk
+          ? "ok-disk"
+          : inFileStorage
+            ? "ok-file-storage-fallback"
+            : thumbStartsWithData
+              ? "ok-thumbnail-fallback"
+              : "NO BYTES — row exists but no readable image. Re-import needed.",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Diagnostic — shows what's in the brand library and whether a given name
   // matches anything. Hit /api/brand-logo-debug?name=Pret to test from the
   // browser. Auth required, but anyone can use.
