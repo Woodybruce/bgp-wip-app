@@ -1863,7 +1863,6 @@ function LeasingSection({
                       />
                     ) : "Status"}
                   </TableHead>
-                  <TableHead className="min-w-[100px] text-center">Progress</TableHead>
                   <TableHead className="min-w-[140px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
@@ -1907,7 +1906,6 @@ function LeasingSection({
                   <TableHead className="min-w-[220px]">Map Locations</TableHead>
                   <TableHead className="min-w-[220px]">Principal Contact</TableHead>
                   <TableHead className="min-w-[220px]">Agent Contact</TableHead>
-                  <TableHead className="min-w-[160px]">BGP Contact</TableHead>
                   <TableHead className="min-w-[180px]">Deal</TableHead>
                   <TableHead className="min-w-[120px]">Landlord Pack</TableHead>
                   <TableHead className="min-w-[120px]">Extract</TableHead>
@@ -1959,13 +1957,6 @@ function LeasingSection({
                         colorMap={CRM_OPTIONS.reqLeasingStatusColors}
                         onSave={(v) => inlineUpdate(item.id, { status: v || null })}
                         placeholder="Set status"
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1 text-center">
-                      <ProgressTickCell
-                        item={item}
-                        onUpdate={(data) => inlineUpdate(item.id, data)}
-                        testIdPrefix={`tick-leasing-${item.id}`}
                       />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
@@ -2047,16 +2038,6 @@ function LeasingSection({
                         onSelect={(contactId) => inlineUpdate(item.id, { agentContactId: contactId })}
                         navigate={navigate}
                         testIdPrefix={`agent-contact-${item.id}`}
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      <InlineMultiUserPicker
-                        users={users}
-                        currentUserIds={item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : [])}
-                        userMap={userMap}
-                        onSelect={(userIds) => inlineUpdate(item.id, { bgpContactUserIds: userIds })}
-                        testIdPrefix={`bgp-contact-${item.id}`}
-                        colorMap={colorMap}
                       />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
