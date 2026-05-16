@@ -67,6 +67,13 @@ interface BrandProfile {
     brand_analysis_at: string | null;
     ai_competitors: Array<{ name: string; reason: string | null; segment: string | null }> | null;
     ai_competitors_at: string | null;
+    menu_intel: {
+      type: "menu" | "bestsellers";
+      items: Array<{ name: string; description?: string; price?: string; category?: string }>;
+      source_url?: string | null;
+      citations?: Array<{ url: string; title?: string }>;
+    } | null;
+    menu_intel_at: string | null;
     kyc_status: string | null;
     kyc_expires_at: string | null;
     aml_risk_level: string | null;
@@ -2826,6 +2833,110 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
   );
 }
 
+// Menu / best-sellers panel — Perplexity-sourced summary of what the
+// brand actually sells. Auto-switches between "Menu Highlights"
+// (restaurants / cafés / F&B) and "Best Sellers" (retail) using a
+// keyword check against company_type + industry.
+function MenuIntelCard({
+  companyId,
+  companyName,
+  industry,
+  companyType,
+  intel,
+  refreshedAt,
+}: {
+  companyId: string;
+  companyName: string;
+  industry: string | null;
+  companyType: string | null;
+  intel: BrandProfile["company"]["menu_intel"];
+  refreshedAt: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const isFood = ((): boolean => {
+    const blob = `${companyType || ""} ${industry || ""}`.toLowerCase();
+    return /(restaurant|cafe|café|food|f\s*&\s*b|fnb|bakery|coffee|qsr|fast.?food|dining|kitchen|pub|bar|brewery|hospitality|takeaway|dessert|ice.?cream|juice|smoothie|sandwich|pizza|burger|chicken|sushi|noodle|ramen)/.test(blob);
+  })();
+  const expectedKind: "menu" | "bestsellers" = isFood ? "menu" : "bestsellers";
+  const heading = expectedKind === "menu" ? "Menu highlights" : "Best sellers";
+
+  const refresh = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/brand/${companyId}/menu-intel/refresh`);
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "Menu refresh failed");
+      return out;
+    },
+    onSuccess: (out) => {
+      toast({ title: `${heading} refreshed`, description: `${out.items?.length ?? 0} items` });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Refresh failed", description: e.message, variant: "destructive" }),
+  });
+
+  const items = intel?.items || [];
+  const labelKind = (intel?.type || expectedKind) === "menu" ? "Menu highlights" : "Best sellers";
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Store className="w-3.5 h-3.5" /> {labelKind}
+          {refreshedAt && (
+            <span className="text-[10px] normal-case text-muted-foreground ml-1">
+              · {new Date(refreshedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            </span>
+          )}
+        </CardTitle>
+        <button
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+          className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          title={`Ask Perplexity for ${companyName}'s ${expectedKind === "menu" ? "menu" : "best sellers"}`}
+        >
+          {refresh.isPending ? "Fetching…" : items.length > 0 ? "Refresh" : "Fetch"}
+        </button>
+      </CardHeader>
+      <CardContent className="p-3 pt-0">
+        {items.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground italic">
+            No {expectedKind === "menu" ? "menu items" : "best sellers"} yet — click Fetch.
+          </p>
+        ) : (
+          <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-1">
+            {items.map((it, i) => (
+              <div key={i} className="text-xs border-b border-border/40 last:border-0 pb-1.5 last:pb-0">
+                <div className="flex items-baseline gap-2">
+                  <span className="font-medium text-foreground flex-1 truncate">{it.name}</span>
+                  {it.price && <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">{it.price}</span>}
+                </div>
+                {it.description && (
+                  <div className="text-[11px] text-muted-foreground leading-snug">{it.description}</div>
+                )}
+                {it.category && !it.description && (
+                  <div className="text-[10px] text-muted-foreground italic">{it.category}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {intel?.source_url && (
+          <a
+            href={intel.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
+          >
+            <ExternalLink className="w-2.5 h-2.5" /> Source
+          </a>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // Creates a stub CRM company row for an AI-discovered competitor that
 // isn't yet tracked, so it shows up in lists, can be linked from
 // competitor chips, and starts the same enrichment pipeline every brand
@@ -3656,6 +3767,17 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       })()}
 
       <BrandInstagramCard companyId={companyId} />
+
+      {/* Menu / Best-sellers — F&B brands get menu items, retailers
+          get best-sellers. Refreshed via Perplexity. */}
+      <MenuIntelCard
+        companyId={companyId}
+        companyName={c.name}
+        industry={c.industry}
+        companyType={c.company_type}
+        intel={c.menu_intel}
+        refreshedAt={c.menu_intel_at}
+      />
 
       {/* Documents & Gallery */}
       <Card>

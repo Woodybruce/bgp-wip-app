@@ -1643,6 +1643,12 @@ import { pool } from "./db";
     `ALTER TABLE brand_stores ADD COLUMN IF NOT EXISTS country TEXT`,
     `UPDATE brand_stores SET country = 'GB' WHERE country IS NULL`,
     `CREATE INDEX IF NOT EXISTS brand_stores_country_idx ON brand_stores (brand_company_id, country)`,
+
+    // ── Migration 0024 — menu / best-sellers intel (brand panel).
+    // Single JSONB blob holds {type, items[], source_url, citations}.
+    // Refreshed on demand via Perplexity from the brand profile UI.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS menu_intel JSONB`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS menu_intel_at TIMESTAMP`,
   ];
 
   let ok = 0, skipped = 0;

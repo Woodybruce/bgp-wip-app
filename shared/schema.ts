@@ -534,6 +534,11 @@ export const crmCompanies = pgTable("crm_companies", {
   lendingAppetiteNotes: text("lending_appetite_notes"),
   // Latest curated email/meeting timestamp from ai-activity-curator (ISO string)
   lastInteraction: text("last_interaction"),
+  // Menu / best-sellers intel for the brand panel. Shape:
+  //   { type: 'menu' | 'bestsellers', items: Array<{ name, description?, price?, category? }>, source_url?: string }
+  // Restaurants / cafés / F&B → 'menu'. Retail/everything else → 'bestsellers'.
+  menuIntel: jsonb("menu_intel"),
+  menuIntelAt: timestamp("menu_intel_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

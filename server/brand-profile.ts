@@ -168,6 +168,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               bgp_contact_crm, bgp_contact_user_ids,
               brand_analysis, brand_analysis_at,
               ai_competitors, ai_competitors_at,
+              menu_intel, menu_intel_at,
               ai_disabled,
               merged_into_id,
               letting_hunter_flag, letting_hunter_notes,
@@ -1341,6 +1342,78 @@ router.delete("/api/brand/stores/:storeId", requireAuth, async (req: Request, re
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Menu / best-sellers refresh — Perplexity-sourced. F&B brands get menu
+// items; retailers get best-sellers. Detection from company_type +
+// industry text (keyword match). Result cached in crm_companies.menu_intel
+// as { type, items:[{name,description?,price?,category?}], source_url? }.
+function isFoodBrand(companyType: string | null, industry: string | null): boolean {
+  const blob = `${companyType || ""} ${industry || ""}`.toLowerCase();
+  return /(restaurant|cafe|café|food|f\s*&\s*b|fnb|bakery|coffee|qsr|fast.?food|dining|kitchen|pub|bar|brewery|hospitality|takeaway|dessert|ice.?cream|juice|smoothie|sandwich|pizza|burger|chicken|sushi|noodle|ramen)/.test(blob);
+}
+
+router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyId } = req.params;
+    const r = await pool.query(
+      `SELECT id, name, company_type, industry, domain FROM crm_companies WHERE id = $1`,
+      [companyId]
+    );
+    const c = r.rows[0];
+    if (!c) return res.status(404).json({ error: "company not found" });
+
+    const { askPerplexity, isPerplexityConfigured } = await import("./perplexity");
+    if (!isPerplexityConfigured()) {
+      return res.status(503).json({ error: "Perplexity not configured" });
+    }
+
+    const isFood = isFoodBrand(c.company_type, c.industry);
+    const kind: "menu" | "bestsellers" = isFood ? "menu" : "bestsellers";
+    const prompt = isFood
+      ? `List 8 to 12 of the most popular / signature menu items at ${c.name} (UK), with a one-line description and approximate price in GBP. Respond as JSON only: {"items":[{"name":"...","description":"...","price":"£X"}],"source_url":"..."} — no prose, no markdown fences.`
+      : `List 8 to 12 of the best-selling or signature products at ${c.name} (UK), with a one-line description and approximate price in GBP. Respond as JSON only: {"items":[{"name":"...","description":"...","price":"£X","category":"..."}],"source_url":"..."} — no prose, no markdown fences.`;
+
+    const out = await askPerplexity(prompt, {
+      systemPrompt: "You are a UK retail / hospitality analyst. Reply with valid JSON only — no markdown code fences, no commentary.",
+      maxTokens: 1200,
+      temperature: 0.1,
+    });
+
+    // Strip fences if Perplexity added them anyway, then parse.
+    const cleaned = out.answer.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    let parsed: { items?: any[]; source_url?: string } = {};
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Salvage attempt: find first { ... } block.
+      const m = cleaned.match(/\{[\s\S]*\}/);
+      if (m) {
+        try { parsed = JSON.parse(m[0]); } catch {}
+      }
+    }
+    const items = Array.isArray(parsed.items) ? parsed.items.slice(0, 14) : [];
+    if (items.length === 0) {
+      return res.status(502).json({ error: "Couldn't parse menu items from Perplexity response" });
+    }
+
+    const payload = {
+      type: kind,
+      items,
+      source_url: parsed.source_url || out.citations[0]?.url || null,
+      citations: out.citations.slice(0, 6),
+    };
+
+    await pool.query(
+      `UPDATE crm_companies SET menu_intel = $1::jsonb, menu_intel_at = NOW() WHERE id = $2`,
+      [JSON.stringify(payload), companyId]
+    );
+
+    res.json({ ...payload, refreshed_at: new Date().toISOString() });
+  } catch (err: any) {
+    console.error(`[brand menu-intel ${req.params.companyId}]`, err?.message || err);
+    res.status(500).json({ error: err.message || "menu-intel refresh failed" });
   }
 });
 
