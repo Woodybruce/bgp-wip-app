@@ -541,16 +541,18 @@ function probeBrandLibrary(): Promise<boolean> {
 // empty so we don't 404-spam on the first paint.
 probeBrandLibrary();
 
+// Cache-buster bumped whenever we change /api/brand-logo behaviour, so
+// browsers don't keep serving stale 404 responses (the old endpoint cached
+// misses for 24h). Increment when the route logic changes.
+const LOGO_CACHE_BUSTER = "v=3";
+
 export function localBrandLogoUrl(name: string | null | undefined, domain?: string | null | undefined): string | null {
   const trimmed = (name || "").trim();
   if (!trimmed) return null;
-  // Always return the local-library URL first. BrandLogo's onError chain
-  // falls through to Clearbit + initials if this 404s, so there's no value
-  // in gating on /api/brand-logo-stats — and the stats probe was getting
-  // stuck on a stale 'hasLogos: false' from before the bulk import ran.
-  // The endpoint sets a 24h cache on 404s so misses don't spam either.
   const d = extractDomain(domain ?? null);
-  const qs = d ? `?domain=${encodeURIComponent(d)}` : "";
+  const qs = d
+    ? `?domain=${encodeURIComponent(d)}&${LOGO_CACHE_BUSTER}`
+    : `?${LOGO_CACHE_BUSTER}`;
   return `/api/brand-logo/${encodeURIComponent(trimmed)}${qs}`;
 }
 
@@ -559,14 +561,11 @@ export function getCompanyLogoUrl(
   name: string | null | undefined,
   _size: number = 40
 ): string | null {
-  // Always return the /api/brand-logo/... URL — the server now redirects to
-  // logo.dev (or Google favicons) when there's no local image, so this single
-  // endpoint is the one and only logo source. Clearbit's DNS is dead.
   const local = localBrandLogoUrl(name, domain);
   if (local) return local;
   const d = extractDomain(domain) ?? guessDomain(name);
   if (d && (name || "").trim()) {
-    return `/api/brand-logo/${encodeURIComponent((name || "").trim())}?domain=${encodeURIComponent(d)}`;
+    return `/api/brand-logo/${encodeURIComponent((name || "").trim())}?domain=${encodeURIComponent(d)}&${LOGO_CACHE_BUSTER}`;
   }
   return null;
 }
