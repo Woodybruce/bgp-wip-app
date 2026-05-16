@@ -324,7 +324,80 @@ export async function runDailyBrandScraper(): Promise<{ scanned: number; signals
   return { scanned: brands.rows.length, signalsAdded, errors };
 }
 
+// Extract the brand's Instagram handle from a homepage / footer HTML blob.
+// Returns the bare handle (no @, no domain) or null. Skips obvious non-handle
+// paths (instagram.com/p/..., /explore/, /reel/, etc).
+function extractInstagramHandle(html: string): string | null {
+  if (!html) return null;
+  // Match instagram.com/handle — handle is 1-30 chars, letters/digits/._
+  const re = /instagram\.com\/([a-zA-Z0-9._]{1,30})/gi;
+  const banned = new Set(["p", "explore", "reel", "reels", "tv", "stories", "accounts", "about", "developer", "directory", "legal"]);
+  for (const m of html.matchAll(re)) {
+    const h = m[1].toLowerCase().replace(/[._]+$/, "");
+    if (!h || banned.has(h)) continue;
+    return m[1];
+  }
+  return null;
+}
+
+// Backfill instagram_handle for brands that don't have one by scraping the
+// homepage and pulling the first instagram.com/<handle> link from the markup
+// (footer / social bar). Free, fast, ~one HTTP call per brand. Skips brands
+// that already have a handle or no domain.
+export async function backfillInstagramHandles(limit = 500): Promise<{
+  attempted: number; filled: number; skipped: number; errors: number;
+}> {
+  if (!isScraperApiAvailable()) {
+    return { attempted: 0, filled: 0, skipped: 0, errors: 0 };
+  }
+  const rows = await pool.query<{ id: string; name: string; domain: string | null; domain_url: string | null }>(
+    `SELECT id, name, domain, domain_url FROM crm_companies
+      WHERE (instagram_handle IS NULL OR instagram_handle = '')
+        AND (domain IS NOT NULL OR domain_url IS NOT NULL)
+        AND is_tracked_brand = true
+      ORDER BY name
+      LIMIT $1`,
+    [limit]
+  );
+  let filled = 0, skipped = 0, errors = 0;
+  for (const b of rows.rows) {
+    const root = buildBrandRoot(b);
+    if (!root) { skipped++; continue; }
+    try {
+      const res = await scraperFetch(root, { uk: true, render: false, timeoutMs: 15000 });
+      if (!res.ok) { errors++; continue; }
+      const html = await res.text().catch(() => "");
+      const handle = extractInstagramHandle(html);
+      if (!handle) { skipped++; continue; }
+      await pool.query(
+        `UPDATE crm_companies SET instagram_handle = $1 WHERE id = $2 AND (instagram_handle IS NULL OR instagram_handle = '')`,
+        [handle, b.id]
+      );
+      filled++;
+    } catch {
+      errors++;
+    }
+  }
+  return { attempted: rows.rows.length, filled, skipped, errors };
+}
+
 // ─── Endpoints ───────────────────────────────────────────────────────────
+
+router.post("/api/admin/backfill-instagram-handles", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId as string;
+    const adminCheck = await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [userId]);
+    if (!adminCheck.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+    const limit = Math.min(parseInt(String(req.body?.limit || req.query.limit || 500), 10) || 500, 3000);
+    // Run async so the request doesn't time out on Railway (~60s proxy limit).
+    backfillInstagramHandles(limit)
+      .then(r => console.log(`[ig backfill] ${r.filled}/${r.attempted} filled, ${r.skipped} skipped, ${r.errors} errors`))
+      .catch(e => console.error("[ig backfill] failed:", e?.message));
+    res.json({ started: true, limit });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.post("/api/brand/:companyId/scrape", requireAuth, async (req: Request, res: Response) => {
   try {
