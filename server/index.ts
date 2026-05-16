@@ -1830,6 +1830,7 @@ import bulkBrandLogosRouter from "./bulk-brand-logos";
 import brandImagesRouter from "./brand-images";
 import instagramRouter from "./instagram";
 import pipnetRequirementsRouter from "./pipnet-requirements";
+import purgeApolloContactsRouter from "./purge-apollo-contacts";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
@@ -2327,6 +2328,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandImagesRouter);
   app.use(instagramRouter);
   app.use(pipnetRequirementsRouter);
+  app.use(purgeApolloContactsRouter);
 
   // Health + lookup endpoints for the two new data providers.
   app.get("/api/rocketreach/health", async (_req, res) => {
