@@ -166,6 +166,14 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
       console.error(`RSS fetch error for ${source.name}:`, err?.message?.slice(0, 100));
       errors++;
     }
+
+    // Throttle between feed fetches to keep Google News happy. Without this,
+    // hammering ~860 per-brand Google News feeds in sequence triggers their
+    // abuse protection (503 partway through the run). 2s for Google News,
+    // 250ms for other publishers — keeps a full cron pass under 30 min for
+    // the brand-feed bulk plus tiny extra for direct RSS.
+    const isGoogle = source.type === "google_news" || /google\.com/i.test(source.feedUrl || "");
+    await new Promise(r => setTimeout(r, isGoogle ? 2000 : 250));
   }
 
   return { fetched, errors };
