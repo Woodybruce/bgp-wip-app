@@ -1156,16 +1156,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       <Globe className="w-2.5 h-2.5 shrink-0" />{(c.domain || c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "")}
                     </a>
                   )}
-                  {c.instagram_handle && (
-                    <a
-                      href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-primary hover:underline inline-flex items-center gap-0.5"
-                    >
-                      <Instagram className="w-2.5 h-2.5 shrink-0" />@{c.instagram_handle.replace(/^@/, "")}
-                    </a>
-                  )}
                   {hqShort && (
                     <span className="text-xs text-muted-foreground flex items-center gap-0.5" title={hqFull || hqShort}>
                       <MapPin className="w-2.5 h-2.5 shrink-0" />Global HQ: {hqShort}
