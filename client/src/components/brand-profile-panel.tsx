@@ -1343,7 +1343,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <div className="overflow-hidden rounded-md bg-muted/40">
                       <img
                         src={firstImg.thumbnail_data
-                          ? `data:${firstImg.mime_type || "image/jpeg"};base64,${firstImg.thumbnail_data}`
+                          ? (firstImg.thumbnail_data.startsWith("data:")
+                              ? firstImg.thumbnail_data
+                              : `data:${firstImg.mime_type || "image/jpeg"};base64,${firstImg.thumbnail_data}`)
                           : `/api/brand/gallery-image/${firstImg.id}`}
                         alt=""
                         className="w-full h-full object-cover"
@@ -3467,7 +3469,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                   <div key={img.id} className="aspect-square rounded border border-border/60 overflow-hidden bg-muted">
                     <img
                       src={img.thumbnail_data
-                        ? `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`
+                        ? (img.thumbnail_data.startsWith("data:")
+                            ? img.thumbnail_data
+                            : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
                         : `/api/brand/gallery-image/${img.id}`}
                       alt={img.file_name}
                       className="w-full h-full object-cover"
