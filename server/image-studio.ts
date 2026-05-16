@@ -1240,26 +1240,26 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   // One-shot stats — client calls this once per session to decide whether
-  // /api/brand-logo/:name is worth hitting at all. When the library is
-  // empty (or very sparse), the client skips the per-thumbnail lookup and
-  // falls straight through to the initials tile. Eliminates the ~200
-  // 404/page-load brand-logo chatter on Brand Explorer.
+  // /api/brand-logo/:name is worth hitting at all.
   //
-  // Threshold: hasLogos = true only when the library has a meaningful
-  // number of brand rows (>= 50). One stray test row used to flip the flag
-  // and let the spam through — every brand still 404'd because no specific
-  // row matched, just one unrelated row existed.
+  // Threshold: hasLogos = true once there's at least 1 brand logo. Earlier
+  // we had a 50-row threshold to prevent spam when the library was empty;
+  // that's no longer needed because (a) 404 responses are now cached by the
+  // browser for 24h, (b) /api/brand-logo/* is exempt from the global rate
+  // limiter, and (c) access logs are suppressed. So as soon as a single
+  // logo lands, surface it.
   app.get("/api/brand-logo-stats", requireAuth, async (_req: Request, res: Response) => {
     try {
       const { rows } = await pool.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count
            FROM image_studio_images
-          WHERE (brand_name IS NOT NULL AND brand_name <> '')
-             OR category = 'Brands'`
+          WHERE category = 'Brands'
+            AND brand_name IS NOT NULL
+            AND brand_name <> ''`
       );
       const count = Number(rows[0]?.count || 0);
       res.setHeader("Cache-Control", "private, max-age=300");
-      res.json({ count, hasLogos: count >= 50 });
+      res.json({ count, hasLogos: count >= 1 });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
