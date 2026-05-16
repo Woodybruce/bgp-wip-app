@@ -17,7 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import {
-  Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake,
+  Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper, Heart, MessageCircle,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
@@ -313,9 +313,11 @@ type RepForm = {
   otherCompanyName: string;
   agent_type: string;
   region: string;
+  contactId?: string;       // optional: the person at the agency (set when picking a contact rather than a company)
+  contactName?: string;
 };
 
-const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "" };
+const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
 
 export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const { toast } = useToast();
@@ -607,8 +609,24 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     queryKey: ["/api/crm/companies"],
   });
 
+  // Live contact search for the "Add agent" picker — searches /api/crm/contacts
+  // by name so the user can pick the specific person at the agency rather
+  // than just the agency company. Returns up to 10 with their company name shown.
+  const { data: agentContactResults = [] } = useQuery<Array<{ id: string; name: string; role: string | null; companyId: string | null; companyName: string | null; email: string | null }>>({
+    queryKey: ["/api/crm/contacts", "agent-search", repSearch],
+    queryFn: async () => {
+      const term = repSearch.trim();
+      if (term.length < 2) return [];
+      const r = await fetch(`/api/crm/contacts?search=${encodeURIComponent(term)}&limit=10`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: addRep === "agent" && repSearch.trim().length >= 2 && !repForm.otherCompanyId,
+    staleTime: 30_000,
+  });
+
   const addRepMutation = useMutation({
-    mutationFn: async (vars: { brandCompanyId: string; agentCompanyId: string; agentType: string; region?: string }) => {
+    mutationFn: async (vars: { brandCompanyId: string; agentCompanyId: string; agentType: string; region?: string; primaryContactId?: string }) => {
       const res = await apiRequest("POST", `/api/brand/representations`, vars);
       return res.json();
     },
@@ -2361,13 +2379,49 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
                 <div className="relative">
                   <Input
-                    placeholder={addRep === "agent" ? "Search agent company..." : "Search brand company..."}
-                    value={repForm.otherCompanyName || repSearch}
-                    onChange={(e) => { setRepSearch(e.target.value); setRepForm({ ...repForm, otherCompanyId: "", otherCompanyName: "" }); }}
+                    placeholder={addRep === "agent" ? "Search agent by person name (e.g. Harry Elliott)..." : "Search brand company..."}
+                    value={
+                      repForm.contactName
+                        ? `${repForm.contactName}${repForm.otherCompanyName ? ` — ${repForm.otherCompanyName}` : ""}`
+                        : (repForm.otherCompanyName || repSearch)
+                    }
+                    onChange={(e) => { setRepSearch(e.target.value); setRepForm({ ...repForm, otherCompanyId: "", otherCompanyName: "", contactId: undefined, contactName: undefined }); }}
                     className="h-8 text-xs"
                   />
                   {repSearch && !repForm.otherCompanyId && (
-                    <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-40 overflow-y-auto">
+                    <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      {/* Agent flow: search CONTACTS (people) by name and show
+                          the agency company alongside. Picks both at once. */}
+                      {addRep === "agent" && agentContactResults.length > 0 && (
+                        <>
+                          {agentContactResults.map(ct => (
+                            <button
+                              type="button"
+                              key={ct.id}
+                              onClick={() => setRepForm({
+                                ...repForm,
+                                contactId: ct.id,
+                                contactName: ct.name,
+                                otherCompanyId: ct.companyId || "",
+                                otherCompanyName: ct.companyName || "",
+                              })}
+                              className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-start gap-2"
+                            >
+                              <User className="w-3 h-3 text-blue-500 mt-0.5 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium truncate">{ct.name}</div>
+                                <div className="text-[10px] text-muted-foreground truncate">
+                                  {[ct.role, ct.companyName].filter(Boolean).join(" · ")}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                          <div className="border-t my-0.5" />
+                        </>
+                      )}
+                      {/* Fall-through: company picker. Used for the brand-search
+                          case, AND as a fallback when the agent search returns
+                          nothing (so user can still pick by company name). */}
                       {allCompaniesForPicker
                         .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
                         .filter(co => addRep === "agent" ? !!co.agent_type : true)
@@ -2376,7 +2430,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           <button
                             type="button"
                             key={co.id}
-                            onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name }); setRepSearch(""); }}
+                            onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name, contactId: undefined, contactName: undefined }); setRepSearch(""); }}
                             className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-center gap-2"
                           >
                             {addRep === "agent" && <Handshake className="w-3 h-3 text-blue-500" />}
@@ -2410,7 +2464,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     disabled={!repForm.otherCompanyId || addRepMutation.isPending}
                     onClick={() => {
                       const vars = addRep === "agent"
-                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId, agentType: repForm.agent_type, region: repForm.region || undefined }
+                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId, agentType: repForm.agent_type, region: repForm.region || undefined, primaryContactId: repForm.contactId || undefined }
                         : { brandCompanyId: repForm.otherCompanyId, agentCompanyId: companyId, agentType: repForm.agent_type, region: repForm.region || undefined };
                       addRepMutation.mutate(vars);
                     }}
