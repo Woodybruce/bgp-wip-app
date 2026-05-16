@@ -25,11 +25,13 @@ export function BrandPortfolioMap({ stores, height = 180 }: { stores: Store[]; h
 
     if (!mapInstance.current) {
       mapInstance.current = L.map(mapRef.current, {
-        zoomControl: false,
+        zoomControl: false,            // disable default — we add a positioned one below
         attributionControl: false,
         dragging: true,
-        scrollWheelZoom: false,
+        scrollWheelZoom: false,        // don't hijack page scroll; zoom buttons + double-click still work
+        doubleClickZoom: true,
       });
+      L.control.zoom({ position: "topright" }).addTo(mapInstance.current);
       L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
         maxZoom: 19,
       }).addTo(mapInstance.current);
