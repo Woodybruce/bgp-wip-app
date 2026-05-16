@@ -4,6 +4,7 @@ import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
+import { InteractionsBoard } from "@/components/interactions-board";
 import { useToast } from "@/hooks/use-toast";
 import { InlineMultiSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
@@ -605,7 +606,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
   // All companies — used by the representation picker AND the backer linkifier
   // so any mentioned company name gets a link to its profile.
-  const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; is_tracked_brand: boolean }>>({
+  const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; is_tracked_brand: boolean; domain: string | null; domainUrl: string | null }>>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -1739,92 +1740,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               compact
             />
 
-            {/* Interactions board — always visible. When empty, surfaces a
-                "possibly incomplete" hint so the user knows the gap might
-                be a sync issue rather than genuinely no contact. */}
-            {(() => {
-              const allInteractions = data.interactions || [];
-              const ago = (date: string) => {
-                const days = Math.floor((Date.now() - new Date(date).getTime()) / 864e5);
-                return days < 1 ? "today" : days < 7 ? `${days}d` : days < 30 ? `${Math.floor(days / 7)}w` : days < 365 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
-              };
-              const twoYearsAgo = Date.now() - 2 * 365 * 864e5;
-              const recent = allInteractions.filter((it: any) => new Date(it.interaction_date).getTime() >= twoYearsAgo);
-              const emails = recent.filter((it: any) => it.type === "email" || it.type === "call" || it.type === "note");
-              const meetings = recent.filter((it: any) => it.type === "meeting");
-              const isEmpty = recent.length === 0;
-              const renderRow = (it: any, accent: string) => {
-                // crm_interactions.microsoft_id is stored prefixed with
-                // 'email_' / 'cal_' (server/interactions.ts:158,251). Graph
-                // expects the raw ID, so strip the prefix before opening.
-                const rawId: string | null = it.microsoft_id
-                  ? String(it.microsoft_id).replace(/^(email_|cal_)/, "")
-                  : null;
-                const canOpen = !!(rawId && it.bgp_user);
-                const onClick = () => {
-                  if (!canOpen || !rawId) return;
-                  if (it.type === "meeting") setOpenMeeting({ eventId: rawId, mailboxEmail: it.bgp_user });
-                  else setOpenEmail({ msgId: rawId, mailboxEmail: it.bgp_user });
-                };
-                return (
-                  <div
-                    key={it.id}
-                    onClick={onClick}
-                    className={`text-xs flex gap-1.5 items-start py-0.5 ${canOpen ? "cursor-pointer hover:bg-muted/50 rounded px-1 -mx-1" : ""}`}
-                    title={canOpen ? "Click to view" : ""}
-                  >
-                    <div className={`w-1 self-stretch rounded-full shrink-0 ${accent}`} />
-                    <div className="flex-1 min-w-0">
-                      {it.subject && <div className="font-medium truncate leading-snug">{it.subject}</div>}
-                      {it.preview && <div className="text-[10px] text-muted-foreground truncate leading-snug">{it.preview}</div>}
-                    </div>
-                    <span className="text-[10px] text-muted-foreground shrink-0">{bgpUserDisplay(it.bgp_user)} · {ago(it.interaction_date)}</span>
-                  </div>
-                );
-              };
-              return (
-                <div className="border-t pt-2">
-                  <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> Recent interactions — last 2 years ({recent.length})
-                  </div>
-                  {isEmpty && (
-                    <div className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded px-2 py-1.5 mb-2 flex items-start gap-1.5">
-                      <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-                      <span>
-                        No BGP interactions logged in the last 2 years.
-                        This may be incorrect — check the brand's email/calendar sync or log them manually.
-                      </span>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-[10px] font-medium text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Mail className="w-2.5 h-2.5" /> Emails &amp; calls ({emails.length})
-                      </div>
-                      {emails.length > 0 ? (
-                        <div className="space-y-0.5">
-                          {emails.slice(0, 6).map((it: any) => renderRow(it, "bg-blue-300 dark:bg-blue-700"))}
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-muted-foreground italic">None</p>
-                      )}
-                    </div>
-                    <div>
-                      <div className="text-[10px] font-medium text-purple-700 dark:text-purple-400 uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Users className="w-2.5 h-2.5" /> Meetings &amp; viewings ({meetings.length})
-                      </div>
-                      {meetings.length > 0 ? (
-                        <div className="space-y-0.5">
-                          {meetings.slice(0, 6).map((it: any) => renderRow(it, "bg-purple-300 dark:bg-purple-700"))}
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-muted-foreground italic">None</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+            {/* Interactions — shared InteractionsBoard component with company
+                scope. Banner with top BGP contacts + next interaction, type
+                toggle, 3-line rows, click to pop out the email/meeting. Auto-
+                fires meeting sync if 0 meetings on first open. */}
+            <div className="border-t pt-2">
+              <InteractionsBoard scope="company" contextId={companyId} />
+            </div>
 
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
             {leaseEvents.length > 0 && (
@@ -2568,9 +2490,10 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
   companyId: string;
   competitors: Array<{ name: string; reason: string | null; segment: string | null }>;
   generatedAt: string | null;
-  allCompaniesForPicker: Array<{ id: string; name: string }>;
+  allCompaniesForPicker: Array<{ id: string; name: string; domain: string | null; domainUrl: string | null }>;
 }) {
   const { toast } = useToast();
+  const [expanded, setExpanded] = useState<number | null>(null);
   const research = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/brand/${companyId}/competitors/research`);
@@ -2585,27 +2508,30 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     onError: (e: any) => toast({ title: "Competitor research error", description: e.message, variant: "destructive" }),
   });
 
-  const nameToId = useMemo(() => {
-    const m = new Map<string, string>();
+  // Lookup by name: returns the CRM row (with id + domain) if we already
+  // track this competitor, else undefined. Used to wire the "View in CRM"
+  // + "Visit website" links in the expanded panel.
+  const nameToRow = useMemo(() => {
+    const m = new Map<string, { id: string; domain: string | null; domainUrl: string | null }>();
     for (const co of allCompaniesForPicker) {
-      if (co.id !== companyId && co.name) m.set(co.name.toLowerCase(), co.id);
+      if (co.id !== companyId && co.name) m.set(co.name.toLowerCase(), { id: co.id, domain: co.domain, domainUrl: co.domainUrl });
     }
     return m;
   }, [allCompaniesForPicker, companyId]);
 
   const segmentColor = (seg: string | null): string => {
     switch ((seg || "").toLowerCase()) {
-      case "direct": return "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-900";
-      case "adjacent": return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900";
-      case "aspirational": return "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-900";
-      case "value": return "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900";
-      default: return "bg-zinc-50 text-zinc-700 border-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800";
+      case "direct": return "bg-rose-100 text-rose-700 border-rose-300 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800";
+      case "adjacent": return "bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
+      case "aspirational": return "bg-violet-100 text-violet-700 border-violet-300 hover:bg-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800";
+      case "value": return "bg-emerald-100 text-emerald-700 border-emerald-300 hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
+      default: return "bg-zinc-100 text-zinc-700 border-zinc-300 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-700";
     }
   };
 
   return (
     <div className="border-t pt-2">
-      <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+      <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
         <Sparkles className="w-3 h-3 text-purple-500" /> Competitor set
         {generatedAt && (
           <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
@@ -2621,22 +2547,75 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
       {competitors.length === 0 ? (
         <p className="text-[11px] text-muted-foreground italic">No AI competitors yet — click Research.</p>
       ) : (
-        <div className="space-y-1">
-          {competitors.map((comp, i) => {
-            const id = nameToId.get(comp.name.toLowerCase());
-            const badge = (
-              <Badge variant="outline" className={`text-[10px] ${segmentColor(comp.segment)}`}>
-                {comp.name}
-                {comp.segment && <span className="ml-1 opacity-70">· {comp.segment}</span>}
-              </Badge>
-            );
+        <div>
+          {/* Button row — bigger, colour-coded by segment */}
+          <div className="flex flex-wrap gap-1.5">
+            {competitors.map((comp, i) => {
+              const isOpen = expanded === i;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setExpanded(isOpen ? null : i)}
+                  className={`text-xs font-medium px-3 py-1.5 rounded-md border transition-colors ${segmentColor(comp.segment)} ${isOpen ? "ring-2 ring-offset-1 ring-current" : ""}`}
+                  title={comp.segment ? `${comp.segment} competitor` : "competitor"}
+                >
+                  {comp.name}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Expanded detail for the selected competitor */}
+          {expanded !== null && competitors[expanded] && (() => {
+            const comp = competitors[expanded];
+            const crmRow = nameToRow.get(comp.name.toLowerCase());
+            // Derive a website URL: CRM domain_url > CRM domain > Google search fallback
+            const websiteHref = crmRow?.domainUrl
+              || (crmRow?.domain ? `https://${crmRow.domain.replace(/^https?:\/\//, "")}` : null);
+            const googleHref = `https://www.google.com/search?q=${encodeURIComponent(comp.name)}`;
             return (
-              <div key={i} className="flex items-start gap-1.5">
-                {id ? <Link href={`/companies/${id}`} className="hover:opacity-80">{badge}</Link> : badge}
-                {comp.reason && <span className="text-[10px] text-muted-foreground leading-snug flex-1">{comp.reason}</span>}
+              <div className="mt-2 p-3 rounded-md border bg-muted/30 text-xs space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm">{comp.name}</span>
+                  {comp.segment && (
+                    <Badge variant="outline" className={`text-[10px] ${segmentColor(comp.segment)}`}>
+                      {comp.segment}
+                    </Badge>
+                  )}
+                </div>
+                {comp.reason && (
+                  <p className="text-muted-foreground leading-snug">{comp.reason}</p>
+                )}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {crmRow && (
+                    <Link href={`/companies/${crmRow.id}`}>
+                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                        <Building2 className="w-2.5 h-2.5" /> Open in BGP
+                      </Badge>
+                    </Link>
+                  )}
+                  {websiteHref && (
+                    <a href={websiteHref} target="_blank" rel="noopener noreferrer">
+                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                        <Globe className="w-2.5 h-2.5" /> Website
+                      </Badge>
+                    </a>
+                  )}
+                  {!websiteHref && (
+                    <a href={googleHref} target="_blank" rel="noopener noreferrer">
+                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                        <Search className="w-2.5 h-2.5" /> Search Google
+                      </Badge>
+                    </a>
+                  )}
+                  {!crmRow && (
+                    <span className="text-[10px] text-muted-foreground italic ml-1">Not in BGP CRM yet</span>
+                  )}
+                </div>
               </div>
             );
-          })}
+          })()}
         </div>
       )}
     </div>
