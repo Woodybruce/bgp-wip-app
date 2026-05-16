@@ -461,10 +461,15 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
 // (server/ai-activity-curator.ts) when it needs to find historic
 // meetings about a deal / brand / landlord across all 31 BGP mailboxes.
 //
-// Graph supports `/users/{id}/events?$search="query"` which matches
-// against subject, body, attendees and location. Date-bounded by
-// optional startDateTime / endDateTime params (default: last 18 months
-// to next 6 months — covers most "is there a meeting about X?" needs).
+// IMPLEMENTATION NOTE: Graph rejects $search on /events ("Graph $search
+// isn't supported on Events at the moment"). We use /calendarView with a
+// date range and filter for the query term client-side over subject/body/
+// location/attendees/organiser. Same end result — the tool DOES support
+// keyword search, just not via Graph's native operator.
+//
+// Date-bounded by optional startDateTime / endDateTime params (default:
+// last 18 months to next 6 months — covers most "is there a meeting about
+// X?" needs).
 export async function runSearchCalendarTool(opts: {
   query: string;
   top: number;
@@ -2537,7 +2542,10 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "search_calendar",
-      description: "Search Outlook calendars for meetings matching a query. By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Matches against subject, body, attendees, and location. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
+      // KEY: this tool DOES support keyword search — implemented via
+      // /calendarView + client-side filter because Graph rejects $search on
+      // /events. Don't tell the user the API can't search keywords; it can.
+      description: "Keyword-search Outlook calendars for meetings — supports full-text search across subject, body, attendees, and location even though Graph's $search operator doesn't work on /events (we use /calendarView + client-side filter under the hood). By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property — never say 'the calendar API can't search keywords', it can. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
       parameters: {
         type: "object",
         properties: {
