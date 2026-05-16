@@ -24,6 +24,11 @@ export interface ParsedRequirement {
   contactName: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  // BGP categorical options — promotion to crm_requirements_leasing uses these
+  // directly so the Use / Type columns populate cleanly.
+  useCategories: string[];         // subset of ["Retail","Restaurant","Leisure","Other","Wellness","Gym","A1 Food"]
+  typeCategory: string | null;     // one of ["Shopping Centre","High street","Retail Park","Leisure Park"] or null
+  summary: string | null;          // 1-2 line useful summary for the Comments column (no agent residue)
   confidence: "high" | "medium" | "low";
   rawText: string;
 }
@@ -41,6 +46,9 @@ Extract these fields. If a field is unclear or absent from the document, return 
 - fitOut: fit-out spec mentioned (e.g. "Cat A+", "Vanilla shell", "Open A1") or null
 - notes: freeform anything else useful — features (basement, frontage), rent guidance, exclusivity etc, in <140 chars
 - contactName / contactEmail / contactPhone: if the requirement names a contact for offers
+- useCategories: pick ALL that apply from this exact list — ["Retail","Restaurant","Leisure","Other","Wellness","Gym","A1 Food"]. Map planning classes: A1 / E(a) shop -> Retail; A3 / A4 / A5 / E(b) -> Restaurant; D2 / E(d) gyms -> Gym; D2 / E(d) other leisure -> Leisure; convenience grocers / coffee chains -> A1 Food.
+- typeCategory: pick ONE from ["Shopping Centre","High street","Retail Park","Leisure Park"] based on the format/positioning, or null if the document doesn't specify
+- summary: ONE short useful sentence for an agent scanning the row — what they really want, key features, anything non-obvious (e.g. "Flagship corner unit, double frontage, prepared to pay premium for prime trading position"). Max 160 chars. NO contact details, NO agent name, NO "Source: PIPnet" boilerplate. Null if nothing useful to say.
 - confidence: "high" if the document is clear and most fields visible, "medium" if some are inferred from context, "low" if pages are blurry / a different document type
 
 Respond with ONLY valid JSON, no markdown fences, no commentary. Example:
@@ -56,6 +64,9 @@ Respond with ONLY valid JSON, no markdown fences, no commentary. Example:
   "contactName": "Henry Davis",
   "contactEmail": "henry@example.com",
   "contactPhone": null,
+  "useCategories": ["Retail"],
+  "typeCategory": "High street",
+  "summary": "Flagship store seeker; prime central London only, prepared to pay premium for corner unit with double frontage.",
   "confidence": "high"
 }`;
 
@@ -127,6 +138,8 @@ export async function parseRequirementBrochure(args: {
       return null;
     }
     const parsed = JSON.parse(jsonMatch[0]);
+    const allowedUse = new Set(["Retail", "Restaurant", "Leisure", "Other", "Wellness", "Gym", "A1 Food"]);
+    const allowedType = new Set(["Shopping Centre", "High street", "Retail Park", "Leisure Park"]);
     return {
       brandName: parsed.brandName || null,
       sizeRange: parsed.sizeRange || null,
@@ -139,6 +152,11 @@ export async function parseRequirementBrochure(args: {
       contactName: parsed.contactName || null,
       contactEmail: parsed.contactEmail || null,
       contactPhone: parsed.contactPhone || null,
+      useCategories: Array.isArray(parsed.useCategories)
+        ? parsed.useCategories.filter((v: any) => typeof v === "string" && allowedUse.has(v))
+        : [],
+      typeCategory: allowedType.has(parsed.typeCategory) ? parsed.typeCategory : null,
+      summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim().slice(0, 200) : null,
       confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "medium",
       rawText: text,
     };

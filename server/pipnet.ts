@@ -352,8 +352,23 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
     if (k && v && !(k in fields)) fields[k] = v;
   }
 
-  // "View All Images" — the multi-page brochure the team calls the landlord pack.
-  const viewAllMatch = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i);
+  // The brochure / landlord pack link — Pipnet uses several different anchor
+  // texts ("View All Images", "View Brochure", "Download Pack", sometimes
+  // wrapped around an image). Try each pattern from most specific to most
+  // permissive; the first hit wins.
+  const brochureRegexes = [
+    /<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i,
+    /<a[^>]+href="([^"]+)"[^>]*>\s*View\s+Brochure\s*<\/a>/i,
+    /<a[^>]+href="([^"]+)"[^>]*>\s*Download\s+(?:Pack|Brochure)\s*<\/a>/i,
+    /<a[^>]+href="([^"]*viewallimages[^"]*)"/i,
+    /<a[^>]+href="([^"]*\/brochure[^"]*)"/i,
+    /<a[^>]+href="([^"]*landlord[_-]?pack[^"]*)"/i,
+  ];
+  let viewAllMatch: RegExpMatchArray | null = null;
+  for (const re of brochureRegexes) {
+    viewAllMatch = html.match(re);
+    if (viewAllMatch) break;
+  }
   const landlordPackUrl = viewAllMatch
     ? (viewAllMatch[1].startsWith("http") ? viewAllMatch[1] : `${PIPNET_URL}/${viewAllMatch[1].replace(/^\//, "")}`)
     : undefined;
@@ -607,6 +622,11 @@ export async function importPipnetRequirements(params: {
     let brochurePack: { url: string; name: string; pages: number; buffer?: Buffer } | null = null;
     if (detail.landlordPackUrl && detail.requirementId) {
       brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId);
+      if (!brochurePack) {
+        console.warn(`[pipnet import] brochure download returned null for ${companyName} (${detail.requirementId}): ${detail.landlordPackUrl}`);
+      }
+    } else if (!detail.landlordPackUrl) {
+      console.warn(`[pipnet import] no landlordPackUrl detected for ${companyName} — Use/Type/Comments will be empty unless cached`);
     }
 
     // Run Claude vision over the brochure pages to extract structured fields.
@@ -640,6 +660,29 @@ export async function importPipnetRequirements(params: {
         )
       )
       .limit(1);
+
+    // If fresh vision didn't run (no brochure link / download failed / parse
+    // returned null) but we have a cached vision parse from a prior sync, reuse
+    // it. Saves the Claude call AND keeps Use / Type / Comments populated when
+    // PIPnet's HTML occasionally drops the brochure link.
+    if (!visionParse && existing.length > 0) {
+      const cached = (existing[0].rawData as any)?._visionParse;
+      if (cached && cached.confidence && cached.confidence !== "low") {
+        visionParse = cached;
+        console.log(`[pipnet import] reusing cached vision parse for ${companyName} (${cached.confidence})`);
+      }
+    }
+
+    // Similarly, if we couldn't get a fresh brochure pack this run but the
+    // previous sync stored one, keep the cached URL so the Landlord Pack
+    // column still has a clickable link.
+    if (!brochurePack && existing.length > 0) {
+      const cachedPack = (existing[0].rawData as any)?._brochurePack;
+      if (cachedPack?.url) {
+        brochurePack = cachedPack;
+        console.log(`[pipnet import] reusing cached brochure pack for ${companyName}`);
+      }
+    }
 
     const contactName = (detail.contactName || listContactName || "").trim();
     const useClass = detail.useClass || "";
@@ -699,6 +742,23 @@ export async function importPipnetRequirements(params: {
   return { imported, promoted, skippedOld, total: results.length, pages: Math.ceil(results.length / 20) };
 }
 
+// Coarse fallback when the vision parse didn't run (no brochure / parse failed).
+// Maps PIPnet's raw planning-class string ("A1,A3,SG,E") onto BGP's Use options.
+// Vision parse gives a far better classification — this is only a safety net so
+// the Use column isn't completely empty.
+function mapPlanningClassToBgpUse(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const out = new Set<string>();
+  const tokens = raw.toUpperCase().split(/[,;|\s]+/).filter(Boolean);
+  for (const t of tokens) {
+    if (t === "A1" || t.startsWith("E(A)") || t === "RETAIL") out.add("Retail");
+    else if (t.match(/^A[3-5]$/) || t.startsWith("E(B)")) out.add("Restaurant");
+    else if (t === "D2" || t.startsWith("E(D)")) out.add("Leisure");
+    else if (t === "SG" || t.startsWith("SUI")) out.add("Other");
+  }
+  return Array.from(out);
+}
+
 async function promoteToCrmRequirement(
   externalId: string,
   item: {
@@ -719,7 +779,6 @@ async function promoteToCrmRequirement(
   const landlordPackUrl: string | null = item.rawData?._landlordPackUrl || null;
   const brochurePack: { url: string; name: string; pages: number } | null = item.rawData?._brochurePack || null;
   const mobile: string | null = item.rawData?._mobile || null;
-  const addr = item.rawData?._address || {};
   return db.transaction(async (tx) => {
     // Client company — the tenant looking for space (PIPnet "Client" column).
     let clientCompanyId: string | null = null;
@@ -808,10 +867,15 @@ async function promoteToCrmRequirement(
       }
     }
 
-    // Use class arrives comma-separated from PIPnet ("A1,A3,SG,A4,E") — split.
-    const useArray = item.useClass
-      ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
-      : null;
+    // Use + Type + Comments come from the vision parse (Claude reads the
+    // brochure pages and maps onto BGP's categorical options). Fall back to
+    // a coarse planning-class map only when vision didn't run.
+    const visionParse: any = item.rawData?._visionParse || null;
+    const useArray: string[] | null = (visionParse?.useCategories?.length
+      ? visionParse.useCategories
+      : mapPlanningClassToBgpUse(item.useClass)) || null;
+    const requirementType: string[] | null = visionParse?.typeCategory ? [visionParse.typeCategory] : null;
+    const aiSummary: string | null = visionParse?.summary || null;
 
     // Prefer the BGP-hosted PDF (no PIPnet login required). Fall back to the
     // raw PIPnet URL only if the download/stitch failed, so the link still
@@ -838,10 +902,15 @@ async function promoteToCrmRequirement(
       // leave non-empty fields untouched (don't trample manual edits).
       const updates: Record<string, any> = {};
       if (!existingReq.agentContactId && agentContactId) updates.agentContactId = agentContactId;
-      if ((!existingReq.use || existingReq.use.length === 0) && useArray) updates.use = useArray;
+      if ((!existingReq.use || existingReq.use.length === 0) && useArray && useArray.length > 0) updates.use = useArray;
+      if ((!existingReq.requirementType || existingReq.requirementType.length === 0) && requirementType) updates.requirementType = requirementType;
       if ((!existingReq.size || existingReq.size.length === 0) && item.sizeRange) updates.size = [item.sizeRange];
+      if ((!existingReq.requirementLocations || existingReq.requirementLocations.length === 0) && item.locations && item.locations.length > 0) {
+        updates.requirementLocations = item.locations;
+      }
       if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
       if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
+      if ((!existingReq.comments || !existingReq.comments.trim()) && aiSummary) updates.comments = aiSummary;
       // Append "PIPnet" to the sources array if not already there.
       const existingSources = existingReq.sources ?? [];
       if (!existingSources.includes("PIPnet")) {
@@ -857,24 +926,19 @@ async function promoteToCrmRequirement(
       return false;
     }
 
-    const addressLine = [addr.line1, addr.line2, addr.town, addr.county, addr.postCode].filter(Boolean).join(", ");
     await tx.insert(crmRequirementsLeasing).values({
       name: item.companyName,
       companyId: clientCompanyId,
       principalContactId: null,
       agentContactId,
       requirementDate: requirementDateIso,
-      use: useArray,
+      use: useArray && useArray.length > 0 ? useArray : null,
+      requirementType,
       size: item.sizeRange ? [item.sizeRange] : null,
       requirementLocations: item.locations,
       landlordPack: landlordPackJson,
       sources: ["PIPnet"],
-      comments: [
-        item.description,
-        item.tenure ? `Tenure: ${item.tenure}` : null,
-        addressLine ? `Agent address: ${addressLine}` : null,
-        "Source: PIPnet",
-      ].filter(Boolean).join("\n"),
+      comments: aiSummary,
       status: "Active",
     });
 
