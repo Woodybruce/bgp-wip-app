@@ -5,6 +5,7 @@ import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
 import { saveFile } from "./file-storage";
 import { randomBytes } from "crypto";
+import { parseRequirementBrochure, mergeVisionIntoRecord } from "./requirement-vision-parser";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -387,7 +388,7 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
 // a single PDF, save via the existing file-storage helper and return the
 // BGP-hosted URL ready for the landlord_pack JSON. Returns null if the
 // brochure couldn't be fetched or contained no usable pages.
-async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId: string): Promise<{ url: string; name: string; pages: number } | null> {
+async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId: string): Promise<{ url: string; name: string; pages: number; buffer: Buffer } | null> {
   try {
     const res = await pipFetch(brochureUrl, { headers: { Cookie: cookie } });
     if (!res.ok) {
@@ -401,7 +402,7 @@ async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId:
       const buf = Buffer.from(await res.arrayBuffer());
       const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
       await saveFile(key, buf, "application/pdf", `pipnet-${reqId}.pdf`);
-      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1 };
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1, buffer: buf };
     }
 
     // Direct image — wrap in single-page PDF.
@@ -411,7 +412,7 @@ async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId:
       if (!pdf) return null;
       const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
       await saveFile(key, pdf, "application/pdf", `pipnet-${reqId}.pdf`);
-      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1 };
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1, buffer: pdf };
     }
 
     // HTML index — find every <img>, download each, stitch.
@@ -461,7 +462,7 @@ async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId:
     if (!pdfBytes) return null;
     const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
     await saveFile(key, pdfBytes, "application/pdf", `pipnet-${reqId}.pdf`);
-    return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure (${pages.length} pages)`, pages: pages.length };
+    return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure (${pages.length} pages)`, pages: pages.length, buffer: pdfBytes };
   } catch (e: any) {
     console.error(`[pipnet brochure] ${reqId}: ${e?.message}`);
     return null;
@@ -603,9 +604,24 @@ export async function importPipnetRequirements(params: {
     // Download the "View All Images" brochure (the landlord pack — flyer plus
     // photos) and stitch into a single PDF hosted by BGP. Falls back to the
     // raw PIPnet URL on failure so the link still works (with PIPnet login).
-    let brochurePack: { url: string; name: string; pages: number } | null = null;
+    let brochurePack: { url: string; name: string; pages: number; buffer?: Buffer } | null = null;
     if (detail.landlordPackUrl && detail.requirementId) {
       brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId);
+    }
+
+    // Run Claude vision over the brochure pages to extract structured fields.
+    // PIPnet's tabular metadata is sparse + often wrong — the brochure images
+    // contain the real requirement (size, use class, target locations, format).
+    let visionParse: Awaited<ReturnType<typeof parseRequirementBrochure>> = null;
+    if (brochurePack?.buffer) {
+      try {
+        visionParse = await parseRequirementBrochure({ pdfBuffer: brochurePack.buffer });
+        if (visionParse) {
+          console.log(`[pipnet import] vision parse for ${companyName} (${visionParse.confidence}): size=${visionParse.sizeRange}, locations=${visionParse.locations?.length || 0}`);
+        }
+      } catch (e: any) {
+        console.warn(`[pipnet import] vision parse failed for ${companyName}: ${e?.message}`);
+      }
     }
 
     // Prefer PIPnet's stable Requirement ID for dedup; fall back to the old
@@ -628,7 +644,7 @@ export async function importPipnetRequirements(params: {
     const contactName = (detail.contactName || listContactName || "").trim();
     const useClass = detail.useClass || "";
 
-    const record = {
+    const record: any = {
       source: "PIPnet" as const,
       sourceId,
       companyName,
@@ -638,7 +654,7 @@ export async function importPipnetRequirements(params: {
       tenure: detail.tenure || row["Tenure"] || null,
       sizeRange: sizeRange || null,
       useClass: useClass || null,
-      locations: null, // PIPnet does not expose wanted locations — team fills manually.
+      locations: null as string[] | null, // PIPnet does not expose wanted locations — team fills manually.
       lastUpdated: detail.documentDate || docDate || null,
       description: [detail.comments, agentCompany ? `Acting agent: ${agentCompany}` : null].filter(Boolean).join("\n\n") || null,
       status: row["Status"] || "active",
@@ -647,12 +663,19 @@ export async function importPipnetRequirements(params: {
         _agentCompany: agentCompany,
         _detail: detail,
         _landlordPackUrl: detail.landlordPackUrl || null,
-        _brochurePack: brochurePack, // BGP-hosted PDF (preferred) or null
+        _brochurePack: brochurePack ? { url: brochurePack.url, name: brochurePack.name, pages: brochurePack.pages } : null,
         _mobile: detail.mobile || null,
         _address: { line1: detail.address1, line2: detail.address2, town: detail.town, county: detail.county, postCode: detail.postCode },
+        _visionParse: visionParse,
       } as any,
       updatedAt: new Date(),
     };
+
+    // Merge vision-extracted fields into the record. Vision wins on empty
+    // fields, AND wins entirely when confidence === "high".
+    if (visionParse) {
+      mergeVisionIntoRecord(record, visionParse);
+    }
 
     let externalId: string;
     if (existing.length > 0) {

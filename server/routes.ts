@@ -1585,6 +1585,54 @@ export async function registerRoutes(
     }
   });
 
+  // Re-run Claude vision over an already-imported external requirement's
+  // brochure and merge the extracted fields back into the row. Useful when:
+  // - the requirement was imported BEFORE the vision parser was wired (older
+  //   PIPnet rows have only the noisy tabular metadata)
+  // - the prompt has been tuned and we want to re-extract
+  // - the original parse was low-confidence
+  //
+  // POST /api/external-requirements/:id/reparse-vision
+  app.post("/api/external-requirements/:id/reparse-vision", requireAuth, async (req, res) => {
+    try {
+      const id = req.params.id;
+      const { externalRequirements: extReq } = await import("@shared/schema");
+      const { getFile } = await import("./file-storage");
+      const { parseRequirementBrochure, mergeVisionIntoRecord } = await import("./requirement-vision-parser");
+      const [row] = await db.select().from(extReq).where(eq(extReq.id, id)).limit(1);
+      if (!row) return res.status(404).json({ message: "Requirement not found" });
+      const brochure = (row.rawData as any)?._brochurePack;
+      if (!brochure?.url) {
+        return res.status(400).json({ message: "No brochure pack on this row — vision needs a PDF" });
+      }
+      // The URL is /api/crm/landlord-packs/<filename>. Reconstruct the storage key.
+      const filename = String(brochure.url).split("/").pop();
+      if (!filename) return res.status(400).json({ message: "Couldn't parse brochure URL" });
+      const file = await getFile(`landlord-packs/${filename}`);
+      if (!file) return res.status(404).json({ message: "Brochure file missing from storage" });
+      const vision = await parseRequirementBrochure({ pdfBuffer: file.data });
+      if (!vision) return res.status(502).json({ message: "Vision parse failed or returned nothing" });
+      const updated: any = {
+        sizeRange: row.sizeRange,
+        useClass: row.useClass,
+        locations: row.locations,
+        tenure: row.tenure,
+        description: row.description,
+        contactName: row.contactName,
+        contactEmail: row.contactEmail,
+        contactPhone: row.contactPhone,
+      };
+      mergeVisionIntoRecord(updated, vision);
+      await db.update(extReq)
+        .set({ ...updated, rawData: { ...(row.rawData as any || {}), _visionParse: vision }, updatedAt: new Date() })
+        .where(eq(extReq.id, id));
+      res.json({ ok: true, confidence: vision.confidence, fields: updated, vision });
+    } catch (err: any) {
+      console.error("[reparse-vision] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Vision reparse failed" });
+    }
+  });
+
   // TRL: full sync — discovers every requirement URL via TRL's search and
   // imports + auto-promotes each into crm_requirements_leasing.
   app.post("/api/external-requirements/sync-trl", requireAuth, async (_req, res) => {
