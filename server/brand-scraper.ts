@@ -20,7 +20,7 @@
 //   POST /api/brand-scraper/run              — admin: kick a batch
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import Anthropic from "@anthropic-ai/sdk";
@@ -383,11 +383,8 @@ export async function backfillInstagramHandles(limit = 500): Promise<{
 
 // ─── Endpoints ───────────────────────────────────────────────────────────
 
-router.post("/api/admin/backfill-instagram-handles", requireAuth, async (req: Request, res: Response) => {
+router.post("/api/admin/backfill-instagram-handles", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId as string;
-    const adminCheck = await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [userId]);
-    if (!adminCheck.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
     const limit = Math.min(parseInt(String(req.body?.limit || req.query.limit || 500), 10) || 500, 3000);
     // Run async so the request doesn't time out on Railway (~60s proxy limit).
     backfillInstagramHandles(limit)
