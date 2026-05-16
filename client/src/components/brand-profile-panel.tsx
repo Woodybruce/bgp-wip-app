@@ -1302,8 +1302,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         src={firstImg.thumbnail_data
                           ? `data:${firstImg.mime_type || "image/jpeg"};base64,${firstImg.thumbnail_data}`
                           : `/api/brand/gallery-image/${firstImg.id}`}
-                        alt="Brand visual"
+                        alt=""
                         className="w-full h-full object-cover"
+                        onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
                       />
                     </div>
                   )}
@@ -3225,8 +3226,10 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                         ) : (
                           <div className="w-10 h-10 rounded border bg-muted flex items-center justify-center overflow-hidden">
                             {domain ? (
+                              // Google favicon API — works for any domain, free, no key.
+                              // Replaces deprecated Clearbit.
                               <img
-                                src={`https://logo.clearbit.com/${domain}?size=64`}
+                                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
                                 alt=""
                                 className="w-5 h-5 object-contain"
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
