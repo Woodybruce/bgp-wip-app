@@ -2867,9 +2867,26 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
 //   • Quick actions (run KYC, run Red Flag — placeholders)
 // All data comes from the same /api/brand/:id/profile payload the main
 // panel already fetched, so no extra requests.
-function SidebarKeyContacts({ data, companyId, topContacts }: { data: BrandProfile; companyId: string; topContacts: any[] }) {
+function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId: string; topContacts: any[] }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [showAll, setShowAll] = useState(false);
+
+  // Property-relevant roles only by default. Most of what RocketReach imports
+  // is C-suite + store-dev — but historical Apollo data has store managers,
+  // baristas, anyone. We filter to property-relevant titles so the panel is
+  // useful for "who do I pitch this unit to". User can click 'Show all'.
+  const isPropertyTier = (role: string | null | undefined): boolean => {
+    if (!role) return false;
+    const r = role.toLowerCase();
+    return /(property|real estate|acquisition|expansion|portfolio|estates|store dev|store development|store opening|locations|sites)/.test(r)
+      || /(founder|ceo|coo|cfo|cmo|managing director|chief executive|chief operating|chief financial|chief marketing|md\b)/.test(r);
+  };
+
+  const allContacts = data.contacts || [];
+  const propertyContacts = allContacts.filter((c: any) => isPropertyTier(c.role));
+  const visible = showAll ? allContacts : propertyContacts;
+
   const refresh = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {});
@@ -2893,7 +2910,7 @@ function SidebarKeyContacts({ data, companyId, topContacts }: { data: BrandProfi
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Users className="w-3.5 h-3.5" /> Key contacts
-          <Badge variant="outline" className="text-[10px]">{(data.contacts || []).length}</Badge>
+          <Badge variant="outline" className="text-[10px]">{visible.length}{!showAll && allContacts.length > propertyContacts.length ? ` / ${allContacts.length}` : ""}</Badge>
         </CardTitle>
         <button
           onClick={() => refresh.mutate()}
@@ -2904,22 +2921,43 @@ function SidebarKeyContacts({ data, companyId, topContacts }: { data: BrandProfi
           {refresh.isPending ? "Searching…" : "Refresh"}
         </button>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-2">
-        {topContacts.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No decision-makers logged yet. Click Refresh to discover.</p>
-        ) : topContacts.map((dm: any) => (
-          <div key={dm.id} className="flex items-start gap-2 text-xs">
-            <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
-              {dm.avatar_url ? <img src={dm.avatar_url} alt="" className="w-full h-full object-cover" /> : (dm.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="font-medium truncate">{dm.name}</div>
-              <div className="text-[10px] text-muted-foreground truncate">{dm.role || dm.email || ""}</div>
-            </div>
+      <CardContent className="p-3 pt-0">
+        {visible.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">
+            {allContacts.length === 0
+              ? "No contacts logged yet. Click Refresh to discover."
+              : "No property-tier contacts. Click Show all below."}
+          </p>
+        ) : (
+          <div className="max-h-[280px] overflow-y-auto pr-1 space-y-1.5">
+            {visible.map((dm: any) => {
+              const hasEmail = !!dm.email;
+              const hasLinkedin = !!dm.linkedin_url;
+              return (
+                <Link key={dm.id} href={`/contacts/${dm.id}`} className="flex items-start gap-2 text-xs hover:bg-muted/50 rounded p-1 -mx-1 transition-colors">
+                  <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
+                    {dm.avatar_url ? <img src={dm.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.style.display = "none"); }} /> : (dm.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium truncate flex items-center gap-1">
+                      {dm.name}
+                      {hasEmail && <Mail className="w-2.5 h-2.5 text-emerald-600 shrink-0" />}
+                      {hasLinkedin && <Linkedin className="w-2.5 h-2.5 text-blue-600 shrink-0" />}
+                    </div>
+                    {dm.role && <div className="text-[10px] text-muted-foreground truncate">{dm.role}</div>}
+                  </div>
+                </Link>
+              );
+            })}
           </div>
-        ))}
-        {(data.contacts || []).length > 5 && (
-          <p className="text-[10px] text-muted-foreground">+ {data.contacts.length - 5} more in Representations below</p>
+        )}
+        {allContacts.length > propertyContacts.length && (
+          <button
+            onClick={() => setShowAll(v => !v)}
+            className="mt-2 text-[10px] text-primary hover:underline"
+          >
+            {showAll ? `Show property-tier only (${propertyContacts.length})` : `Show all ${allContacts.length} contacts`}
+          </button>
         )}
       </CardContent>
     </Card>
