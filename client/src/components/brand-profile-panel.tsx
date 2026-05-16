@@ -3236,14 +3236,51 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                   No LinkedIn posts captured.{c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="text-primary hover:underline not-italic">Visit →</a>}
                 </div>
               )}
+              {(() => { return null; })()}
               <div className="space-y-1.5">
                 {visible.map((article) => {
                   const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
                   const hasRealImage = !!(article.image_url && !isGoogleProxy);
-                  const domain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
-                  const sourceLabel = article.source_name && /^google( news)?$/i.test(article.source_name)
-                    ? (domain || null)
-                    : article.source_name;
+                  // Strip the " (Google News)" suffix that the pipeline appends.
+                  const cleanSourceName = (article.source_name || "").replace(/\s*\(Google News\)\s*$/i, "").trim();
+                  const rawUrlDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
+                  // Don't use the URL domain for Google-News-proxied articles — it'd
+                  // return Google's logo. Map known publishers from source_name instead.
+                  const isGoogleUrl = rawUrlDomain && /(^|\.)(google|gstatic|googleusercontent)\.com$/i.test(rawUrlDomain);
+                  const PUBLISHER_DOMAINS: Record<string, string> = {
+                    "drapers": "drapersonline.com",
+                    "retail week": "retailweek.com",
+                    "retail gazette": "retailgazette.co.uk",
+                    "property week": "propertyweek.com",
+                    "estates gazette": "egi.co.uk",
+                    "vogue business": "voguebusiness.com",
+                    "business of fashion": "businessoffashion.com",
+                    "vogue": "vogue.co.uk",
+                    "bbc": "bbc.co.uk",
+                    "bbc news": "bbc.co.uk",
+                    "the times": "thetimes.co.uk",
+                    "the guardian": "theguardian.com",
+                    "guardian": "theguardian.com",
+                    "telegraph": "telegraph.co.uk",
+                    "the telegraph": "telegraph.co.uk",
+                    "financial times": "ft.com",
+                    "ft": "ft.com",
+                    "reuters": "reuters.com",
+                    "bloomberg": "bloomberg.com",
+                    "fashionunited": "fashionunited.uk",
+                    "who what wear": "whowhatwear.com",
+                    "elle": "elle.com",
+                    "harpers bazaar": "harpersbazaar.com",
+                    "gq": "gq.com",
+                    "wallpaper": "wallpaper.com",
+                    "metro": "metro.co.uk",
+                    "yahoo life": "uk.style.yahoo.com",
+                  };
+                  const sourceDomain = PUBLISHER_DOMAINS[cleanSourceName.toLowerCase()];
+                  // Final domain for favicon: prefer mapped publisher, fall back to
+                  // URL domain only if it's NOT a Google proxy.
+                  const domain = sourceDomain || (isGoogleUrl ? null : rawUrlDomain);
+                  const sourceLabel = cleanSourceName || rawUrlDomain;
                   const displayText = article.ai_summary || article.summary;
                   return (
                     <a
