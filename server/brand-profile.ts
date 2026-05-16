@@ -739,6 +739,7 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
       "instagram_handle", "tiktok_handle", "x_handle", "dept_store_presence",
       "franchise_activity", "hunter_flag", "stock_ticker", "uk_entity_name", "agent_type",
       "concept_status",
+      "domain", "domain_url",
     ];
     const sets: string[] = [];
     const vals: any[] = [];

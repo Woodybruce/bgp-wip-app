@@ -335,6 +335,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [contactsFinding, setContactsFinding] = useState(false);
+  const [editingDomain, setEditingDomain] = useState(false);
+  const [domainInput, setDomainInput] = useState("");
   const autoContactsRan = useRef(false);
   const autoBrandIntelRan = useRef(false);
 
@@ -1175,16 +1177,73 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             })()}
             {/* Outreach strip — quick-action buttons */}
             <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1">
-              {(c.domain_url || c.domain) && (
-                <a
-                  href={c.domain_url || `https://${c.domain}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                  data-testid="link-website"
+              {editingDomain ? (
+                <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background text-xs">
+                  <Globe className="w-3 h-3 text-muted-foreground" />
+                  <input
+                    type="text"
+                    autoFocus
+                    value={domainInput}
+                    onChange={(e) => setDomainInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const clean = domainInput.trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+                        patchMutation.mutate({ domain: clean || null, domain_url: clean ? `https://${clean}` : null } as any);
+                        setEditingDomain(false);
+                      } else if (e.key === "Escape") {
+                        setEditingDomain(false);
+                      }
+                    }}
+                    placeholder="example.com"
+                    className="bg-transparent outline-none w-40 text-xs"
+                    data-testid="input-edit-domain"
+                  />
+                  <button
+                    onClick={() => {
+                      const clean = domainInput.trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+                      patchMutation.mutate({ domain: clean || null, domain_url: clean ? `https://${clean}` : null } as any);
+                      setEditingDomain(false);
+                    }}
+                    title="Save"
+                    className="hover:text-emerald-600"
+                  >
+                    <Check className="w-3 h-3" />
+                  </button>
+                  <button onClick={() => setEditingDomain(false)} title="Cancel" className="hover:text-rose-600">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (c.domain_url || c.domain) ? (
+                <div className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 transition-colors">
+                  <a
+                    href={c.domain_url || `https://${c.domain}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 pl-2 pr-1 py-1 text-xs font-medium"
+                    data-testid="link-website"
+                  >
+                    <Globe className="w-3 h-3" /> Website
+                  </a>
+                  <button
+                    onClick={() => {
+                      setDomainInput((c.domain || (c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "")) || "");
+                      setEditingDomain(true);
+                    }}
+                    title="Edit website"
+                    className="pr-2 py-1 text-muted-foreground hover:text-foreground"
+                    data-testid="button-edit-domain"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setDomainInput(""); setEditingDomain(true); }}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-border/60 bg-background hover:bg-muted/50 text-xs font-medium text-muted-foreground transition-colors"
+                  data-testid="button-add-domain"
                 >
-                  <Globe className="w-3 h-3" /> Website
-                </a>
+                  <Globe className="w-3 h-3" /> Add website
+                </button>
               )}
               {c.linkedin_url && (
                 <a
