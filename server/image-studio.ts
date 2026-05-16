@@ -1258,7 +1258,11 @@ export function registerImageStudioRoutes(app: Express) {
             AND brand_name <> ''`
       );
       const count = Number(rows[0]?.count || 0);
-      res.setHeader("Cache-Control", "private, max-age=300");
+      // No browser cache — used to be 5 min, but that locked in a stale
+      // 'hasLogos: false' for users who loaded the page before the bulk
+      // logo import ran. UI now always tries the local URL anyway, so
+      // this endpoint is mostly informational.
+      res.setHeader("Cache-Control", "no-store");
       res.json({ count, hasLogos: count >= 1 });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

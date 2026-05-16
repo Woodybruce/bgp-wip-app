@@ -544,8 +544,11 @@ probeBrandLibrary();
 export function localBrandLogoUrl(name: string | null | undefined, domain?: string | null | undefined): string | null {
   const trimmed = (name || "").trim();
   if (!trimmed) return null;
-  // No logos in the library → skip the local lookup entirely.
-  if (_libraryHasLogos !== true) return null;
+  // Always return the local-library URL first. BrandLogo's onError chain
+  // falls through to Clearbit + initials if this 404s, so there's no value
+  // in gating on /api/brand-logo-stats — and the stats probe was getting
+  // stuck on a stale 'hasLogos: false' from before the bulk import ran.
+  // The endpoint sets a 24h cache on 404s so misses don't spam either.
   const d = extractDomain(domain ?? null);
   const qs = d ? `?domain=${encodeURIComponent(d)}` : "";
   return `/api/brand-logo/${encodeURIComponent(trimmed)}${qs}`;
