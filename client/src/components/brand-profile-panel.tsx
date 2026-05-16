@@ -759,6 +759,30 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // User list — used to map bgp_user emails to friendly names in the
+  // Recent interactions board (e.g. woody@brucegillinghampollard.com → Woody Bruce).
+  const { data: allBgpUsers } = useQuery<Array<{ id: string; name: string; username: string; email: string | null }>>({
+    queryKey: ["/api/users"],
+    staleTime: 10 * 60 * 1000,
+  });
+  const emailToName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const u of allBgpUsers || []) {
+      const display = u.name || u.username || u.email || "";
+      if (u.email) m.set(u.email.toLowerCase(), display);
+      if (u.username) m.set(u.username.toLowerCase(), display);
+    }
+    return m;
+  }, [allBgpUsers]);
+  const bgpUserDisplay = (raw: string | null | undefined): string => {
+    if (!raw) return "";
+    const lower = raw.toLowerCase();
+    if (emailToName.has(lower)) return emailToName.get(lower)!;
+    // Fallback: prettify the local part (e.g. "harrye" → "Harry E").
+    const local = lower.includes("@") ? lower.split("@")[0] : lower;
+    return local.replace(/\b\w/g, c => c.toUpperCase());
+  };
+
   // Hunter score (computed score + flags from brand_signals + stock)
   const { data: hunter } = useQuery<{ expansionScore: number; expansionFlags: string[] }>({
     queryKey: ["/api/brand", companyId, "hunter-score"],
@@ -1736,7 +1760,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       {it.subject && <div className="font-medium truncate leading-snug">{it.subject}</div>}
                       {it.preview && <div className="text-[10px] text-muted-foreground truncate leading-snug">{it.preview}</div>}
                     </div>
-                    <span className="text-[10px] text-muted-foreground shrink-0">{it.bgp_user || ""} · {ago(it.interaction_date)}</span>
+                    <span className="text-[10px] text-muted-foreground shrink-0">{bgpUserDisplay(it.bgp_user)} · {ago(it.interaction_date)}</span>
                   </div>
                 );
               };
