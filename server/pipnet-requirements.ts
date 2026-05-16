@@ -54,7 +54,7 @@ router.get("/api/brand/:companyId/pipnet-requirements", requireAuth, async (req:
     }
 
     // Normalise the variable Pipnet field names into a stable shape.
-    const normalised = rows.slice(0, 25).map((r) => ({
+    const normalised = rows.slice(0, 50).map((r) => ({
       client: r["Client"] || r["Company"] || r["Name"] || null,
       location: r["Location"] || r["Town"] || r["Area"] || null,
       size: r["Size"] || r["Sales Area"] || r["Sq Ft"] || r["Square Footage"] || r["Floor Area"] || null,
@@ -65,7 +65,41 @@ router.get("/api/brand/:companyId/pipnet-requirements", requireAuth, async (req:
       tenure: r["Tenure"] || null,
     }));
 
-    const payload = { rows: normalised, fetched_at: new Date().toISOString() };
+    // Pipnet's client filter is fuzzy substring — searching "Pret" returns
+    // "Pret News Ltd" too. Filter the rows to ones that genuinely match the
+    // brand: exact (after stripping Ltd/Limited/Group/Holdings/plc), OR the
+    // brand name occupies the first word of the client name. Anything else
+    // is dropped as a false match.
+    const normaliseName = (s: string): string => s
+      .toLowerCase()
+      .replace(/[.,&]/g, "")
+      .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|uk|the)\b\.?/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const target = normaliseName(brandName);
+    const targetTokens = target.split(" ").filter(Boolean);
+    const tightlyMatched = normalised.filter((row) => {
+      if (!row.client) return false;
+      const c = normaliseName(row.client);
+      if (!c) return false;
+      if (c === target) return true;
+      // Must contain ALL of the brand's tokens AND start with the first token.
+      // Catches "Aesop UK Ltd" → "aesop" matches, but rejects "Pret News" when
+      // brand is "Pret" because tokens of "pret" all match but "pret news"
+      // starts with "pret" so... let's tighten further: client length must be
+      // close to brand length.
+      const startsWithFirst = c.split(" ")[0] === targetTokens[0];
+      const lengthRatio = target.length / c.length;
+      const allTokensPresent = targetTokens.every(t => c.includes(t));
+      return startsWithFirst && allTokensPresent && lengthRatio >= 0.5;
+    });
+
+    const droppedAsFuzzy = normalised.length - tightlyMatched.length;
+    if (droppedAsFuzzy > 0) {
+      console.log(`[pipnet-requirements] "${brandName}": kept ${tightlyMatched.length}/${normalised.length} (dropped ${droppedAsFuzzy} fuzzy matches)`);
+    }
+
+    const payload = { rows: tightlyMatched.slice(0, 25), fetched_at: new Date().toISOString(), dropped_fuzzy: droppedAsFuzzy };
     cache.set(companyId, { value: payload, expiresAt: Date.now() + TTL_MS });
     res.json({ ...payload, cached: false });
   } catch (err: any) {

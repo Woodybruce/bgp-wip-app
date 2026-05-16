@@ -2450,7 +2450,7 @@ function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; br
     <div>
       <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
         <span className="flex items-center gap-1">
-          <Search className="w-3 h-3" /> Pipnet requirements {hasRows ? `(${rows.length})` : ""}
+          <Search className="w-3 h-3" /> Requirements {hasRows ? `(${rows.length})` : ""}
           {data?.fetched_at && (
             <span className="text-[10px] ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
           )}
@@ -2466,7 +2466,7 @@ function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; br
       {isLoading ? (
         <p className="text-[11px] text-muted-foreground italic">Loading…</p>
       ) : !hasRows ? (
-        <p className="text-[11px] text-muted-foreground italic">No Pipnet requirements found for "{brandName}".</p>
+        <p className="text-[11px] text-muted-foreground italic">No requirements found for "{brandName}".</p>
       ) : (
         <div className="space-y-0.5">
           {rows.slice(0, 6).map((r, i) => (
