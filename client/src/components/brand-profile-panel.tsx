@@ -78,6 +78,10 @@ interface BrandProfile {
     kyc_expires_at: string | null;
     aml_risk_level: string | null;
     aml_pep_status: string | null;
+    last_accounts_doc_id: string | null;
+    last_accounts_made_up_to: string | null;
+    last_accounts_storage_key: string | null;
+    last_accounts_fetched_at: string | null;
     bgp_contact_crm: string | null;
     letting_hunter_flag: boolean | null;
     letting_hunter_notes: string | null;
@@ -3479,6 +3483,27 @@ function ComplianceBoard({
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
 
+  // On-demand "fetch latest accounts" — surfaces a button next to the
+  // Latest-accounts row when we have a CH number. Idempotent server-side:
+  // re-running when we already have the most recent filing is a no-op.
+  const fetchAccounts = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/fetch-latest-accounts`, {});
+      return res.json();
+    },
+    onSuccess: (out: any) => {
+      if (out?.status === "downloaded") {
+        toast({ title: "Latest accounts downloaded", description: out.madeUpTo ? `Period ending ${out.madeUpTo}` : "" });
+      } else if (out?.status === "up_to_date") {
+        toast({ title: "Already up to date" });
+      } else {
+        toast({ title: "Couldn't fetch", description: out?.reason || "no filing found", variant: "destructive" });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Fetch failed", description: e.message, variant: "destructive" }),
+  });
+
   const entity = company.uk_entity_name?.trim() || "";
   const hasEntity = entity.length > 0;
   const chSearchUrl = `https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(entity || company.name)}`;
@@ -3600,13 +3625,13 @@ function ComplianceBoard({
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Downstream checks</div>
           <div className="space-y-0.5">
             {[
-              { label: "Companies House profile", done: !!company.companies_house_number },
-              { label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
-              { label: "Latest accounts", done: !!(company.companies_house_data as any)?.lastAccountsMadeUpTo },
-              { label: "Red Flag credit score", done: !!(company.kyc_status === "verified") },
-              { label: "AML PEP / adverse media", done: !!company.aml_pep_status },
-            ].map((row, i) => (
-              <div key={i} className="flex items-center gap-1.5 text-[11px]">
+              { key: "ch", label: "Companies House profile", done: !!company.companies_house_number },
+              { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
+              { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
+              { key: "redflag", label: "Red Flag credit score", done: !!(company.kyc_status === "verified") },
+              { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
+            ].map((row) => (
+              <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
                 {row.done ? (
                   <Check className="w-3 h-3 text-emerald-600 shrink-0" />
                 ) : (
@@ -3614,8 +3639,38 @@ function ComplianceBoard({
                 )}
                 <span className={row.done ? "text-foreground" : (hasEntity ? "text-foreground/80" : "text-muted-foreground/60")}>
                   {row.label}
+                  {row.key === "accounts" && row.done && company.last_accounts_made_up_to && (
+                    <span className="text-muted-foreground ml-1">
+                      (FY{new Date(company.last_accounts_made_up_to).getFullYear()})
+                    </span>
+                  )}
                 </span>
-                {!hasEntity && !row.done && (
+                {row.key === "accounts" && (
+                  <div className="ml-auto flex items-center gap-1.5">
+                    {row.done && (
+                      <a
+                        href={`/api/brand/${companyId}/latest-accounts.pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                        title="Download stored PDF"
+                      >
+                        <ExternalLink className="w-2.5 h-2.5" /> PDF
+                      </a>
+                    )}
+                    {company.companies_house_number && (
+                      <button
+                        onClick={() => fetchAccounts.mutate()}
+                        disabled={fetchAccounts.isPending}
+                        className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                        title={row.done ? "Re-check Companies House for a newer filing" : "Download latest accounts from Companies House"}
+                      >
+                        {fetchAccounts.isPending ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : (row.done ? "↻" : "Fetch")}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {!hasEntity && !row.done && row.key !== "accounts" && (
                   <span className="text-[10px] text-muted-foreground/60 italic ml-auto">parked</span>
                 )}
               </div>

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "./auth";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { runAllAmlChecks } from "./kyc-orchestrator";
+import { pool } from "./db";
 
 const router = Router();
 
@@ -3245,6 +3246,104 @@ router.post("/api/companies-house/bulk-scrape-uk-entities", requireAuth, async (
 
 router.get("/api/companies-house/bulk-scrape-uk-entities/status", requireAuth, async (_req, res) => {
   res.json(bulkScrapeProgress);
+});
+
+// ─── Bulk accounts fetch ──────────────────────────────────────────────────
+// Auto-downloads the latest set of accounts (PDF) from CH for every CRM
+// company with a CH number. Skips companies whose stored doc_id already
+// matches the latest CH filing. Throttled to 1 req/sec.
+
+let bulkAccountsProgress = {
+  state: "idle" as "idle" | "running" | "done" | "error",
+  startedAt: null as string | null,
+  finishedAt: null as string | null,
+  total: 0,
+  processed: 0,
+  downloaded: 0,
+  upToDate: 0,
+  skipped: 0,
+  errored: 0,
+  error: null as string | null,
+};
+
+router.post("/api/companies-house/bulk-fetch-accounts", requireAuth, async (req, res) => {
+  if (bulkAccountsProgress.state === "running") {
+    return res.status(202).json({ accepted: true, alreadyRunning: true, progress: bulkAccountsProgress });
+  }
+  const limit = Math.min(Number(req.body?.limit ?? 5000), 5000);
+  bulkAccountsProgress = {
+    state: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    total: 0, processed: 0, downloaded: 0, upToDate: 0, skipped: 0, errored: 0, error: null,
+  };
+
+  (async () => {
+    try {
+      const { runBulkAccountsFetch } = await import("./ch-accounts");
+      // Inline progress tracking by patching opts — runBulkAccountsFetch
+      // already does the heavy lifting; we just observe its return.
+      const out = await runBulkAccountsFetch({ limit });
+      Object.assign(bulkAccountsProgress, out);
+      bulkAccountsProgress.state = "done";
+      bulkAccountsProgress.finishedAt = new Date().toISOString();
+      console.log(`[bulk-accounts] done — ${out.downloaded} downloaded, ${out.upToDate} up-to-date, ${out.errored} errors`);
+    } catch (err: any) {
+      bulkAccountsProgress.state = "error";
+      bulkAccountsProgress.error = err?.message || String(err);
+      bulkAccountsProgress.finishedAt = new Date().toISOString();
+      console.error("[bulk-accounts] aborted:", err?.message || err);
+    }
+  })();
+
+  res.status(202).json({
+    accepted: true,
+    message: "Bulk accounts fetch started. Poll /api/companies-house/bulk-fetch-accounts/status for progress.",
+    progress: bulkAccountsProgress,
+  });
+});
+
+router.get("/api/companies-house/bulk-fetch-accounts/status", requireAuth, async (_req, res) => {
+  res.json(bulkAccountsProgress);
+});
+
+// Fetch latest accounts for a single company on demand. Idempotent — if
+// the stored doc_id already matches CH, it short-circuits to "up_to_date"
+// without re-downloading.
+router.post("/api/brand/:companyId/fetch-latest-accounts", requireAuth, async (req, res) => {
+  try {
+    const { fetchLatestAccountsForCompany } = await import("./ch-accounts");
+    const outcome = await fetchLatestAccountsForCompany(req.params.companyId);
+    res.json(outcome);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "fetch-latest-accounts failed" });
+  }
+});
+
+// Stream the stored accounts PDF for a company. Returns 404 if we haven't
+// downloaded one yet (caller should hit POST .../fetch-latest-accounts first).
+router.get("/api/brand/:companyId/latest-accounts.pdf", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query<{ last_accounts_storage_key: string | null; last_accounts_made_up_to: string | null; name: string }>(
+      `SELECT last_accounts_storage_key, last_accounts_made_up_to, name FROM crm_companies WHERE id = $1`,
+      [req.params.companyId]
+    );
+    const row = rows[0];
+    if (!row?.last_accounts_storage_key) {
+      return res.status(404).json({ error: "no accounts on file for this company" });
+    }
+    const { getFile } = await import("./file-storage");
+    const file = await getFile(row.last_accounts_storage_key);
+    if (!file) return res.status(404).json({ error: "stored file missing" });
+    const safeName = (row.name || "company").replace(/[^A-Za-z0-9._-]/g, "_");
+    const datePart = row.last_accounts_made_up_to ? `-${row.last_accounts_made_up_to}` : "";
+    res.setHeader("Content-Type", file.contentType || "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}-accounts${datePart}.pdf"`);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.end(file.data);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "stream failed" });
+  }
 });
 
 export default router;

@@ -592,6 +592,13 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_edd_reason TEXT`,
+    // CH-accounts auto-fetch (May 2026). doc_id = CH document-metadata UUID,
+    // storage_key points at the PDF in the file_storage table. We only
+    // re-download when doc_id changes (every CH filing gets a new UUID).
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_accounts_doc_id TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_accounts_made_up_to DATE`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_accounts_storage_key TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_accounts_fetched_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_notes TEXT`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
@@ -2643,6 +2650,17 @@ app.use("/api/branding/assets", express.static(
               .then(m => m.runWeeklyUkEntityRescrape())
               .then(r => console.log(`[uk-entity-rescrape] weekly: ${r.found}/${r.total} new, ${r.errored} errors`))
               .catch(err => console.error("[uk-entity-rescrape] cron run failed:", err?.message));
+          }
+          // Weekly accounts auto-fetch — Sunday 03:00, an hour after the
+          // entity rescrape so brands that just got their CH number
+          // resolved get their accounts pulled in the same week. Idempotent
+          // per company: only re-downloads if the latest CH filing's
+          // doc_id differs from what we have stored.
+          if (now.getDay() === 0 && now.getHours() === 3 && now.getMinutes() < 60) {
+            import("./ch-accounts")
+              .then(m => m.runBulkAccountsFetch())
+              .then(r => console.log(`[ch-accounts] weekly: ${r.downloaded} new / ${r.upToDate} up-to-date / ${r.errored} errors (${r.total} total)`))
+              .catch(err => console.error("[ch-accounts] cron run failed:", err?.message));
           }
           // Monthly Perplexity refresh — 1st of month, 03:00
           if (now.getDate() === 1 && now.getHours() === 3 && now.getMinutes() < 60) {

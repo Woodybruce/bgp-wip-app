@@ -164,6 +164,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
               tiktok_handle, x_handle, dept_store_presence, franchise_activity, hunter_flag,
               stock_ticker, uk_entity_name, agent_type, concept_status,
+              last_accounts_doc_id, last_accounts_made_up_to,
+              last_accounts_storage_key, last_accounts_fetched_at,
               ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,
               brand_analysis, brand_analysis_at,
