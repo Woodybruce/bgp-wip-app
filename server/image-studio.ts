@@ -1211,19 +1211,33 @@ export function registerImageStudioRoutes(app: Express) {
 
       const row = rows[0];
       if (!row) {
-        // No local hit. If we have a domain, redirect to a live logo source so
-        // the <img> renders something instead of 404'ing. Clearbit's logo API
-        // was killed by HubSpot March 2025 and the domain no longer resolves;
-        // logo.dev is the new default, with Google favicons as last resort.
-        if (domain) {
+        // No local hit. Redirect to logo.dev (or Google favicons) so the <img>
+        // renders something rather than 404. Clearbit's logo API was killed by
+        // HubSpot March 2025. If no domain was supplied, slugify the name and
+        // guess `<slug>.com` — logo.dev returns a placeholder for unknown
+        // domains so the image element always loads.
+        let effectiveDomain = domain;
+        if (!effectiveDomain) {
+          const slug = name
+            .toLowerCase()
+            .replace(/['']/g, "")
+            .replace(/&/g, "and")
+            .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
+            .replace(/[^a-z0-9]+/g, "")
+            .trim();
+          if (slug.length >= 3) effectiveDomain = `${slug}.com`;
+        }
+        if (effectiveDomain) {
           const token = process.env.LOGO_DEV_TOKEN;
           const target = token
-            ? `https://img.logo.dev/${encodeURIComponent(domain)}?token=${token}&size=256&format=png`
-            : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+            ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
+            : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
           res.setHeader("Cache-Control", "public, max-age=3600");
           return res.redirect(302, target);
         }
-        res.setHeader("Cache-Control", "public, max-age=86400");
+        // Short TTL on the no-logo 404 so we don't get stuck serving stale
+        // misses for a day after a fix lands.
+        res.setHeader("Cache-Control", "public, max-age=60");
         return res.status(404).json({ error: "no logo" });
       }
 
