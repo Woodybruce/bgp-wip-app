@@ -83,6 +83,52 @@ export async function pingComplyAdvantage(): Promise<{ ok: boolean; status?: num
   }
 }
 
+/**
+ * Diagnostic — tries each candidate search-endpoint URL and reports what
+ * comes back. Lets us pinpoint which URL the API expects without guessing.
+ * Hit /api/comply-advantage/probe to see results.
+ */
+export async function probeComplyAdvantage(testName = "John Smith"): Promise<Array<{ label: string; url: string; method: string; status: number | null; body: string; ms: number }>> {
+  const probes = [
+    { label: "Mesh: POST /v2/searches", url: `${BASE_URL}/v2/searches`, method: "POST" },
+    { label: "Mesh: POST /v2/screening/searches", url: `${BASE_URL}/v2/screening/searches`, method: "POST" },
+    { label: "Mesh: POST /v2/screen", url: `${BASE_URL}/v2/screen`, method: "POST" },
+    { label: "Mesh: POST /v2/search", url: `${BASE_URL}/v2/search`, method: "POST" },
+    { label: "Mesh: POST /searches", url: `${BASE_URL}/searches`, method: "POST" },
+    { label: "Legacy: POST /searches", url: `https://api.complyadvantage.com/searches`, method: "POST" },
+    { label: "Legacy v1: POST /searches", url: `https://api.complyadvantage.com/v1/searches`, method: "POST" },
+  ];
+
+  let token: string | null = null;
+  try { token = await getToken(); } catch (e: any) {
+    return [{ label: "TOKEN AUTH", url: `${BASE_URL}/v2/token`, method: "POST", status: null, body: `Auth failed: ${e?.message}`, ms: 0 }];
+  }
+
+  const body = JSON.stringify({
+    search_term: testName,
+    fuzziness: 0.6,
+    filters: { types: ["sanction", "pep", "adverse-media", "warning"] },
+  });
+
+  const results = await Promise.all(probes.map(async (p) => {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(p.url, {
+        method: p.method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await r.text().catch(() => "");
+      return { label: p.label, url: p.url, method: p.method, status: r.status, body: text.slice(0, 200), ms: Date.now() - t0 };
+    } catch (e: any) {
+      return { label: p.label, url: p.url, method: p.method, status: null, body: `Error: ${e?.message}`, ms: Date.now() - t0 };
+    }
+  }));
+
+  return results;
+}
+
 export interface ScreeningMatch {
   name: string;
   matchType: string; // "sanctions" | "pep" | "adverse_media" | "warning"

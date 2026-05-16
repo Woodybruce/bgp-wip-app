@@ -1585,6 +1585,21 @@ export async function registerRoutes(
     }
   });
 
+  // ComplyAdvantage diagnostic — probes several candidate search-endpoint
+  // URLs and reports which return non-405 responses. The current `/v2/searches`
+  // path 405s every time at nginx level; this helps pinpoint the new path
+  // without guessing.
+  app.get("/api/comply-advantage/probe", requireAuth, async (req, res) => {
+    try {
+      const { probeComplyAdvantage } = await import("./comply-advantage");
+      const testName = String(req.query.name || "John Smith");
+      const results = await probeComplyAdvantage(testName);
+      res.json({ probed: results.length, results });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Re-run Claude vision over an already-imported external requirement's
   // brochure and merge the extracted fields back into the row. Useful when:
   // - the requirement was imported BEFORE the vision parser was wired (older
