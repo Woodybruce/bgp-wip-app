@@ -243,7 +243,75 @@ async function findHomepageImages(domain: string): Promise<FoundImage[]> {
 // "Search the entire web" with image search enabled. Free tier is 100
 // queries/day; £4/1000 above that.
 
-async function findCseImages(brandName: string, industry: string | null): Promise<FoundImage[]> {
+// Domains and title tokens that are almost always wrong for retail brand
+// imagery. "Stories" is the worst offender (children's books, cartoons),
+// but generic brand names like "Apple", "Coach", "Gap" all pull off-topic
+// content from these hosts. We drop anything matching post-fetch.
+const IMAGE_HOST_DENYLIST = [
+  "cartoon",
+  "clipart",
+  "fairy",
+  "fairytale",
+  "storybook",
+  "childrens",
+  "kindergarten",
+  "babynames",
+  "lego.com/cdn", // toy product pages
+  "alamy.com",   // stock photo of unrelated subjects
+  "shutterstock.com",
+  "istockphoto.com",
+  "dreamstime.com",
+  "etsy.com",
+  "redbubble.com",
+  "amazon.com/dp", // generic product detail
+];
+const IMAGE_TITLE_DENYLIST = [
+  "cartoon",
+  "clipart",
+  "fairy tale",
+  "fairytale",
+  "story book",
+  "storybook",
+  "children's book",
+  "childrens book",
+  "kindergarten",
+  "colouring page",
+  "coloring page",
+  "nursery rhyme",
+  "bedtime",
+  "illustration vector",
+];
+
+function looksLikeBrandImage(brandName: string, brandDomain: string | null, page: string | undefined, title: string | undefined): boolean {
+  const titleLower = (title || "").toLowerCase();
+  const pageLower = (page || "").toLowerCase();
+  // Drop anything matching the denylists outright.
+  for (const bad of IMAGE_TITLE_DENYLIST) if (titleLower.includes(bad)) return false;
+  for (const bad of IMAGE_HOST_DENYLIST) if (pageLower.includes(bad)) return false;
+  // Strong positive signal: page hosted on the brand's own domain, or
+  // page URL mentions the brand domain.
+  if (brandDomain) {
+    const dStem = brandDomain.split(".")[0]; // "stories" from "stories.com"
+    if (pageLower.includes(brandDomain)) return true;
+    // Domain stem only counts if it's a recognisable token — skip generic
+    // 1-2 char stems and stems that are common English words.
+    if (dStem.length >= 4 && pageLower.includes(dStem)) return true;
+  }
+  // Otherwise require the brand name (or its core token) to appear in the
+  // title. For multi-word brands take the most distinctive word (longest).
+  const tokens = brandName.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true; // can't filter, let it through
+  const distinctive = tokens.slice().sort((a, b) => b.length - a.length)[0];
+  // If brand has a unique multi-word phrase, require it in title.
+  const phrase = brandName.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  if (phrase.length > 6 && titleLower.includes(phrase)) return true;
+  // Fall back to the distinctive token — but require it to be >=5 chars
+  // so we don't whitelist anything just because "the" appears.
+  if (distinctive.length >= 5 && titleLower.includes(distinctive)) return true;
+  return false;
+}
+
+async function findCseImages(brandName: string, industry: string | null, brandDomain: string | null): Promise<FoundImage[]> {
   // Reuses GOOGLE_API_KEY (already used for Places / Street View) — no need
   // for a separate CSE-only key. GOOGLE_CSE_ID is the Custom Search Engine
   // config ID (set up free at programmablesearchengine.google.com).
@@ -251,15 +319,19 @@ async function findCseImages(brandName: string, industry: string | null): Promis
   const cx = process.env.GOOGLE_CSE_ID;
   if (!key || !cx) return [];
   try {
+    // Bias the query toward the brand's own domain so generic names
+    // ("& Other Stories", "Apple", "Coach") don't pull cartoons.
     const concept = industry ? ` ${industry}` : " flagship store";
-    const query = `"${brandName}"${concept}`;
-    const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&searchType=image&imgSize=large&num=6&safe=active`;
+    const domainHint = brandDomain ? ` "${brandDomain}"` : "";
+    const query = `"${brandName}"${domainHint}${concept}`;
+    const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&searchType=image&imgSize=large&num=10&safe=active`;
     const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!r.ok) return [];
     const d = await r.json();
     const items: any[] = d?.items || [];
     return items
       .filter(it => it.link && (it.image?.width ?? 0) >= MIN_WIDTH)
+      .filter(it => looksLikeBrandImage(brandName, brandDomain, it.image?.contextLink, it.title))
       .slice(0, 5)
       .map(it => ({
         url: it.link,
@@ -316,7 +388,7 @@ export async function refreshBrandImages(companyId: string): Promise<{
     candidates.push(...await findHomepageImages(domain));
   }
   if (candidates.length < targetNew * 2) {
-    candidates.push(...await findCseImages(brand.name, brand.industry));
+    candidates.push(...await findCseImages(brand.name, brand.industry, domain));
   }
 
   const bySource: Record<string, number> = {};
