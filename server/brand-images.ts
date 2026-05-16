@@ -282,7 +282,7 @@ const IMAGE_TITLE_DENYLIST = [
   "illustration vector",
 ];
 
-function looksLikeBrandImage(brandName: string, brandDomain: string | null, page: string | undefined, title: string | undefined): boolean {
+export function looksLikeBrandImage(brandName: string, brandDomain: string | null, page: string | undefined, title: string | undefined): boolean {
   const titleLower = (title || "").toLowerCase();
   const pageLower = (page || "").toLowerCase();
   // Drop anything matching the denylists outright.

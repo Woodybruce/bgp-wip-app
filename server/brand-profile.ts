@@ -1366,17 +1366,13 @@ function isFoodBrand(companyType: string | null, industry: string | null): boole
   return /(restaurant|cafe|café|food|f\s*&\s*b|fnb|bakery|coffee|qsr|fast.?food|dining|kitchen|pub|bar|brewery|hospitality|takeaway|dessert|ice.?cream|juice|smoothie|sandwich|pizza|burger|chicken|sushi|noodle|ramen)/.test(blob);
 }
 
-// For each menu/best-seller item that came back without a Perplexity-provided
-// image, run a Google CSE image search restricted to the brand's own domain
-// (or a curated list of trusted retail/fashion sites). Strict relevance filter
-// applied after fetch. Mutates the items array in place. Silently noops if CSE
-// env vars aren't set.
-const TRUSTED_PRODUCT_HOSTS = [
-  "vogue.com", "vogue.co.uk", "businessoffashion.com", "net-a-porter.com",
-  "matchesfashion.com", "selfridges.com", "harrods.com", "harveynichols.com",
-  "ssense.com", "endclothing.com", "mrporter.com", "farfetch.com",
-  "liberty.co.uk", "browns.com", "lyst.co.uk", "drapers.co.uk",
-];
+// For each menu/best-seller item without a Perplexity-provided image, run a
+// Google CSE image search anywhere on the web — quality enforced via:
+//   - imgSize=large + imgType=photo (no clipart / illustrations / icons)
+//   - denylist of stock-photo / craft / scraper hosts
+//   - brand-relevance check via looksLikeBrandImage (image must clearly
+//     reference the brand by domain or distinctive name token)
+// Mutates the items array in place. Silently noops if CSE env vars aren't set.
 const PRODUCT_HOST_DENYLIST = [
   "pinterest.", "tumblr.", "redbubble.", "etsy.", "alamy.", "shutterstock.",
   "istockphoto.", "dreamstime.", "gettyimages.", "cartoon", "clipart",
@@ -1395,22 +1391,20 @@ async function enrichMenuItemImagesWithCse(
     return;
   }
 
+  const { looksLikeBrandImage } = await import("./brand-images");
   const cleanDomain = (brandDomain || "")
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
     .split("/")[0]
-    .trim();
+    .trim() || null;
 
-  const isAcceptable = (link: string, page: string): boolean => {
+  const isAcceptable = (link: string, page: string, title: string): boolean => {
     const linkLower = link.toLowerCase();
     const pageLower = page.toLowerCase();
     for (const bad of PRODUCT_HOST_DENYLIST) {
       if (linkLower.includes(bad) || pageLower.includes(bad)) return false;
     }
-    // Always accept if the page or image is on the brand's own domain.
-    if (cleanDomain && (linkLower.includes(cleanDomain) || pageLower.includes(cleanDomain))) return true;
-    // Otherwise only accept from the trusted-host allowlist.
-    return TRUSTED_PRODUCT_HOSTS.some(h => linkLower.includes(h) || pageLower.includes(h));
+    return looksLikeBrandImage(brandName, cleanDomain, page, title);
   };
 
   let attempted = 0, filled = 0, errors = 0, rejected = 0;
@@ -1418,51 +1412,34 @@ async function enrichMenuItemImagesWithCse(
     if (it.image && /^https?:\/\//i.test(it.image)) continue;
     attempted++;
     try {
-      // Two-pass: first try restricted to brand's own domain (best product
-      // shots), then fall back to a wider search but still apply the host
-      // allowlist + denylist.
+      const q = cleanDomain
+        ? `"${brandName}" "${it.name}" "${cleanDomain}"`
+        : `"${brandName}" "${it.name}"`;
+      const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&searchType=image&num=10&safe=active&imgSize=large&imgType=photo`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) {
+        errors++;
+        const errBody = await r.text().catch(() => "");
+        console.warn(`[menu-intel ${brandName}] CSE ${r.status} for "${it.name}": ${errBody.slice(0, 200)}`);
+        continue;
+      }
+      const d: any = await r.json();
       let chosen: string | null = null;
-
-      if (cleanDomain) {
-        const q1 = `${brandName} ${it.name}`;
-        const u1 = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q1)}&siteSearch=${encodeURIComponent(cleanDomain)}&searchType=image&num=5&safe=active&imgSize=large&imgType=photo`;
-        const r1 = await fetch(u1, { signal: AbortSignal.timeout(8000) });
-        if (r1.ok) {
-          const d1: any = await r1.json();
-          for (const row of d1?.items || []) {
-            const link = String(row?.link || "");
-            const page = String(row?.image?.contextLink || "");
-            if (link && /^https?:\/\//i.test(link) && isAcceptable(link, page)) {
-              chosen = link;
-              break;
-            }
-          }
+      for (const row of d?.items || []) {
+        const link = String(row?.link || "");
+        const page = String(row?.image?.contextLink || "");
+        const title = String(row?.title || "");
+        if (link && /^https?:\/\//i.test(link) && isAcceptable(link, page, title)) {
+          chosen = link;
+          break;
         }
       }
-
-      if (!chosen) {
-        const q2 = cleanDomain ? `"${brandName}" "${it.name}" "${cleanDomain}"` : `"${brandName}" "${it.name}"`;
-        const u2 = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q2)}&searchType=image&num=10&safe=active&imgSize=large&imgType=photo`;
-        const r2 = await fetch(u2, { signal: AbortSignal.timeout(8000) });
-        if (!r2.ok) {
-          errors++;
-          const errBody = await r2.text().catch(() => "");
-          console.warn(`[menu-intel ${brandName}] CSE ${r2.status} for "${it.name}": ${errBody.slice(0, 200)}`);
-          continue;
-        }
-        const d2: any = await r2.json();
-        for (const row of d2?.items || []) {
-          const link = String(row?.link || "");
-          const page = String(row?.image?.contextLink || "");
-          if (link && /^https?:\/\//i.test(link) && isAcceptable(link, page)) {
-            chosen = link;
-            break;
-          }
-        }
-        if (!chosen && (d2?.items || []).length > 0) rejected++;
+      if (chosen) {
+        it.image = chosen;
+        filled++;
+      } else if ((d?.items || []).length > 0) {
+        rejected++;
       }
-
-      if (chosen) { it.image = chosen; filled++; }
     } catch (err: any) {
       errors++;
       console.warn(`[menu-intel ${brandName}] CSE exception for "${it.name}": ${err?.message || err}`);
