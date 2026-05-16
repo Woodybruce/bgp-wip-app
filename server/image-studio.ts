@@ -1258,7 +1258,28 @@ export function registerImageStudioRoutes(app: Express) {
         }
       }
 
-      res.setHeader("Cache-Control", "public, max-age=86400");
+      // Row exists but the blob is missing/unreadable. Don't 404 — fall through
+      // to the same logo.dev redirect path used when there's no row at all.
+      let effectiveDomain = domain;
+      if (!effectiveDomain) {
+        const slug = name
+          .toLowerCase()
+          .replace(/['']/g, "")
+          .replace(/&/g, "and")
+          .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
+          .replace(/[^a-z0-9]+/g, "")
+          .trim();
+        if (slug.length >= 3) effectiveDomain = `${slug}.com`;
+      }
+      if (effectiveDomain) {
+        const token = process.env.LOGO_DEV_TOKEN;
+        const target = token
+          ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
+          : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.redirect(302, target);
+      }
+      res.setHeader("Cache-Control", "public, max-age=60");
       return res.status(404).json({ error: "no readable blob" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
