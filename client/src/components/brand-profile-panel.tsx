@@ -445,6 +445,22 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
+  // Auto-fire the UK trading-entity scraper on first brand load when we
+  // don't have one stored yet. UK law (Companies Act 2006) requires brands
+  // to disclose their trading entity on the website, so the scraper finds
+  // most of them — but for the cases it misses, the Compliance board on
+  // the sidebar lets the user paste it in manually. Until the entity is
+  // known, AML/KYC checks downstream can't run against the right CH row.
+  const autoUkEntityRan = useRef(false);
+  useEffect(() => {
+    if (!data || autoUkEntityRan.current) return;
+    if (data.company?.uk_entity_name) return; // already set — don't re-scrape
+    if (!(data.company?.domain || data.company?.domain_url)) return; // no website to scrape
+    autoUkEntityRan.current = true;
+    findUkEntityMutation.mutate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
       const res = await apiRequest("PATCH", `/api/brand/${companyId}`, body);
@@ -3412,6 +3428,210 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
   );
 }
 
+// Compliance / KYC entry-point. Gates the AML/KYC workflow on knowing the
+// brand's UK trading entity — until uk_entity_name is set, every other
+// check (CH details, PSC, accounts, Red Flag, AML PEP) is parked and
+// labelled as such. Auto-fired scraper populates the field on first load;
+// the user can overwrite the value at any time. The "Find on Companies
+// House" link opens a CH search prefilled with whatever's currently in
+// the input so the user can hand-pick the right registered name.
+function ComplianceBoard({
+  companyId,
+  company,
+}: {
+  companyId: string;
+  company: BrandProfile["company"];
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(company.uk_entity_name || "");
+
+  // Re-fire the scraper. Different mutation instance from the parent's
+  // auto-fire — having a local one means the "Refresh" button works
+  // without prop-drilling and can show its own pending state.
+  const rescrape = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/companies-house/find-uk-entity/${companyId}`, {});
+      return res.json();
+    },
+    onSuccess: (out: any) => {
+      const found = out?.ukEntityName || out?.scraped?.entityName;
+      toast({
+        title: found ? `Found: ${found}` : "Scraper found nothing",
+        description: found ? "" : "Paste the entity below — UK law requires it on the website but some retailers hide it.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
+  });
+
+  const save = useMutation({
+    mutationFn: async (value: string) => {
+      const res = await apiRequest("PATCH", `/api/brand/${companyId}`, { uk_entity_name: value || null });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "UK trading entity saved" });
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  const entity = company.uk_entity_name?.trim() || "";
+  const hasEntity = entity.length > 0;
+  const chSearchUrl = `https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(entity || company.name)}`;
+  const chCompanyUrl = company.companies_house_number
+    ? `https://find-and-update.company-information.service.gov.uk/company/${company.companies_house_number}`
+    : null;
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-2.5">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
+            UK trading entity
+            {hasEntity && !editing && (
+              <Badge variant="outline" className="text-[9px] font-normal bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">
+                <Check className="w-2.5 h-2.5 mr-0.5" /> set
+              </Badge>
+            )}
+            {rescrape.isPending && (
+              <span className="text-[10px] italic flex items-center gap-1 text-muted-foreground">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Scraping website…
+              </span>
+            )}
+          </div>
+          {!editing ? (
+            <div className="flex items-center gap-1.5">
+              <div className="flex-1 min-w-0">
+                {hasEntity ? (
+                  <div className="text-sm font-semibold leading-tight truncate" title={entity}>{entity}</div>
+                ) : (
+                  <div className="text-xs italic text-muted-foreground">
+                    {rescrape.isPending ? "Scraping the brand's T&Cs page…" : "Not found — enter manually or re-run scraper."}
+                  </div>
+                )}
+                {company.companies_house_number && (
+                  <a
+                    href={chCompanyUrl || "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 mt-0.5"
+                  >
+                    CH {company.companies_house_number} <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                )}
+              </div>
+              <button
+                onClick={() => { setDraft(entity); setEditing(true); }}
+                className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+                title="Edit the trading entity manually"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => rescrape.mutate()}
+                disabled={rescrape.isPending}
+                className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
+                title="Re-run the website scraper"
+              >
+                {rescrape.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "↻"}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") save.mutate(draft.trim());
+                  if (e.key === "Escape") { setEditing(false); setDraft(entity); }
+                }}
+                placeholder={`e.g. ${company.name} UK Limited`}
+                className="w-full text-sm font-medium border rounded px-2 py-1 bg-background"
+              />
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => save.mutate(draft.trim())}
+                  disabled={save.isPending}
+                  className="text-[10px] px-2 py-1 rounded bg-foreground text-background disabled:opacity-50"
+                >
+                  {save.isPending ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => { setEditing(false); setDraft(entity); }}
+                  className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+                >
+                  Cancel
+                </button>
+                <a
+                  href={chSearchUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-1"
+                  title="Search Companies House for this brand"
+                >
+                  <Search className="w-2.5 h-2.5" /> Find on Companies House
+                </a>
+              </div>
+            </div>
+          )}
+          {!editing && !hasEntity && (
+            <a
+              href={chSearchUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-primary hover:underline inline-flex items-center gap-1 mt-1.5"
+            >
+              <Search className="w-2.5 h-2.5" /> Search Companies House for "{company.name}"
+            </a>
+          )}
+        </div>
+
+        <div className="border-t pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Downstream checks</div>
+          <div className="space-y-0.5">
+            {[
+              { label: "Companies House profile", done: !!company.companies_house_number },
+              { label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
+              { label: "Latest accounts", done: !!(company.companies_house_data as any)?.lastAccountsMadeUpTo },
+              { label: "Red Flag credit score", done: !!(company.kyc_status === "verified") },
+              { label: "AML PEP / adverse media", done: !!company.aml_pep_status },
+            ].map((row, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                {row.done ? (
+                  <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                ) : (
+                  <span className={`w-3 h-3 rounded-full border shrink-0 ${hasEntity ? "border-amber-400 bg-amber-50 dark:bg-amber-950" : "border-zinc-300 bg-zinc-100 dark:bg-zinc-900"}`} />
+                )}
+                <span className={row.done ? "text-foreground" : (hasEntity ? "text-foreground/80" : "text-muted-foreground/60")}>
+                  {row.label}
+                </span>
+                {!hasEntity && !row.done && (
+                  <span className="text-[10px] text-muted-foreground/60 italic ml-auto">parked</span>
+                )}
+              </div>
+            ))}
+          </div>
+          {!hasEntity && (
+            <p className="text-[10px] text-muted-foreground italic mt-2 leading-snug">
+              Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name.
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyId: string }) {
   const { toast } = useToast();
   const c = data.company;
@@ -3479,6 +3699,13 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 
   return (
     <aside className="w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start">
+      {/* Compliance / AML board — gates every downstream check on knowing
+          the brand's actual UK trading entity. Scraper auto-fires on
+          first load (from the parent useEffect); the user can overwrite
+          via the input below. Until uk_entity_name is set, all downstream
+          checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
+      <ComplianceBoard companyId={companyId} company={c} />
+
       {/* Covenant snapshot — also hides the legacy page-level KYC/Ownership
           block (moved here May 2026; collapsed until Red Flag/Experian
           is wired). */}
