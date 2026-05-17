@@ -262,8 +262,112 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     ).catch(() => {});
   }
 
+  // Auto-link clear-obvious matches to existing CRM properties. Strict
+  // policy: only link on (a) exact normalised-name match or (b) exact
+  // postcode match. Anything fuzzier surfaces in the UI as a candidate
+  // for human review. The exact-name rule catches Bluewater / Gunwharf
+  // Quays / Trinity Kitchen reliably without the false-positive risk
+  // we hit on the CH name-search.
+  await autoLinkScrapedProperties(companyId, findings.properties);
+
   progress[companyId] = { state: "done", updatedAt: new Date().toISOString(), result: findings };
   return { ok: true, findings };
+}
+
+// Normalise a property name for matching. Strips common suffixes
+// ("shopping centre", "Limited", "Plc"), punctuation, the/and, and
+// collapses whitespace. So "Bluewater Shopping Centre" and "Bluewater"
+// both reduce to "bluewater"; "St David's Dewi Sant" reduces to "st
+// davids dewi sant" and matches "St. David's Dewi Sant" in CRM.
+function normalisePropertyName(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return String(raw)
+    .toLowerCase()
+    .replace(/[''`]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(shopping centre|retail park|business park|outlet centre|the|and|plc|limited|ltd|llp)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalisePostcode(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return String(raw).toUpperCase().replace(/\s+/g, "");
+}
+
+// Auto-link scraped properties to existing crm_properties rows when
+// there's a clear-obvious match. Two strategies in order:
+//   1. Normalised-name exact match — strongest signal, low false-positive
+//      rate for big assets ("Bluewater", "Gunwharf Quays", "Trinity Kitchen").
+//   2. Exact postcode match — covers the cases where the landlord
+//      brands the property differently to the CRM ("St David's Cardiff"
+//      vs "St. David's Dewi Sant").
+// Only links when the CRM row currently has no landlord_id, so we never
+// clobber an existing assignment. Returns the number of links written.
+export async function autoLinkScrapedProperties(
+  companyId: string,
+  scraped: Array<{ name: string; address?: string; postcode?: string; sector?: string }>,
+): Promise<number> {
+  if (!scraped || scraped.length === 0) return 0;
+  // Pull unlinked CRM properties once — cheaper than a per-scrape query.
+  const { rows: unlinked } = await pool.query<{ id: string; name: string; postcode: string | null }>(
+    `SELECT id, name, postcode FROM crm_properties
+      WHERE landlord_id IS NULL OR landlord_id = ''`
+  );
+  if (unlinked.length === 0) return 0;
+
+  const byName = new Map<string, string>();      // normalised name → CRM id
+  const byPostcode = new Map<string, string>();  // normalised postcode → CRM id
+  for (const row of unlinked) {
+    const n = normalisePropertyName(row.name);
+    if (n) byName.set(n, row.id);
+    const p = normalisePostcode(row.postcode);
+    if (p) byPostcode.set(p, row.id);
+  }
+
+  let linked = 0;
+  for (const item of scraped) {
+    let crmId: string | undefined;
+    const nameKey = normalisePropertyName(item.name);
+    if (nameKey) crmId = byName.get(nameKey);
+    if (!crmId) {
+      const pcKey = normalisePostcode(item.postcode);
+      if (pcKey) crmId = byPostcode.get(pcKey);
+    }
+    if (!crmId) continue;
+    const { rowCount } = await pool.query(
+      `UPDATE crm_properties SET landlord_id = $1
+        WHERE id = $2 AND (landlord_id IS NULL OR landlord_id = '')`,
+      [companyId, crmId]
+    );
+    if ((rowCount ?? 0) > 0) {
+      linked++;
+      // Burn this CRM id from the lookup tables so two scraped names
+      // can't both win the same CRM row in a single pass.
+      byName.delete(nameKey);
+      const pc = normalisePostcode(item.postcode);
+      if (pc) byPostcode.delete(pc);
+    }
+  }
+  return linked;
+}
+
+// Create a new crm_properties row from a scraped property record,
+// pre-linked to this landlord. Address goes in as a JSONB shell so the
+// existing property views render it.
+export async function createPropertyFromScraped(
+  companyId: string,
+  item: { name: string; address?: string; postcode?: string; sector?: string },
+): Promise<{ id: string }> {
+  const addr = item.address || item.postcode ? { formatted: item.address || null, postcode: item.postcode || null } : null;
+  const assetClass = item.sector ? item.sector.charAt(0).toUpperCase() + item.sector.slice(1).toLowerCase() : null;
+  const { rows } = await pool.query<{ id: string }>(
+    `INSERT INTO crm_properties (name, postcode, address, landlord_id, asset_class)
+     VALUES ($1, $2, $3::jsonb, $4, $5)
+     RETURNING id`,
+    [item.name, item.postcode || null, addr ? JSON.stringify(addr) : null, companyId, assetClass]
+  );
+  return { id: rows[0].id };
 }
 
 export async function getLandlordFindings(companyId: string): Promise<LandlordFindings & { scraped_at: string } | null> {

@@ -1553,6 +1553,23 @@ export async function registerRoutes(
     }
   });
 
+  // Create a crm_properties row from a scraped item and link it to this
+  // landlord. Used by the per-row "Create CRM property" button in the
+  // Ownership block. Returns the new property id so the client can
+  // jump to it.
+  app.post("/api/landlord/:companyId/create-property", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const { name, address, postcode, sector } = req.body || {};
+      if (!name || !String(name).trim()) return res.status(400).json({ error: "name is required" });
+      const { createPropertyFromScraped } = await import("./landlord-scraper");
+      const out = await createPropertyFromScraped(companyId, { name: String(name).trim(), address, postcode, sector });
+      res.json(out);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
   app.get("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const status = await getPipnetCredsStatus();

@@ -1738,173 +1738,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                  at the gaps so the user can spot a landlord with 0
                  properties → known portfolio, time to ingest CCOD. */}
             {isLandlord && (
-              <div className="border-t border-border/40 mt-3 pt-2 order-5">
-                <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                  <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-                    Ownership
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    CRM: {ownedProperties.length} · Land Registry: {landRegistryTitles.length} · Website: {(data.landlordWebsiteFindings?.properties?.length || 0)}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      try {
-                        await apiRequest("POST", `/api/landlord/${companyId}/scrape-portfolio`, {});
-                        toast({ title: "Scraping landlord site…", description: "Pulling portfolio, IR contact, board + annual report. Takes ~60s." });
-                        // Poll for completion, then invalidate the profile.
-                        const start = Date.now();
-                        const poll = async () => {
-                          if (Date.now() - start > 5 * 60_000) return;
-                          const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, { credentials: "include" });
-                          if (r.ok) {
-                            const s = await r.json();
-                            if (s.progress?.state === "done") {
-                              queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-                              toast({ title: "Website synced", description: `Found ${s.findings?.properties?.length || 0} properties, ${s.findings?.board_members?.length || 0} board members.` });
-                              return;
-                            }
-                            if (s.progress?.state === "error") {
-                              toast({ title: "Sync failed", description: s.progress.error || "unknown", variant: "destructive" });
-                              return;
-                            }
-                          }
-                          setTimeout(poll, 5000);
-                        };
-                        setTimeout(poll, 5000);
-                      } catch (e: any) {
-                        toast({ title: "Couldn't start sync", description: e?.message, variant: "destructive" });
-                      }
-                    }}
-                    className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
-                    data-testid="btn-sync-landlord-website"
-                    title="Drill the landlord's website for portfolio, share ticker, IR contact, board + annual report"
-                  >
-                    <RefreshCw className="w-2.5 h-2.5" /> Sync from website
-                  </button>
-                </div>
-
-                {/* Website-scraped intel — only visible once a sync has
-                    run. Shows share ticker, IR contact, scraped property
-                    count, board size, annual report link. Each piece
-                    is a one-line summary so we don't dominate the panel. */}
-                {data.landlordWebsiteFindings && (
-                  <div className="rounded-md border bg-muted/30 px-2 py-1.5 mb-2 text-[11px] leading-snug space-y-0.5">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] text-muted-foreground">From {(typeof data.company.domain === "string" ? data.company.domain : null) || "website"}:</span>
-                      {data.landlordWebsiteFindings.share_ticker && (
-                        <span className="font-mono text-[10px] px-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">{data.landlordWebsiteFindings.share_ticker}</span>
-                      )}
-                      {data.landlordWebsiteFindings.ir_contact?.name && (
-                        <span>IR: {data.landlordWebsiteFindings.ir_contact.name}{data.landlordWebsiteFindings.ir_contact.email && <a href={`mailto:${data.landlordWebsiteFindings.ir_contact.email}`} className="text-primary hover:underline ml-1">({data.landlordWebsiteFindings.ir_contact.email})</a>}</span>
-                      )}
-                      {data.landlordWebsiteFindings.board_members?.length > 0 && (
-                        <span>· Board: {data.landlordWebsiteFindings.board_members.length}</span>
-                      )}
-                      {data.landlordWebsiteFindings.annual_report_url && (
-                        <a href={data.landlordWebsiteFindings.annual_report_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">
-                          <ExternalLink className="w-2.5 h-2.5" /> Annual Report
-                        </a>
-                      )}
-                    </div>
-                    {data.landlordWebsiteFindings.raw_notes && (
-                      <div className="italic text-muted-foreground">{data.landlordWebsiteFindings.raw_notes}</div>
-                    )}
-                  </div>
-                )}
-
-                {/* CRM properties — the curated, human-linked list. Map +
-                    list as before. */}
-                {ownedProperties.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
-                    <BrandPortfolioMap
-                      stores={ownedProperties.map((p: any) => ({
-                        id: p.id, name: p.name,
-                        address: typeof p.address === "string" ? p.address : (p.address?.formatted || p.postcode || null),
-                        lat: p.lat, lng: p.lng,
-                      })) as any}
-                      height={380}
-                    />
-                    <div className="max-h-[380px] overflow-y-auto pr-1 text-xs grid grid-cols-1 gap-y-1 content-start">
-                      {ownedProperties.map((p: any) => (
-                        <Link key={p.id} href={`/properties/${p.id}`}>
-                          <div className="leading-snug px-1.5 py-1 rounded hover:bg-muted cursor-pointer">
-                            <div className="font-medium truncate">{p.name}</div>
-                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                              {p.asset_class && <span>{p.asset_class}</span>}
-                              {p.unit_count != null && p.unit_count > 0 && <span>· {p.unit_count} units</span>}
-                              {p.postcode && <span>· {p.postcode}</span>}
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                ) : landRegistryTitles.length === 0 ? (
-                  <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-[11px] text-muted-foreground leading-snug">
-                    No properties linked to this landlord yet. To populate: link existing CRM properties via the property page's Landlord field, ingest HM Land Registry CCOD (admin → ingest-ccod), or ask ChatBGP to scrape their portfolio page.
-                  </div>
-                ) : null}
-
-                {/* Website-discovered properties — what their /portfolio
-                    page actually names. These are usually fewer than the
-                    Land Registry count (a single asset can sit across
-                    many titles) but they're the human-curated names
-                    Land Sec et al. publicly market, so handy for matching
-                    to our CRM. */}
-                {data.landlordWebsiteFindings?.properties && data.landlordWebsiteFindings.properties.length > 0 && (
-                  <div className="mt-3 pt-2 border-t border-border/30">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-                      From their website ({data.landlordWebsiteFindings.properties.length})
-                    </div>
-                    <div className="max-h-[200px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 md:grid-cols-2 gap-y-0.5 gap-x-3">
-                      {data.landlordWebsiteFindings.properties.slice(0, 60).map((p: any, i: number) => (
-                        <div key={i} className="leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
-                          <div className="font-medium truncate">{p.name}</div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                            {p.sector && <span className="capitalize">{p.sector}</span>}
-                            {p.postcode && <span>· {p.postcode}</span>}
-                            {!p.postcode && p.address && <span className="truncate">{p.address}</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Land Registry titles — the authoritative truth from
-                    HMLR CCOD/UCOD. Often hundreds for a big REIT; we
-                    cap render at 50 and show a "view all" link. Each
-                    row is a registered title, not a building. */}
-                {landRegistryTitles.length > 0 && (
-                  <div className="mt-3 pt-2 border-t border-border/30">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-                      Land Registry titles ({landRegistryTitles.length}{landRegistryTitles.length >= 200 ? "+" : ""})
-                    </div>
-                    <div className="max-h-[280px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 gap-y-0.5">
-                      {landRegistryTitles.slice(0, 50).map((t: any) => (
-                        <div key={t.title_number} className="leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-[10px] text-muted-foreground shrink-0">{t.title_number}</span>
-                            <span className="truncate">{t.property_address || "(no address)"}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                            {t.tenure && <span>{t.tenure}</span>}
-                            {t.postcode && <span>· {t.postcode}</span>}
-                            {t.district && <span>· {t.district}</span>}
-                            {t.price_paid && <span>· £{Number(t.price_paid).toLocaleString()}</span>}
-                          </div>
-                        </div>
-                      ))}
-                      {landRegistryTitles.length > 50 && (
-                        <div className="text-[10px] italic text-muted-foreground pt-1">
-                          + {landRegistryTitles.length - 50} more titles — ask ChatBGP to summarise by region or pull a CSV.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <LandlordOwnershipBlock
+                companyId={companyId}
+                hasDomain={!!(c.domain || c.domain_url)}
+                ownedProperties={ownedProperties}
+                landRegistryTitles={landRegistryTitles}
+                findings={data.landlordWebsiteFindings || null}
+              />
             )}
 
             {/* ── Zone 4: BGP Relationship ──────────────────── */}
@@ -3861,6 +3701,257 @@ function ComplianceBoard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// Ownership block for landlord profiles. Combines three sources into
+// one view:
+//   - CRM-linked properties (crm_properties.landlord_id = this company)
+//   - Website-scraped properties (from landlord_website_findings)
+//   - Land Registry titles (CCOD/UCOD, matched by CH number)
+// The website scrape auto-fires on first load when we have no findings
+// yet or they're > 14 days old, and the server auto-links any obvious
+// name/postcode matches before returning. Per-scraped-property we offer
+// a "Create CRM property" button so the user can promote an asset into
+// the CRM in one click. No commentary about source on the panel — just
+// data.
+function LandlordOwnershipBlock({
+  companyId,
+  hasDomain,
+  ownedProperties,
+  landRegistryTitles,
+  findings,
+}: {
+  companyId: string;
+  hasDomain: boolean;
+  ownedProperties: BrandProfile["ownedProperties"];
+  landRegistryTitles: BrandProfile["landRegistryTitles"];
+  findings: BrandProfile["landlordWebsiteFindings"];
+}) {
+  const { toast } = useToast();
+  const autoSyncRan = useRef(false);
+
+  // Decide if findings are fresh enough to skip the auto-fire. 14-day
+  // freshness mirrors the weekly cron's stale threshold.
+  const findingsAreFresh = !!findings?.scraped_at && (
+    Date.now() - new Date(findings.scraped_at).getTime() < 14 * 24 * 60 * 60 * 1000
+  );
+
+  // Fire the scrape automatically the first time a landlord profile is
+  // opened with stale/missing findings. Poll the status endpoint until
+  // it finishes, then invalidate the brand profile so the new data and
+  // any auto-linked CRM properties land in the panel.
+  useEffect(() => {
+    if (autoSyncRan.current) return;
+    if (!hasDomain) return;
+    if (findingsAreFresh) return;
+    autoSyncRan.current = true;
+    (async () => {
+      try {
+        await apiRequest("POST", `/api/landlord/${companyId}/scrape-portfolio`, {});
+        const start = Date.now();
+        const poll = async () => {
+          if (Date.now() - start > 5 * 60_000) return;
+          const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, { credentials: "include" });
+          if (r.ok) {
+            const s = await r.json();
+            if (s.progress?.state === "done") {
+              queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+              return;
+            }
+            if (s.progress?.state === "error") return;
+          }
+          setTimeout(poll, 5000);
+        };
+        setTimeout(poll, 5000);
+      } catch {
+        /* swallow — manual refresh available via /chatbgp */
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, hasDomain, findingsAreFresh]);
+
+  // Build the combined marker set for the map. CRM rows already have
+  // lat/lng. Website-scraped + Land Registry rows are skipped from the
+  // map for now (no geocoding yet) but still listed below the map.
+  const mapStores = ownedProperties
+    .filter(p => p.lat != null && p.lng != null)
+    .map(p => ({
+      id: p.id,
+      name: p.name,
+      address: typeof p.address === "string" ? p.address : (p.address?.formatted || p.postcode || null),
+      lat: p.lat,
+      lng: p.lng,
+      status: p.status,
+    }));
+
+  const createPropertyMutation = useMutation({
+    mutationFn: async (item: { name: string; address?: string; postcode?: string; sector?: string }) => {
+      const res = await apiRequest("POST", `/api/landlord/${companyId}/create-property`, item);
+      return res.json() as Promise<{ id: string }>;
+    },
+    onSuccess: (out, item) => {
+      toast({ title: `Created CRM property`, description: `${item.name} linked to this landlord.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create", description: e?.message, variant: "destructive" }),
+  });
+
+  // Cross-reference scraped properties against the already-linked CRM
+  // list so each scraped row knows whether it's been promoted yet.
+  // Compares on normalised name + postcode (mirrors the server-side
+  // auto-link rules).
+  const linkedSignatures = new Set<string>();
+  for (const p of ownedProperties) {
+    const n = (p.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (n) linkedSignatures.add(`name:${n}`);
+    const pc = (p.postcode || "").toUpperCase().replace(/\s+/g, "");
+    if (pc) linkedSignatures.add(`pc:${pc}`);
+  }
+  const isAlreadyLinked = (p: { name: string; postcode?: string }) => {
+    const n = (p.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (n && linkedSignatures.has(`name:${n}`)) return true;
+    const pc = (p.postcode || "").toUpperCase().replace(/\s+/g, "");
+    if (pc && linkedSignatures.has(`pc:${pc}`)) return true;
+    return false;
+  };
+
+  const scrapedProperties = findings?.properties || [];
+
+  return (
+    <div className="border-t border-border/40 mt-3 pt-2 order-5">
+      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+        <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          Ownership
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          CRM: {ownedProperties.length} · Website: {scrapedProperties.length} · Land Registry: {landRegistryTitles.length}
+        </span>
+        {findings?.annual_report_url && (
+          <a
+            href={findings.annual_report_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-1"
+            title="Open the most recent annual report PDF"
+          >
+            <ExternalLink className="w-2.5 h-2.5" /> Annual Report
+          </a>
+        )}
+      </div>
+
+      {/* Map always shows — even with zero CRM rows we put up the
+          empty Leaflet so the layout is consistent. Markers will fill
+          in once any scraped property is promoted to a CRM row. */}
+      <BrandPortfolioMap stores={mapStores as any} height={300} />
+
+      {/* CRM-linked list — the curated portfolio. Each row deep-links
+          into the property page. */}
+      {ownedProperties.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+            CRM portfolio ({ownedProperties.length})
+          </div>
+          <div className="max-h-[200px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 md:grid-cols-2 gap-y-0.5 gap-x-3">
+            {ownedProperties.map((p: any) => (
+              <Link key={p.id} href={`/properties/${p.id}`}>
+                <div className="leading-snug px-1.5 py-1 rounded hover:bg-muted cursor-pointer">
+                  <div className="font-medium truncate">{p.name}</div>
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    {p.asset_class && <span>{p.asset_class}</span>}
+                    {p.unit_count != null && p.unit_count > 0 && <span>· {p.unit_count} units</span>}
+                    {p.postcode && <span>· {p.postcode}</span>}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Website-scraped list with per-row "Create CRM property"
+          button. Rows that match an existing CRM row (i.e. were
+          auto-linked) get a Linked badge instead of a button. */}
+      {scrapedProperties.length > 0 && (
+        <div className="mt-3 pt-2 border-t border-border/30">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+            From their website ({scrapedProperties.length})
+          </div>
+          <div className="max-h-[240px] overflow-y-auto pr-1 text-[11px] space-y-0.5">
+            {scrapedProperties.slice(0, 80).map((p: any, i: number) => {
+              const linked = isAlreadyLinked(p);
+              return (
+                <div key={i} className="flex items-center gap-1.5 leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{p.name}</div>
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      {p.sector && <span className="capitalize">{p.sector}</span>}
+                      {p.postcode && <span>· {p.postcode}</span>}
+                      {!p.postcode && p.address && <span className="truncate">{p.address}</span>}
+                    </div>
+                  </div>
+                  {linked ? (
+                    <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 shrink-0">
+                      <Check className="w-2.5 h-2.5 mr-0.5" /> linked
+                    </Badge>
+                  ) : (
+                    <button
+                      onClick={() => createPropertyMutation.mutate(p)}
+                      disabled={createPropertyMutation.isPending}
+                      className="text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 shrink-0"
+                      title="Create a CRM property record from this scraped row and link it to this landlord"
+                    >
+                      <Plus className="w-2.5 h-2.5 inline" /> CRM
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Land Registry titles — the authoritative truth from HMLR
+          CCOD/UCOD. Often hundreds for a big REIT; we cap render at 50. */}
+      {landRegistryTitles.length > 0 && (
+        <div className="mt-3 pt-2 border-t border-border/30">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+            Land Registry titles ({landRegistryTitles.length}{landRegistryTitles.length >= 200 ? "+" : ""})
+          </div>
+          <div className="max-h-[240px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 gap-y-0.5">
+            {landRegistryTitles.slice(0, 50).map((t: any) => (
+              <div key={t.title_number} className="leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-[10px] text-muted-foreground shrink-0">{t.title_number}</span>
+                  <span className="truncate">{t.property_address || "(no address)"}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  {t.tenure && <span>{t.tenure}</span>}
+                  {t.postcode && <span>· {t.postcode}</span>}
+                  {t.district && <span>· {t.district}</span>}
+                  {t.price_paid && <span>· £{Number(t.price_paid).toLocaleString()}</span>}
+                </div>
+              </div>
+            ))}
+            {landRegistryTitles.length > 50 && (
+              <div className="text-[10px] italic text-muted-foreground pt-1">
+                + {landRegistryTitles.length - 50} more titles — ask ChatBGP to summarise by region or pull a CSV.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Empty state — no source has any data yet. */}
+      {ownedProperties.length === 0 && scrapedProperties.length === 0 && landRegistryTitles.length === 0 && (
+        <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-[11px] text-muted-foreground leading-snug mt-3">
+          {hasDomain
+            ? "Auto-syncing portfolio from website… this takes ~60 seconds the first time. Refresh in a minute or two."
+            : "No portfolio sources yet. Add a website domain on the brand details to enable auto-sync, or ingest HM Land Registry CCOD as admin."}
+        </div>
+      )}
+    </div>
   );
 }
 
