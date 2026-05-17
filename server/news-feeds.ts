@@ -1371,12 +1371,17 @@ export function setupNewsFeedRoutes(app: Express) {
   // brand name. Map each to its /api/brand-logo URL so the thumbnail shows the
   // brand's logo. Covers ~all articles in one shot.
   app.post("/api/news-feed/backfill-brand-logos", requireAuth, async (_req: Request, res: Response) => {
-    try {
-      const result = await backfillBrandLogosBySourceName();
-      res.json({ ok: true, ...result });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    // Fire-and-forget — 93k articles × per-row UPDATE blows the Railway proxy
+    // timeout (~60s). Run in background and reply immediately.
+    (async () => {
+      try {
+        const result = await backfillBrandLogosBySourceName();
+        console.log(`[news] Brand-logo backfill done: ${result.updated} articles, ${result.sampleNames.length} sample brands`);
+      } catch (e: any) {
+        console.error("[news] Brand-logo backfill failed:", e?.message || e);
+      }
+    })();
+    res.json({ started: true });
   });
 
   // Diagnostic: top source_name values amongst imageless articles. Tells us
