@@ -8,6 +8,12 @@ import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -147,30 +153,32 @@ function statusBandFor(value: string | null | undefined) {
 }
 
 function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: string | null | undefined; onSave: (id: string, field: string, value: string) => void }) {
-  const [open, setOpen] = useState(false);
   const band = statusBandFor(value);
   return (
-    <div className="relative">
-      <Badge variant="outline" className={`text-[9px] cursor-pointer whitespace-nowrap ${band?.pillClass || "border-gray-300 text-gray-500"}`} onClick={() => setOpen(!open)} data-testid={`inline-statusband-${unitId}`}>
-        {band?.label || "— Set band"}
-      </Badge>
-      {open && (
-        <div className="absolute z-50 mt-1 bg-white dark:bg-gray-900 border rounded-md shadow-lg py-1 min-w-[200px]" data-testid={`statusband-menu-${unitId}`}>
-          {STATUS_BANDS.map(b => (
-            <button key={b.value} onClick={() => { onSave(unitId, "status_band", b.value); setOpen(false); }}
-              className={`w-full text-left px-3 py-1 text-xs hover:bg-gray-100 dark:hover:bg-gray-800 ${b.value === value ? "font-bold" : ""}`} data-testid={`statusband-option-${b.value}-${unitId}`}>
-              <span className={`inline-block w-3 h-3 rounded mr-2 align-middle ${b.rowClass}`}></span>{b.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Badge variant="outline" className={`text-[9px] cursor-pointer whitespace-nowrap ${band?.pillClass || "border-gray-300 text-gray-500"}`} data-testid={`inline-statusband-${unitId}`}>
+          {band?.label || "— Set band"}
+        </Badge>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[220px]" data-testid={`statusband-menu-${unitId}`}>
+        {STATUS_BANDS.map(b => (
+          <DropdownMenuItem
+            key={b.value}
+            onClick={() => onSave(unitId, "status_band", b.value)}
+            className={`text-xs cursor-pointer ${b.value === value ? "font-bold" : ""}`}
+            data-testid={`statusband-option-${b.value}-${unitId}`}
+          >
+            <span className={`inline-block w-3 h-3 rounded mr-2 align-middle ${b.rowClass}`}></span>{b.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: string; onSave: (id: string, field: string, value: string) => void }) {
   const statuses = ["Occupied", "Vacant", "Under Offer", "In Negotiation", "Archived"];
-  const [open, setOpen] = useState(false);
   const colors: Record<string, string> = {
     "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
     "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
@@ -179,21 +187,25 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
     "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
   };
   return (
-    <div className="relative">
-      <Badge variant="outline" className={`text-[9px] cursor-pointer ${colors[value] || "border-gray-300"}`} onClick={() => setOpen(!open)} data-testid={`inline-status-${unitId}`}>
-        {value}
-      </Badge>
-      {open && (
-        <div className="absolute z-50 mt-1 bg-white dark:bg-gray-900 border rounded-md shadow-lg py-1 min-w-[120px]" data-testid={`status-menu-${unitId}`}>
-          {statuses.map(s => (
-            <button key={s} onClick={() => { onSave(unitId, "status", s); setOpen(false); }}
-              className={`w-full text-left px-3 py-1 text-xs hover:bg-gray-100 dark:hover:bg-gray-800 ${s === value ? "font-bold" : ""}`} data-testid={`status-option-${s}-${unitId}`}>
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Badge variant="outline" className={`text-[9px] cursor-pointer ${colors[value] || "border-gray-300"}`} data-testid={`inline-status-${unitId}`}>
+          {value}
+        </Badge>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[140px]" data-testid={`status-menu-${unitId}`}>
+        {statuses.map(s => (
+          <DropdownMenuItem
+            key={s}
+            onClick={() => onSave(unitId, "status", s)}
+            className={`text-xs cursor-pointer ${s === value ? "font-bold" : ""}`}
+            data-testid={`status-option-${s}-${unitId}`}
+          >
+            {s}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
