@@ -750,6 +750,44 @@ import { pool } from "./db";
        updated_at TIMESTAMPTZ DEFAULT NOW(),
        PRIMARY KEY (company_id, user_id)
      )`,
+    // Property plans (Goad / leasing plan / agent-supplied PDF). One
+    // row per FLOOR per property — a centre like Bluewater needs
+    // Ground + First. The plan image lives in file_storage; we keep
+    // width/height here so polygon overlays scale correctly without
+    // an extra fetch.
+    `CREATE TABLE IF NOT EXISTS property_plans (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       property_id TEXT NOT NULL,
+       floor TEXT NOT NULL,
+       display_order INT DEFAULT 0,
+       storage_key TEXT NOT NULL,
+       width INT,
+       height INT,
+       source TEXT,
+       notes TEXT,
+       created_at TIMESTAMPTZ DEFAULT NOW(),
+       updated_at TIMESTAMPTZ DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_property_plans_property ON property_plans (property_id, display_order)`,
+    // Polygons drawn on a plan. unit_id (nullable) links to
+    // leasing_schedule_units — that's where status / tenant / rent
+    // come from at render time, so the plan is automatically a
+    // visual mirror of the schedule. status_override lets the plan
+    // show a state (under offer) before the schedule reflects it.
+    // polygon is { points: [[x, y], ...] } with x/y normalised 0-1
+    // against the plan image dimensions so the SVG scales cleanly.
+    `CREATE TABLE IF NOT EXISTS property_plan_units (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       plan_id UUID NOT NULL,
+       unit_id TEXT,
+       label TEXT,
+       polygon JSONB NOT NULL,
+       status_override TEXT,
+       created_at TIMESTAMPTZ DEFAULT NOW(),
+       updated_at TIMESTAMPTZ DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_property_plan_units_plan ON property_plan_units (plan_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_property_plan_units_unit ON property_plan_units (unit_id) WHERE unit_id IS NOT NULL`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
     // Indexes for compliance-board counterparty joins (otherwise /api/kyc/board
@@ -2002,6 +2040,7 @@ import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
 import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
+import propertyPlansRouter from "./property-plans";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import turnoverRouter from "./turnover";
@@ -2579,6 +2618,7 @@ app.use("/api/branding/assets", express.static(
   app.use(dealStagesRouter);
   app.use(leasingPitchRouter);
   app.use(cadRouter);
+  app.use(propertyPlansRouter);
 
   await registerRoutes(httpServer, app);
   setupWebSocket(httpServer);

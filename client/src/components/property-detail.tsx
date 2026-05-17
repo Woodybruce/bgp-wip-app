@@ -30,11 +30,13 @@ import {
   Activity,
   TrendingUp,
   Store,
+  Map as MapIcon,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
+import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { trackRecentItem } from "@/hooks/use-recent-items";
@@ -186,6 +188,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
   // Heavy panels in the main column — collapsed by default to keep the page short.
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
+    plans: true,
     leasingSchedule: true,
     tenancy: true,
     pathway: false,
@@ -516,6 +519,12 @@ export function PropertyDetail({ id }: { id: string }) {
             {(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction") && (
               <LeasingTrackerSummary propertyId={property.id} />
             )}
+
+            <ErrorBoundary compact name="Property plans">
+              <CollapsibleCard open={mainSections.plans} onToggle={() => toggleMain("plans")} icon={MapIcon} title="Plans" testId="toggle-plans">
+                <PropertyPlansPanel propertyId={property.id} />
+              </CollapsibleCard>
+            </ErrorBoundary>
 
             <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Leasing Schedule" testId="toggle-leasing-schedule">
               <PropertyLeasingSchedule propertyId={property.id} />
