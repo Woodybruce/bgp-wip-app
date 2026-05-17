@@ -166,6 +166,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               stock_ticker, uk_entity_name, agent_type, concept_status,
               last_accounts_doc_id, last_accounts_made_up_to,
               last_accounts_storage_key, last_accounts_fetched_at,
+              annual_report_url, annual_report_storage_key, annual_report_fetched_at,
               folder_teams, sharepoint_folder_url,
               ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,

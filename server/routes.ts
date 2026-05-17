@@ -1553,6 +1553,46 @@ export async function registerRoutes(
     }
   });
 
+  // Stream the cached annual report PDF for a landlord. Same pattern
+  // as the CH accounts streaming endpoint — 404 if we haven't fetched
+  // one yet (the scraper does this automatically).
+  app.get("/api/landlord/:companyId/annual-report.pdf", requireAuth, async (req, res) => {
+    try {
+      const { rows } = await pool.query<{ annual_report_storage_key: string | null; name: string }>(
+        `SELECT annual_report_storage_key, name FROM crm_companies WHERE id = $1`,
+        [req.params.companyId]
+      );
+      const row = rows[0];
+      if (!row?.annual_report_storage_key) return res.status(404).json({ error: "no annual report on file" });
+      const { getFile } = await import("./file-storage");
+      const file = await getFile(row.annual_report_storage_key);
+      if (!file) return res.status(404).json({ error: "stored file missing" });
+      const safeName = (row.name || "landlord").replace(/[^A-Za-z0-9._-]/g, "_");
+      res.setHeader("Content-Type", file.contentType || "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}-annual-report.pdf"`);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.end(file.data);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "stream failed" });
+    }
+  });
+
+  // Why-didn't-it-link diagnostic. Returns the most recent link report
+  // produced by autoLinkScrapedProperties so the user can see, per
+  // scraped property: did it match a CRM row? Was the row already
+  // owned by another landlord? Is it a totally new asset? Used by
+  // ChatBGP + the Ownership block to debug "Bluewater isn't showing".
+  app.get("/api/landlord/:companyId/link-diagnostic", requireAuth, async (req, res) => {
+    try {
+      const { getLandlordScrapeProgress } = await import("./landlord-scraper");
+      const progress = getLandlordScrapeProgress(req.params.companyId);
+      const linkReport = (progress as any)?.result?.link_report || null;
+      res.json({ progress: progress.state, linkReport });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "diagnostic failed" });
+    }
+  });
+
   // Create a crm_properties row from a scraped item and link it to this
   // landlord. Used by the per-row "Create CRM property" button in the
   // Ownership block. Returns the new property id so the client can

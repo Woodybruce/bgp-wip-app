@@ -84,6 +84,9 @@ interface BrandProfile {
     last_accounts_made_up_to: string | null;
     last_accounts_storage_key: string | null;
     last_accounts_fetched_at: string | null;
+    annual_report_url: string | null;
+    annual_report_storage_key: string | null;
+    annual_report_fetched_at: string | null;
     folder_teams: string[] | null;
     sharepoint_folder_url: string | null;
     bgp_contact_crm: string | null;
@@ -3645,6 +3648,7 @@ function ComplianceBoard({
               { key: "ch", label: "Companies House profile", done: !!company.companies_house_number },
               { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
               { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
+              { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
               { key: "redflag", label: "Red Flag credit score", done: !!(company.kyc_status === "verified") },
               { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
             ].map((row) => (
@@ -3687,7 +3691,18 @@ function ComplianceBoard({
                     )}
                   </div>
                 )}
-                {!hasEntity && !row.done && row.key !== "accounts" && (
+                {row.key === "annual_report" && row.done && (
+                  <a
+                    href={`/api/landlord/${companyId}/annual-report.pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                    title="Download cached annual report PDF"
+                  >
+                    <ExternalLink className="w-2.5 h-2.5" /> PDF
+                  </a>
+                )}
+                {!hasEntity && !row.done && row.key !== "accounts" && row.key !== "annual_report" && (
                   <span className="text-[10px] text-muted-foreground/60 italic ml-auto">parked</span>
                 )}
               </div>

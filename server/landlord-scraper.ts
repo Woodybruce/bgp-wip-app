@@ -22,6 +22,7 @@ import { pool } from "./db";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { callClaude, safeParseJSON, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { geocodeBatch } from "./geocode";
+import { saveFile } from "./file-storage";
 
 // Paths likely to hold landlord-specific intel. Probed in parallel. Each
 // path that returns >200 chars of text is fed into the AI prompt. We
@@ -289,9 +290,55 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
   // for human review. The exact-name rule catches Bluewater / Gunwharf
   // Quays / Trinity Kitchen reliably without the false-positive risk
   // we hit on the CH name-search.
-  await autoLinkScrapedProperties(companyId, findings.properties);
+  const linkReport = await autoLinkScrapedProperties(companyId, findings.properties);
+  console.log(`[landlord-scrape ${companyId}] auto-linked ${linkReport.linked}/${findings.properties.length} (skipped: ${linkReport.skipped.length})`);
 
-  progress[companyId] = { state: "done", updatedAt: new Date().toISOString(), result: findings };
+  // Auto-download the annual report PDF into file_storage so it lives
+  // in our Compliance & KYC stack rather than depending on the
+  // landlord's CDN. Idempotent — if the stored URL still matches what
+  // we just scraped, no re-download. New URL or no existing one → fetch
+  // + cache + write metadata back to crm_companies.
+  if (findings.annual_report_url) {
+    try {
+      progress[companyId] = { state: "downloading_annual_report", updatedAt: new Date().toISOString() };
+      const { rows: existing } = await pool.query<{ annual_report_url: string | null }>(
+        `SELECT annual_report_url FROM crm_companies WHERE id = $1`,
+        [companyId]
+      );
+      if (existing[0]?.annual_report_url !== findings.annual_report_url) {
+        const pdfRes = await fetch(findings.annual_report_url, {
+          headers: { Accept: "application/pdf,*/*", "User-Agent": "Mozilla/5.0 BGPBot/1.0" },
+          signal: AbortSignal.timeout(60_000),
+          redirect: "follow",
+        });
+        if (pdfRes.ok) {
+          const buf = Buffer.from(await pdfRes.arrayBuffer());
+          const year = new Date().getUTCFullYear();
+          const storageKey = `landlord-annual-reports/${companyId}/${year}.pdf`;
+          await saveFile(storageKey, buf, "application/pdf", `annual-report-${year}.pdf`);
+          await pool.query(
+            `UPDATE crm_companies
+                SET annual_report_url = $1,
+                    annual_report_storage_key = $2,
+                    annual_report_fetched_at = NOW()
+              WHERE id = $3`,
+            [findings.annual_report_url, storageKey, companyId]
+          );
+          console.log(`[landlord-scrape ${companyId}] cached annual report (${buf.length} bytes)`);
+        } else {
+          console.warn(`[landlord-scrape ${companyId}] annual report fetch failed: ${pdfRes.status}`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[landlord-scrape ${companyId}] annual report download error:`, err?.message || err);
+    }
+  }
+
+  progress[companyId] = {
+    state: "done",
+    updatedAt: new Date().toISOString(),
+    result: { ...findings, link_report: linkReport } as any,
+  };
   return { ok: true, findings };
 }
 
@@ -324,53 +371,90 @@ function normalisePostcode(raw: string | null | undefined): string {
 //      brands the property differently to the CRM ("St David's Cardiff"
 //      vs "St. David's Dewi Sant").
 // Only links when the CRM row currently has no landlord_id, so we never
-// clobber an existing assignment. Returns the number of links written.
+// clobber an existing assignment. Returns the link report so the panel
+// + ChatBGP can see exactly what was tried for each scraped item.
+export interface LinkReport {
+  linked: number;
+  skipped: Array<{ name: string; reason: string; existingLandlordId?: string; existingLandlordName?: string }>;
+  hits: Array<{ scrapedName: string; crmId: string; via: "name" | "postcode" }>;
+}
+
 export async function autoLinkScrapedProperties(
   companyId: string,
   scraped: Array<{ name: string; address?: string; postcode?: string; sector?: string }>,
-): Promise<number> {
-  if (!scraped || scraped.length === 0) return 0;
-  // Pull unlinked CRM properties once — cheaper than a per-scrape query.
-  const { rows: unlinked } = await pool.query<{ id: string; name: string; postcode: string | null }>(
-    `SELECT id, name, postcode FROM crm_properties
-      WHERE landlord_id IS NULL OR landlord_id = ''`
-  );
-  if (unlinked.length === 0) return 0;
+): Promise<LinkReport> {
+  const report: LinkReport = { linked: 0, skipped: [], hits: [] };
+  if (!scraped || scraped.length === 0) return report;
 
-  const byName = new Map<string, string>();      // normalised name → CRM id
-  const byPostcode = new Map<string, string>();  // normalised postcode → CRM id
-  for (const row of unlinked) {
-    const n = normalisePropertyName(row.name);
-    if (n) byName.set(n, row.id);
-    const p = normalisePostcode(row.postcode);
-    if (p) byPostcode.set(p, row.id);
+  // Pull EVERY CRM property (linked + unlinked) so we can tell the
+  // difference between "no row matches" and "the matching row is
+  // already owned by someone else".
+  const { rows: all } = await pool.query<{ id: string; name: string; postcode: string | null; landlord_id: string | null }>(
+    `SELECT id, name, postcode, landlord_id FROM crm_properties`
+  );
+  if (all.length === 0) {
+    for (const item of scraped) report.skipped.push({ name: item.name, reason: "crm_properties table is empty" });
+    return report;
   }
 
-  let linked = 0;
+  const byName = new Map<string, typeof all[number]>();
+  const byPostcode = new Map<string, typeof all[number]>();
+  for (const row of all) {
+    const n = normalisePropertyName(row.name);
+    if (n) byName.set(n, row);
+    const p = normalisePostcode(row.postcode);
+    if (p) byPostcode.set(p, row);
+  }
+
   for (const item of scraped) {
-    let crmId: string | undefined;
     const nameKey = normalisePropertyName(item.name);
-    if (nameKey) crmId = byName.get(nameKey);
-    if (!crmId) {
-      const pcKey = normalisePostcode(item.postcode);
-      if (pcKey) crmId = byPostcode.get(pcKey);
+    const pcKey = normalisePostcode(item.postcode);
+    let match = nameKey ? byName.get(nameKey) : undefined;
+    let via: "name" | "postcode" = "name";
+    if (!match && pcKey) { match = byPostcode.get(pcKey); via = "postcode"; }
+
+    if (!match) {
+      report.skipped.push({ name: item.name, reason: "no CRM property matches name or postcode" });
+      continue;
     }
-    if (!crmId) continue;
+    if (match.landlord_id && match.landlord_id !== companyId) {
+      // Don't clobber — surface what's blocking. Looks up the other
+      // landlord's display name for the UI message.
+      const otherName = await pool.query<{ name: string }>(
+        `SELECT name FROM crm_companies WHERE id = $1`, [match.landlord_id]
+      ).then(r => r.rows[0]?.name).catch(() => undefined);
+      report.skipped.push({
+        name: item.name,
+        reason: "CRM row already linked to a different landlord",
+        existingLandlordId: match.landlord_id,
+        existingLandlordName: otherName,
+      });
+      continue;
+    }
+    if (match.landlord_id === companyId) {
+      // Already wired up — count toward linked so the UI shows it
+      // green, but don't issue a no-op UPDATE.
+      report.hits.push({ scrapedName: item.name, crmId: match.id, via });
+      report.linked++;
+      continue;
+    }
     const { rowCount } = await pool.query(
       `UPDATE crm_properties SET landlord_id = $1
         WHERE id = $2 AND (landlord_id IS NULL OR landlord_id = '')`,
-      [companyId, crmId]
+      [companyId, match.id]
     );
     if ((rowCount ?? 0) > 0) {
-      linked++;
-      // Burn this CRM id from the lookup tables so two scraped names
-      // can't both win the same CRM row in a single pass.
-      byName.delete(nameKey);
-      const pc = normalisePostcode(item.postcode);
-      if (pc) byPostcode.delete(pc);
+      report.linked++;
+      report.hits.push({ scrapedName: item.name, crmId: match.id, via });
+      // Burn this CRM row from the lookup tables so two scraped
+      // names can't both win the same row in a single pass.
+      if (nameKey) byName.delete(nameKey);
+      if (pcKey) byPostcode.delete(pcKey);
+    } else {
+      report.skipped.push({ name: item.name, reason: "UPDATE returned 0 rows (race or RLS?)" });
     }
   }
-  return linked;
+  return report;
 }
 
 // Create a new crm_properties row from a scraped property record,

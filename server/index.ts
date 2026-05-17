@@ -713,6 +713,12 @@ import { pool } from "./db";
     // passing the landlord's company name as propertyName.
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS folder_teams TEXT[]`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    // Annual report auto-download for landlords (May 2026). Same shape
+    // as last_accounts_* — original public URL the scraper found,
+    // file_storage key for the cached PDF, fetched timestamp.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS annual_report_url TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS annual_report_storage_key TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS annual_report_fetched_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_notes TEXT`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
