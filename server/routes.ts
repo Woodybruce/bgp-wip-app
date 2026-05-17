@@ -379,20 +379,16 @@ export async function registerRoutes(
       if (!files || files.length === 0) {
         return res.status(400).json({ message: "No files uploaded" });
       }
+      const userId = (req as any).userId || req.session?.userId || null;
       const uploaded = await Promise.all(files.map(async (f) => {
         const ext = path.extname(f.originalname).toLowerCase();
         const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
-        await saveFile(`chat-media/${uniqueName}`, f.buffer, f.mimetype, f.originalname);
-        return {
-          url: `/api/chat-media/${uniqueName}`,
-          name: f.originalname,
-          size: f.size,
-          type: f.mimetype,
-        };
-      const userId = (req as any).user?.id || (req as any).userId;
         const storageKey = `chat-media/${uniqueName}`;
         await saveFile(storageKey, f.buffer, f.mimetype, f.originalname);
         const url = `/api/chat-media/${uniqueName}`;
+        // Track per-user so ChatBGP can list "what has Woody uploaded
+        // recently" without needing the exact filename — fixes the "file
+        // vanished" complaint when the user comes back in a new session.
         if (userId) {
           recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
         }

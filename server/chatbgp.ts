@@ -11,7 +11,7 @@ import fs from "node:fs";
 import multer from "multer";
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
-import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
+import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
@@ -3685,6 +3685,22 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           tenantName: { type: "string", description: "Filter by tenant name (partial match)" },
           expiringWithinMonths: { type: "number", description: "Find units with lease expiry within this many months from now" },
           limit: { type: "number", description: "Max results to return (default 50)" },
+        },
+        required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_my_uploads",
+      description: "List files the current user has uploaded to chat recently — most recent first. Use this when the user references a previously-uploaded file ('the Landsec sheet', 'that xlsx I dropped last week') but the exact filename is unclear. Returns filename + size + when uploaded + the chat-media filename to pass to import tools. Always call this BEFORE telling the user 'file not found, please re-upload' — the file is almost certainly still here.",
+      parameters: {
+        type: "object",
+        properties: {
+          search: { type: "string", description: "Optional case-insensitive substring filter (e.g. 'landsec' or 'wip'). Omit to list everything recent." },
+          limit: { type: "number", description: "Max files to return. Default 20, max 50." },
         },
         required: [],
       },
@@ -7529,6 +7545,46 @@ async function executeCrmToolRaw(
       };
     } catch (err: any) {
       return { data: { error: `Leasing schedule query failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "list_my_uploads") {
+    try {
+      const search = String(fnArgs.search || "").trim();
+      const limit = Math.min(Math.max(Number(fnArgs.limit) || 20, 1), 50);
+      const currentUserId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      // Prefer the user-scoped history table (populated on every upload).
+      // Fall back to a global chat-media search when the per-user table has
+      // gaps (older uploads predating the recordUserUpload fix).
+      let items: Array<{ storageKey: string; originalName: string; mimeType: string; size: number; uploadedAt: string }> = [];
+      if (currentUserId) {
+        const recent = await getRecentUserUploads(currentUserId, limit * 2);
+        items = recent
+          .filter(r => !search || r.originalName.toLowerCase().includes(search.toLowerCase()))
+          .slice(0, limit)
+          .map(r => ({ storageKey: r.storageKey, originalName: r.originalName, mimeType: r.mimeType, size: r.size, uploadedAt: r.uploadedAt }));
+      }
+      if (items.length === 0) {
+        const global = await searchChatMedia(search, limit);
+        items = global.map(g => ({ storageKey: g.storageKey, originalName: g.originalName, mimeType: g.contentType, size: g.size, uploadedAt: "" }));
+      }
+      return {
+        data: {
+          count: items.length,
+          files: items.map(it => ({
+            chat_media_filename: it.storageKey.replace(/^chat-media\//, ""),
+            original_name: it.originalName,
+            mime_type: it.mimeType,
+            size_kb: Math.round((it.size || 0) / 1024),
+            uploaded_at: it.uploadedAt || null,
+          })),
+          hint: items.length === 0
+            ? "No matching files. Ask the user to drag/drop the file into chat."
+            : `Pass any \`chat_media_filename\` above (or the \`original_name\`) to import tools — both resolve to the same file.`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: err?.message || "list_my_uploads failed" } };
     }
   }
 

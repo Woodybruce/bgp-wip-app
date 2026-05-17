@@ -45,18 +45,51 @@ export async function deleteFile(storageKey: string): Promise<boolean> {
 
 export async function findChatMediaByOriginalName(
   originalName: string
-): Promise<{ data: Buffer; contentType: string; storageKey: string } | null> {
-  const result = await pool.query(
-    `SELECT storage_key, data, content_type FROM file_storage WHERE storage_key LIKE 'chat-media/%' AND original_name = $1 ORDER BY storage_key DESC LIMIT 1`,
+): Promise<{ data: Buffer; contentType: string; storageKey: string; originalName: string } | null> {
+  // Exact-match first (cheap, fast), then case-insensitive partial fallback so
+  // "complete landsec" / "LANDSEC.xlsx" / the full bracketed name all resolve.
+  // Most recent upload wins on partial matches.
+  const exact = await pool.query(
+    `SELECT storage_key, data, content_type, original_name FROM file_storage
+       WHERE storage_key LIKE 'chat-media/%' AND original_name = $1
+       ORDER BY storage_key DESC LIMIT 1`,
     [originalName]
   );
-  if (result.rows.length === 0) return null;
-  const row = result.rows[0];
-  return {
-    data: row.data,
-    contentType: row.content_type,
-    storageKey: row.storage_key,
-  };
+  if (exact.rows.length > 0) {
+    const row = exact.rows[0];
+    return { data: row.data, contentType: row.content_type, storageKey: row.storage_key, originalName: row.original_name };
+  }
+  const fuzzy = await pool.query(
+    `SELECT storage_key, data, content_type, original_name FROM file_storage
+       WHERE storage_key LIKE 'chat-media/%' AND original_name ILIKE $1
+       ORDER BY storage_key DESC LIMIT 1`,
+    [`%${originalName}%`]
+  );
+  if (fuzzy.rows.length === 0) return null;
+  const row = fuzzy.rows[0];
+  return { data: row.data, contentType: row.content_type, storageKey: row.storage_key, originalName: row.original_name };
+}
+
+// List chat-media files matching a case-insensitive search term, most recent
+// first. Used by ChatBGP's `list_my_uploads` tool to enumerate files the user
+// has shared without forcing them to remember the exact filename.
+export async function searchChatMedia(
+  searchTerm: string,
+  limit = 20
+): Promise<Array<{ storageKey: string; originalName: string; contentType: string; size: number }>> {
+  const result = await pool.query(
+    `SELECT storage_key, original_name, content_type, size FROM file_storage
+       WHERE storage_key LIKE 'chat-media/%'
+         AND ($1 = '' OR original_name ILIKE $2)
+       ORDER BY storage_key DESC LIMIT $3`,
+    [searchTerm, `%${searchTerm}%`, limit]
+  );
+  return result.rows.map(r => ({
+    storageKey: r.storage_key,
+    originalName: r.original_name,
+    contentType: r.content_type,
+    size: r.size,
+  }));
 }
 
 export async function fileExists(storageKey: string): Promise<boolean> {
