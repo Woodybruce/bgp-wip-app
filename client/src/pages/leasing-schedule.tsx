@@ -152,6 +152,38 @@ function statusBandFor(value: string | null | undefined) {
   return STATUS_BANDS.find(b => b.value === value) || null;
 }
 
+// Map the status_band enum to a tenant-name colour (matches Landsec key —
+// green for halo/on-strategy, amber for maintain, dark/bright red for divest/
+// at-risk, grey for void).
+function tenantNameColourFor(value: string | null | undefined): string {
+  switch (value) {
+    case "GREEN_A_HALO":
+    case "GREEN_B_HALO": return "text-emerald-700 dark:text-emerald-400";
+    case "AMBER_C_MAINTAIN": return "text-amber-700 dark:text-amber-400";
+    case "DARK_RED_D_DIVEST": return "text-rose-800 dark:text-rose-400";
+    case "BRIGHT_RED_D_AT_RISK": return "text-red-700 dark:text-red-400";
+    case "GREY_VOID": return "text-zinc-500 dark:text-zinc-400";
+    default: return "text-foreground";
+  }
+}
+
+// Header label for the Updates column, formatted like Landsec's
+// "Updates - APR 2026 LEASING MEETING". Picks the most recent meeting_month
+// from the units; falls back to the current month.
+function updatesHeaderLabel(units: any[]): string {
+  const mm = units.find((u: any) => u.meeting_month)?.meeting_month;
+  const label = (mm || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" })).toUpperCase();
+  return `Updates - ${label} - Leasing Meeting`;
+}
+
+function formatLandsecDate(d: string | null | undefined): string | null {
+  if (!d) return null;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  // dd/m/yy — matches Landsec's compact "24/3/35" style
+  return `${dt.getDate()}/${dt.getMonth() + 1}/${String(dt.getFullYear()).slice(-2)}`;
+}
+
 function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: string | null | undefined; onSave: (id: string, field: string, value: string) => void }) {
   const band = statusBandFor(value);
   return (
@@ -1256,19 +1288,13 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                 <table className="w-full" data-testid={`zone-table-${zone}`}>
                   <thead>
                     <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b text-left text-sm">
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Existing</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[100px]">Positioning</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[200px]">Existing</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Positioning</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[160px]">Status Band</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[50px]">Agent</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[80px]">Expiry</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">Break</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">RR</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[100px]">Performance</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[220px]">Targets</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Optimum Target</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[90px]">Priority</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[180px]">Updates (BGP)</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[160px]">Agent Input</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[110px]">Priority</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[260px]">{updatesHeaderLabel(zoneUnits)}</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 w-[60px]"></th>
                     </tr>
                   </thead>
@@ -1279,57 +1305,56 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                       const hasMore = zoneUnits.length > ZONE_ROW_LIMIT && !showAll;
                       return (<>
                         {visible.map(u => {
-                          const expired = isExpired(u.lease_expiry);
-                          const expSoon = isExpiringSoon(u.lease_expiry);
                           const band = statusBandFor((u as any).status_band);
                           const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
+                          const nameColour = tenantNameColourFor((u as any).status_band);
+                          const expFmt = formatLandsecDate(u.lease_expiry);
+                          const breakFmt = formatLandsecDate(u.lease_break);
+                          const llBreakFmt = formatLandsecDate((u as any).landlord_break);
+                          const rrFmt = formatLandsecDate(u.rent_review);
                           return (
-                            <tr key={u.id} className={`border-b hover:brightness-95 transition-all ${rowTint}`} data-testid={`unit-row-${u.id}`}>
-                              <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" />
-                                {(u as any).tenant_name && <div className="text-[10px] text-muted-foreground truncate max-w-[140px]">{(u as any).tenant_name}</div>}
+                            <tr key={u.id} className={`border-b hover:brightness-95 transition-all align-top ${rowTint}`} data-testid={`unit-row-${u.id}`}>
+                              {/* Existing — tenant name (bold, larger, colour-coded) + lease dates stacked below */}
+                              <td className="px-3 py-2 min-w-[200px]">
+                                <div className={`text-sm font-bold leading-tight ${nameColour}`}>
+                                  <InlineEditCell unitId={u.id} field="tenant_name" value={u.tenant_name || u.unit_name || ""} onSave={inlineUpdate} className="text-sm font-bold" placeholder="Tenant" />
+                                </div>
+                                <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                                  {expFmt && <div>(Exp. {expFmt})</div>}
+                                  {breakFmt && <div>(TB {breakFmt})</div>}
+                                  {llBreakFmt && <div>(LL {llBreakFmt})</div>}
+                                  {rrFmt && <div>(RR {rrFmt})</div>}
+                                  {!expFmt && !breakFmt && !llBreakFmt && !rrFmt && (
+                                    <div className="italic opacity-60">No lease dates — pull from Tenancy Schedule</div>
+                                  )}
+                                </div>
                               </td>
+                              {/* Positioning */}
                               <td className="px-3 py-2">
                                 <InlineEditCell unitId={u.id} field="positioning" value={(u as any).positioning || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Set positioning" />
                               </td>
+                              {/* Status Band + (Occupied/Vacant pill below) */}
                               <td className="px-3 py-2">
                                 <StatusBandCell unitId={u.id} value={(u as any).status_band} onSave={inlineUpdate} />
                                 <div className="mt-1"><InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} /></div>
                               </td>
-                              <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="agent_initials" value={u.agent_initials || ""} onSave={inlineUpdate} className="text-gray-500" />
-                              </td>
-                              <td className={`px-3 py-2 ${expired ? "text-red-600 font-medium" : expSoon ? "text-amber-600 font-medium" : "text-gray-600"}`}>
-                                <InlineDateCell unitId={u.id} field="lease_expiry" value={u.lease_expiry} onSave={inlineUpdate} />
-                              </td>
-                              <td className="px-3 py-2">
-                                <InlineDateCell unitId={u.id} field="lease_break" value={u.lease_break} onSave={inlineUpdate} className="text-gray-500" />
-                              </td>
-                              <td className="px-3 py-2">
-                                <InlineDateCell unitId={u.id} field="rent_review" value={u.rent_review} onSave={inlineUpdate} className="text-gray-500" />
-                              </td>
-                              <td className="px-3 py-2">
-                                <div className="space-y-0.5">
-                                  <InlineEditCell unitId={u.id} field="mat_psqft" value={u.mat_psqft || ""} onSave={inlineUpdate} className="text-[10px]" placeholder="MAT" />
-                                  <InlineEditCell unitId={u.id} field="lfl_percent" value={u.lfl_percent || ""} onSave={inlineUpdate} className={`text-[10px] ${u.lfl_percent?.startsWith("-") ? "text-red-500" : "text-emerald-600"}`} placeholder="LFL%" />
-                                  <InlineEditCell unitId={u.id} field="occ_cost_percent" value={u.occ_cost_percent || ""} onSave={inlineUpdate} className="text-[10px] text-gray-400" placeholder="Occ%" />
-                                </div>
-                              </td>
+                              {/* Targets */}
                               <td className="px-3 py-2 min-w-[220px]">
                                 <TargetTenantPanel unitId={u.id} propertyId={propertyId} targets={allTargets} onRefresh={() => refetchTargets()} />
                               </td>
+                              {/* Optimum Target */}
                               <td className="px-3 py-2">
                                 <InlineEditCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} className="text-[11px] font-medium" placeholder="Optimum target" />
                               </td>
+                              {/* Priority */}
                               <td className="px-3 py-2">
                                 <InlineEditCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Priority" />
                               </td>
+                              {/* Updates */}
                               <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-700" placeholder="BGP update" multiline />
+                                <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-700 dark:text-gray-300 leading-snug" placeholder="Update / agent input" multiline />
                               </td>
-                              <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="agent_input" value={(u as any).agent_input || ""} onSave={inlineUpdate} className="text-[10px] text-gray-600 italic" placeholder="Agent input" multiline />
-                              </td>
+                              {/* Actions */}
                               <td className="px-3 py-2">
                                 <div className="flex items-center gap-0.5">
                                   <button
@@ -1350,7 +1375,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                         })}
                         {hasMore && (
                           <tr>
-                            <td colSpan={14} className="text-center py-2">
+                            <td colSpan={8} className="text-center py-2">
                               <button
                                 onClick={() => setExpandedRowZones(prev => { const n = new Set(prev); n.add(zone); return n; })}
                                 className="text-xs text-primary hover:underline font-medium"
