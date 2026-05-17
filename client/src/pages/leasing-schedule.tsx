@@ -266,29 +266,62 @@ function PositioningCell({ unitId, group, subType, onSave }: {
   );
 }
 
+// Inline financial-performance cell — three-line LFL / MAT / Occ display.
+// Click any line to inline-edit. Numbers carry over from the Tenancy Schedule
+// once linked; otherwise stored on the leasing_schedule_units row.
+function FinancialPerformanceCell({ unit, onSave }: { unit: any; onSave: (id: string, field: string, value: string) => void }) {
+  const lfl = unit.lfl_percent || "";
+  const mat = unit.mat_psqft || "";
+  const occ = unit.occ_cost_percent || "";
+  return (
+    <div className="space-y-0.5 text-[10px] leading-tight">
+      <div className="flex items-center gap-1">
+        <InlineEditCell unitId={unit.id} field="lfl_percent" value={lfl} onSave={onSave} className={`${String(lfl).startsWith("-") ? "text-rose-600" : "text-emerald-700"}`} placeholder="—" />
+        <span className="text-muted-foreground">% LFL</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-muted-foreground">£</span>
+        <InlineEditCell unitId={unit.id} field="mat_psqft" value={mat} onSave={onSave} className="font-medium" placeholder="MAT" />
+        <span className="text-muted-foreground">MAT/sqft</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <InlineEditCell unitId={unit.id} field="occ_cost_percent" value={occ} onSave={onSave} className="text-muted-foreground" placeholder="—" />
+        <span className="text-muted-foreground">% Occ</span>
+      </div>
+    </div>
+  );
+}
+
 // Existing tenant cell — pulls name LIVE from the linked Tenancy Schedule
 // row when the row is FK'd, otherwise uses leasing_schedule_units.tenant_name.
 // Clickable through to the brand CRM when matched. Inline-editable if no
-// brand match (lets you correct a typo without leaving the schedule).
+// brand match (lets you correct a typo without leaving the schedule). The
+// status band picker is rendered as a small pill underneath the name so the
+// row tint can be set without a dedicated column.
 function ExistingTenantCell({ unit, nameColour, onSave }: {
   unit: any; nameColour: string; onSave: (id: string, field: string, value: string) => void;
 }) {
   const tenantName = unit.live_tenant_name || unit.tenant_name || unit.unit_name || "";
   const linkedCompanyId = unit.resolved_tenant_company_id || unit.tenant_company_id || null;
-  if (linkedCompanyId) {
-    return (
-      <Link
-        href={`/companies/${linkedCompanyId}`}
-        className={`text-sm font-bold leading-tight hover:underline ${nameColour}`}
-        data-testid={`existing-link-${unit.id}`}
-      >
-        {tenantName || "—"}
-      </Link>
-    );
-  }
   return (
-    <div className={`text-sm font-bold leading-tight ${nameColour}`}>
-      <InlineEditCell unitId={unit.id} field="tenant_name" value={tenantName} onSave={onSave} className="text-sm font-bold" placeholder="Tenant" />
+    <div>
+      {linkedCompanyId ? (
+        <Link
+          href={`/companies/${linkedCompanyId}`}
+          className={`text-sm font-bold leading-tight hover:underline ${nameColour}`}
+          data-testid={`existing-link-${unit.id}`}
+        >
+          {tenantName || "—"}
+        </Link>
+      ) : (
+        <div className={`text-sm font-bold leading-tight ${nameColour}`}>
+          <InlineEditCell unitId={unit.id} field="tenant_name" value={tenantName} onSave={onSave} className="text-sm font-bold" placeholder="Tenant" />
+        </div>
+      )}
+      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+        <StatusBandCell unitId={unit.id} value={unit.status_band} onSave={onSave} />
+        <InlineStatusCell unitId={unit.id} value={unit.status} onSave={onSave} />
+      </div>
     </div>
   );
 }
@@ -1764,7 +1797,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                     <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b text-left text-sm">
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[200px]">Existing</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Positioning</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[160px]">Status Band</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Financial Performance</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[220px]">Targets</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Optimum Target</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[110px]">Priority</th>
@@ -1807,10 +1840,9 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                               <td className="px-3 py-2 align-top">
                                 <PositioningCell unitId={u.id} group={(u as any).positioning_group} subType={(u as any).positioning || ""} onSave={inlineUpdate} />
                               </td>
-                              {/* Status Band + (Occupied/Vacant pill below) */}
-                              <td className="px-3 py-2">
-                                <StatusBandCell unitId={u.id} value={(u as any).status_band} onSave={inlineUpdate} />
-                                <div className="mt-1"><InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} /></div>
+                              {/* Financial Performance — 3-line LFL / MAT / Occ */}
+                              <td className="px-3 py-2 align-top">
+                                <FinancialPerformanceCell unit={u} onSave={inlineUpdate} />
                               </td>
                               {/* Targets */}
                               <td className="px-3 py-2 min-w-[220px]">
@@ -2404,7 +2436,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                       <tr className="bg-gray-50/30 border-b text-left text-sm">
                         <th className="px-2 py-1 font-medium text-gray-500 min-w-[200px]">Existing</th>
                         <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Positioning</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[160px]">Status Band</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Financial Performance</th>
                         <th className="px-2 py-1 font-medium text-gray-500 min-w-[200px]">Targets</th>
                         <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Optimum Target</th>
                         <th className="px-2 py-1 font-medium text-gray-500 min-w-[110px]">Priority</th>
@@ -2435,9 +2467,8 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                             <td className="px-2 py-1.5 align-top">
                               <PositioningCell unitId={u.id} group={(u as any).positioning_group} subType={(u as any).positioning || ""} onSave={inlineUpdate} />
                             </td>
-                            <td className="px-2 py-1.5">
-                              <StatusBandCell unitId={u.id} value={(u as any).status_band} onSave={inlineUpdate} />
-                              <div className="mt-1"><InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} /></div>
+                            <td className="px-2 py-1.5 align-top">
+                              <FinancialPerformanceCell unit={u} onSave={inlineUpdate} />
                             </td>
                             <td className="px-2 py-1.5 min-w-[200px]">
                               <TargetCompaniesCell unitId={u.id} targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} onUpdate={inlineUpdate} />
