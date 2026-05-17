@@ -278,11 +278,20 @@ router.get("/api/instagram/health", requireAuth, async (_req: Request, res: Resp
 router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, res: Response) => {
   try {
     const force = req.query.force === "true" || req.query.force === "1";
-    const profile = await getBrandInstagram(String(req.params.companyId), { force });
-    if (!profile) {
-      return res.status(204).end();
-    }
-    res.json(profile);
+    const companyId = String(req.params.companyId);
+    const profile = await getBrandInstagram(companyId, { force });
+    if (profile) return res.json(profile);
+
+    // Lookup returned null — figure out WHY so the UI can render a useful
+    // empty-state card instead of just hiding itself.
+    const handleRow = await pool.query<{ instagram_handle: string | null }>(
+      `SELECT instagram_handle FROM crm_companies WHERE id = $1`, [companyId]
+    );
+    const handle = (handleRow.rows[0]?.instagram_handle || "").replace(/^@/, "").trim();
+    let status: "not_configured" | "no_handle" | "lookup_failed" = "lookup_failed";
+    if (!process.env.META_ACCESS_TOKEN || !process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID) status = "not_configured";
+    else if (!handle) status = "no_handle";
+    res.json({ status, handle: handle || null, profile: null });
   } catch (e: any) {
     console.error("[/api/brand/:companyId/instagram]", e?.message);
     res.status(500).json({ error: e?.message || "failed" });

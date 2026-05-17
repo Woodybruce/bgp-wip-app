@@ -4215,7 +4215,41 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
     staleTime: 1000 * 60 * 60, // 1h
   });
 
-  if (isLoading || !profile) return null;
+  if (isLoading) return null;
+
+  // Server returns { status, handle, profile: null } when the lookup failed —
+  // surface that in an empty-state card so the user can see WHY there's no
+  // data, instead of the card silently hiding itself.
+  if (!profile || profile.status) {
+    const status: string | undefined = profile?.status;
+    const handle: string | null = profile?.handle ?? null;
+    const message =
+      status === "not_configured" ? "Meta Graph API credentials not set on server."
+      : status === "no_handle" ? "No Instagram handle on this brand. Add via Edit, or run the homepage backfill."
+      : "Instagram lookup failed — likely the handle is a Personal account (Business Discovery only works on Business/Creator accounts), or the access token / business account ID is wrong.";
+    return (
+      <Card>
+        <CardHeader className="p-3 pb-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <Instagram className="w-3.5 h-3.5" /> Instagram
+            {handle && (
+              <a
+                href={`https://instagram.com/${handle}`}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal"
+              >
+                @{handle}
+              </a>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 pt-0">
+          <p className="text-[11px] text-muted-foreground italic">{message}</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const fmt = (n: number | null | undefined) => {
     if (n == null) return "—";
