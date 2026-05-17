@@ -80,7 +80,6 @@ import {
   LinkedDealsPanel,
   ClientBoardPanel,
   LinkedContactsPanel,
-  LeasingTrackerSummary,
   PropertyIntelligencePanel,
   PropertyKycPanel,
   PropertyNewsPanel,
@@ -516,9 +515,11 @@ export function PropertyDetail({ id }: { id: string }) {
               </Button>
             )}
 
-            {(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction") && (
-              <LeasingTrackerSummary propertyId={property.id} />
-            )}
+            {/* LeasingTrackerSummary removed — its counts (available /
+                under-offer / let / viewings / offers) duplicate what's
+                already visible per unit on the Leasing Schedule below.
+                The deal-CRM letting-tracker function it sourced from
+                (available_units) is untouched. */}
 
             <ErrorBoundary compact name="Property plans">
               <CollapsibleCard open={mainSections.plans} onToggle={() => toggleMain("plans")} icon={MapIcon} title="Plans" testId="toggle-plans">

@@ -369,12 +369,19 @@ export async function refreshBrandImages(companyId: string): Promise<{
   bySource: Record<string, number>;
   skipped: string;
 }> {
-  const { rows } = await pool.query<BrandRow>(
-    `SELECT id, name, domain, domain_url, industry FROM crm_companies WHERE id = $1`,
+  const { rows } = await pool.query<BrandRow & { company_type: string | null }>(
+    `SELECT id, name, domain, domain_url, industry, company_type FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   const brand = rows[0];
   if (!brand) throw new Error("Brand not found");
+
+  // Landlord-shaped rows reorder sources: their own homepage / portfolio
+  // pages have far better property hero shots than Wikipedia (which is mostly
+  // logos + boardroom photos for institutional landlords). Detect via
+  // company_type so the retail brand pipeline isn't affected.
+  const ct = (brand.company_type || "").toLowerCase();
+  const isLandlord = ct.includes("landlord") || ct === "client" || ct === "landlord / client";
 
   // Skip if we already have enough auto-fetched images. Manual uploads are
   // never counted against the cap — users always get their content back.
@@ -401,19 +408,35 @@ export async function refreshBrandImages(companyId: string): Promise<{
   const landlordImages = await findLandlordWebsiteImages(companyId);
   candidates.push(...landlordImages);
 
-  // Fetch from each source in quality order; bail once we have ~3× target
-  // to keep the dedupe + import loop tight.
-  if (candidates.length < targetNew * 2 && domain) {
-    candidates.push(...await findPressImages(domain));
-  }
-  if (candidates.length < targetNew * 2) {
-    candidates.push(...await findWikipediaImages(brand.name));
-  }
-  if (candidates.length < targetNew * 2 && domain) {
-    candidates.push(...await findHomepageImages(domain));
-  }
-  if (candidates.length < targetNew * 2) {
-    candidates.push(...await findCseImages(brand.name, brand.industry, domain));
+  if (isLandlord) {
+    // For landlords: own-website first, then trusted press, skip Wikipedia
+    // (institutional landlord Wikipedia articles are mostly corporate logo +
+    // boardroom shots — never useful for a property gallery), then CSE.
+    if (candidates.length < targetNew * 2 && domain) {
+      candidates.push(...await findHomepageImages(domain));
+    }
+    if (candidates.length < targetNew * 2 && domain) {
+      candidates.push(...await findPressImages(domain));
+    }
+    if (candidates.length < targetNew * 2) {
+      candidates.push(...await findCseImages(brand.name, brand.industry, domain));
+    }
+  } else {
+    // Retail brand pipeline — Wikipedia stays useful (logo + flagship store
+    // shots from notable retailers like Aesop / Apple / Pret) so keeps its
+    // original position between press and homepage.
+    if (candidates.length < targetNew * 2 && domain) {
+      candidates.push(...await findPressImages(domain));
+    }
+    if (candidates.length < targetNew * 2) {
+      candidates.push(...await findWikipediaImages(brand.name));
+    }
+    if (candidates.length < targetNew * 2 && domain) {
+      candidates.push(...await findHomepageImages(domain));
+    }
+    if (candidates.length < targetNew * 2) {
+      candidates.push(...await findCseImages(brand.name, brand.industry, domain));
+    }
   }
 
   const bySource: Record<string, number> = {};
