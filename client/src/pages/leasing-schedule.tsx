@@ -139,12 +139,12 @@ function InlineEditCell({ unitId, field, value, onSave, className = "", placehol
 // uses internally; we store the enum value in `status_band` and render the
 // label + colour. Drives the row tint on the Leasing Schedule.
 const STATUS_BANDS: Array<{ value: string; label: string; rowClass: string; pillClass: string }> = [
-  { value: "GREEN_A_HALO",       label: "A — Halo",          rowClass: "bg-emerald-50 dark:bg-emerald-950/40", pillClass: "border-emerald-400 text-emerald-700 bg-emerald-100" },
-  { value: "GREEN_B_HALO",       label: "B — On Strategy",   rowClass: "bg-emerald-50/60 dark:bg-emerald-950/20", pillClass: "border-emerald-300 text-emerald-700 bg-emerald-50" },
-  { value: "AMBER_C_MAINTAIN",   label: "C — Maintain Mix",  rowClass: "bg-amber-50 dark:bg-amber-950/30",     pillClass: "border-amber-400 text-amber-700 bg-amber-100" },
-  { value: "DARK_RED_D_DIVEST",  label: "D — Divest Over Time", rowClass: "bg-rose-100/60 dark:bg-rose-950/40", pillClass: "border-rose-500 text-rose-800 bg-rose-100" },
-  { value: "BRIGHT_RED_D_AT_RISK", label: "D — Customer At Risk / Live Opp", rowClass: "bg-red-100 dark:bg-red-950/50", pillClass: "border-red-500 text-red-800 bg-red-200" },
-  { value: "GREY_VOID",          label: "Void / Live Opp",   rowClass: "bg-zinc-100 dark:bg-zinc-800/60",      pillClass: "border-zinc-400 text-zinc-700 bg-zinc-100" },
+  { value: "GREEN_A_HALO",       label: "A — Halo",          rowClass: "bg-emerald-200/80 dark:bg-emerald-900/60", pillClass: "border-emerald-600 text-emerald-900 bg-emerald-200 dark:text-emerald-100 dark:bg-emerald-800" },
+  { value: "GREEN_B_HALO",       label: "B — On Strategy",   rowClass: "bg-emerald-100/90 dark:bg-emerald-950/50", pillClass: "border-emerald-500 text-emerald-800 bg-emerald-100 dark:text-emerald-200 dark:bg-emerald-900" },
+  { value: "AMBER_C_MAINTAIN",   label: "C — Maintain Mix",  rowClass: "bg-amber-200/80 dark:bg-amber-900/50",     pillClass: "border-amber-600 text-amber-900 bg-amber-200 dark:text-amber-100 dark:bg-amber-800" },
+  { value: "DARK_RED_D_DIVEST",  label: "D — Divest Over Time", rowClass: "bg-rose-300/70 dark:bg-rose-900/60", pillClass: "border-rose-700 text-rose-900 bg-rose-200 dark:text-rose-100 dark:bg-rose-800" },
+  { value: "BRIGHT_RED_D_AT_RISK", label: "D — Customer At Risk / Live Opp", rowClass: "bg-red-300/80 dark:bg-red-900/70", pillClass: "border-red-700 text-red-900 bg-red-300 dark:text-red-100 dark:bg-red-800" },
+  { value: "GREY_VOID",          label: "Void / Live Opp",   rowClass: "bg-zinc-300/70 dark:bg-zinc-800/80",      pillClass: "border-zinc-500 text-zinc-800 bg-zinc-200 dark:text-zinc-200 dark:bg-zinc-700" },
 ];
 
 function statusBandFor(value: string | null | undefined) {
@@ -153,15 +153,16 @@ function statusBandFor(value: string | null | undefined) {
 
 // Map the status_band enum to a tenant-name colour (matches Landsec key —
 // green for halo/on-strategy, amber for maintain, dark/bright red for divest/
-// at-risk, grey for void).
+// at-risk, grey for void). Uses deeper shades than the row tint so the name
+// remains readable on top of a saturated background.
 function tenantNameColourFor(value: string | null | undefined): string {
   switch (value) {
     case "GREEN_A_HALO":
-    case "GREEN_B_HALO": return "text-emerald-700 dark:text-emerald-400";
-    case "AMBER_C_MAINTAIN": return "text-amber-700 dark:text-amber-400";
-    case "DARK_RED_D_DIVEST": return "text-rose-800 dark:text-rose-400";
-    case "BRIGHT_RED_D_AT_RISK": return "text-red-700 dark:text-red-400";
-    case "GREY_VOID": return "text-zinc-500 dark:text-zinc-400";
+    case "GREEN_B_HALO": return "text-emerald-900 dark:text-emerald-200";
+    case "AMBER_C_MAINTAIN": return "text-amber-900 dark:text-amber-200";
+    case "DARK_RED_D_DIVEST": return "text-rose-900 dark:text-rose-200";
+    case "BRIGHT_RED_D_AT_RISK": return "text-red-900 dark:text-red-200";
+    case "GREY_VOID": return "text-zinc-700 dark:text-zinc-300";
     default: return "text-foreground";
   }
 }
