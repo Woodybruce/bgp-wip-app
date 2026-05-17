@@ -130,6 +130,44 @@ function InlineEditCell({ unitId, field, value, onSave, className = "", placehol
   </span>;
 }
 
+// Landsec leasing-tracker status bands. The bracketed label is what Landsec
+// uses internally; we store the enum value in `status_band` and render the
+// label + colour. Drives the row tint on the Leasing Schedule.
+const STATUS_BANDS: Array<{ value: string; label: string; rowClass: string; pillClass: string }> = [
+  { value: "GREEN_A_HALO",       label: "A — Halo",          rowClass: "bg-emerald-50 dark:bg-emerald-950/40", pillClass: "border-emerald-400 text-emerald-700 bg-emerald-100" },
+  { value: "GREEN_B_HALO",       label: "B — On Strategy",   rowClass: "bg-emerald-50/60 dark:bg-emerald-950/20", pillClass: "border-emerald-300 text-emerald-700 bg-emerald-50" },
+  { value: "AMBER_C_MAINTAIN",   label: "C — Maintain Mix",  rowClass: "bg-amber-50 dark:bg-amber-950/30",     pillClass: "border-amber-400 text-amber-700 bg-amber-100" },
+  { value: "DARK_RED_D_DIVEST",  label: "D — Divest Over Time", rowClass: "bg-rose-100/60 dark:bg-rose-950/40", pillClass: "border-rose-500 text-rose-800 bg-rose-100" },
+  { value: "BRIGHT_RED_D_AT_RISK", label: "D — Customer At Risk / Live Opp", rowClass: "bg-red-100 dark:bg-red-950/50", pillClass: "border-red-500 text-red-800 bg-red-200" },
+  { value: "GREY_VOID",          label: "Void / Live Opp",   rowClass: "bg-zinc-100 dark:bg-zinc-800/60",      pillClass: "border-zinc-400 text-zinc-700 bg-zinc-100" },
+];
+
+function statusBandFor(value: string | null | undefined) {
+  return STATUS_BANDS.find(b => b.value === value) || null;
+}
+
+function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: string | null | undefined; onSave: (id: string, field: string, value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const band = statusBandFor(value);
+  return (
+    <div className="relative">
+      <Badge variant="outline" className={`text-[9px] cursor-pointer whitespace-nowrap ${band?.pillClass || "border-gray-300 text-gray-500"}`} onClick={() => setOpen(!open)} data-testid={`inline-statusband-${unitId}`}>
+        {band?.label || "— Set band"}
+      </Badge>
+      {open && (
+        <div className="absolute z-50 mt-1 bg-white dark:bg-gray-900 border rounded-md shadow-lg py-1 min-w-[200px]" data-testid={`statusband-menu-${unitId}`}>
+          {STATUS_BANDS.map(b => (
+            <button key={b.value} onClick={() => { onSave(unitId, "status_band", b.value); setOpen(false); }}
+              className={`w-full text-left px-3 py-1 text-xs hover:bg-gray-100 dark:hover:bg-gray-800 ${b.value === value ? "font-bold" : ""}`} data-testid={`statusband-option-${b.value}-${unitId}`}>
+              <span className={`inline-block w-3 h-3 rounded mr-2 align-middle ${b.rowClass}`}></span>{b.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: string; onSave: (id: string, field: string, value: string) => void }) {
   const statuses = ["Occupied", "Vacant", "Under Offer", "In Negotiation", "Archived"];
   const [open, setOpen] = useState(false);
@@ -1097,15 +1135,19 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                 <table className="w-full" data-testid={`zone-table-${zone}`}>
                   <thead>
                     <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b text-left text-sm">
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Tenant</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Existing</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[100px]">Positioning</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[160px]">Status Band</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[50px]">Agent</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">Status</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[80px]">Expiry</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">Break</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">RR</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[100px]">Performance</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[220px]">Target Tenants</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[200px]">Updates</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[220px]">Targets</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Optimum Target</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[90px]">Priority</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[180px]">Updates (BGP)</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[160px]">Agent Input</th>
                       <th className="px-3 py-1.5 font-medium text-gray-500 w-[60px]"></th>
                     </tr>
                   </thead>
@@ -1118,16 +1160,23 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                         {visible.map(u => {
                           const expired = isExpired(u.lease_expiry);
                           const expSoon = isExpiringSoon(u.lease_expiry);
+                          const band = statusBandFor((u as any).status_band);
+                          const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
                           return (
-                            <tr key={u.id} className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/30 ${u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : ""}`} data-testid={`unit-row-${u.id}`}>
+                            <tr key={u.id} className={`border-b hover:brightness-95 transition-all ${rowTint}`} data-testid={`unit-row-${u.id}`}>
                               <td className="px-3 py-2">
                                 <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" />
+                                {(u as any).tenant_name && <div className="text-[10px] text-muted-foreground truncate max-w-[140px]">{(u as any).tenant_name}</div>}
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineEditCell unitId={u.id} field="positioning" value={(u as any).positioning || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Set positioning" />
+                              </td>
+                              <td className="px-3 py-2">
+                                <StatusBandCell unitId={u.id} value={(u as any).status_band} onSave={inlineUpdate} />
+                                <div className="mt-1"><InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} /></div>
                               </td>
                               <td className="px-3 py-2">
                                 <InlineEditCell unitId={u.id} field="agent_initials" value={u.agent_initials || ""} onSave={inlineUpdate} className="text-gray-500" />
-                              </td>
-                              <td className="px-3 py-2">
-                                <InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} />
                               </td>
                               <td className={`px-3 py-2 ${expired ? "text-red-600 font-medium" : expSoon ? "text-amber-600 font-medium" : "text-gray-600"}`}>
                                 <InlineDateCell unitId={u.id} field="lease_expiry" value={u.lease_expiry} onSave={inlineUpdate} />
@@ -1149,7 +1198,16 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                                 <TargetTenantPanel unitId={u.id} propertyId={propertyId} targets={allTargets} onRefresh={() => refetchTargets()} />
                               </td>
                               <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-600" placeholder="Updates" multiline />
+                                <InlineEditCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} className="text-[11px] font-medium" placeholder="Optimum target" />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineEditCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Priority" />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-700" placeholder="BGP update" multiline />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineEditCell unitId={u.id} field="agent_input" value={(u as any).agent_input || ""} onSave={inlineUpdate} className="text-[10px] text-gray-600 italic" placeholder="Agent input" multiline />
                               </td>
                               <td className="px-3 py-2">
                                 <div className="flex items-center gap-0.5">
@@ -1171,7 +1229,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                         })}
                         {hasMore && (
                           <tr>
-                            <td colSpan={10} className="text-center py-2">
+                            <td colSpan={14} className="text-center py-2">
                               <button
                                 onClick={() => setExpandedRowZones(prev => { const n = new Set(prev); n.add(zone); return n; })}
                                 className="text-xs text-primary hover:underline font-medium"
