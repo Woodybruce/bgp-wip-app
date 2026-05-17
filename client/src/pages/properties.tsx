@@ -92,7 +92,7 @@ import {
   Link2,
   Upload,
 } from "lucide-react";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
 import { trackRecentItem } from "@/hooks/use-recent-items";
