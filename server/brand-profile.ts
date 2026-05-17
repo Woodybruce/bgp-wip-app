@@ -166,6 +166,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               stock_ticker, uk_entity_name, agent_type, concept_status,
               last_accounts_doc_id, last_accounts_made_up_to,
               last_accounts_storage_key, last_accounts_fetched_at,
+              folder_teams, sharepoint_folder_url,
               ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,
               brand_analysis, brand_analysis_at,
@@ -348,6 +349,16 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         ORDER BY p.name ASC`,
       [companyId]
     );
+
+    // Latest landlord-website scrape findings (logo, share ticker, IR
+    // contact, board, asset list, annual report URL). Only populated
+    // after the user has hit "Sync from website" on the landlord profile.
+    const landlordFindingsQ = pool.query(
+      `SELECT scraped_at, source_urls, logo_url, share_ticker, ir_contact,
+              board_members, annual_report_url, properties, raw_notes, error
+         FROM landlord_website_findings WHERE company_id = $1`,
+      [companyId]
+    ).catch(() => ({ rows: [] })); // table may not exist if module never loaded
 
     // Land Registry titles (CCOD / UCOD) for this company by CH number.
     // Counts every UK title where this company is proprietor 1 — the
@@ -551,14 +562,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
-      rolloutMonthly, kycInvestigation, ownedProperties, landRegistry,
+      rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
-      safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ),
+      safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -748,6 +759,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       stores: stores.rows,
       ownedProperties: ownedProperties.rows,
       landRegistryTitles: landRegistry.rows,
+      landlordWebsiteFindings: landlordFindings.rows[0] || null,
       turnover: turnover.rows,
       covenant,
       coverers,
@@ -781,6 +793,7 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
       "franchise_activity", "hunter_flag", "stock_ticker", "uk_entity_name", "agent_type",
       "concept_status",
       "domain", "domain_url",
+      "folder_teams", "sharepoint_folder_url",
     ];
     const sets: string[] = [];
     const vals: any[] = [];

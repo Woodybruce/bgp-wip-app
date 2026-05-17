@@ -708,6 +708,11 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_accounts_made_up_to DATE`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_accounts_storage_key TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_accounts_fetched_at TIMESTAMP`,
+    // SharePoint folder structure for landlords (May 2026). Mirrors the
+    // crm_properties columns so PropertyFoldersPanel can be reused by
+    // passing the landlord's company name as propertyName.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS folder_teams TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_notes TEXT`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
@@ -2779,6 +2784,17 @@ app.use("/api/branding/assets", express.static(
               .then(m => m.backfillInstagramHandles(2000))
               .then(r => console.log(`[ig-backfill] weekly: ${r.filled}/${r.attempted} filled (${r.filledFromHtml} html, ${r.filledFromAi} AI), ${r.skipped} skipped, ${r.errors} errors`))
               .catch(err => console.error("[ig-backfill] cron run failed:", err?.message));
+          }
+          // Weekly landlord-website scrape — Sunday 05:00. Drills the
+          // portfolio / investor / board pages of landlord-shaped companies
+          // (render:true), AI-extracts share ticker, IR contact, board,
+          // annual report URL, asset list. ~30s/brand throttle, max 50 per
+          // run, so worst case ~25 min — well under the budget.
+          if (now.getDay() === 0 && now.getHours() === 5 && now.getMinutes() < 60) {
+            import("./landlord-scraper")
+              .then(m => m.runWeeklyLandlordScrape({ limit: 50 }))
+              .then(r => console.log(`[landlord-scrape] weekly: ${r.succeeded}/${r.attempted} ok, ${r.failed} failed`))
+              .catch(err => console.error("[landlord-scrape] cron run failed:", err?.message));
           }
           // Monthly Perplexity refresh — 1st of month, 03:00
           if (now.getDate() === 1 && now.getHours() === 3 && now.getMinutes() < 60) {

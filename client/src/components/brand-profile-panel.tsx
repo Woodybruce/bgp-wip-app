@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { PropertyFoldersPanel } from "@/pages/properties";
+import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
+import { MessageSquare, FolderTree, RefreshCw } from "lucide-react";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
@@ -83,6 +84,8 @@ interface BrandProfile {
     last_accounts_made_up_to: string | null;
     last_accounts_storage_key: string | null;
     last_accounts_fetched_at: string | null;
+    folder_teams: string[] | null;
+    sharepoint_folder_url: string | null;
     bgp_contact_crm: string | null;
     letting_hunter_flag: boolean | null;
     letting_hunter_notes: string | null;
@@ -116,6 +119,17 @@ interface BrandProfile {
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
   ownedProperties: Array<{ id: string; name: string; address: any; postcode: string | null; status: string | null; asset_class: string | null; lat: number | null; lng: number | null; unit_count: number | null }>;
   landRegistryTitles: Array<{ title_number: string; tenure: string | null; property_address: string | null; postcode: string | null; district: string | null; county: string | null; region: string | null; price_paid: number | null; date_proprietor_added: string | null; source: string }>;
+  landlordWebsiteFindings: {
+    scraped_at: string;
+    logo_url: string | null;
+    share_ticker: string | null;
+    ir_contact: { name?: string; email?: string; phone?: string; role?: string } | null;
+    board_members: Array<{ name: string; role?: string }>;
+    annual_report_url: string | null;
+    properties: Array<{ name: string; address?: string; postcode?: string; sector?: string }>;
+    raw_notes: string | null;
+    error: string | null;
+  } | null;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null }>;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
@@ -1731,9 +1745,73 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     Ownership
                   </span>
                   <span className="text-[10px] text-muted-foreground">
-                    CRM: {ownedProperties.length} · Land Registry: {landRegistryTitles.length}
+                    CRM: {ownedProperties.length} · Land Registry: {landRegistryTitles.length} · Website: {(data.landlordWebsiteFindings?.properties?.length || 0)}
                   </span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await apiRequest("POST", `/api/landlord/${companyId}/scrape-portfolio`, {});
+                        toast({ title: "Scraping landlord site…", description: "Pulling portfolio, IR contact, board + annual report. Takes ~60s." });
+                        // Poll for completion, then invalidate the profile.
+                        const start = Date.now();
+                        const poll = async () => {
+                          if (Date.now() - start > 5 * 60_000) return;
+                          const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, { credentials: "include" });
+                          if (r.ok) {
+                            const s = await r.json();
+                            if (s.progress?.state === "done") {
+                              queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                              toast({ title: "Website synced", description: `Found ${s.findings?.properties?.length || 0} properties, ${s.findings?.board_members?.length || 0} board members.` });
+                              return;
+                            }
+                            if (s.progress?.state === "error") {
+                              toast({ title: "Sync failed", description: s.progress.error || "unknown", variant: "destructive" });
+                              return;
+                            }
+                          }
+                          setTimeout(poll, 5000);
+                        };
+                        setTimeout(poll, 5000);
+                      } catch (e: any) {
+                        toast({ title: "Couldn't start sync", description: e?.message, variant: "destructive" });
+                      }
+                    }}
+                    className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+                    data-testid="btn-sync-landlord-website"
+                    title="Drill the landlord's website for portfolio, share ticker, IR contact, board + annual report"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" /> Sync from website
+                  </button>
                 </div>
+
+                {/* Website-scraped intel — only visible once a sync has
+                    run. Shows share ticker, IR contact, scraped property
+                    count, board size, annual report link. Each piece
+                    is a one-line summary so we don't dominate the panel. */}
+                {data.landlordWebsiteFindings && (
+                  <div className="rounded-md border bg-muted/30 px-2 py-1.5 mb-2 text-[11px] leading-snug space-y-0.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-muted-foreground">From {(typeof data.company.domain === "string" ? data.company.domain : null) || "website"}:</span>
+                      {data.landlordWebsiteFindings.share_ticker && (
+                        <span className="font-mono text-[10px] px-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">{data.landlordWebsiteFindings.share_ticker}</span>
+                      )}
+                      {data.landlordWebsiteFindings.ir_contact?.name && (
+                        <span>IR: {data.landlordWebsiteFindings.ir_contact.name}{data.landlordWebsiteFindings.ir_contact.email && <a href={`mailto:${data.landlordWebsiteFindings.ir_contact.email}`} className="text-primary hover:underline ml-1">({data.landlordWebsiteFindings.ir_contact.email})</a>}</span>
+                      )}
+                      {data.landlordWebsiteFindings.board_members?.length > 0 && (
+                        <span>· Board: {data.landlordWebsiteFindings.board_members.length}</span>
+                      )}
+                      {data.landlordWebsiteFindings.annual_report_url && (
+                        <a href={data.landlordWebsiteFindings.annual_report_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">
+                          <ExternalLink className="w-2.5 h-2.5" /> Annual Report
+                        </a>
+                      )}
+                    </div>
+                    {data.landlordWebsiteFindings.raw_notes && (
+                      <div className="italic text-muted-foreground">{data.landlordWebsiteFindings.raw_notes}</div>
+                    )}
+                  </div>
+                )}
 
                 {/* CRM properties — the curated, human-linked list. Map +
                     list as before. */}
@@ -1767,6 +1845,32 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     No properties linked to this landlord yet. To populate: link existing CRM properties via the property page's Landlord field, ingest HM Land Registry CCOD (admin → ingest-ccod), or ask ChatBGP to scrape their portfolio page.
                   </div>
                 ) : null}
+
+                {/* Website-discovered properties — what their /portfolio
+                    page actually names. These are usually fewer than the
+                    Land Registry count (a single asset can sit across
+                    many titles) but they're the human-curated names
+                    Land Sec et al. publicly market, so handy for matching
+                    to our CRM. */}
+                {data.landlordWebsiteFindings?.properties && data.landlordWebsiteFindings.properties.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-border/30">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+                      From their website ({data.landlordWebsiteFindings.properties.length})
+                    </div>
+                    <div className="max-h-[200px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 md:grid-cols-2 gap-y-0.5 gap-x-3">
+                      {data.landlordWebsiteFindings.properties.slice(0, 60).map((p: any, i: number) => (
+                        <div key={i} className="leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
+                          <div className="font-medium truncate">{p.name}</div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                            {p.sector && <span className="capitalize">{p.sector}</span>}
+                            {p.postcode && <span>· {p.postcode}</span>}
+                            {!p.postcode && p.address && <span className="truncate">{p.address}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Land Registry titles — the authoritative truth from
                     HMLR CCOD/UCOD. Often hundreds for a big REIT; we
@@ -3760,6 +3864,68 @@ function ComplianceBoard({
   );
 }
 
+// Sidebar block for landlord profiles: Chat shortcut + Files/Folders
+// (with Set Up Folders dialog), mirroring the property page layout.
+// Brand profiles never render this — it lives under the isLandlord
+// branch in BrandProfileSidebar.
+function LandlordSidebarBlock({
+  companyId,
+  companyName,
+  folderTeams,
+  sharepointFolderUrl,
+}: {
+  companyId: string;
+  companyName: string;
+  folderTeams: string[] | null | undefined;
+  sharepointFolderUrl: string | null | undefined;
+}) {
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  return (
+    <>
+      <SetUpFoldersDialog
+        propertyId={companyId}
+        propertyName={companyName}
+        folderTeams={folderTeams || []}
+        open={folderDialogOpen}
+        onOpenChange={setFolderDialogOpen}
+        entityType="landlord"
+      />
+
+      <Link
+        href="/chatbgp"
+        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity justify-center"
+        data-testid="button-open-landlord-chat"
+      >
+        <MessageSquare className="w-3.5 h-3.5" />
+        Chat about this Landlord
+      </Link>
+
+      <Card>
+        <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <FileText className="w-3.5 h-3.5" /> Files
+          </CardTitle>
+          <button
+            type="button"
+            onClick={() => setFolderDialogOpen(true)}
+            className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+            data-testid="button-setup-landlord-folders"
+          >
+            <FolderTree className="w-3 h-3" /> Set Up Folders
+          </button>
+        </CardHeader>
+        <CardContent className="p-3 pt-0">
+          <PropertyFoldersPanel
+            propertyName={companyName}
+            folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
+            sharepointFolderUrl={sharepointFolderUrl || null}
+          />
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
 function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyId: string }) {
   const { toast } = useToast();
   const c = data.company;
@@ -4177,16 +4343,16 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         />
       )}
 
-      {/* Folders — landlord-only. Reuses the property folder panel so
-          legal-DD packs, accounts, cash-flow models live in the same
-          SharePoint folder structure as a property deal. Defaults to
-          the Investment team since most landlord engagements run
-          through them. */}
+      {/* Landlord-only sidebar block — Chat shortcut, Files / Folders
+          (with Set Up Folders dialog), reusing the property page's
+          components. Order mirrors the property sidebar in the
+          Bluewater screenshot. */}
       {isLandlord && (
-        <PropertyFoldersPanel
-          propertyName={c.name}
-          folderTeams={["Investment"]}
-          sharepointFolderUrl={null}
+        <LandlordSidebarBlock
+          companyId={companyId}
+          companyName={c.name}
+          folderTeams={c.folder_teams}
+          sharepointFolderUrl={c.sharepoint_folder_url}
         />
       )}
 

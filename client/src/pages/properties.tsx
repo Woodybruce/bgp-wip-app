@@ -1161,12 +1161,19 @@ export function SetUpFoldersDialog({
   folderTeams,
   open,
   onOpenChange,
+  // entityType lets the same dialog drive a landlord folder set-up
+  // (defaults to property). When 'landlord', the post-create update
+  // hits PATCH /api/brand/:id instead of PUT /api/crm/properties/:id,
+  // and invalidates the brand-profile query so the new folders show
+  // up immediately in the sidebar.
+  entityType = "property",
 }: {
   propertyId: string;
   propertyName: string;
   folderTeams?: string[] | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  entityType?: "property" | "landlord";
 }) {
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -1206,9 +1213,14 @@ export function SetUpFoldersDialog({
       const currentTeams = folderTeams || [];
       if (!currentTeams.includes(data.team)) {
         const updated = [...currentTeams, data.team];
-        await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
+        if (entityType === "landlord") {
+          await apiRequest("PATCH", `/api/brand/${propertyId}`, { folder_teams: updated });
+          queryClient.invalidateQueries({ queryKey: ["/api/brand", propertyId, "profile"] });
+        } else {
+          await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
+        }
       }
       toast({
         title: "Folders Created",

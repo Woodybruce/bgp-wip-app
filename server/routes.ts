@@ -1520,6 +1520,39 @@ export async function registerRoutes(
     }
   });
 
+  // Scrape a landlord's website — drills portfolio / investor / board
+  // pages with JS rendering on, extracts structured intel via Haiku.
+  // Returns 202 + a job state — poll /status for results.
+  app.post("/api/landlord/:companyId/scrape-portfolio", requireAuth, async (req, res) => {
+    const { companyId } = req.params;
+    try {
+      const { scrapeLandlordWebsite, getLandlordScrapeProgress } = await import("./landlord-scraper");
+      const current = getLandlordScrapeProgress(companyId);
+      if (current.state === "fetching" || current.state === "extracting") {
+        return res.status(202).json({ accepted: true, alreadyRunning: true, progress: current });
+      }
+      // Fire and forget; the scraper writes to landlord_website_findings
+      // when done. Avoids Railway edge timeout on the ~60s render fan-out.
+      scrapeLandlordWebsite(companyId).catch(err =>
+        console.error(`[landlord-scrape ${companyId}] failed:`, err?.message || err)
+      );
+      res.status(202).json({ accepted: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "kick-off failed" });
+    }
+  });
+
+  app.get("/api/landlord/:companyId/scrape-portfolio/status", requireAuth, async (req, res) => {
+    try {
+      const { getLandlordScrapeProgress, getLandlordFindings } = await import("./landlord-scraper");
+      const progress = getLandlordScrapeProgress(req.params.companyId);
+      const findings = await getLandlordFindings(req.params.companyId);
+      res.json({ progress, findings });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "status failed" });
+    }
+  });
+
   app.get("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const status = await getPipnetCredsStatus();
