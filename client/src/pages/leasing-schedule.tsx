@@ -25,7 +25,7 @@ import {
   Edit2, Plus, Trash2, X, Check, MapPin, Users, TrendingUp,
   Clock, Target, Star, ChevronDown, ChevronRight, Loader2,
   Shield, ShieldCheck, ShieldOff, Download, Upload, History, Lock, Eye, ExternalLink,
-  Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus,
+  Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus, RefreshCw, Pencil,
 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 
@@ -267,27 +267,25 @@ function PositioningCell({ unitId, group, subType, onSave }: {
 }
 
 // Inline financial-performance cell — three-line LFL / MAT / Occ display.
-// Click any line to inline-edit. Numbers carry over from the Tenancy Schedule
-// once linked; otherwise stored on the leasing_schedule_units row.
+// Click any line to inline-edit. Grid layout keeps lines aligned even when
+// some values are missing (so empty rows don't collapse).
 function FinancialPerformanceCell({ unit, onSave }: { unit: any; onSave: (id: string, field: string, value: string) => void }) {
   const lfl = unit.lfl_percent || "";
   const mat = unit.mat_psqft || "";
   const occ = unit.occ_cost_percent || "";
+  const Row = ({ label, value, field, valueClass }: { label: string; value: string; field: string; valueClass?: string }) => (
+    <div className="grid grid-cols-[60px_1fr] items-baseline gap-1 h-[14px] leading-[14px]">
+      <span className="text-right tabular-nums truncate">
+        <InlineEditCell unitId={unit.id} field={field} value={value} onSave={onSave} className={valueClass} placeholder="—" />
+      </span>
+      <span className="text-[9px] text-muted-foreground whitespace-nowrap">{label}</span>
+    </div>
+  );
   return (
-    <div className="space-y-0.5 text-[10px] leading-tight">
-      <div className="flex items-center gap-1">
-        <InlineEditCell unitId={unit.id} field="lfl_percent" value={lfl} onSave={onSave} className={`${String(lfl).startsWith("-") ? "text-rose-600" : "text-emerald-700"}`} placeholder="—" />
-        <span className="text-muted-foreground">% LFL</span>
-      </div>
-      <div className="flex items-center gap-1">
-        <span className="text-muted-foreground">£</span>
-        <InlineEditCell unitId={unit.id} field="mat_psqft" value={mat} onSave={onSave} className="font-medium" placeholder="MAT" />
-        <span className="text-muted-foreground">MAT/sqft</span>
-      </div>
-      <div className="flex items-center gap-1">
-        <InlineEditCell unitId={unit.id} field="occ_cost_percent" value={occ} onSave={onSave} className="text-muted-foreground" placeholder="—" />
-        <span className="text-muted-foreground">% Occ</span>
-      </div>
+    <div className="text-[10px]">
+      <Row label="% LFL" value={lfl} field="lfl_percent" valueClass={lfl ? (String(lfl).startsWith("-") ? "text-rose-600" : "text-emerald-700") : "text-muted-foreground"} />
+      <Row label="£ MAT/sqft" value={mat} field="mat_psqft" valueClass="font-medium" />
+      <Row label="% Occ" value={occ} field="occ_cost_percent" valueClass="text-muted-foreground" />
     </div>
   );
 }
