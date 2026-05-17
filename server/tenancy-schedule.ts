@@ -566,8 +566,25 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
 // dropping as part of the Landsec-template alignment. Tells us if any of the
 // legacy columns has live data we'd need to migrate before removing.
 router.get("/api/tenancy-schedule/audit-legacy-columns", requireAuth, async (_req, res) => {
+  const pool = await getPool();
   try {
-    const pool = await getPool();
+    // First: does the table even exist?
+    const exists = await pool.query(
+      `SELECT to_regclass('public.tenancy_schedule_units') AS reg`
+    );
+    if (!exists.rows[0]?.reg) {
+      return res.json({ error: "Table tenancy_schedule_units does not exist", existing_columns: [] });
+    }
+
+    // Get every column actually in the table so we don't query for ones
+    // that aren't there.
+    const colsResult = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='tenancy_schedule_units'
+        ORDER BY ordinal_position`
+    );
+    const existingColumns: string[] = colsResult.rows.map((r: any) => r.column_name);
+
     const legacyCols = [
       "area_basement", "area_ground", "area_first", "area_second", "area_other",
       "landlord_shortfall", "net_income", "total_occ_costs", "occ_costs_psf",
@@ -578,28 +595,35 @@ router.get("/api/tenancy-schedule/audit-legacy-columns", requireAuth, async (_re
       "rent_review_4_date", "rent_review_4_amount",
     ];
     const total = await pool.query("SELECT COUNT(*)::int AS n FROM tenancy_schedule_units");
-    const out: Array<{ column: string; nonNullRows: number; sampleValues: string[] }> = [];
+    const out: Array<{ column: string; exists: boolean; nonNullRows: number; sampleValues: string[] }> = [];
     for (const col of legacyCols) {
+      if (!existingColumns.includes(col)) {
+        out.push({ column: col, exists: false, nonNullRows: 0, sampleValues: ["(column does not exist)"] });
+        continue;
+      }
       try {
         const c = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM tenancy_schedule_units WHERE ${col} IS NOT NULL AND ${col}::text <> '' AND ${col}::text <> '0'`
+          `SELECT COUNT(*)::int AS n FROM tenancy_schedule_units
+            WHERE ${col} IS NOT NULL AND ${col}::text <> '' AND ${col}::text <> '0'`
         );
         const samples = await pool.query(
-          `SELECT DISTINCT ${col}::text AS v FROM tenancy_schedule_units WHERE ${col} IS NOT NULL AND ${col}::text <> '' AND ${col}::text <> '0' LIMIT 3`
+          `SELECT DISTINCT ${col}::text AS v FROM tenancy_schedule_units
+            WHERE ${col} IS NOT NULL AND ${col}::text <> '' AND ${col}::text <> '0' LIMIT 3`
         );
         out.push({
           column: col,
+          exists: true,
           nonNullRows: c.rows[0]?.n ?? 0,
           sampleValues: samples.rows.map((r: any) => String(r.v)),
         });
       } catch (e: any) {
-        out.push({ column: col, nonNullRows: -1, sampleValues: [`error: ${e.message}`] });
+        out.push({ column: col, exists: true, nonNullRows: -1, sampleValues: [`query error: ${e.message}`] });
       }
     }
     out.sort((a, b) => b.nonNullRows - a.nonNullRows);
-    res.json({ totalRows: total.rows[0]?.n ?? 0, columns: out });
+    res.json({ totalRows: total.rows[0]?.n ?? 0, existingColumns, columns: out });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, stack: e.stack?.split("\n").slice(0, 3) });
   }
 });
 
