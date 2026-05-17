@@ -24,7 +24,7 @@ const MIN_WIDTH = 480;               // reject thumbnails
 
 interface FoundImage {
   url: string;
-  source: "press" | "wikipedia" | "homepage" | "cse";
+  source: "press" | "wikipedia" | "homepage" | "cse" | "landlord-website";
   caption?: string;
   pageUrl?: string;             // where we discovered it (for attribution)
 }
@@ -144,6 +144,23 @@ const PRESS_PATHS = [
   "/press", "/newsroom", "/news", "/media", "/press-room", "/press-releases",
   "/about/press", "/company/press", "/about/newsroom", "/corporate/press",
 ];
+
+// Landlord-website source. Reads image_urls cached by the
+// landlord-scraper's most recent run for this company. Doesn't fire
+// an HTTP fetch of its own — the scraper has already done the heavy
+// lifting (render:true × 8 paths). Returns up to 40 candidate URLs.
+async function findLandlordWebsiteImages(companyId: string): Promise<FoundImage[]> {
+  try {
+    const { rows } = await pool.query<{ image_urls: string[] | null; source_urls: any }>(
+      `SELECT image_urls, source_urls FROM landlord_website_findings WHERE company_id = $1`,
+      [companyId]
+    );
+    const urls = Array.isArray(rows[0]?.image_urls) ? rows[0].image_urls : [];
+    return urls.map(u => ({ url: u, source: "landlord-website" as const, pageUrl: rows[0]?.source_urls?.[0]?.url }));
+  } catch {
+    return [];
+  }
+}
 
 async function findPressImages(domain: string): Promise<FoundImage[]> {
   const base = `https://${domain}`;
@@ -376,9 +393,17 @@ export async function refreshBrandImages(companyId: string): Promise<{
   const domain = extractDomain(brand.domain || brand.domain_url);
   const candidates: FoundImage[] = [];
 
+  // Landlord-website images take priority for landlord-shaped rows.
+  // Landlords curate big high-quality hero galleries of their assets
+  // on /portfolio + /our-places — way better than Google CSE
+  // ("Land Securities" on CSE returns logos + headshots + stock
+  // photos, none of which are useful in our gallery).
+  const landlordImages = await findLandlordWebsiteImages(companyId);
+  candidates.push(...landlordImages);
+
   // Fetch from each source in quality order; bail once we have ~3× target
   // to keep the dedupe + import loop tight.
-  if (domain) {
+  if (candidates.length < targetNew * 2 && domain) {
     candidates.push(...await findPressImages(domain));
   }
   if (candidates.length < targetNew * 2) {

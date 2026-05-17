@@ -58,10 +58,13 @@ async function ensureTable() {
       board_members JSONB,
       annual_report_url TEXT,
       properties JSONB,
+      image_urls JSONB,
       raw_notes TEXT,
       error TEXT
     )
   `);
+  // Additive for rows that pre-date image_urls.
+  await pool.query(`ALTER TABLE landlord_website_findings ADD COLUMN IF NOT EXISTS image_urls JSONB`).catch(() => {});
   _tableEnsured = true;
 }
 
@@ -73,6 +76,11 @@ interface LandlordFindings {
   board_members: Array<{ name: string; role?: string }>;
   annual_report_url: string | null;
   properties: Array<{ name: string; address?: string; postcode?: string; sector?: string; lat?: number | null; lng?: number | null; formatted_address?: string | null }>;
+  // High-quality image URLs harvested from the landlord's own
+  // /portfolio + /our-places pages — passed into the image pipeline
+  // as a priority source so the gallery uses the landlord's own
+  // press photography instead of Google CSE garbage.
+  image_urls: string[];
   raw_notes: string | null;
 }
 
@@ -108,6 +116,58 @@ function condenseHtml(html: string, baseUrl: string, maxChars = 12000): string {
     .trim()
     .slice(0, maxChars);
   return `og:image=${og}\nLinks:\n${links.join("\n")}\n\nVisible text:\n${text}`;
+}
+
+// Extract high-quality image URLs from a rendered HTML page. We want
+// hero shots / asset photography (landlords' /portfolio pages are
+// curated picture galleries), NOT logos / sprites / icons.
+//
+// Strategy:
+//   - og:image / twitter:image (publisher's chosen hero, always good)
+//   - <img src="..."> with width OR srcset hinting >= 800px
+//   - Reject anything matching: favicon, sprite, icon, logo, badge,
+//     placeholder, pixel, tracker, 1x1, plus tiny .svg
+// Returns absolute URLs, deduped, capped at 30 per page.
+function extractImageUrls(html: string, baseUrl: string, limit = 30): string[] {
+  if (!html) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (url: string | undefined | null) => {
+    if (!url) return;
+    let abs: string;
+    try { abs = new URL(url, baseUrl).toString(); } catch { return; }
+    if (seen.has(abs)) return;
+    if (/\.svg(\?|$)/i.test(abs)) return;
+    if (/favicon|sprite|icon[-/]|logo|badge|placeholder|pixel|tracking|gtm|analytics|1x1\.|spacer/i.test(abs)) return;
+    seen.add(abs);
+    out.push(abs);
+  };
+
+  // og:image / twitter:image — almost always the page's hero.
+  for (const m of html.matchAll(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/gi)) push(m[1]);
+  for (const m of html.matchAll(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/gi)) push(m[1]);
+
+  // Picture / source srcset (responsive images). Take the largest
+  // entry — it has the best chance of being a hero asset.
+  for (const m of html.matchAll(/<source\b[^>]*?srcset=["']([^"']+)["']/gi)) {
+    const cands = m[1].split(",").map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
+    if (cands.length > 0) push(cands[cands.length - 1]);
+  }
+
+  // <img src=...> + srcset. Prefer srcset (highest-res entry) but also
+  // accept plain src as a fallback.
+  const imgRe = /<img\b[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) && out.length < limit) {
+    const tag = m[0];
+    const srcset = tag.match(/srcset=["']([^"']+)["']/i)?.[1];
+    if (srcset) {
+      const cands = srcset.split(",").map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
+      if (cands.length > 0) { push(cands[cands.length - 1]); continue; }
+    }
+    push(tag.match(/(?:^|\s)(?:src|data-src)=["']([^"']+)["']/i)?.[1]);
+  }
+  return out.slice(0, limit);
 }
 
 function buildPrompt(landlordName: string, domain: string, pages: Array<{ url: string; text: string }>): string {
@@ -165,20 +225,23 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
   // 404s — landlord sites have idiosyncratic IA (Land Sec uses
   // /our-places, others /portfolio, others /assets). Let the AI sort
   // the wheat from the chaff at the end.
-  const fetched: Array<{ url: string; status: number; bytes: number; text: string }> = [];
+  const fetched: Array<{ url: string; status: number; bytes: number; text: string; images: string[] }> = [];
   await Promise.all(LANDLORD_PATHS.slice(0, 8).map(async (path) => {
     const url = `${baseUrl}${path}`;
     try {
       const res = await scraperFetch(url, { uk: true, render: true, timeoutMs: 45000 });
       if (!res.ok) {
-        fetched.push({ url, status: res.status, bytes: 0, text: "" });
+        fetched.push({ url, status: res.status, bytes: 0, text: "", images: [] });
         return;
       }
       const html = await res.text().catch(() => "");
       const text = condenseHtml(html, url, 10000);
-      fetched.push({ url, status: 200, bytes: html.length, text });
+      // Pull image URLs while we have the raw HTML — saves us a second
+      // fetch for the image-gathering pass.
+      const images = extractImageUrls(html, url, 20);
+      fetched.push({ url, status: 200, bytes: html.length, text, images });
     } catch (err: any) {
-      fetched.push({ url, status: 0, bytes: 0, text: "" });
+      fetched.push({ url, status: 0, bytes: 0, text: "", images: [] });
     }
   }));
 
@@ -212,6 +275,20 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     return { ok: false, error: err?.message || "AI extraction failed" };
   }
 
+  // Dedupe image URLs across all fetched pages. Cap at 40 — that's
+  // plenty for a hero gallery and keeps the persisted JSONB small.
+  const imageUrlSeen = new Set<string>();
+  const imageUrls: string[] = [];
+  for (const p of fetched) {
+    for (const u of p.images) {
+      if (imageUrlSeen.has(u)) continue;
+      imageUrlSeen.add(u);
+      imageUrls.push(u);
+      if (imageUrls.length >= 40) break;
+    }
+    if (imageUrls.length >= 40) break;
+  }
+
   const findings: LandlordFindings = {
     source_urls: fetched.map(f => ({ url: f.url, status: f.status, bytes: f.bytes })),
     logo_url: aiOut?.logo_url || null,
@@ -220,6 +297,7 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     board_members: Array.isArray(aiOut?.board_members) ? aiOut.board_members.slice(0, 12) : [],
     annual_report_url: aiOut?.annual_report_url || null,
     properties: Array.isArray(aiOut?.properties) ? aiOut.properties.slice(0, 200) : [],
+    image_urls: imageUrls,
     raw_notes: aiOut?.raw_notes || null,
   };
 
@@ -246,8 +324,8 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
   await pool.query(
     `INSERT INTO landlord_website_findings
        (company_id, source_urls, logo_url, share_ticker, ir_contact,
-        board_members, annual_report_url, properties, raw_notes, error)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)
+        board_members, annual_report_url, properties, image_urls, raw_notes, error)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
      ON CONFLICT (company_id) DO UPDATE SET
        scraped_at = NOW(),
        source_urls = $2,
@@ -257,7 +335,8 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
        board_members = $6,
        annual_report_url = $7,
        properties = $8,
-       raw_notes = $9,
+       image_urls = $9,
+       raw_notes = $10,
        error = NULL`,
     [
       companyId,
@@ -268,6 +347,7 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
       JSON.stringify(findings.board_members),
       findings.annual_report_url,
       JSON.stringify(findings.properties),
+      JSON.stringify(findings.image_urls),
       findings.raw_notes,
     ]
   );
