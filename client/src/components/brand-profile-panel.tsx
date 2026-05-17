@@ -118,7 +118,8 @@ interface BrandProfile {
   }>;
   requirements: Array<{ id: string; name: string | null; use: string[] | null; size: string[] | null; requirement_locations: string[] | null; status: string | null; updated_at: string | null }>;
   pitchedTo: Array<{ id: string; unit_name: string | null; target_brands: string | null; status: string | null; priority: string | null; property_id: string; property_name: string; property_address: string | null; updated_at: string | null }>;
-  contacts: Array<{ id: string; name: string; role: string | null; email: string | null; phone: string | null; linkedin_url: string | null; avatar_url: string | null; last_contacted_at: string | null; enrichment_source: string | null }>;
+  // contacts is re-declared further down with interaction stats — keep this
+  // here for backwards-compat with code that destructures from BrandProfile.
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
   ownedProperties: Array<{ id: string; name: string; address: any; postcode: string | null; status: string | null; asset_class: string | null; lat: number | null; lng: number | null; unit_count: number | null }>;
   landRegistryTitles: Array<{ title_number: string; tenure: string | null; property_address: string | null; postcode: string | null; district: string | null; county: string | null; region: string | null; price_paid: number | null; date_proprietor_added: string | null; source: string }>;
@@ -136,6 +137,20 @@ interface BrandProfile {
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null }>;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
+  // Contacts get interaction_count + last_interaction_at decorated on
+  // the server so the key-contacts panel can show BGP-relationship
+  // strength next to each name.
+  contacts: Array<{
+    id: string;
+    name: string | null;
+    email: string | null;
+    role: string | null;
+    avatar_url: string | null;
+    linkedin_url: string | null;
+    interaction_count: number;
+    last_interaction_at: string | null;
+    [key: string]: any;
+  }>;
   socialStats: Array<{ platform: string; followers: number | null; fetched_at: string | null }>;
   covenant: {
     companyStatus: string | null;
@@ -3367,6 +3382,96 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
 //   • Quick actions (run KYC, run Red Flag — placeholders)
 // All data comes from the same /api/brand/:id/profile payload the main
 // panel already fetched, so no extra requests.
+// Single contact row with inline role editing + BGP-relationship
+// strength badge. The name itself links to the contact page; the role
+// is click-to-edit so users can fill in titles RocketReach got wrong
+// (or didn't return) without leaving the landlord profile.
+function KeyContactRow({ contact, companyId }: { contact: any; companyId: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [editingRole, setEditingRole] = useState(false);
+  const [roleDraft, setRoleDraft] = useState(contact.role || "");
+
+  const saveRole = useMutation({
+    mutationFn: async (value: string) => {
+      const res = await apiRequest("PUT", `/api/crm/contacts/${contact.id}`, { role: value || null });
+      return res.json();
+    },
+    onSuccess: () => {
+      setEditingRole(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
+  });
+
+  const hasEmail = !!contact.email;
+  const hasLinkedin = !!contact.linkedin_url;
+  const touches: number = contact.interaction_count || 0;
+  const lastTouch: string | null = contact.last_interaction_at || null;
+  const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
+
+  return (
+    <div className="flex items-start gap-2 text-xs hover:bg-muted/50 rounded p-1 -mx-1 transition-colors">
+      <Link href={`/contacts/${contact.id}`} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
+        {contact.avatar_url ? <img src={contact.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.style.display = "none"); }} /> : (contact.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
+      </Link>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium truncate flex items-center gap-1">
+          <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
+          {hasEmail && <Mail className="w-2.5 h-2.5 text-emerald-600 shrink-0" />}
+          {hasLinkedin && <Linkedin className="w-2.5 h-2.5 text-blue-600 shrink-0" />}
+          {touches > 0 && (
+            <span
+              className="ml-auto text-[9px] px-1 py-0 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800 shrink-0"
+              title={lastTouch ? `${touches} touch${touches === 1 ? "" : "es"} · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} touches`}
+            >
+              {touches}{lastTouchLabel ? ` · ${lastTouchLabel}` : ""}
+            </span>
+          )}
+        </div>
+        {editingRole ? (
+          <input
+            autoFocus
+            value={roleDraft}
+            onChange={(e) => setRoleDraft(e.target.value)}
+            onBlur={() => {
+              if (roleDraft.trim() !== (contact.role || "").trim()) saveRole.mutate(roleDraft.trim());
+              else setEditingRole(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveRole.mutate(roleDraft.trim());
+              if (e.key === "Escape") { setEditingRole(false); setRoleDraft(contact.role || ""); }
+            }}
+            className="text-[10px] w-full border rounded px-1 py-0.5 bg-background"
+            placeholder="e.g. Head of Leasing"
+          />
+        ) : (
+          <button
+            onClick={() => setEditingRole(true)}
+            className="text-[10px] text-left truncate w-full text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
+            title="Click to edit role"
+          >
+            {contact.role || <span className="italic text-muted-foreground/70">add role…</span>}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Compact relative-time formatter ("3d", "2w", "5mo") for the touches
+// badge — full date is in the tooltip.
+function formatRelativeShort(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days < 1) return "today";
+  if (days < 7) return `${days}d`;
+  if (days < 56) return `${Math.floor(days / 7)}w`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
 function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId: string; topContacts: any[] }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -3430,25 +3535,9 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
           </p>
         ) : (
           <div className="max-h-[280px] overflow-y-auto pr-1 space-y-1.5">
-            {visible.map((dm: any) => {
-              const hasEmail = !!dm.email;
-              const hasLinkedin = !!dm.linkedin_url;
-              return (
-                <Link key={dm.id} href={`/contacts/${dm.id}`} className="flex items-start gap-2 text-xs hover:bg-muted/50 rounded p-1 -mx-1 transition-colors">
-                  <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
-                    {dm.avatar_url ? <img src={dm.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.style.display = "none"); }} /> : (dm.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium truncate flex items-center gap-1">
-                      {dm.name}
-                      {hasEmail && <Mail className="w-2.5 h-2.5 text-emerald-600 shrink-0" />}
-                      {hasLinkedin && <Linkedin className="w-2.5 h-2.5 text-blue-600 shrink-0" />}
-                    </div>
-                    {dm.role && <div className="text-[10px] text-muted-foreground truncate">{dm.role}</div>}
-                  </div>
-                </Link>
-              );
-            })}
+            {visible.map((dm: any) => (
+              <KeyContactRow key={dm.id} contact={dm} companyId={companyId} />
+            ))}
           </div>
         )}
         {allContacts.length > propertyContacts.length && (

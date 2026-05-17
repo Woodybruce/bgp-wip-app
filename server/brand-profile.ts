@@ -317,6 +317,20 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     );
 
     // Recent contacts — emails/meetings linked to this company
+    // Interaction stats per contact — fold email/meeting counts and
+    // last-touch date back into each contact row so the key-contacts
+    // panel can show 'Charlotte · 18 touches · 3d ago' instead of just
+    // a name. Cheaper than joining in JS later.
+    const contactInteractionStatsQ = pool.query(
+      `SELECT contact_id,
+              COUNT(*)::int AS touches,
+              MAX(interaction_date) AS last_touch
+         FROM crm_interactions
+        WHERE company_id = $1
+        GROUP BY contact_id`,
+      [companyId]
+    );
+
     const contactsQ = pool.query(
       `SELECT ct.id, ct.name, ct.role, ct.email, ct.phone, ct.linkedin_url, ct.avatar_url,
               ct.enrichment_source, ct.last_enriched_at
@@ -563,14 +577,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
-      rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings,
+      rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings, contactInteractionStats,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
-      safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ),
+      safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ), safe(contactInteractionStatsQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -760,7 +774,19 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       news: news.rows,
       requirements: requirements.rows,
       pitchedTo: pitchedTo.rows,
-      contacts: contacts.rows,
+      contacts: (() => {
+        // Decorate each contact with interaction counts so the
+        // key-contacts panel can show BGP-relationship strength.
+        const statsByContact = new Map<string, { touches: number; last_touch: string | null }>();
+        for (const r of contactInteractionStats.rows as any[]) {
+          statsByContact.set(r.contact_id, { touches: r.touches, last_touch: r.last_touch });
+        }
+        return (contacts.rows as any[]).map(c => ({
+          ...c,
+          interaction_count: statsByContact.get(c.id)?.touches || 0,
+          last_interaction_at: statsByContact.get(c.id)?.last_touch || null,
+        }));
+      })(),
       stores: stores.rows,
       ownedProperties: ownedProperties.rows,
       landRegistryTitles: landRegistry.rows,
