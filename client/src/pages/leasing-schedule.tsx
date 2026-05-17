@@ -178,6 +178,94 @@ function updatesHeaderLabel(units: any[]): string {
 // Brand picker — free-type autocomplete against CRM companies. Stores the
 // brand NAME as the field value (matches Landsec sheet semantics) but if the
 // typed name resolves to a tracked CRM company, the deep-link is preserved.
+// Suggested sub-types per Landsec positioning group (Key ii). Free-text is
+// allowed too — these are just hints in the dropdown so the team converges on
+// a shared vocabulary without being forced into it.
+const POSITIONING_SUBTYPES: Record<string, string[]> = {
+  "Everyday Connections": ["Social Dining", "Gym", "Wellness", "Convenience"],
+  "Quick Refuel": ["Café", "Grab & Go", "QSR", "Bakery"],
+  "Joyful Gatherings": ["Leisure", "Bars", "Premium Dining", "Cinema"],
+  "Leisurely Refuel": ["Casual Dining", "Premium Casual Dining", "Family Dining"],
+};
+
+// Positioning cell — two-step picker: group (Key ii umbrella) + sub-type.
+// Saves to two fields: positioning_group (filterable) + positioning (free text).
+function PositioningCell({ unitId, group, subType, onSave }: {
+  unitId: string; group: string | null | undefined; subType: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draftGroup, setDraftGroup] = useState(group || "");
+  const [draftSub, setDraftSub] = useState(subType || "");
+  useEffect(() => { if (open) { setDraftGroup(group || ""); setDraftSub(subType || ""); } }, [open, group, subType]);
+  const commit = () => {
+    if ((draftGroup || "") !== (group || "")) onSave(unitId, "positioning_group", draftGroup);
+    if ((draftSub || "") !== (subType || "")) onSave(unitId, "positioning", draftSub);
+    setOpen(false);
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <span
+          className="cursor-pointer hover:bg-muted/50 px-1 rounded text-xs inline-block leading-tight min-w-[100px] align-top"
+          data-testid={`positioning-cell-${unitId}`}
+        >
+          {group ? (
+            <div>
+              <div className="font-medium text-[11px]">{group}</div>
+              {subType && <div className="text-[10px] text-muted-foreground">{subType}</div>}
+            </div>
+          ) : subType ? (
+            <span className="text-[11px]">{subType}</span>
+          ) : (
+            <span className="italic text-muted-foreground">Set positioning</span>
+          )}
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="p-3 w-[260px]">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Group (Key ii)</div>
+        <div className="flex flex-wrap gap-1 mb-3">
+          {POSITIONING_GROUPS.map(g => (
+            <button
+              key={g.key}
+              onClick={() => { setDraftGroup(draftGroup === g.key ? "" : g.key); if (draftGroup !== g.key) setDraftSub(""); }}
+              className={`text-[11px] px-2 py-1 rounded border ${draftGroup === g.key ? "bg-foreground text-background border-foreground" : "hover:bg-muted"}`}
+              data-testid={`positioning-group-${g.key}-${unitId}`}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Sub-type</div>
+        {draftGroup && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {(POSITIONING_SUBTYPES[draftGroup] || []).map(t => (
+              <button
+                key={t}
+                onClick={() => setDraftSub(t)}
+                className={`text-[11px] px-2 py-0.5 rounded border ${draftSub === t ? "bg-foreground text-background border-foreground" : "hover:bg-muted"}`}
+                data-testid={`positioning-sub-${t}-${unitId}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
+        <Input
+          value={draftSub}
+          onChange={(e) => setDraftSub(e.target.value)}
+          placeholder="Or type your own (e.g. Padel)"
+          className="h-7 text-[11px]"
+          data-testid={`positioning-sub-input-${unitId}`}
+        />
+        <div className="flex justify-end gap-1 mt-2">
+          <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button size="sm" className="h-7 text-[11px]" onClick={commit} data-testid={`positioning-save-${unitId}`}>Save</Button>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 // Existing tenant cell — pulls name LIVE from the linked Tenancy Schedule
 // row when the row is FK'd, otherwise uses leasing_schedule_units.tenant_name.
 // Clickable through to the brand CRM when matched. Inline-editable if no
@@ -1715,9 +1803,9 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                                   )}
                                 </div>
                               </td>
-                              {/* Positioning */}
-                              <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="positioning" value={(u as any).positioning || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Set positioning" />
+                              {/* Positioning — group (Key ii) + sub-type two-step picker */}
+                              <td className="px-3 py-2 align-top">
+                                <PositioningCell unitId={u.id} group={(u as any).positioning_group} subType={(u as any).positioning || ""} onSave={inlineUpdate} />
                               </td>
                               {/* Status Band + (Occupied/Vacant pill below) */}
                               <td className="px-3 py-2">
@@ -2344,8 +2432,8 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                                 {rrFmt && <div>(RR {rrFmt})</div>}
                               </div>
                             </td>
-                            <td className="px-2 py-1.5">
-                              <InlineEditCell unitId={u.id} field="positioning" value={(u as any).positioning || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Set positioning" />
+                            <td className="px-2 py-1.5 align-top">
+                              <PositioningCell unitId={u.id} group={(u as any).positioning_group} subType={(u as any).positioning || ""} onSave={inlineUpdate} />
                             </td>
                             <td className="px-2 py-1.5">
                               <StatusBandCell unitId={u.id} value={(u as any).status_band} onSave={inlineUpdate} />
