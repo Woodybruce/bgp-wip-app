@@ -655,7 +655,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Deal ledger summary
     const completedDeals = deals.rows.filter((d: any) => d.status === "COM" || d.status === "INV" || d.status === "completed" || d.completed_at);
-    const activeDeals = deals.rows.filter((d: any) => d.status === "active" || d.status === "in_progress" || d.stage === "negotiation");
+    // BGP deal lifecycle: WIT (withdrawn) / COM (completed) / INV
+    // (invoiced) = terminal. Anything else (REP, NEG, AGT, EXC, …) is
+    // still live. Matches the /api/company-portfolio convention.
+    const TERMINAL_DEAL_STATUSES = new Set(["WIT", "COM", "INV"]);
+    const activeDeals = deals.rows.filter((d: any) => !TERMINAL_DEAL_STATUSES.has(String(d.status || "").toUpperCase()));
 
     // Rollout velocity — signed net from brand_signals, plus store-count trend from brand_stores
     const velocityRow = rolloutVelocityRow.rows[0] || { openings_12m: 0, closures_12m: 0 };

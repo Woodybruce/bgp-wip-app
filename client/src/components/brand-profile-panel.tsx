@@ -449,15 +449,27 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  // Brand-page auto-KYC disabled May 2026 — covenant zone is parked until
-  // Red Flag / Experian are wired. Re-enable by reviving runKycCheck() here.
-  // useEffect(() => {
-  //   if (!data || autoKycRan.current) return;
-  //   autoKycRan.current = true;
-  //   const hasCh = !!data.company?.companies_house_number;
-  //   const hasExperian = !!(data as any).covenant?.experian;
-  //   if (hasCh && !hasExperian) runKycCheck();
-  // }, [data]);
+  // Auto-fire the Companies House KYC sweep on first load if we have
+  // a CH number but no officers/PSCs cached yet. Brands had this
+  // parked May '26 (covenant zone disabled) but landlords need it to
+  // populate the "Officers + PSCs" downstream check in the Compliance
+  // board — without this, the row stays grey forever even on PLCs
+  // like Land Sec where the data is one CH call away. Gated on having
+  // a CH number so we don't kick off a no-op for brands without one.
+  useEffect(() => {
+    if (!data || autoKycRan.current) return;
+    const hasCh = !!data.company?.companies_house_number;
+    const chData: any = data.company?.companies_house_data || {};
+    const hasOfficers = Array.isArray(chData?.officers) && chData.officers.length > 0;
+    const hasPscs = Array.isArray(chData?.pscs) && chData.pscs.length > 0;
+    if (hasCh && (!hasOfficers || !hasPscs)) {
+      autoKycRan.current = true;
+      apiRequest("POST", `/api/companies-house/auto-kyc/${companyId}`, {})
+        .then(() => queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }))
+        .catch(() => { /* failure surfaces in the compliance board's row state */ });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   const autoStoresRan = useRef(false);
   useEffect(() => {
