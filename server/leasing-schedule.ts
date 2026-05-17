@@ -184,7 +184,8 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
       "financial_notes", "target_brands", "optimum_target", "priority", "status", "updates",
       "target_company_ids",
       // Landsec leasing-tracker additions
-      "status_band", "meeting_month", "agent_input",
+      "status_band", "meeting_month", "agent_input", "positioning_group",
+      "tenancy_unit_id", "tenant_company_id",
     ];
 
     const setClauses: string[] = [];
@@ -1879,6 +1880,38 @@ router.get("/api/leasing-schedule/snapshot/:snapshotId", requireAuth, async (req
     const { allowed } = await checkPropertyAccess(pool, req, snap.property_id);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
     res.json({ snapshot: snap });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Strategic Principles & Priorities — per-property block that surfaces above
+// the leasing schedule (Landsec key block). Toggle on/off, edit any field.
+router.get("/api/leasing-schedule/property/:propertyId/strategic-principles", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    const r = await pool.query("SELECT strategic_principles FROM crm_properties WHERE id = $1", [req.params.propertyId]);
+    res.json({ principles: r.rows[0]?.strategic_principles || null });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/api/leasing-schedule/property/:propertyId/strategic-principles", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    const principles = req.body?.principles || null;
+    await pool.query("UPDATE crm_properties SET strategic_principles = $1::jsonb WHERE id = $2", [principles ? JSON.stringify(principles) : null, req.params.propertyId]);
+    await logAudit(pool, {
+      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      action: "edit_strategic_principles",
+      newValue: principles?.enabled ? "enabled" : "disabled",
+    });
+    res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

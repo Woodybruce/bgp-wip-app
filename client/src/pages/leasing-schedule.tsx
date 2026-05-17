@@ -1084,6 +1084,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const ZONE_ROW_LIMIT = 40;
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [statFilter, setStatFilter] = useState<string | null>(null);
+  const [positioningGroupFilter, setPositioningGroupFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
@@ -1300,9 +1301,10 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       if (statFilter === "vacant" && u.status !== "Vacant") return false;
       if (statFilter === "expiring" && !isExpiringSoon(u.lease_expiry)) return false;
       if (statFilter === "expired" && !isExpired(u.lease_expiry)) return false;
+      if (positioningGroupFilter && (u as any).positioning_group !== positioningGroupFilter) return false;
       return true;
     });
-  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived]);
+  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived, positioningGroupFilter]);
 
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
@@ -1545,6 +1547,33 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <span key={b.value} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border ${b.pillClass}`}>
             {b.label}
           </span>
+        ))}
+      </div>
+
+      {/* Strategic Principles & Priorities (per-property opt-in) */}
+      <StrategicPrinciplesPanel propertyId={propertyId} />
+
+      {/* Positioning group filter chips (Landsec Key ii) — click to filter the
+          schedule by umbrella category. Same UX shape as deal-status chips. */}
+      <div className="flex items-center gap-2 flex-wrap text-[11px] pt-2 pb-1 border-b border-border/40">
+        <span className="text-muted-foreground uppercase tracking-wider mr-1">Positioning:</span>
+        <button
+          onClick={() => setPositioningGroupFilter(null)}
+          className={`px-2 py-0.5 rounded border ${!positioningGroupFilter ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted"}`}
+          data-testid="positioning-filter-all"
+        >
+          All
+        </button>
+        {POSITIONING_GROUPS.map(g => (
+          <button
+            key={g.key}
+            onClick={() => setPositioningGroupFilter(positioningGroupFilter === g.key ? null : g.key)}
+            className={`px-2 py-0.5 rounded border ${positioningGroupFilter === g.key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted"}`}
+            data-testid={`positioning-filter-${g.key}`}
+            title={g.subTypes}
+          >
+            {g.label}
+          </button>
         ))}
       </div>
 
@@ -2414,6 +2443,187 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// Landsec "Key ii" positioning umbrella categories. Drives the filter chips
+// at the top of the schedule + the Positioning sub-type assignment per unit.
+const POSITIONING_GROUPS: Array<{ key: string; label: string; subTypes: string }> = [
+  { key: "Everyday Connections", label: "Everyday Connections", subTypes: "Social Dining" },
+  { key: "Quick Refuel",         label: "Quick Refuel",         subTypes: "Café / Grab & Go / QSR" },
+  { key: "Joyful Gatherings",    label: "Joyful Gatherings",    subTypes: "Leisure / Bars / Premium Dining" },
+  { key: "Leisurely Refuel",     label: "Leisurely Refuel",     subTypes: "Casual / Premium Casual Dining" },
+];
+
+interface StrategicPrinciples {
+  enabled: boolean;
+  fivePriorities: Array<{ rank: number; text: string }>;
+  positioningKey: Array<{ group: string; description: string }>;
+  rules: Array<{ tag: string; rule: string }>;
+  topThree: Array<{ rank: number; text: string; band?: string }>;
+}
+
+const DEFAULT_PRINCIPLES: StrategicPrinciples = {
+  enabled: false,
+  fivePriorities: [
+    { rank: 1, text: "Delivering Social Dining across all major retail schemes" },
+    { rank: 2, text: "Casual Dining converted to Best-Of-QSR (↓) or Elevated Restaurants (↑)" },
+    { rank: 3, text: "Elevated & Independent Cafe and Grab & Go" },
+    { rank: 4, text: "Rightsizing Cinema" },
+    { rank: 5, text: "Leisure: Flight To Prime" },
+  ],
+  positioningKey: POSITIONING_GROUPS.map(g => ({ group: g.label, description: g.subTypes })),
+  rules: [
+    { tag: "Divest or Void", rule: "Min x3 brands in Target + x1 in Optimum" },
+    { tag: "Red", rule: "Overarching category in Target and x1 brand in Optimum" },
+  ],
+  topThree: [
+    { rank: 1, text: "" },
+    { rank: 2, text: "" },
+    { rank: 3, text: "" },
+  ],
+};
+
+// Editable Strategic Principles & Priorities block. Renders above the schedule
+// when enabled. Toggle is per-property — most clients won't use this; Landsec
+// does. Stored as JSONB on crm_properties.strategic_principles.
+function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery<{ principles: StrategicPrinciples | null }>({
+    queryKey: ["/api/leasing-schedule/property", propertyId, "strategic-principles"],
+    queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/strategic-principles`, { headers: getAuthHeaders() }).then(r => r.json()),
+  });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<StrategicPrinciples | null>(null);
+  const principles = data?.principles || null;
+
+  const save = useMutation({
+    mutationFn: async (next: StrategicPrinciples) => {
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/strategic-principles`, {
+        method: "PUT", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ principles: next }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Save failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId, "strategic-principles"] });
+      toast({ title: "Saved" });
+      setEditing(false);
+      setDraft(null);
+    },
+    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return null;
+
+  // Not yet set up — show "Enable" CTA so user can opt in (most clients won't).
+  if (!principles) {
+    return (
+      <div className="border rounded-lg p-3 bg-muted/20 text-xs flex items-center justify-between">
+        <span className="text-muted-foreground">Strategic Principles & Priorities (Landsec key block) — not enabled for this property.</span>
+        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => save.mutate(DEFAULT_PRINCIPLES)} data-testid="btn-enable-principles">
+          Enable
+        </Button>
+      </div>
+    );
+  }
+  if (!principles.enabled) return null;
+
+  const view = editing && draft ? draft : principles;
+  const startEdit = () => { setDraft(JSON.parse(JSON.stringify(principles))); setEditing(true); };
+  const cancelEdit = () => { setDraft(null); setEditing(false); };
+  const update = (patch: Partial<StrategicPrinciples>) => { if (!draft) return; setDraft({ ...draft, ...patch }); };
+
+  return (
+    <div className="border rounded-lg p-4 bg-card/60">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-bold uppercase tracking-wider">Overarching Hospitality &amp; Leisure Strategic Principles &amp; Priorities</h3>
+        <div className="flex items-center gap-1">
+          {editing ? (
+            <>
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={cancelEdit}>Cancel</Button>
+              <Button size="sm" className="h-7 text-[11px]" onClick={() => draft && save.mutate(draft)} disabled={save.isPending}>
+                {save.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}Save
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={startEdit} data-testid="btn-edit-principles"><Pencil className="w-3 h-3 mr-1" />Edit</Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] text-muted-foreground" onClick={() => save.mutate({ ...principles, enabled: false })} data-testid="btn-disable-principles">Hide</Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+        {/* Five Priorities */}
+        <div>
+          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">5 Priorities</div>
+          <div className="space-y-1">
+            {view.fivePriorities.map((p, i) => (
+              <div key={i} className="grid grid-cols-[80px_1fr] gap-2 items-start">
+                <span className="text-muted-foreground">Priority {["One", "Two", "Three", "Four", "Five"][i]}</span>
+                {editing ? (
+                  <Input className="h-7 text-[11px]" value={p.text} onChange={e => { const next = [...(draft!.fivePriorities)]; next[i] = { ...next[i], text: e.target.value }; update({ fivePriorities: next }); }} />
+                ) : (
+                  <span>{i + 1}. {p.text || <span className="italic text-muted-foreground">—</span>}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top Three Strategic Priorities */}
+        <div>
+          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">Top Three Strategic Priorities</div>
+          <div className="space-y-1">
+            {view.topThree.map((p, i) => (
+              <div key={i} className="grid grid-cols-[80px_1fr] gap-2 items-start">
+                <span className="text-muted-foreground">Priority {["One", "Two", "Three"][i]}</span>
+                {editing ? (
+                  <Input
+                    className="h-7 text-[11px]"
+                    value={p.text}
+                    placeholder="e.g. West Village leasing (TG)"
+                    onChange={e => { const next = [...(draft!.topThree)]; next[i] = { ...next[i], text: e.target.value }; update({ topThree: next }); }}
+                  />
+                ) : (
+                  <span className={p.band === "AMBER" ? "text-amber-700" : p.band === "RED" ? "text-rose-700" : ""}>{p.text || <span className="italic text-muted-foreground">—</span>}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Key ii — Positioning groups */}
+        <div>
+          <div className="font-semibold mb-1.5">Positioning Groups (Key ii)</div>
+          <div className="space-y-1">
+            {view.positioningKey.map((p, i) => (
+              <div key={i} className="grid grid-cols-[140px_1fr] gap-2">
+                <span className="font-medium">{p.group}</span>
+                <span className="text-muted-foreground">{p.description}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Rules */}
+        <div>
+          <div className="font-semibold mb-1.5">Rules</div>
+          <div className="space-y-1">
+            {view.rules.map((r, i) => (
+              <div key={i} className="grid grid-cols-[120px_1fr] gap-2">
+                <span className="font-medium text-rose-700">{r.tag}</span>
+                <span className="text-muted-foreground">{r.rule}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

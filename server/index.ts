@@ -2905,6 +2905,13 @@ app.use("/api/branding/assets", express.static(
           // CRM company link for the Existing tenant — drives the click-through
           // from the Leasing Schedule cell to the brand profile.
           await addColIfMissing("leasing_schedule_units", "tenant_company_id", "varchar");
+          // Positioning umbrella group (Landsec Key ii) — e.g. "Everyday
+          // Connections" / "Quick Refuel" / "Joyful Gatherings" / "Leisurely
+          // Refuel". Drives the filter chips at the top of the schedule.
+          await addColIfMissing("leasing_schedule_units", "positioning_group", "text");
+          // Per-property Strategic Principles & Priorities (Landsec key block).
+          // JSONB: { enabled, fivePriorities[], positioningKey[], rules[], topThree[] }
+          await addColIfMissing("crm_properties", "strategic_principles", "jsonb");
 
           // Tenancy schedule — bring in line with the Landsec investment-grade
           // template. Unit Details / Tenant / Lease / Areas (GIA+NIA splits) /
