@@ -79,42 +79,108 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
   }
 });
 
+// Full list of columns the API accepts on create/update. Mirrors the
+// Landsec-aligned schema in server/index.ts auto-migrate. Used by both POST
+// (create) and PUT (update) below + by the xlsx import header → field mapper.
+const TENANCY_FIELDS = [
+  // Unit Details
+  "grouping", "premises", "unit_number", "permitted_use", "status", "am_initiative",
+  // Tenant Details
+  "tenant_name", "trading_name", "tenant_mix",
+  // Lease Details
+  "lease_start", "break_date", "break_details", "break_notice", "lease_expiry",
+  "term_years", "unexpired_term_break", "unexpired_term", "next_review_date",
+  "outside_lt_act", "measurement_type",
+  // Areas — GIA
+  "area_basement_gia", "area_ground_gia", "area_first_gia", "area_other_gia",
+  // Areas — NIA
+  "area_basement_nia", "area_ground_nia", "area_first_nia", "area_first_sales_nia", "area_other_nia",
+  // Areas — ITZA + totals
+  "area_ground_itza", "gia_sqft", "nia_sqft", "itza_sqft", "units_applied",
+  // Rental Income
+  "passing_rent_pa", "marketing_rent_pa", "turnover_rent_payable", "erv_profile",
+  "erv_pa", "rent_free_value", "capex_value",
+  // Rates
+  "rateable_value", "rates_payable",
+  // Occ Costs
+  "service_charge", "service_charge_cap", "insurance",
+  // Shortfalls
+  "shortfall_liability", "rental_shortfalls",
+  // NOI
+  "topped_up_noi", "noi_pa",
+  // Comments
+  "comments", "leasing_comments", "target_tenants", "target_company_ids", "underwriting_comments",
+  // BGP integration
+  "epc_rating", "rent_psf", "turnover_percent", "blended_erv",
+  "deal_id", "letting_tracker_unit_id", "in_leasing_schedule", "sort_order",
+];
+
+const NUMERIC_FIELDS = new Set([
+  "term_years", "unexpired_term_break", "unexpired_term",
+  "area_basement_gia", "area_ground_gia", "area_first_gia", "area_other_gia",
+  "area_basement_nia", "area_ground_nia", "area_first_nia", "area_first_sales_nia", "area_other_nia",
+  "area_ground_itza", "gia_sqft", "nia_sqft", "itza_sqft", "units_applied",
+  "passing_rent_pa", "marketing_rent_pa", "turnover_rent_payable",
+  "erv_pa", "rent_free_value", "capex_value",
+  "rateable_value", "rates_payable",
+  "service_charge", "service_charge_cap", "insurance",
+  "rental_shortfalls", "topped_up_noi", "noi_pa",
+  "rent_psf", "turnover_percent", "blended_erv", "sort_order",
+]);
+
+const DATE_FIELDS = new Set(["lease_start", "break_date", "lease_expiry", "next_review_date"]);
+
+function normaliseFieldValue(field: string, raw: any): any {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === "") {
+    return NUMERIC_FIELDS.has(field) ? null : DATE_FIELDS.has(field) ? null : null;
+  }
+  if (NUMERIC_FIELDS.has(field)) {
+    if (typeof raw === "number") return raw;
+    const n = Number(String(raw).replace(/[£,]/g, ""));
+    return isNaN(n) ? null : n;
+  }
+  if (DATE_FIELDS.has(field)) {
+    const dt = new Date(raw);
+    if (isNaN(dt.getTime())) return null;
+    return dt.toISOString().slice(0, 10);
+  }
+  if (field === "in_leasing_schedule") return Boolean(raw);
+  if (field === "target_company_ids") return Array.isArray(raw) ? raw : null;
+  return String(raw);
+}
+
 router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
     const d = req.body;
+    if (!d?.property_id) return res.status(400).json({ error: "property_id required" });
+
+    const cols: string[] = ["property_id"];
+    const placeholders: string[] = ["$1"];
+    const values: any[] = [d.property_id];
+    let idx = 2;
+    for (const f of TENANCY_FIELDS) {
+      if (!(f in d)) continue;
+      const v = normaliseFieldValue(f, d[f]);
+      if (v === undefined) continue;
+      cols.push(f);
+      placeholders.push(`$${idx++}`);
+      values.push(v);
+    }
+    // Default status if not given — Vacant unless tenant_name provided.
+    if (!cols.includes("status")) {
+      cols.push("status");
+      placeholders.push(`$${idx++}`);
+      values.push(d.tenant_name && d.tenant_name !== "Vacant" ? "Occupied" : "Vacant");
+    }
     const result = await pool.query(
-      `INSERT INTO tenancy_schedule_units (
-        property_id, premises, unit_number, tenant_name, trading_name, permitted_use,
-        area_basement, area_ground, area_first, area_second, area_other,
-        nia_sqft, gia_sqft, passing_rent_pa, rent_psf, turnover_percent,
-        landlord_shortfall, net_income, epc_rating, blended_erv, erv_pa,
-        lease_start, term_years, lease_expiry,
-        rent_review_1_date, rent_review_1_amount, rent_review_2_date, rent_review_2_amount,
-        rent_review_3_date, rent_review_3_amount, rent_review_4_date, rent_review_4_amount,
-        outside_lt_act, break_type, break_date, wault_rent_percent, unexpired_term,
-        service_charge, insurance, total_occ_costs, occ_costs_psf, status,
-        deal_id, letting_tracker_unit_id, sort_order
-      ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-        $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45
-      ) RETURNING *`,
-      [
-        d.property_id, d.premises || '', d.unit_number || '', d.tenant_name || '', d.trading_name || '', d.permitted_use || '',
-        d.area_basement || 0, d.area_ground || 0, d.area_first || 0, d.area_second || 0, d.area_other || 0,
-        d.nia_sqft || 0, d.gia_sqft || 0, d.passing_rent_pa || 0, d.rent_psf || 0, d.turnover_percent || 0,
-        d.landlord_shortfall || 0, d.net_income || 0, d.epc_rating || '', d.blended_erv || 0, d.erv_pa || 0,
-        d.lease_start || null, d.term_years || 0, d.lease_expiry || null,
-        d.rent_review_1_date || '', d.rent_review_1_amount || '', d.rent_review_2_date || '', d.rent_review_2_amount || '',
-        d.rent_review_3_date || '', d.rent_review_3_amount || '', d.rent_review_4_date || '', d.rent_review_4_amount || '',
-        d.outside_lt_act || '', d.break_type || '', d.break_date || '', d.wault_rent_percent || 0, d.unexpired_term || 0,
-        d.service_charge || 0, d.insurance || 0, d.total_occ_costs || 0, d.occ_costs_psf || 0,
-        d.status || (d.tenant_name && d.tenant_name !== 'Vacant' ? 'Occupied' : 'Vacant'),
-        d.deal_id || null, d.letting_tracker_unit_id || null, d.sort_order || 0
-      ]
+      `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`,
+      values
     );
     res.json(result.rows[0]);
   } catch (e: any) {
+    console.error("[tenancy] create unit failed:", e?.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -127,50 +193,25 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     const fields: string[] = [];
     const values: any[] = [];
     let idx = 1;
-
-    const allowedFields = [
-      // Existing core
-      'premises', 'unit_number', 'tenant_name', 'trading_name', 'permitted_use',
-      'area_basement', 'area_ground', 'area_first', 'area_second', 'area_other',
-      'nia_sqft', 'gia_sqft', 'passing_rent_pa', 'rent_psf', 'turnover_percent',
-      'landlord_shortfall', 'net_income', 'epc_rating', 'blended_erv', 'erv_pa',
-      'lease_start', 'term_years', 'lease_expiry',
-      'rent_review_1_date', 'rent_review_1_amount', 'rent_review_2_date', 'rent_review_2_amount',
-      'rent_review_3_date', 'rent_review_3_amount', 'rent_review_4_date', 'rent_review_4_amount',
-      'outside_lt_act', 'break_type', 'break_date', 'wault_rent_percent', 'unexpired_term',
-      'service_charge', 'insurance', 'total_occ_costs', 'occ_costs_psf', 'status',
-      'deal_id', 'letting_tracker_unit_id', 'sort_order',
-      // Landsec-template additions
-      'grouping', 'am_initiative', 'tenant_mix',
-      'break_details', 'break_notice', 'unexpired_term_break', 'next_review_date', 'measurement_type',
-      'area_basement_gia', 'area_ground_gia', 'area_first_gia', 'area_other_gia',
-      'area_basement_nia', 'area_ground_nia', 'area_first_nia', 'area_first_sales_nia', 'area_other_nia',
-      'area_ground_itza', 'itza_sqft', 'units_applied',
-      'marketing_rent_pa', 'turnover_rent_payable', 'erv_profile', 'rent_free_value', 'capex_value',
-      'rateable_value', 'rates_payable', 'service_charge_cap',
-      'shortfall_liability', 'rental_shortfalls', 'topped_up_noi',
-      'comments', 'leasing_comments', 'target_tenants', 'target_company_ids', 'underwriting_comments',
-      'in_leasing_schedule',
-    ];
-
-    for (const f of allowedFields) {
-      if (f in d) {
-        fields.push(`${f} = $${idx}`);
-        values.push(d[f] === '' ? null : d[f]);
-        idx++;
-      }
+    // Allow 'status' alongside the shared TENANCY_FIELDS list.
+    const updatable = [...TENANCY_FIELDS, "status"];
+    for (const f of updatable) {
+      if (!(f in d)) continue;
+      const v = normaliseFieldValue(f, d[f]);
+      if (v === undefined) continue;
+      fields.push(`${f} = $${idx++}`);
+      values.push(v);
     }
-
     if (fields.length === 0) return res.json({ ok: true });
-
     fields.push(`updated_at = NOW()`);
     values.push(id);
     const result = await pool.query(
-      `UPDATE tenancy_schedule_units SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      `UPDATE tenancy_schedule_units SET ${fields.join(", ")} WHERE id = $${idx} RETURNING *`,
       values
     );
     res.json(result.rows[0]);
   } catch (e: any) {
+    console.error("[tenancy] update unit failed:", e?.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -213,7 +254,117 @@ function strVal(v: any): string {
   return String(v).trim();
 }
 
-router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single('file'), async (req: any, res) => {
+// Normalise an arbitrary header string so we can match it against the alias
+// map regardless of capitalisation, punctuation, whitespace or multi-line
+// labels. "Basement (sq ft) - GIA" → "basement sq ft gia".
+function normaliseHeader(h: any): string {
+  return String(h || "")
+    .toLowerCase()
+    .replace(/[–—]/g, "-")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Header text → DB field. Covers Landsec column names, BGP legacy template
+// names, and common variations. Extend here as new templates surface.
+const HEADER_ALIASES: Record<string, string> = {
+  // Unit
+  "grouping": "grouping",
+  "unit": "unit_number",
+  "unit number": "unit_number",
+  "use": "permitted_use",
+  "permitted use": "permitted_use",
+  "status": "status",
+  "am initiative": "am_initiative",
+  // Tenant
+  "tenant": "tenant_name",
+  "tenant name": "tenant_name",
+  "trading as": "trading_name",
+  "trading name": "trading_name",
+  "tenant mix": "tenant_mix",
+  // Lease
+  "start": "lease_start",
+  "lease start": "lease_start",
+  "break date": "break_date",
+  "details": "break_details",
+  "notice note": "break_notice",
+  "expiry": "lease_expiry",
+  "lease expiry": "lease_expiry",
+  "term": "term_years",
+  "term yrs": "term_years",
+  "unexp term break": "unexpired_term_break",
+  "unexp term expiry": "unexpired_term",
+  "next review": "next_review_date",
+  "l t act": "outside_lt_act",
+  "outside l t act": "outside_lt_act",
+  "measurement": "measurement_type",
+  // Areas — GIA per floor
+  "basement sq ft gia": "area_basement_gia",
+  "ground sq ft gia": "area_ground_gia",
+  "first sq ft gia": "area_first_gia",
+  "other sq ft gia": "area_other_gia",
+  // Areas — NIA per floor
+  "basement sq ft nia": "area_basement_nia",
+  "ground sq ft nia": "area_ground_nia",
+  "first sq ft nia": "area_first_nia",
+  "first sales sq ft nia": "area_first_sales_nia",
+  "other sq ft nia": "area_other_nia",
+  // Areas — totals + ITZA
+  "ground itza": "area_ground_itza",
+  "gia sq ft": "gia_sqft",
+  "nia sq ft": "nia_sqft",
+  "itza itgf sq ft": "itza_sqft",
+  "itza sq ft": "itza_sqft",
+  "units applied": "units_applied",
+  // Rental
+  "rent pa": "passing_rent_pa",
+  "passing rent pa": "passing_rent_pa",
+  "marketing rent pa": "marketing_rent_pa",
+  "t o rent payable": "turnover_rent_payable",
+  "erv profile": "erv_profile",
+  "erv pa": "erv_pa",
+  "rent free value": "rent_free_value",
+  "capex value": "capex_value",
+  // Rates
+  "rateable value": "rateable_value",
+  "rates payable pa": "rates_payable",
+  "rates payable": "rates_payable",
+  // Occ costs
+  "service charge pa": "service_charge",
+  "service charge": "service_charge",
+  "service charge cap pa": "service_charge_cap",
+  "service charge cap": "service_charge_cap",
+  "insurance pa": "insurance",
+  "insurance": "insurance",
+  // Shortfalls
+  "shortfall liability l t": "shortfall_liability",
+  "shortfall liability": "shortfall_liability",
+  "total ll shortfalls pa": "rental_shortfalls",
+  "total ll shortfalls": "rental_shortfalls",
+  "rental shortfalls": "rental_shortfalls",
+  // NOI
+  "topped up noi pa": "topped_up_noi",
+  "topped up noi": "topped_up_noi",
+  "noi pa": "noi_pa",
+  "noi": "noi_pa",
+  // Comments
+  "comments": "comments",
+  "leasing comments": "leasing_comments",
+  "target tenants": "target_tenants",
+  "underwriting comments queries": "underwriting_comments",
+  "underwriting comments": "underwriting_comments",
+  // BGP extras
+  "epc rating": "epc_rating",
+  "epc": "epc_rating",
+  "rent psf": "rent_psf",
+  "rent £psf": "rent_psf",
+  "rent psf £": "rent_psf",
+  "turnover percent": "turnover_percent",
+  "turnover": "turnover_percent",
+  "blended erv": "blended_erv",
+};
+
+router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("file"), async (req: any, res) => {
   try {
     const pool = await getPool();
     const propertyId = req.body.propertyId;
@@ -222,84 +373,192 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single('fi
 
     const XLSX = await import("xlsx");
     const wb = XLSX.read(req.file.buffer);
-    const sheetName = wb.SheetNames.find((s: string) => s === 'TS') || wb.SheetNames[0];
+    // Prefer a sheet named "TS" / "Tenancy Schedule"; fall back to the first.
+    const sheetName =
+      wb.SheetNames.find((s: string) => /tenancy\s*schedule/i.test(s))
+      || wb.SheetNames.find((s: string) => s === "TS")
+      || wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
-    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[];
+    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[];
 
-    let headerRowIdx = -1;
-    for (let i = 0; i < Math.min(10, data.length); i++) {
-      const row = data[i];
-      if (row && row.some((c: any) => typeof c === 'string' && (c.includes('Tenant') || c.includes('Unit Number')))) {
-        headerRowIdx = i;
-        break;
+    // Landsec template has a CATEGORY band above the actual column headers
+    // (Unit Details / Tenant Details / etc), so we scan the first ~15 rows
+    // for the row that matches the most field aliases.
+    let bestHeaderIdx = -1;
+    let bestHits = 0;
+    for (let i = 0; i < Math.min(15, data.length); i++) {
+      const row = data[i] || [];
+      let hits = 0;
+      for (const cell of row) {
+        if (cell == null) continue;
+        if (HEADER_ALIASES[normaliseHeader(cell)]) hits++;
+      }
+      if (hits > bestHits) {
+        bestHits = hits;
+        bestHeaderIdx = i;
       }
     }
-    if (headerRowIdx === -1) return res.status(400).json({ error: "Could not find header row in spreadsheet" });
+    if (bestHeaderIdx === -1 || bestHits < 3) {
+      return res.status(400).json({
+        error: "Could not find a recognisable header row. Expected columns like 'Tenant', 'Unit', 'Rent (pa)', etc.",
+      });
+    }
 
-    const clearExisting = req.body.clearExisting === 'true';
+    // Build column index → DB field map for this sheet.
+    const headerRow = data[bestHeaderIdx] || [];
+    const colToField: Record<number, string> = {};
+    for (let c = 0; c < headerRow.length; c++) {
+      const field = HEADER_ALIASES[normaliseHeader(headerRow[c])];
+      if (field) colToField[c] = field;
+    }
+
+    const clearExisting = req.body.clearExisting === "true";
     if (clearExisting) {
       await pool.query("DELETE FROM tenancy_schedule_units WHERE property_id = $1", [propertyId]);
     }
 
-    let currentPremises = '';
     let imported = 0;
     let sortOrder = 0;
+    let currentGrouping = ""; // Landsec tracks a "Grouping" header band
 
-    for (let i = headerRowIdx + 1; i < data.length; i++) {
-      const row = data[i];
-      if (!row || row.length < 3) continue;
+    for (let i = bestHeaderIdx + 1; i < data.length; i++) {
+      const row = data[i] || [];
+      if (row.length === 0) continue;
 
-      if (row[1] && !row[2] && !row[3]) {
-        currentPremises = strVal(row[1]);
-        continue;
+      // Build a partial record from whichever columns we recognise.
+      const rec: Record<string, any> = {};
+      for (const [colIdxStr, field] of Object.entries(colToField)) {
+        const colIdx = Number(colIdxStr);
+        const raw = row[colIdx];
+        if (raw == null) continue;
+        // Dates from xlsx may arrive as Excel-serial numbers
+        if (DATE_FIELDS.has(field) && typeof raw === "number") {
+          const dt = new Date((raw - 25569) * 86400 * 1000);
+          if (!isNaN(dt.getTime())) {
+            rec[field] = dt.toISOString().slice(0, 10);
+            continue;
+          }
+        }
+        rec[field] = normaliseFieldValue(field, raw);
       }
 
-      const unitNumber = strVal(row[2]);
-      if (!unitNumber) continue;
+      // Grouping row carry-forward — if only the grouping cell has a value
+      // and there's no tenant or unit, treat as a band header.
+      const hasUnit = rec.unit_number || rec.tenant_name;
+      if (rec.grouping && !hasUnit) {
+        currentGrouping = String(rec.grouping);
+        continue;
+      }
+      if (!hasUnit) continue;
 
-      const tenantName = strVal(row[3]);
-      const tradingName = strVal(row[4]);
-      const isVacant = tenantName.toLowerCase() === 'vacant';
-
+      if (!rec.grouping && currentGrouping) rec.grouping = currentGrouping;
+      if (!rec.status) {
+        const tn = (rec.tenant_name || "").toString().toLowerCase();
+        rec.status = !tn || tn === "vacant" ? "Vacant" : "Occupied";
+      }
       sortOrder++;
-      await pool.query(
-        `INSERT INTO tenancy_schedule_units (
-          property_id, premises, unit_number, tenant_name, trading_name, permitted_use,
-          area_basement, area_ground, area_first, area_second, area_other,
-          nia_sqft, gia_sqft, passing_rent_pa, rent_psf, turnover_percent,
-          landlord_shortfall, net_income, epc_rating, blended_erv, erv_pa,
-          lease_start, term_years, lease_expiry,
-          rent_review_1_date, rent_review_1_amount, rent_review_2_date, rent_review_2_amount,
-          rent_review_3_date, rent_review_3_amount, rent_review_4_date, rent_review_4_amount,
-          outside_lt_act, break_type, break_date, wault_rent_percent, unexpired_term,
-          service_charge, insurance, total_occ_costs, occ_costs_psf, status, sort_order
-        ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-          $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43
-        )`,
-        [
-          propertyId, currentPremises, unitNumber, tenantName, tradingName, strVal(row[5]),
-          numVal(row[6]), numVal(row[7]), numVal(row[8]), numVal(row[9]), numVal(row[10]),
-          numVal(row[11]), numVal(row[12]), numVal(row[13]), numVal(row[14]), numVal(row[15]),
-          numVal(row[16]), numVal(row[17]), strVal(row[18]), numVal(row[19]), numVal(row[20]),
-          excelDateToISO(row[21]), numVal(row[22]), excelDateToISO(row[23]),
-          strVal(row[24]), strVal(row[25]), strVal(row[26]), strVal(row[27]),
-          strVal(row[28]), strVal(row[29]), strVal(row[30]), strVal(row[31]),
-          strVal(row[32]), strVal(row[33]), excelDateToISO(row[34]) || strVal(row[34]),
-          numVal(row[35]), numVal(row[36]),
-          numVal(row[37]), numVal(row[38]), numVal(row[39]), numVal(row[40]),
-          isVacant ? 'Vacant' : 'Occupied', sortOrder
-        ]
-      );
-      imported++;
+      rec.sort_order = sortOrder;
+
+      const cols = ["property_id", ...Object.keys(rec)];
+      const placeholders = cols.map((_, idx) => `$${idx + 1}`);
+      const values = [propertyId, ...Object.values(rec)];
+
+      try {
+        await pool.query(
+          `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")})`,
+          values
+        );
+        imported++;
+      } catch (e: any) {
+        console.warn(`[tenancy-import] row ${i + 1} skipped: ${e.message}`);
+      }
     }
 
-    res.json({ imported, message: `${imported} units imported successfully` });
+    res.json({
+      imported,
+      headerRow: bestHeaderIdx + 1,
+      mappedColumns: Object.values(colToField),
+      message: `${imported} units imported`,
+    });
   } catch (e: any) {
-    console.error("Tenancy schedule import error:", e);
+    console.error("[tenancy-import] failed:", e);
     res.status(500).json({ error: e.message });
   }
 });
+
+// Landsec-aligned column definition for the export. Each column has:
+//   field — DB column name
+//   label — header shown in the spreadsheet
+//   band  — category band (drawn as a merged header above the column row)
+//   width — column width in Excel "characters"
+//   fmt   — "currency" | "currency_psf" | "pct" | "num" | "date" | undefined
+const EXPORT_COLUMNS: Array<{ field: string; label: string; band: string; width: number; fmt?: string }> = [
+  // Unit Details
+  { field: "__idx",       label: "#",            band: "Unit Details", width: 5  },
+  { field: "grouping",    label: "Grouping",     band: "Unit Details", width: 18 },
+  { field: "unit_number", label: "Unit",         band: "Unit Details", width: 12 },
+  { field: "permitted_use", label: "Use",        band: "Unit Details", width: 16 },
+  { field: "status",      label: "Status",       band: "Unit Details", width: 12 },
+  { field: "am_initiative", label: "AM Initiative?", band: "Unit Details", width: 18 },
+  // Tenant Details
+  { field: "tenant_name", label: "Tenant",       band: "Tenant Details", width: 24 },
+  { field: "trading_name", label: "Trading As",  band: "Tenant Details", width: 20 },
+  { field: "tenant_mix",  label: "Tenant Mix",   band: "Tenant Details", width: 16 },
+  // Lease Details
+  { field: "lease_start", label: "Start",        band: "Lease Details", width: 12, fmt: "date" },
+  { field: "break_date",  label: "Break Date",   band: "Lease Details", width: 12, fmt: "date" },
+  { field: "break_details", label: "Break Details", band: "Lease Details", width: 22 },
+  { field: "break_notice", label: "Notice/Note", band: "Lease Details", width: 18 },
+  { field: "lease_expiry", label: "Expiry",      band: "Lease Details", width: 12, fmt: "date" },
+  { field: "term_years",  label: "Term",         band: "Lease Details", width: 8,  fmt: "num" },
+  { field: "unexpired_term_break", label: "Unexp. Term (Break)", band: "Lease Details", width: 12, fmt: "num" },
+  { field: "unexpired_term", label: "Unexp. Term (Expiry)", band: "Lease Details", width: 12, fmt: "num" },
+  { field: "next_review_date", label: "Next Review", band: "Lease Details", width: 12, fmt: "date" },
+  { field: "outside_lt_act", label: "L&T Act",   band: "Lease Details", width: 14 },
+  { field: "measurement_type", label: "Measurement", band: "Lease Details", width: 14 },
+  // Areas — GIA
+  { field: "area_basement_gia", label: "Basement (GIA)", band: "Areas (sq ft) — GIA", width: 12, fmt: "num" },
+  { field: "area_ground_gia",   label: "Ground (GIA)",   band: "Areas (sq ft) — GIA", width: 12, fmt: "num" },
+  { field: "area_first_gia",    label: "First (GIA)",    band: "Areas (sq ft) — GIA", width: 12, fmt: "num" },
+  { field: "area_other_gia",    label: "Other (GIA)",    band: "Areas (sq ft) — GIA", width: 12, fmt: "num" },
+  // Areas — NIA
+  { field: "area_basement_nia",     label: "Basement (NIA)",     band: "Areas (sq ft) — NIA", width: 12, fmt: "num" },
+  { field: "area_ground_nia",       label: "Ground (NIA)",       band: "Areas (sq ft) — NIA", width: 12, fmt: "num" },
+  { field: "area_ground_itza",      label: "Ground (ITZA)",      band: "Areas (sq ft) — NIA", width: 12, fmt: "num" },
+  { field: "area_first_sales_nia",  label: "First Sales (NIA)",  band: "Areas (sq ft) — NIA", width: 12, fmt: "num" },
+  { field: "area_first_nia",        label: "First (NIA)",        band: "Areas (sq ft) — NIA", width: 12, fmt: "num" },
+  { field: "area_other_nia",        label: "Other (NIA)",        band: "Areas (sq ft) — NIA", width: 12, fmt: "num" },
+  { field: "gia_sqft",  label: "GIA",            band: "Areas — Totals", width: 12, fmt: "num" },
+  { field: "nia_sqft",  label: "NIA",            band: "Areas — Totals", width: 12, fmt: "num" },
+  { field: "itza_sqft", label: "ITZA / ITGF",    band: "Areas — Totals", width: 12, fmt: "num" },
+  { field: "units_applied", label: "Units Applied", band: "Areas — Totals", width: 12, fmt: "num" },
+  // Rental Income
+  { field: "passing_rent_pa",       label: "Rent (pa)",          band: "Rental Income", width: 14, fmt: "currency" },
+  { field: "marketing_rent_pa",     label: "Marketing Rent (pa)", band: "Rental Income", width: 14, fmt: "currency" },
+  { field: "turnover_rent_payable", label: "T/O Rent Payable",   band: "Rental Income", width: 14, fmt: "currency" },
+  { field: "erv_profile",           label: "ERV Profile",        band: "Rental Income", width: 14 },
+  { field: "erv_pa",                label: "ERV (pa)",           band: "Rental Income", width: 14, fmt: "currency" },
+  { field: "rent_free_value",       label: "Rent Free Value",    band: "Rental Income", width: 14, fmt: "currency" },
+  { field: "capex_value",           label: "Capex Value",        band: "Rental Income", width: 14, fmt: "currency" },
+  // Rates
+  { field: "rateable_value", label: "Rateable Value",      band: "MLA",  width: 14, fmt: "currency" },
+  { field: "rates_payable",  label: "Rates Payable (pa)",  band: "MLA",  width: 14, fmt: "currency" },
+  // Occ Costs
+  { field: "service_charge",    label: "Service Charge (pa)",     band: "Occupational Costs", width: 14, fmt: "currency" },
+  { field: "service_charge_cap", label: "Service Charge Cap (pa)", band: "Occupational Costs", width: 14, fmt: "currency" },
+  { field: "insurance",         label: "Insurance (pa)",          band: "Occupational Costs", width: 14, fmt: "currency" },
+  // Shortfalls
+  { field: "shortfall_liability", label: "Shortfall Liability (L/T)", band: "Shortfalls", width: 16 },
+  { field: "rental_shortfalls",   label: "Total LL Shortfalls (pa)", band: "Shortfalls", width: 16, fmt: "currency" },
+  // NOI
+  { field: "topped_up_noi", label: "Topped Up NOI (pa)", band: "NOI", width: 14, fmt: "currency" },
+  { field: "noi_pa",        label: "NOI (pa)",           band: "NOI", width: 14, fmt: "currency" },
+  // Comments
+  { field: "comments",              label: "Comments",            band: "Comments", width: 28 },
+  { field: "leasing_comments",      label: "Leasing Comments",    band: "Comments", width: 28 },
+  { field: "target_tenants",        label: "Target Tenants",      band: "Comments", width: 28 },
+  { field: "underwriting_comments", label: "Underwriting Comments", band: "Comments", width: 28 },
+];
 
 router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAuth, async (req, res) => {
   try {
@@ -310,7 +569,7 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     const propertyName = propResult.rows[0]?.name || "Property";
 
     const result = await pool.query(
-      "SELECT * FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY premises, sort_order, id",
+      "SELECT * FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY grouping NULLS LAST, premises NULLS LAST, sort_order, id",
       [propertyId]
     );
 
@@ -319,12 +578,15 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     wb.creator = "Bruce Gillingham Pollard";
     wb.created = new Date();
 
+    // Brand palette — matches BGP house style used elsewhere in the app.
     const DARK_BLUE = "FF082861";
     const WARM_GREY = "FFE8E6DF";
-    const LIGHT_BLUE_BG = "FFDCEAF7";
-    const WHITE_FONT: any = { name: "Calibri", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
-    const HEADER_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: DARK_BLUE } };
-    const ALT_ROW_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F5F5" } };
+    const LIGHT_GREY_ALT = "FFF7F6F2";
+    const BAND_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: DARK_BLUE } };
+    const COL_HEADER_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: "FF13396B" } };
+    const ALT_ROW_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: LIGHT_GREY_ALT } };
+    const GROUPING_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: WARM_GREY } };
+    const TOTAL_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: WARM_GREY } };
     const THIN_BORDER: any = {
       top: { style: "thin", color: { argb: "FFDDDFE0" } },
       left: { style: "thin", color: { argb: "FFDDDFE0" } },
@@ -333,187 +595,160 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     };
     const CURRENCY_FMT = '£#,##0';
     const CURRENCY_PSF_FMT = '£#,##0.00';
-    const PCT_FMT = '0.0%';
     const NUM_FMT = '#,##0';
+    const DATE_FMT = 'dd-mmm-yyyy';
 
-    const safeSheetName = propertyName.replace(/[\\/*?\[\]:]/g, "").slice(0, 31) || "Sheet1";
-    const ws = wb.addWorksheet(safeSheetName);
+    const safeSheetName = propertyName.replace(/[\\/*?\[\]:]/g, "").slice(0, 31) || "Tenancy";
+    const ws = wb.addWorksheet(safeSheetName, { views: [{ state: "frozen", ySplit: 4, xSplit: 3 }] });
 
+    const totalCols = EXPORT_COLUMNS.length;
+
+    // Row 1: Title
     const titleRow = ws.addRow([`${propertyName} — Tenancy Schedule`]);
-    ws.mergeCells(titleRow.number, 1, titleRow.number, 41);
+    ws.mergeCells(titleRow.number, 1, titleRow.number, totalCols);
     const titleCell = ws.getCell(titleRow.number, 1);
-    titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
-    titleCell.fill = HEADER_FILL;
-    titleCell.alignment = { vertical: "middle" };
+    titleCell.font = { name: "Calibri", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
+    titleCell.fill = BAND_FILL;
+    titleCell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
     ws.getRow(titleRow.number).height = 36;
 
-    const dateRow = ws.addRow([`Exported: ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`]);
-    ws.mergeCells(dateRow.number, 1, dateRow.number, 41);
+    // Row 2: Exported date / footer line
+    const dateRow = ws.addRow([
+      `Bruce Gillingham Pollard  ·  Exported ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}  ·  ${result.rows.length} units`,
+    ]);
+    ws.mergeCells(dateRow.number, 1, dateRow.number, totalCols);
     const dateCell = ws.getCell(dateRow.number, 1);
     dateCell.font = { name: "Calibri", size: 9, italic: true, color: { argb: "FF596264" } };
-    dateCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E6DF" } };
+    dateCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: WARM_GREY } };
+    dateCell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
     ws.getRow(dateRow.number).height = 20;
 
-    const headers = [
-      '#', 'Premises', 'Unit Number', 'Tenant Name', 'Trading Name', 'Permitted Use',
-      'Basement', 'Ground', 'First', 'Second', 'Other', 'NIA (sq ft)', 'GIA (sq ft)',
-      'Passing Rent PA', 'Rent £psf', 'Turnover %', 'Landlord Shortfall', 'Net Income',
-      'EPC Rating', 'Blended ERV', 'ERV PA',
-      'Lease Start', 'Term (yrs)', 'Lease Expiry',
-      'RR1 Date', 'RR1 Amount', 'RR2 Date', 'RR2 Amount',
-      'RR3 Date', 'RR3 Amount', 'RR4 Date', 'RR4 Amount',
-      'Outside L&T', 'Break Type', 'Break Date',
-      'WAULT Rent %', 'Unexpired Term',
-      'Service Charge', 'Insurance', 'Total Occ Costs', 'Occ Costs £psf'
-    ];
-
-    const headerRow = ws.addRow(headers);
-    headerRow.eachCell((cell: any) => {
-      cell.font = WHITE_FONT;
-      cell.fill = HEADER_FILL;
-      cell.alignment = { vertical: "middle", wrapText: true, horizontal: "center" };
-      cell.border = THIN_BORDER;
-    });
-    headerRow.height = 32;
-
-    ws.columns = [
-      { width: 5 },
-      { width: 20 },
-      { width: 14 },
-      { width: 24 },
-      { width: 20 },
-      { width: 18 },
-      { width: 10 },
-      { width: 10 },
-      { width: 10 },
-      { width: 10 },
-      { width: 10 },
-      { width: 13 },
-      { width: 13 },
-      { width: 16 },
-      { width: 12 },
-      { width: 12 },
-      { width: 16 },
-      { width: 14 },
-      { width: 10 },
-      { width: 13 },
-      { width: 14 },
-      { width: 13 },
-      { width: 10 },
-      { width: 13 },
-      { width: 13 },
-      { width: 13 },
-      { width: 13 },
-      { width: 13 },
-      { width: 13 },
-      { width: 13 },
-      { width: 13 },
-      { width: 13 },
-      { width: 12 },
-      { width: 12 },
-      { width: 13 },
-      { width: 14 },
-      { width: 14 },
-      { width: 14 },
-      { width: 12 },
-      { width: 15 },
-      { width: 14 },
-    ];
-
-    const currencyCols = [14, 17, 18, 20, 21, 26, 28, 30, 32, 38, 39, 40];
-    const currencyPsfCols = [15, 41];
-    const pctCols = [16, 36];
-    const numCols = [7, 8, 9, 10, 11, 12, 13, 23, 37];
-
-    function formatDate(d: any): string {
-      if (!d) return "";
-      const dt = new Date(d);
-      if (isNaN(dt.getTime())) return String(d || "");
-      return dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    // Row 3: Category bands — merge contiguous columns sharing the same band.
+    const bandRow = ws.addRow(EXPORT_COLUMNS.map(c => c.band));
+    bandRow.height = 22;
+    let mergeStart = 1;
+    for (let i = 1; i <= totalCols; i++) {
+      const curr = EXPORT_COLUMNS[i - 1].band;
+      const next = i === totalCols ? null : EXPORT_COLUMNS[i].band;
+      if (curr !== next) {
+        if (mergeStart !== i) ws.mergeCells(bandRow.number, mergeStart, bandRow.number, i);
+        const c = ws.getCell(bandRow.number, mergeStart);
+        c.font = { name: "Calibri", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+        c.fill = BAND_FILL;
+        c.alignment = { vertical: "middle", horizontal: "center" };
+        c.border = THIN_BORDER;
+        mergeStart = i + 1;
+      }
     }
 
+    // Row 4: Column headers
+    const headerRow = ws.addRow(EXPORT_COLUMNS.map(c => c.label));
+    headerRow.eachCell({ includeEmpty: true }, (cell: any) => {
+      cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = COL_HEADER_FILL;
+      cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+      cell.border = THIN_BORDER;
+    });
+    headerRow.height = 36;
+
+    // Column widths
+    ws.columns = EXPORT_COLUMNS.map(c => ({ width: c.width }));
+
+    function formatDate(d: any): any {
+      if (!d) return null;
+      const dt = new Date(d);
+      if (isNaN(dt.getTime())) return null;
+      return dt;
+    }
+
+    // Data rows — group by `grouping` and emit a band row whenever it changes
+    // so the export mirrors the Landsec layout.
     let idx = 0;
-    let totals = {
-      nia: 0, gia: 0, passingRent: 0, netIncome: 0, ervPa: 0,
-      serviceCh: 0, insurance: 0, totalOcc: 0,
-    };
+    let lastGrouping = "__none__";
+    const totals: Record<string, number> = {};
+    const numericFields = EXPORT_COLUMNS.filter(c => c.fmt === "currency" || c.fmt === "currency_psf" || c.fmt === "num").map(c => c.field);
+    for (const f of numericFields) totals[f] = 0;
 
     for (const u of result.rows) {
+      // Grouping band row
+      const g = (u.grouping || "").trim();
+      if (g && g !== lastGrouping) {
+        const gRow = ws.addRow([g]);
+        ws.mergeCells(gRow.number, 1, gRow.number, totalCols);
+        const gc = ws.getCell(gRow.number, 1);
+        gc.font = { name: "Calibri", size: 11, bold: true, color: { argb: DARK_BLUE } };
+        gc.fill = GROUPING_FILL;
+        gc.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+        gc.border = {
+          top: { style: "medium", color: { argb: DARK_BLUE } },
+          bottom: { style: "thin", color: { argb: DARK_BLUE } },
+        } as any;
+        gRow.height = 22;
+        lastGrouping = g;
+      }
+
       idx++;
-      const row = ws.addRow([
-        idx, u.premises, u.unit_number, u.tenant_name, u.trading_name, u.permitted_use,
-        Number(u.area_basement) || 0, Number(u.area_ground) || 0, Number(u.area_first) || 0,
-        Number(u.area_second) || 0, Number(u.area_other) || 0,
-        Number(u.nia_sqft) || 0, Number(u.gia_sqft) || 0,
-        Number(u.passing_rent_pa) || 0, Number(u.rent_psf) || 0, Number(u.turnover_percent) || 0,
-        Number(u.landlord_shortfall) || 0, Number(u.net_income) || 0,
-        u.epc_rating, Number(u.blended_erv) || 0, Number(u.erv_pa) || 0,
-        formatDate(u.lease_start), Number(u.term_years) || 0, formatDate(u.lease_expiry),
-        formatDate(u.rent_review_1_date), u.rent_review_1_amount, formatDate(u.rent_review_2_date), u.rent_review_2_amount,
-        formatDate(u.rent_review_3_date), u.rent_review_3_amount, formatDate(u.rent_review_4_date), u.rent_review_4_amount,
-        u.outside_lt_act, u.break_type, formatDate(u.break_date),
-        Number(u.wault_rent_percent) || 0, Number(u.unexpired_term) || 0,
-        Number(u.service_charge) || 0, Number(u.insurance) || 0,
-        Number(u.total_occ_costs) || 0, Number(u.occ_costs_psf) || 0
-      ]);
+      const values = EXPORT_COLUMNS.map(c => {
+        if (c.field === "__idx") return idx;
+        const raw = u[c.field];
+        if (raw == null || raw === "") return null;
+        if (c.fmt === "date") return formatDate(raw);
+        if (c.fmt === "currency" || c.fmt === "currency_psf" || c.fmt === "num") {
+          const n = Number(raw);
+          if (!isNaN(n)) {
+            totals[c.field] = (totals[c.field] || 0) + n;
+            return n;
+          }
+          return null;
+        }
+        return raw;
+      });
 
-      totals.nia += Number(u.nia_sqft) || 0;
-      totals.gia += Number(u.gia_sqft) || 0;
-      totals.passingRent += Number(u.passing_rent_pa) || 0;
-      totals.netIncome += Number(u.net_income) || 0;
-      totals.ervPa += Number(u.erv_pa) || 0;
-      totals.serviceCh += Number(u.service_charge) || 0;
-      totals.insurance += Number(u.insurance) || 0;
-      totals.totalOcc += Number(u.total_occ_costs) || 0;
-
+      const row = ws.addRow(values);
       const isAlt = idx % 2 === 0;
       row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+        const col = EXPORT_COLUMNS[colNumber - 1];
         cell.font = { name: "Calibri", size: 10 };
-        cell.alignment = { vertical: "middle" };
+        cell.alignment = { vertical: "middle", wrapText: col?.fmt === undefined && col?.width > 20 };
         cell.border = THIN_BORDER;
         if (isAlt) cell.fill = ALT_ROW_FILL;
-
-        if (currencyCols.includes(colNumber)) cell.numFmt = CURRENCY_FMT;
-        else if (currencyPsfCols.includes(colNumber)) cell.numFmt = CURRENCY_PSF_FMT;
-        else if (pctCols.includes(colNumber)) cell.numFmt = '0.0"%"';
-        else if (numCols.includes(colNumber)) cell.numFmt = NUM_FMT;
+        if (col?.fmt === "currency") cell.numFmt = CURRENCY_FMT;
+        else if (col?.fmt === "currency_psf") cell.numFmt = CURRENCY_PSF_FMT;
+        else if (col?.fmt === "num") cell.numFmt = NUM_FMT;
+        else if (col?.fmt === "date") cell.numFmt = DATE_FMT;
       });
       row.height = 20;
     }
 
+    // Totals row
     if (result.rows.length > 0) {
-      const totalRow = ws.addRow([
-        '', '', '', 'TOTALS', '', '',
-        '', '', '', '', '',
-        totals.nia, totals.gia,
-        totals.passingRent, '', '', '', totals.netIncome,
-        '', '', totals.ervPa,
-        '', '', '',
-        '', '', '', '',
-        '', '', '', '',
-        '', '', '',
-        '', '',
-        totals.serviceCh, totals.insurance, totals.totalOcc, ''
-      ]);
+      const totalValues = EXPORT_COLUMNS.map(c => {
+        if (c.field === "__idx") return "";
+        if (c.field === "tenant_name") return "TOTAL";
+        if (totals[c.field] !== undefined) return totals[c.field] || null;
+        return "";
+      });
+      const totalRow = ws.addRow(totalValues);
       totalRow.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+        const col = EXPORT_COLUMNS[colNumber - 1];
         cell.font = { name: "Calibri", size: 10, bold: true };
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E6DF" } };
+        cell.fill = TOTAL_FILL;
+        cell.alignment = { vertical: "middle" };
         cell.border = {
           top: { style: "medium", color: { argb: DARK_BLUE } },
           left: { style: "thin", color: { argb: "FFDDDFE0" } },
           bottom: { style: "medium", color: { argb: DARK_BLUE } },
           right: { style: "thin", color: { argb: "FFDDDFE0" } },
         };
-        cell.alignment = { vertical: "middle" };
-        if (currencyCols.includes(colNumber)) cell.numFmt = CURRENCY_FMT;
-        else if (numCols.includes(colNumber)) cell.numFmt = NUM_FMT;
+        if (col?.fmt === "currency") cell.numFmt = CURRENCY_FMT;
+        else if (col?.fmt === "currency_psf") cell.numFmt = CURRENCY_PSF_FMT;
+        else if (col?.fmt === "num") cell.numFmt = NUM_FMT;
       });
       totalRow.height = 24;
     }
 
-    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3 + result.rows.length, column: 41 } };
-
-    ws.views = [{ state: "frozen", ySplit: 3, xSplit: 4 }];
+    // Auto-filter on the column-header row, frozen pane keeps title + bands visible.
+    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: totalCols } };
 
     const buffer = await wb.xlsx.writeBuffer();
     const safeName = propertyName.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "_");
@@ -521,7 +756,7 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     res.setHeader("Content-Disposition", `attachment; filename="${safeName}_Tenancy_Schedule.xlsx"`);
     res.send(Buffer.from(buffer as ArrayBuffer));
   } catch (e: any) {
-    console.error("[tenancy-export] Error:", e.message);
+    console.error("[tenancy-export] failed:", e?.message);
     res.status(500).json({ error: e.message });
   }
 });
