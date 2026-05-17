@@ -535,6 +535,115 @@ import { pool } from "./db";
     `CREATE TABLE IF NOT EXISTS land_registry_searches (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, address TEXT NOT NULL, postcode TEXT, freeholds_count INTEGER DEFAULT 0, leaseholds_count INTEGER DEFAULT 0, freeholds JSONB, leaseholds JSONB, intelligence JSONB, ai_summary JSONB, ownership JSONB, crm_property_id VARCHAR, notes TEXT, tags JSONB DEFAULT '[]', status VARCHAR DEFAULT 'New', created_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS leasing_schedule_units (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR NOT NULL, unit_name TEXT, zone TEXT, positioning TEXT, tenant_name TEXT, agent_initials TEXT, lease_expiry TIMESTAMP, lease_break TIMESTAMP, rent_review TIMESTAMP, landlord_break TIMESTAMP, rent_pa REAL, sqft REAL, mat_psqft REAL, lfl_percent REAL, occ_cost_percent REAL, financial_notes TEXT, target_brands TEXT, optimum_target TEXT, priority TEXT, status TEXT, updates TEXT, target_company_ids TEXT[], sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS leasing_schedule_audit (id SERIAL PRIMARY KEY, unit_id VARCHAR, property_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, action TEXT NOT NULL, field_name TEXT, old_value TEXT, new_value TEXT, created_at TIMESTAMP DEFAULT now())`,
+
+    // Tenancy schedule — single source of truth per unit, aligned with the
+    // Landsec investment-grade template (see SharePoint: Landsec Leisure -
+    // Tenancy Schedule - BGP.xlsx). Columns are union of Landsec template +
+    // a handful of legacy columns kept alive for the xlsx import path.
+    `CREATE TABLE IF NOT EXISTS tenancy_schedule_units (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id VARCHAR NOT NULL,
+      -- Unit Details
+      grouping TEXT,
+      premises TEXT,
+      unit_number TEXT,
+      permitted_use TEXT,
+      status TEXT,
+      am_initiative TEXT,
+      -- Tenant Details
+      tenant_name TEXT,
+      trading_name TEXT,
+      tenant_mix TEXT,
+      -- Lease Details
+      lease_start DATE,
+      break_date DATE,
+      break_details TEXT,
+      break_notice TEXT,
+      lease_expiry DATE,
+      term_years REAL,
+      unexpired_term_break REAL,
+      unexpired_term REAL,
+      next_review_date DATE,
+      outside_lt_act TEXT,
+      measurement_type TEXT,
+      -- Areas — GIA per floor
+      area_basement_gia REAL,
+      area_ground_gia REAL,
+      area_first_gia REAL,
+      area_other_gia REAL,
+      -- Areas — NIA per floor
+      area_basement_nia REAL,
+      area_ground_nia REAL,
+      area_first_nia REAL,
+      area_first_sales_nia REAL,
+      area_other_nia REAL,
+      -- Areas — ITZA + totals
+      area_ground_itza REAL,
+      gia_sqft REAL,
+      nia_sqft REAL,
+      itza_sqft REAL,
+      units_applied REAL,
+      -- Rental Income
+      passing_rent_pa REAL,
+      marketing_rent_pa REAL,
+      turnover_rent_payable REAL,
+      erv_profile TEXT,
+      erv_pa REAL,
+      rent_free_value REAL,
+      capex_value REAL,
+      -- Rates (MLA)
+      rateable_value REAL,
+      rates_payable REAL,
+      -- Occupational Costs
+      service_charge REAL,
+      service_charge_cap REAL,
+      insurance REAL,
+      -- Shortfalls
+      shortfall_liability TEXT,
+      rental_shortfalls REAL,
+      -- NOI
+      topped_up_noi REAL,
+      noi_pa REAL,
+      -- Comments
+      comments TEXT,
+      leasing_comments TEXT,
+      target_tenants TEXT,
+      target_company_ids TEXT[],
+      underwriting_comments TEXT,
+      -- BGP integration
+      epc_rating TEXT,
+      rent_psf REAL,
+      turnover_percent REAL,
+      blended_erv REAL,
+      deal_id VARCHAR,
+      letting_tracker_unit_id VARCHAR,
+      in_leasing_schedule BOOLEAN DEFAULT false,
+      sort_order INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now(),
+      -- Legacy columns kept alive for the xlsx import path; UI will not read
+      -- or write these going forward, drop in a later cleanup commit.
+      area_basement REAL,
+      area_ground REAL,
+      area_first REAL,
+      area_second REAL,
+      area_other REAL,
+      landlord_shortfall REAL,
+      net_income REAL,
+      total_occ_costs REAL,
+      occ_costs_psf REAL,
+      wault_rent_percent REAL,
+      break_type TEXT,
+      rent_review_1_date TEXT,
+      rent_review_1_amount TEXT,
+      rent_review_2_date TEXT,
+      rent_review_2_amount TEXT,
+      rent_review_3_date TEXT,
+      rent_review_3_amount TEXT,
+      rent_review_4_date TEXT,
+      rent_review_4_amount TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tenancy_schedule_units_property ON tenancy_schedule_units(property_id)`,
     `CREATE TABLE IF NOT EXISTS kyc_investigations (id SERIAL PRIMARY KEY, subject_type TEXT NOT NULL, subject_name TEXT NOT NULL, company_number TEXT, crm_company_id VARCHAR, officer_name TEXT, risk_level TEXT, risk_score INTEGER, sanctions_match BOOLEAN DEFAULT false, result JSONB, conducted_by VARCHAR, conducted_at TIMESTAMP DEFAULT now(), notes TEXT)`,
     `CREATE INDEX IF NOT EXISTS kyc_investigations_company_number_idx ON kyc_investigations (company_number)`,
     `CREATE INDEX IF NOT EXISTS kyc_investigations_crm_company_id_idx ON kyc_investigations (crm_company_id)`,
