@@ -358,6 +358,99 @@ async function backfillBrandLogosBySourceName(): Promise<{ updated: number; samp
   return { updated, sampleNames };
 }
 
+// Revert the brand-logo backfill. The user wants the actual article thumbnail
+// (og:image / media:content) — the brand's logo is not what news cards show
+// in other apps. Clears image_url for any row pointing at /api/brand-logo/...
+async function clearBrandLogoBackfill(): Promise<number> {
+  const r = await db.execute(sql`
+    UPDATE news_articles SET image_url = NULL
+     WHERE image_url ILIKE '/api/brand-logo/%'`);
+  return (r.rowCount as number) ?? 0;
+}
+
+// Article-thumbnail backfill — for the most recent N articles, unwrap any
+// Google News URL, fetch the real article, extract og:image (or twitter:image),
+// save as image_url. Uses ScraperAPI when available so we get past geo / UA
+// blocks that kill the direct fetch path. Slow but produces real thumbnails.
+async function backfillArticleThumbnails(limit: number): Promise<{ scanned: number; updated: number; errors: number }> {
+  let scraperFetch: any = null;
+  try {
+    const m = await import("./utils/scraperapi");
+    if (m.isScraperApiAvailable()) scraperFetch = m.scraperFetch;
+  } catch {}
+
+  const missing = await db.select({ id: newsArticles.id, url: newsArticles.url })
+    .from(newsArticles)
+    .where(sql`${newsArticles.imageUrl} IS NULL OR ${newsArticles.imageUrl} = ''
+               OR ${newsArticles.imageUrl} ILIKE '/api/brand-logo/%'`)
+    .orderBy(desc(newsArticles.publishedAt))
+    .limit(limit);
+
+  let updated = 0, errors = 0;
+  for (const article of missing) {
+    if (!article.url) continue;
+    let articleUrl = article.url;
+    const updateFields: Record<string, any> = {};
+
+    // Unwrap Google News if needed
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+      const real = await resolveGoogleNewsUrl(articleUrl);
+      if (real && real !== articleUrl) {
+        articleUrl = real;
+        updateFields.url = real;
+      }
+    }
+
+    // Skip if still a Google wrapper after unwrap attempt — no usable og:image.
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+      errors++;
+      continue;
+    }
+
+    // Try direct fetch first (cheaper), fall back to ScraperAPI on failure.
+    let img: string | null = await fetchOgImage(articleUrl);
+    if (!img && scraperFetch) {
+      try {
+        const r = await scraperFetch(articleUrl, { uk: true, render: false, timeoutMs: 20000 });
+        if (r.ok) {
+          const html = await r.text();
+          const og = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+            || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+          if (og?.[1] && !isJunkImage(og[1])) img = og[1];
+          if (!img) {
+            const tw = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)
+              || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i);
+            if (tw?.[1] && !isJunkImage(tw[1])) img = tw[1];
+          }
+        }
+      } catch {}
+    }
+
+    if (img) {
+      updateFields.imageUrl = img;
+    } else {
+      errors++;
+      continue;
+    }
+
+    try {
+      await db.update(newsArticles).set(updateFields).where(eq(newsArticles.id, article.id));
+      updated++;
+    } catch {
+      // URL UNIQUE constraint hit — try just the image
+      if (updateFields.imageUrl) {
+        try {
+          await db.update(newsArticles).set({ imageUrl: updateFields.imageUrl }).where(eq(newsArticles.id, article.id));
+          updated++;
+        } catch {}
+      }
+    }
+    await new Promise(r => setTimeout(r, 150));
+  }
+  console.log(`[news] Thumbnail backfill: ${updated}/${missing.length} updated, ${errors} no-image`);
+  return { scanned: missing.length, updated, errors };
+}
+
 // Google News RSS URLs (news.google.com/rss/articles/CBM…) are opaque wrappers
 // that redirect to the real article. Without unwrapping, clicking them often
 // dead-ends and og:image extraction is impossible. This function follows the
@@ -1382,6 +1475,33 @@ export function setupNewsFeedRoutes(app: Express) {
       }
     })();
     res.json({ started: true });
+  });
+
+  // Revert the brand-logo backfill — what we actually want is each article's
+  // own og:image (the publisher-supplied thumbnail), not the BGP brand logo.
+  app.post("/api/news-feed/clear-brand-logos", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const cleared = await clearBrandLogoBackfill();
+      res.json({ ok: true, cleared });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Proper article-thumbnail backfill — unwraps Google News, fetches the real
+  // article (via ScraperAPI when available), pulls og:image / twitter:image.
+  // Slow (each row ~0.5–2s); fire-and-forget so the request doesn't time out.
+  app.post("/api/news-feed/backfill-thumbnails", requireAuth, async (req: Request, res: Response) => {
+    const limit = Math.min(parseInt(String(req.body?.limit || req.query.limit || 1000), 10) || 1000, 10000);
+    (async () => {
+      try {
+        const r = await backfillArticleThumbnails(limit);
+        console.log(`[news] Thumbnail backfill done: ${r.updated}/${r.scanned} updated, ${r.errors} no-image`);
+      } catch (e: any) {
+        console.error("[news] Thumbnail backfill failed:", e?.message || e);
+      }
+    })();
+    res.json({ started: true, limit });
   });
 
   // Diagnostic: top source_name values amongst imageless articles. Tells us
