@@ -748,6 +748,10 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const [importParsing, setImportParsing] = useState(false);
   const [importPreview, setImportPreview] = useState<{ sheetName: string; sheetCount: number; rowsScanned: number; units: any[] } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
+  // Landsec-format importer + pull-vacant-from-tenancy
+  const [landsecImporting, setLandsecImporting] = useState(false);
+  const landsecFileRef = useRef<HTMLInputElement>(null);
+  const [showPullVacant, setShowPullVacant] = useState(false);
 
   const handleImportExcel = async (file: File) => {
     setImportParsing(true);
@@ -790,7 +794,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
     queryKey: ["/api/auth/me"],
   });
 
-  const { data: units = [], isLoading, error: unitsError } = useQuery<LeasingUnit[]>({
+  const { data: units = [], isLoading, error: unitsError, refetch: refetchUnits } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/property", propertyId],
     queryFn: async () => {
       const r = await fetch(`/api/leasing-schedule/property/${propertyId}`, { headers: getAuthHeaders() });
@@ -1030,10 +1034,66 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <Button variant="outline" size="sm" onClick={() => setShowImport(true)} data-testid="btn-import">
             <Upload className="w-3.5 h-3.5 mr-1" />Import
           </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => landsecFileRef.current?.click()}
+            disabled={landsecImporting}
+            data-testid="btn-import-landsec"
+            title="Import a Landsec-format leasing tracker xlsx (Zone / Existing / Targets columns)"
+          >
+            {landsecImporting ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />}Landsec xlsx
+          </Button>
+          <input
+            ref={landsecFileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              if (!propertyId) { toast({ title: "Open a property's leasing schedule first" }); return; }
+              setLandsecImporting(true);
+              try {
+                const fd = new FormData();
+                fd.append("file", f);
+                fd.append("propertyId", propertyId);
+                const meetingMonth = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase();
+                fd.append("meetingMonth", meetingMonth);
+                const r = await fetch("/api/leasing-schedule/import-landsec", { method: "POST", headers: getAuthHeaders(), body: fd });
+                const out = await r.json();
+                if (!r.ok) throw new Error(out.error || "Import failed");
+                toast({ title: `Imported ${out.imported} rows`, description: `From sheet "${out.sheetName}"` });
+                refetchUnits();
+              } catch (err: any) {
+                toast({ title: "Landsec import failed", description: err.message, variant: "destructive" });
+              } finally {
+                setLandsecImporting(false);
+                e.target.value = "";
+              }
+            }}
+          />
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setShowPullVacant(true)}
+            disabled={!propertyId}
+            data-testid="btn-pull-tenancy"
+            title="Pull vacant units from this property's Tenancy Schedule into the Leasing Schedule"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" />From Tenancy
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAddUnit(true)} data-testid="btn-add-unit">
             <Plus className="w-3.5 h-3.5 mr-1" />Add Unit
           </Button>
         </div>
+      </div>
+      {/* Landsec status-band legend */}
+      <div className="flex items-center gap-2 flex-wrap text-[10px] pt-2 pb-1 border-b border-border/40">
+        <span className="text-muted-foreground uppercase tracking-wider mr-1">Status bands:</span>
+        {STATUS_BANDS.map(b => (
+          <span key={b.value} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border ${b.pillClass}`}>
+            {b.label}
+          </span>
+        ))}
       </div>
 
       <PropertyPlanningCard propertyId={propertyId} />
@@ -1260,6 +1320,16 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Unit</DialogTitle></DialogHeader>
           <AddUnitForm propertyId={propertyId} onSave={(data) => addMutation.mutate(data)} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showPullVacant} onOpenChange={setShowPullVacant}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Pull units from Tenancy Schedule</DialogTitle></DialogHeader>
+          <PullFromTenancyPanel
+            propertyId={propertyId}
+            onDone={() => { setShowPullVacant(false); refetchUnits(); }}
+          />
         </DialogContent>
       </Dialog>
 
@@ -1898,6 +1968,91 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// Pull units from a property's Tenancy Schedule into the Leasing Schedule.
+// Lists tenancy units NOT already on the leasing schedule (matched by unit
+// name) with checkboxes; vacant ones default-checked since they're the main
+// use case. Each promotion fires a POST to /api/leasing-schedule/promote-from-tenancy.
+function PullFromTenancyPanel({ propertyId, onDone }: { propertyId: string; onDone: () => void }) {
+  const { toast } = useToast();
+  const { data: list, isLoading, refetch } = useQuery<{ units: any[] }>({
+    queryKey: ["/api/leasing-schedule/property", propertyId, "available-from-tenancy"],
+    queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/available-from-tenancy`, { headers: getAuthHeaders() }).then(r => r.json()),
+  });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (list?.units) setPicked(new Set(list.units.filter((u: any) => (u.status || "").toLowerCase() === "vacant").map((u: any) => u.id)));
+  }, [list?.units]);
+
+  const promote = async () => {
+    setBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of picked) {
+      try {
+        const r = await fetch("/api/leasing-schedule/promote-from-tenancy", {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ tenancyUnitId: id }),
+        });
+        if (r.ok) ok++; else fail++;
+      } catch { fail++; }
+    }
+    setBusy(false);
+    toast({ title: `Promoted ${ok} unit${ok === 1 ? "" : "s"}`, description: fail > 0 ? `${fail} failed` : undefined });
+    onDone();
+  };
+
+  if (isLoading) return <div className="py-6 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Loading tenancy schedule…</div>;
+  if (!list?.units?.length) return <div className="py-6 text-sm text-muted-foreground">All tenancy units are already on the leasing schedule.</div>;
+
+  const togglePick = (id: string) => {
+    setPicked(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  };
+  const toggleAll = (on: boolean) => setPicked(on ? new Set(list.units.map((u: any) => u.id)) : new Set());
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Units on this property's Tenancy Schedule that aren't yet on the Leasing Schedule. Vacant units are pre-selected. Promoting copies the basic unit info; lease economics stay live-linked to the Tenancy Schedule.
+      </p>
+      <div className="flex items-center gap-3 text-xs">
+        <button onClick={() => toggleAll(true)} className="text-primary hover:underline">Select all</button>
+        <button onClick={() => toggleAll(false)} className="text-muted-foreground hover:text-foreground">Clear</button>
+        <span className="ml-auto text-muted-foreground">{picked.size} selected of {list.units.length}</span>
+      </div>
+      <div className="border rounded max-h-[400px] overflow-y-auto divide-y">
+        {list.units.map((u: any) => {
+          const isVacant = (u.status || "").toLowerCase() === "vacant";
+          const checked = picked.has(u.id);
+          return (
+            <label key={u.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/30 ${isVacant ? "bg-amber-50/40 dark:bg-amber-950/20" : ""}`}>
+              <input type="checkbox" checked={checked} onChange={() => togglePick(u.id)} />
+              <div className="flex-1 min-w-0 text-xs">
+                <div className="font-medium flex items-center gap-2">
+                  {u.unit_number || u.premises || "—"}
+                  {isVacant && <Badge variant="outline" className="text-[9px] border-amber-400 text-amber-700">VACANT</Badge>}
+                  {u.in_leasing_schedule && <Badge variant="outline" className="text-[9px] border-blue-400 text-blue-700">Flagged</Badge>}
+                </div>
+                <div className="text-muted-foreground truncate">
+                  {u.tenant_name || "No tenant"}{u.permitted_use ? ` · ${u.permitted_use}` : ""}{u.nia_sqft ? ` · ${u.nia_sqft.toLocaleString()} sqft NIA` : ""}{u.passing_rent_pa ? ` · £${u.passing_rent_pa.toLocaleString()} pa` : ""}
+                </div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onDone}>Cancel</Button>
+        <Button size="sm" onClick={promote} disabled={busy || picked.size === 0} data-testid="btn-promote-from-tenancy">
+          {busy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}
+          Add {picked.size} to Leasing Schedule
+        </Button>
+      </div>
     </div>
   );
 }
