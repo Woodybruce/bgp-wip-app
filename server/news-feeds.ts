@@ -1340,6 +1340,24 @@ export function setupNewsFeedRoutes(app: Express) {
     }
   });
 
+  // Diagnostic: top source_name values amongst imageless articles. Tells us
+  // which publishers to add to PUBLISHER_DOMAINS so the favicon backfill
+  // actually covers the bulk of the data.
+  app.get("/api/news-feed/source-names", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT source_name, COUNT(*)::int AS n
+          FROM news_articles
+         WHERE (image_url IS NULL OR image_url = '')
+         GROUP BY source_name
+         ORDER BY n DESC
+         LIMIT 80`);
+      res.json({ top: rows.rows });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/news-feed/articles", requireAuth, async (req: Request, res: Response) => {
     try {
       const { team, limit: limitStr, search } = req.query;
