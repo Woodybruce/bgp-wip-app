@@ -3771,19 +3771,68 @@ function LandlordOwnershipBlock({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, hasDomain, findingsAreFresh]);
 
-  // Build the combined marker set for the map. CRM rows already have
-  // lat/lng. Website-scraped + Land Registry rows are skipped from the
-  // map for now (no geocoding yet) but still listed below the map.
-  const mapStores = ownedProperties
-    .filter(p => p.lat != null && p.lng != null)
-    .map(p => ({
-      id: p.id,
+  // Build the combined marker set for the map.
+  // - CRM-linked properties → "linked" tone, click navigates to property page
+  // - Scraped (now geocoded) → "unlinked" tone, click fires the create mutation
+  // - Land Registry titles → "unlinked" tone, click fires create (uses
+  //   property_address + postcode as the seed name).
+  // Each marker shows just the formatted address in its tooltip — names
+  // can be ambiguous ("Lucent") and the address is the unambiguous read.
+  const mapStores: Array<{
+    id: string;
+    name: string;
+    address: string | null;
+    lat: number | null;
+    lng: number | null;
+    status: string | null;
+    tone: "linked" | "unlinked";
+    href?: string;
+    seed?: { name: string; address?: string; postcode?: string; sector?: string };
+  }> = [];
+
+  for (const p of ownedProperties) {
+    if (p.lat == null || p.lng == null) continue;
+    mapStores.push({
+      id: `crm:${p.id}`,
       name: p.name,
       address: typeof p.address === "string" ? p.address : (p.address?.formatted || p.postcode || null),
-      lat: p.lat,
-      lng: p.lng,
+      lat: p.lat, lng: p.lng,
       status: p.status,
-    }));
+      tone: "linked",
+      href: `/properties/${p.id}`,
+    });
+  }
+  for (const p of (findings?.properties || [])) {
+    const lat = (p as any).lat;
+    const lng = (p as any).lng;
+    if (lat == null || lng == null) continue;
+    mapStores.push({
+      id: `scraped:${p.name}`,
+      name: p.name,
+      address: (p as any).formatted_address || p.address || p.postcode || null,
+      lat, lng,
+      status: null,
+      tone: "unlinked",
+      seed: p,
+    });
+  }
+  for (const t of landRegistryTitles) {
+    if ((t as any).lat == null || (t as any).lng == null) continue;
+    mapStores.push({
+      id: `lr:${t.title_number}`,
+      name: t.property_address || `Title ${t.title_number}`,
+      address: t.property_address || t.postcode || null,
+      lat: (t as any).lat,
+      lng: (t as any).lng,
+      status: null,
+      tone: "unlinked",
+      seed: {
+        name: t.property_address || `Title ${t.title_number}`,
+        address: t.property_address || undefined,
+        postcode: t.postcode || undefined,
+      },
+    });
+  }
 
   const createPropertyMutation = useMutation({
     mutationFn: async (item: { name: string; address?: string; postcode?: string; sector?: string }) => {
@@ -3841,107 +3890,102 @@ function LandlordOwnershipBlock({
         )}
       </div>
 
-      {/* Map always shows — even with zero CRM rows we put up the
-          empty Leaflet so the layout is consistent. Markers will fill
-          in once any scraped property is promoted to a CRM row. */}
-      <BrandPortfolioMap stores={mapStores as any} height={300} />
-
-      {/* CRM-linked list — the curated portfolio. Each row deep-links
-          into the property page. */}
-      {ownedProperties.length > 0 && (
-        <div className="mt-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-            CRM portfolio ({ownedProperties.length})
-          </div>
-          <div className="max-h-[200px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 md:grid-cols-2 gap-y-0.5 gap-x-3">
-            {ownedProperties.map((p: any) => (
-              <Link key={p.id} href={`/properties/${p.id}`}>
-                <div className="leading-snug px-1.5 py-1 rounded hover:bg-muted cursor-pointer">
-                  <div className="font-medium truncate">{p.name}</div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                    {p.asset_class && <span>{p.asset_class}</span>}
-                    {p.unit_count != null && p.unit_count > 0 && <span>· {p.unit_count} units</span>}
-                    {p.postcode && <span>· {p.postcode}</span>}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+      {/* Map always shows. Two marker tones: teal for CRM-linked
+          (clickable through to property page), grey for scraped /
+          Land Registry not yet in CRM (click fires the Create CRM
+          property flow). */}
+      <BrandPortfolioMap
+        stores={mapStores as any}
+        height={320}
+        alwaysRender
+        onSelect={(s: any) => {
+          if (s.href) {
+            window.location.href = s.href;
+            return;
+          }
+          if (s.seed) {
+            createPropertyMutation.mutate(s.seed);
+          }
+        }}
+      />
+      {mapStores.length > 0 && (
+        <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-teal-700" /> In CRM ({mapStores.filter(s => s.tone === "linked").length})</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-slate-400" /> Click to add ({mapStores.filter(s => s.tone === "unlinked").length})</span>
         </div>
       )}
 
-      {/* Website-scraped list with per-row "Create CRM property"
-          button. Rows that match an existing CRM row (i.e. were
-          auto-linked) get a Linked badge instead of a button. */}
-      {scrapedProperties.length > 0 && (
-        <div className="mt-3 pt-2 border-t border-border/30">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-            From their website ({scrapedProperties.length})
-          </div>
-          <div className="max-h-[240px] overflow-y-auto pr-1 text-[11px] space-y-0.5">
-            {scrapedProperties.slice(0, 80).map((p: any, i: number) => {
-              const linked = isAlreadyLinked(p);
-              return (
-                <div key={i} className="flex items-center gap-1.5 leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{p.name}</div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                      {p.sector && <span className="capitalize">{p.sector}</span>}
-                      {p.postcode && <span>· {p.postcode}</span>}
-                      {!p.postcode && p.address && <span className="truncate">{p.address}</span>}
-                    </div>
-                  </div>
-                  {linked ? (
-                    <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 shrink-0">
-                      <Check className="w-2.5 h-2.5 mr-0.5" /> linked
-                    </Badge>
-                  ) : (
-                    <button
-                      onClick={() => createPropertyMutation.mutate(p)}
-                      disabled={createPropertyMutation.isPending}
-                      className="text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 shrink-0"
-                      title="Create a CRM property record from this scraped row and link it to this landlord"
-                    >
-                      <Plus className="w-2.5 h-2.5 inline" /> CRM
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Land Registry titles — the authoritative truth from HMLR
-          CCOD/UCOD. Often hundreds for a big REIT; we cap render at 50. */}
-      {landRegistryTitles.length > 0 && (
-        <div className="mt-3 pt-2 border-t border-border/30">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-            Land Registry titles ({landRegistryTitles.length}{landRegistryTitles.length >= 200 ? "+" : ""})
-          </div>
-          <div className="max-h-[240px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 gap-y-0.5">
-            {landRegistryTitles.slice(0, 50).map((t: any) => (
-              <div key={t.title_number} className="leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono text-[10px] text-muted-foreground shrink-0">{t.title_number}</span>
-                  <span className="truncate">{t.property_address || "(no address)"}</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                  {t.tenure && <span>{t.tenure}</span>}
-                  {t.postcode && <span>· {t.postcode}</span>}
-                  {t.district && <span>· {t.district}</span>}
-                  {t.price_paid && <span>· £{Number(t.price_paid).toLocaleString()}</span>}
-                </div>
+      {/* Combined address list — one row per property regardless of
+          source. CRM-linked rows have a teal dot and link to the
+          property page; scraped / Land Registry rows have a grey dot
+          and a Create-CRM button. Address-only display per the team
+          spec; names are still in the tooltip on the map. */}
+      <div className="mt-3 space-y-0.5 text-[11px]">
+        {ownedProperties.map((p: any) => {
+          const addr = typeof p.address === "string"
+            ? p.address
+            : (p.address?.formatted || [p.name, p.postcode].filter(Boolean).join(", "));
+          return (
+            <Link key={`crm:${p.id}`} href={`/properties/${p.id}`}>
+              <div className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted cursor-pointer">
+                <span className="inline-block w-2 h-2 rounded-full bg-teal-700 shrink-0" />
+                <span className="truncate flex-1">{addr || p.name}</span>
+                <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 shrink-0">
+                  in CRM
+                </Badge>
               </div>
-            ))}
-            {landRegistryTitles.length > 50 && (
-              <div className="text-[10px] italic text-muted-foreground pt-1">
-                + {landRegistryTitles.length - 50} more titles — ask ChatBGP to summarise by region or pull a CSV.
-              </div>
-            )}
+            </Link>
+          );
+        })}
+        {scrapedProperties.map((p: any, i: number) => {
+          if (isAlreadyLinked(p)) return null;
+          const addr = [p.formatted_address, p.address, p.postcode].filter(Boolean)[0] || p.name;
+          return (
+            <div key={`scr:${i}`} className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted/50">
+              <span className="inline-block w-2 h-2 rounded-full bg-slate-400 shrink-0" />
+              <span className="truncate flex-1">{addr}</span>
+              <button
+                onClick={() => createPropertyMutation.mutate(p)}
+                disabled={createPropertyMutation.isPending}
+                className="text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 shrink-0"
+                title={`Add "${p.name}" to CRM, linked to this landlord`}
+              >
+                <Plus className="w-2.5 h-2.5 inline" /> Add to CRM
+              </button>
+            </div>
+          );
+        })}
+        {landRegistryTitles.slice(0, 100).map((t: any, i: number) => {
+          // Skip Land Registry rows whose address is already in
+          // ownedProperties (avoids duplicate rendering when the title
+          // shares the address of a linked CRM row).
+          const addr = t.property_address || t.postcode || `Title ${t.title_number}`;
+          return (
+            <div key={`lr:${t.title_number}:${i}`} className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted/50">
+              <span className="inline-block w-2 h-2 rounded-full bg-slate-400 shrink-0" />
+              <span className="truncate flex-1">{addr}</span>
+              <span className="font-mono text-[9px] text-muted-foreground shrink-0">{t.title_number}</span>
+              <button
+                onClick={() => createPropertyMutation.mutate({
+                  name: t.property_address || `Title ${t.title_number}`,
+                  address: t.property_address || undefined,
+                  postcode: t.postcode || undefined,
+                })}
+                disabled={createPropertyMutation.isPending}
+                className="text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 shrink-0"
+                title="Add this Land Registry title to CRM, linked to this landlord"
+              >
+                <Plus className="w-2.5 h-2.5 inline" /> Add to CRM
+              </button>
+            </div>
+          );
+        })}
+        {landRegistryTitles.length > 100 && (
+          <div className="text-[10px] italic text-muted-foreground pt-1 px-1.5">
+            + {landRegistryTitles.length - 100} more Land Registry titles — ask ChatBGP to filter by region.
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Empty state — no source has any data yet. */}
       {ownedProperties.length === 0 && scrapedProperties.length === 0 && landRegistryTitles.length === 0 && (

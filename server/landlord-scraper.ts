@@ -21,6 +21,7 @@
 import { pool } from "./db";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { callClaude, safeParseJSON, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
+import { geocodeBatch } from "./geocode";
 
 // Paths likely to hold landlord-specific intel. Probed in parallel. Each
 // path that returns >200 chars of text is fed into the AI prompt. We
@@ -70,7 +71,7 @@ interface LandlordFindings {
   ir_contact: { name?: string; email?: string; phone?: string; role?: string } | null;
   board_members: Array<{ name: string; role?: string }>;
   annual_report_url: string | null;
-  properties: Array<{ name: string; address?: string; postcode?: string; sector?: string }>;
+  properties: Array<{ name: string; address?: string; postcode?: string; sector?: string; lat?: number | null; lng?: number | null; formatted_address?: string | null }>;
   raw_notes: string | null;
 }
 
@@ -220,6 +221,26 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     properties: Array.isArray(aiOut?.properties) ? aiOut.properties.slice(0, 200) : [],
     raw_notes: aiOut?.raw_notes || null,
   };
+
+  // Geocode each scraped property so the map can plot them. Query
+  // strategy: "Name, Postcode UK" when both present, else "Name UK".
+  // Caps at 60 to keep the Google bill predictable on a big REIT —
+  // Land Sec has ~30 named places, far below the cap. Postcodes
+  // already plot for free via the cache so re-scraping the same
+  // landlord later is essentially zero-cost.
+  if (findings.properties.length > 0) {
+    progress[companyId] = { state: "geocoding", updatedAt: new Date().toISOString() };
+    const toGeocode = findings.properties.slice(0, 60).map(p => {
+      const parts = [p.name, p.postcode, p.address, "UK"].filter(Boolean);
+      return parts.join(", ");
+    });
+    const results = await geocodeBatch(toGeocode, 4);
+    for (let i = 0; i < results.length; i++) {
+      findings.properties[i].lat = results[i].lat;
+      findings.properties[i].lng = results[i].lng;
+      findings.properties[i].formatted_address = results[i].formattedAddress;
+    }
+  }
 
   await pool.query(
     `INSERT INTO landlord_website_findings
