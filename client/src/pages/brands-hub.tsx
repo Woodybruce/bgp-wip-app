@@ -262,57 +262,58 @@ export default function BrandsHub() {
         ))}
       </div>
 
-      {/* ── Turnover Leaderboard ────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-yellow-500" />
-            <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
-            <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0} tracked</Badge>
-          </div>
-          <Link href="/turnover">
-            <Button variant="ghost" size="sm" className="text-xs h-7">
-              Full board <ChevronRight className="w-3 h-3 ml-0.5" />
-            </Button>
-          </Link>
-        </CardHeader>
-        <CardContent className="px-5 pb-4">
-          {!data?.topTurnover?.length ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-20" />
-              <p className="text-sm">No turnover data yet</p>
-              <p className="text-xs mt-1">Click "Research" on any brand to start building your leaderboard</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {data.topTurnover.map((t, i) => (
-                <div key={t.id} className="flex items-center gap-3 py-2 border-b last:border-0">
-                  <span className={`text-xs font-bold w-5 shrink-0 ${i < 3 ? "text-yellow-500" : "text-muted-foreground"}`}>
-                    {i + 1}
-                  </span>
-                  <BrandLogo name={t.company_name} domain={t.domain} size={28} />
-                  <div className="flex-1 min-w-0">
-                    <Link href={`/companies/${t.company_id}`}>
-                      <p className="text-sm font-medium hover:underline truncate">{t.company_name}</p>
-                    </Link>
-                    <p className="text-[10px] text-muted-foreground">{(t.company_type || "").replace("Tenant - ", "")} · {t.period}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-emerald-600">{formatTurnover(t.turnover)}</p>
-                    {t.turnover_per_sqft && (
-                      <p className="text-[10px] text-muted-foreground">£{t.turnover_per_sqft.toFixed(0)}/sq ft</p>
-                    )}
-                  </div>
-                  <Badge className={`text-[9px] px-1.5 shrink-0 ${confidenceColour(t.confidence)}`}>{t.confidence}</Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Top row: Turnover Leaders + Who's Hot + Super Brands ─────
+           Three-column 'at a glance' strip. Layout collapses to 1-col
+           on mobile / 2-col on tablet / 3-col on lg+ so the three
+           snapshots stay legible without becoming postage stamps. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 
-      {/* ── Who's Hot + Super Brands side by side ──────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Turnover Leaderboard */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-yellow-500" />
+              <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
+              <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0}</Badge>
+            </div>
+            <Link href="/turnover">
+              <Button variant="ghost" size="sm" className="text-xs h-7">
+                Full <ChevronRight className="w-3 h-3 ml-0.5" />
+              </Button>
+            </Link>
+          </CardHeader>
+          <CardContent className="px-5 pb-4">
+            {!data?.topTurnover?.length ? (
+              <div className="text-center py-6 text-muted-foreground">
+                <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                <p className="text-xs">No turnover data yet</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
+                {data.topTurnover.slice(0, 10).map((t, i) => (
+                  <div key={t.id} className="flex items-center gap-2 py-1.5 border-b last:border-0">
+                    <span className={`text-xs font-bold w-4 shrink-0 ${i < 3 ? "text-yellow-500" : "text-muted-foreground"}`}>
+                      {i + 1}
+                    </span>
+                    <BrandLogo name={t.company_name} domain={t.domain} size={22} />
+                    <div className="flex-1 min-w-0">
+                      <Link href={`/companies/${t.company_id}`}>
+                        <p className="text-xs font-medium hover:underline truncate">{t.company_name}</p>
+                      </Link>
+                      <p className="text-[9px] text-muted-foreground truncate">{(t.company_type || "").replace("Tenant - ", "")} · {t.period}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-bold text-emerald-600">{formatTurnover(t.turnover)}</p>
+                      {t.turnover_per_sqft && (
+                        <p className="text-[9px] text-muted-foreground">£{t.turnover_per_sqft.toFixed(0)}/sqft</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Who's Hot */}
         <Card>
@@ -320,31 +321,31 @@ export default function BrandsHub() {
             <div className="flex items-center gap-2">
               <Flame className="w-4 h-4 text-orange-500" />
               <CardTitle className="text-sm font-semibold">Who's Hot</CardTitle>
-              <span className="text-[10px] text-muted-foreground">brands active in the last 90 days</span>
+              <Badge variant="secondary" className="text-[10px]">{filteredHot.length}</Badge>
             </div>
+            <span className="text-[10px] text-muted-foreground">last 90 days</span>
           </CardHeader>
           <CardContent className="px-5 pb-4">
             {!filteredHot.length ? (
               <p className="text-sm text-muted-foreground text-center py-6">No recent brand activity</p>
             ) : (
-              <div className="space-y-1.5">
-                {filteredHot.slice(0, 12).map(b => {
-                  const activity = parseInt(b.deal_count) + parseInt(b.req_count) + parseInt(b.contact_count);
+              <div className="space-y-1 max-h-[460px] overflow-y-auto pr-1">
+                {filteredHot.slice(0, 10).map(b => {
                   const daysAgo = Math.floor((Date.now() - new Date(b.last_activity).getTime()) / 86400000);
                   return (
                     <Link key={b.id} href={`/companies/${b.id}`}>
-                      <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
-                        <BrandLogo name={b.name} domain={b.domain} size={32} />
+                      <div className="flex items-center gap-2 py-1.5 border-b last:border-0 hover:bg-muted/50 rounded -mx-1 px-1 transition-colors cursor-pointer">
+                        <BrandLogo name={b.name} domain={b.domain} size={22} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{b.name}</p>
-                          <p className="text-[10px] text-muted-foreground">{(b.company_type || "").replace("Tenant - ", "")}</p>
+                          <p className="text-xs font-medium truncate">{b.name}</p>
+                          <p className="text-[9px] text-muted-foreground truncate">{(b.company_type || "").replace("Tenant - ", "")}</p>
                         </div>
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
-                            {parseInt(b.deal_count) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count} deal{parseInt(b.deal_count) !== 1 ? "s" : ""}</Badge>}
-                            {parseInt(b.req_count) > 0 && <Badge className="text-[9px] px-1 bg-blue-500">{b.req_count} req</Badge>}
+                            {parseInt(b.deal_count) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count}d</Badge>}
+                            {parseInt(b.req_count) > 0 && <Badge className="text-[9px] px-1 bg-blue-500">{b.req_count}r</Badge>}
                           </div>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d ago`}</p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d`}</p>
                         </div>
                       </div>
                     </Link>
@@ -365,17 +366,17 @@ export default function BrandsHub() {
             </div>
             <Link href="/companies?tab=tenants&cat=luxury">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                View all <ChevronRight className="w-3 h-3 ml-0.5" />
+                All <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 max-h-[460px] overflow-y-auto pr-1">
               {(data?.superBrands || []).map(b => (
                 <Link key={b.id} href={`/companies/${b.id}`}>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.name}>
-                    <BrandLogo name={b.name} domain={b.domain} size={18} />
-                    <span className="text-xs font-medium">{b.name}</span>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.name}>
+                    <BrandLogo name={b.name} domain={b.domain} size={16} />
+                    <span className="text-[11px] font-medium">{b.name}</span>
                   </div>
                 </Link>
               ))}
