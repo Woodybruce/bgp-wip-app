@@ -1658,56 +1658,26 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 fn is kept in the file for re-use if/when we buy company
                 lookup credits and the rich payload becomes available. */}
 
-            {/* ── Stores — restored standalone after the Financial & Covenant
-                 zone was scorched. Map + list of UK stores; researched on
-                 demand via the re-scan button. */}
+            {/* ── Stores — UK only. The UK/Global toggle + Research-global
+                 button were rolled back May 2026 — global research wasn't
+                 working reliably. Backend + brand_stores.country schema
+                 are still in place so we can re-enable later. */}
             {stores.length > 0 && (() => {
-              const visible = storesScope === "uk"
-                ? stores.filter((s: any) => !s.country || s.country === "GB")
-                : stores;
-              const hasNonUk = stores.some((s: any) => s.country && s.country !== "GB");
-              const ukCount = stores.filter((s: any) => !s.country || s.country === "GB").length;
+              const visible = stores.filter((s: any) => !s.country || s.country === "GB");
               return (
                 <div className="border-t border-border/40 mt-3 pt-2 order-5">
                   <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                     <Store className="w-3.5 h-3.5 text-muted-foreground" />
                     <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-                      {storesScope === "uk" ? `UK stores (${visible.length})` : `Global stores (${visible.length})`}
+                      UK stores ({visible.length})
                     </span>
-                    {hasNonUk && (
-                      <div className="ml-2 flex items-center gap-0.5 rounded-md border bg-card text-[10px] overflow-hidden">
-                        <button
-                          onClick={() => setStoresScope("uk")}
-                          className={`px-2 py-0.5 ${storesScope === "uk" ? "bg-foreground text-background" : "hover:bg-muted"}`}
-                          data-testid="brand-stores-scope-uk"
-                        >
-                          UK ({ukCount})
-                        </button>
-                        <button
-                          onClick={() => setStoresScope("global")}
-                          className={`px-2 py-0.5 ${storesScope === "global" ? "bg-foreground text-background" : "hover:bg-muted"}`}
-                          data-testid="brand-stores-scope-global"
-                        >
-                          Global ({stores.length})
-                        </button>
-                      </div>
-                    )}
                     <button
                       onClick={() => researchStoresMutation.mutate("uk")}
                       disabled={researchStoresMutation.isPending}
                       className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
                       data-testid="btn-research-stores-uk"
                     >
-                      {researchStoresMutation.isPending && researchStoresMutation.variables === "uk" ? "Researching…" : "Re-scan UK"}
-                    </button>
-                    <button
-                      onClick={() => researchStoresMutation.mutate("global")}
-                      disabled={researchStoresMutation.isPending}
-                      className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
-                      data-testid="btn-research-stores-global"
-                      title="Search ~35 global cities (uses more Google Places quota)"
-                    >
-                      {researchStoresMutation.isPending && researchStoresMutation.variables === "global" ? "Researching…" : "Research global"}
+                      {researchStoresMutation.isPending ? "Researching…" : "Re-scan UK"}
                     </button>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
@@ -1715,12 +1685,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <div className="max-h-[380px] overflow-y-auto pr-1 text-xs grid grid-cols-2 gap-x-2 gap-y-1 content-start">
                       {visible.map((s: any) => (
                         <div key={s.id} className="leading-snug">
-                          <div className="font-medium truncate">
-                            {s.name}
-                            {s.country && s.country !== "GB" && (
-                              <span className="ml-1 text-[9px] font-normal text-muted-foreground">{s.country}</span>
-                            )}
-                          </div>
+                          <div className="font-medium truncate">{s.name}</div>
                           {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
                         </div>
                       ))}
