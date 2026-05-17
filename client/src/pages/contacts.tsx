@@ -1428,16 +1428,21 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
 
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
+    const hasSearch = !!search.trim();
     return contacts.filter((c) => {
-      if (activeGroup !== "all" && (c.groupName || "Uncategorized") !== activeGroup) return false;
-      if (allocationFilter !== "all" && !parseAlloc(c.bgpAllocation).includes(allocationFilter)) return false;
-      if (bgpClientFilter && !c.bgpClient) return false;
-      if ((columnFilters.status?.length || 0) > 0 && !columnFilters.status.includes(c.groupName || "")) return false;
-      if ((columnFilters.type?.length || 0) > 0) {
-        const derivedType = getContactType(c);
-        if (!derivedType || !columnFilters.type.includes(derivedType)) return false;
+      // When a search term is active, search is global — group / allocation /
+      // BGP-client filters are ignored so users always find anyone they type.
+      if (!hasSearch) {
+        if (activeGroup !== "all" && (c.groupName || "Uncategorized") !== activeGroup) return false;
+        if (allocationFilter !== "all" && !parseAlloc(c.bgpAllocation).includes(allocationFilter)) return false;
+        if (bgpClientFilter && !c.bgpClient) return false;
+        if ((columnFilters.status?.length || 0) > 0 && !columnFilters.status.includes(c.groupName || "")) return false;
+        if ((columnFilters.type?.length || 0) > 0) {
+          const derivedType = getContactType(c);
+          if (!derivedType || !columnFilters.type.includes(derivedType)) return false;
+        }
       }
-      if (search) {
+      if (hasSearch) {
         const s = search.toLowerCase();
         return (
           c.name.toLowerCase().includes(s) ||
@@ -1495,8 +1500,8 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       <div className="p-4 sm:p-6">
         <div className="flex items-center justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">People Hub</h1>
-            <p className="text-sm text-muted-foreground">CRM Contacts</p>
+            <h1 className="text-2xl font-bold tracking-tight">CRM</h1>
+            <p className="text-sm text-muted-foreground">Contacts</p>
           </div>
         </div>
         <Card>
@@ -1593,7 +1598,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
             <Users className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">People Hub</h1>
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">CRM</h1>
             <p className="text-sm text-muted-foreground">
               {contacts?.length || 0} contacts in CRM{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
             </p>

@@ -1124,7 +1124,7 @@ function PeopleHub() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-            {scopedLandlordCompany ? `${scopedLandlordCompany.name} — People Hub` : "People Hub"}
+            {scopedLandlordCompany ? `${scopedLandlordCompany.name} — CRM` : "CRM"}
           </h1>
           <p className="text-sm text-muted-foreground">
             {scopedLandlordCompany
