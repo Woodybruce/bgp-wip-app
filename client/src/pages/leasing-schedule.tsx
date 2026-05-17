@@ -818,6 +818,21 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   });
 
   const [generatingAll, setGeneratingAll] = useState(false);
+  const [aiBanding, setAiBanding] = useState(false);
+  const handleAutoBand = async () => {
+    setAiBanding(true);
+    try {
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/auto-status`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "AI banding failed");
+      toast({ title: `AI banded ${out.updated} of ${out.total} units`, description: out.attempted ? `${out.attempted} classifications proposed` : undefined });
+      refetchUnits();
+    } catch (e: any) {
+      toast({ title: "AI banding failed", description: e.message, variant: "destructive" });
+    } finally { setAiBanding(false); }
+  };
   const handleGenerateAll = async () => {
     setGeneratingAll(true);
     try {
@@ -1028,6 +1043,15 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <Button variant="outline" size="sm" onClick={() => setShowAuditLog(!showAuditLog)} data-testid="btn-audit-log">
             <History className="w-3.5 h-3.5 mr-1" />Audit Log
           </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={handleAutoBand}
+            disabled={aiBanding}
+            data-testid="btn-ai-band"
+            title="Ask Claude to assign A/B/C/D/Void status bands based on tenant performance + Landsec strategy"
+          >
+            {aiBanding ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}AI Status Bands
+          </Button>
           <Button variant="outline" size="sm" onClick={handleExport} data-testid="btn-export">
             <Download className="w-3.5 h-3.5 mr-1" />Export
           </Button>
@@ -1086,6 +1110,31 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           </Button>
         </div>
       </div>
+      {/* Last updated + meeting month banner */}
+      {(() => {
+        const mostRecent = units.reduce((max: Date | null, u: any) => {
+          const d = u.updated_at ? new Date(u.updated_at) : null;
+          return d && (!max || d > max) ? d : max;
+        }, null as Date | null);
+        const lastBy = (units.find((u: any) => u.last_updated_by) as any)?.last_updated_by || null;
+        const meetingMonth = (units.find((u: any) => u.meeting_month) as any)?.meeting_month || null;
+        return (
+          <div className="flex items-center gap-3 text-[11px] pt-2 pb-1 text-muted-foreground">
+            {mostRecent && (
+              <span className="inline-flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Last updated {mostRecent.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} at {mostRecent.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                {lastBy && <span className="ml-1">by <span className="font-medium text-foreground">{lastBy}</span></span>}
+              </span>
+            )}
+            {meetingMonth && (
+              <span className="inline-flex items-center gap-1 ml-2">
+                <Badge variant="outline" className="text-[10px]">For {meetingMonth} meeting</Badge>
+              </span>
+            )}
+          </div>
+        );
+      })()}
       {/* Landsec status-band legend */}
       <div className="flex items-center gap-2 flex-wrap text-[10px] pt-2 pb-1 border-b border-border/40">
         <span className="text-muted-foreground uppercase tracking-wider mr-1">Status bands:</span>

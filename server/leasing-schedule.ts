@@ -1206,13 +1206,56 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
     { key: "updates", width: 45 },
   ];
 
-  const titleRow = ws.addRow([`${propertyName}\nLeasing Schedule`]);
+  const titleRow = ws.addRow([`${propertyName} — Leasing Schedule`]);
   ws.mergeCells(titleRow.number, 1, titleRow.number, 8);
   const titleCell = ws.getCell(titleRow.number, 1);
-  titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+  titleCell.font = { name: "Calibri", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
   titleCell.fill = DARK_BLUE_FILL;
-  titleCell.alignment = { vertical: "middle", wrapText: true };
-  ws.getRow(titleRow.number).height = 40;
+  titleCell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+  ws.getRow(titleRow.number).height = 36;
+
+  // "As at" / meeting month + last-updated banner
+  const mostRecentUpdate = units.reduce((max: Date | null, u: any) => {
+    const d = u.updated_at ? new Date(u.updated_at) : null;
+    return d && (!max || d > max) ? d : max;
+  }, null as Date | null);
+  const lastBy = (units.find((u: any) => u.last_updated_by)?.last_updated_by) || null;
+  const meetingMonth = units.find((u: any) => u.meeting_month)?.meeting_month || null;
+  const banner: string[] = [];
+  banner.push(`Bruce Gillingham Pollard`);
+  banner.push(`Exported ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} at ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`);
+  if (mostRecentUpdate) banner.push(`Last updated ${mostRecentUpdate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${lastBy ? ` by ${lastBy}` : ""}`);
+  if (meetingMonth) banner.push(`For ${meetingMonth} meeting`);
+  banner.push(`${units.length} units`);
+  const dateRow = ws.addRow([banner.join("  ·  ")]);
+  ws.mergeCells(dateRow.number, 1, dateRow.number, 8);
+  const dateCell = ws.getCell(dateRow.number, 1);
+  dateCell.font = { name: "Calibri", size: 9, italic: true, color: { argb: "FF596264" } };
+  dateCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E6DF" } };
+  dateCell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+  ws.getRow(dateRow.number).height = 20;
+
+  // Status-band legend row
+  const legendCells = [
+    { label: "A — Halo / On Strategy", fill: "FFC6EFCE" },
+    { label: "B — On Strategy", fill: "FFE2EFDA" },
+    { label: "C — Maintain Mix", fill: "FFFFEB9C" },
+    { label: "D — Divest Over Time", fill: "FFC00000", fontWhite: true },
+    { label: "D — Customer at Risk / Live Opp", fill: "FFFF0000", fontWhite: true },
+    { label: "Void / Live Opp", fill: "FFD9D9D9" },
+  ];
+  const legendRow = ws.addRow(legendCells.map(c => c.label));
+  legendRow.eachCell((cell: any, colNumber: number) => {
+    const c = legendCells[colNumber - 1];
+    if (!c) return;
+    cell.font = { name: "Calibri", size: 9, bold: true, color: { argb: c.fontWhite ? "FFFFFFFF" : "FF000000" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: c.fill } };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = THIN_BORDER;
+  });
+  legendRow.height = 28;
+  // Span legend to col 8
+  ws.mergeCells(legendRow.number, 6, legendRow.number, 8);
 
   const headerRow = ws.addRow(["Zone", "Positioning", "Existing", "Targets", "Optimum Targets", "Financial Performance", "Priority", "Updates"]);
   headerRow.eachCell((cell: any) => {
@@ -1230,8 +1273,18 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
     zoneGroups.get(zone)!.push(unit);
   }
 
-  function getStatusFill(status: string) {
-    const s = (status || "").toLowerCase();
+  // Use the explicit Landsec status_band enum first; fall back to free-text
+  // status for backward-compat with rows imported before the band field existed.
+  const GREEN_B_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2EFDA" } };
+  function getStatusFill(unit: any) {
+    const band = unit?.status_band;
+    if (band === "GREEN_A_HALO") return GREEN_FILL;
+    if (band === "GREEN_B_HALO") return GREEN_B_FILL;
+    if (band === "AMBER_C_MAINTAIN") return AMBER_FILL;
+    if (band === "DARK_RED_D_DIVEST") return DARK_RED_FILL;
+    if (band === "BRIGHT_RED_D_AT_RISK") return BRIGHT_RED_FILL;
+    if (band === "GREY_VOID") return GREY_FILL;
+    const s = (unit?.status || "").toLowerCase();
     if (s === "occupied" || s === "let" || s === "on strategy") return GREEN_FILL;
     if (s === "maintain" || s === "maintain mix") return AMBER_FILL;
     if (s === "divest" || s === "divest over time") return DARK_RED_FILL;
@@ -1241,8 +1294,12 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
     return null;
   }
 
-  function getStatusFont(status: string) {
-    const s = (status || "").toLowerCase();
+  function getStatusFont(unit: any) {
+    const band = unit?.status_band;
+    if (band === "DARK_RED_D_DIVEST" || band === "BRIGHT_RED_D_AT_RISK") {
+      return { name: "Calibri", size: 10, color: { argb: "FFFFFFFF" } };
+    }
+    const s = (unit?.status || "").toLowerCase();
     if (s === "divest" || s === "divest over time" || s === "at risk" || s === "customer at risk") {
       return { name: "Calibri", size: 10, color: { argb: "FFFFFFFF" } };
     }
@@ -1339,8 +1396,8 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
           updatesText
         ]);
 
-        const statusFill = getStatusFill(unit.status);
-        const statusFont = getStatusFont(unit.status);
+        const statusFill = getStatusFill(unit);
+        const statusFont = getStatusFont(unit);
 
         const ratingSymbol: Record<string, string> = { green: "●", amber: "◐", red: "○" };
         const ratingColor: Record<string, string> = { green: "FF00A651", amber: "FFFF8C00", red: "FFCC0000" };
@@ -1351,7 +1408,7 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
           cell.font = statusFont;
           if (statusFill && colNumber === 3) {
             cell.fill = statusFill;
-            cell.font = getStatusFont(unit.status);
+            cell.font = getStatusFont(unit);
           }
           if (colNumber === 4 && unitTargets.length > 0) {
             const richText: any[] = [];
@@ -1482,7 +1539,8 @@ router.get("/api/leasing-schedule/property/:propertyId/export-excel", requireAut
       SELECT u.id, u.unit_name, u.zone, u.positioning, u.tenant_name, u.agent_initials, u.status,
         u.lease_expiry, u.lease_break, u.rent_review, u.landlord_break,
         u.rent_pa, u.sqft, u.mat_psqft, u.lfl_percent, u.occ_cost_percent,
-        u.target_brands, u.optimum_target, u.priority, u.updates, u.financial_notes
+        u.target_brands, u.optimum_target, u.priority, u.updates, u.financial_notes,
+        u.status_band, u.meeting_month, u.agent_input, u.last_updated_by, u.updated_at
       FROM leasing_schedule_units u
       WHERE u.property_id = $1
       ORDER BY u.sort_order, u.zone, u.unit_name
@@ -1719,6 +1777,94 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
     res.setHeader("Content-Disposition", `attachment; filename="BGP_Leasing_Schedule_${today}.xlsx"`);
     res.send(Buffer.from(buf as ArrayBuffer));
   } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// AI auto-suggest status bands for every unit on this property's leasing
+// schedule. Asks Claude to classify each tenant into one of the Landsec
+// bands using whatever context we have (tenant name, performance, expiry,
+// updates, optimum target). Writes the suggestion back to status_band only
+// where it's currently NULL / unset, so manual classifications stick.
+router.post("/api/leasing-schedule/property/:propertyId/auto-status", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const rows = await pool.query(`
+      SELECT id, unit_name, tenant_name, zone, positioning, lease_expiry, lease_break,
+        mat_psqft, lfl_percent, occ_cost_percent, optimum_target, target_brands,
+        priority, status, status_band, updates
+      FROM leasing_schedule_units
+      WHERE property_id = $1 AND status != 'Archived'
+      ORDER BY zone, sort_order, unit_name`,
+      [req.params.propertyId]
+    );
+    if (rows.rows.length === 0) return res.json({ updated: 0, message: "Nothing to classify" });
+
+    const prompt = `You are a Landsec leasing analyst. Classify each unit into ONE of these status bands:
+
+- GREEN_A_HALO — Halo brand, top-tier strategic anchor we want to keep / expand
+- GREEN_B_HALO — On Strategy, performing well, retain
+- AMBER_C_MAINTAIN — Maintain Mix, average performer, no urgent action
+- DARK_RED_D_DIVEST — Divest Over Time, weak performer, plan to replace at lease end
+- BRIGHT_RED_D_AT_RISK — Customer At Risk or Live opportunity right now
+- GREY_VOID — Void / Live opportunity (vacant or about to be)
+
+Use the data per unit. Strong performers (positive LFL, low occ cost %) → GREEN. Weak (negative LFL, high occ cost, near-expiry, optimum target named) → DARK_RED. Currently vacant or expiring soon with active target → BRIGHT_RED or GREY. Solid but unremarkable → AMBER.
+
+Respond as JSON only:
+{ "classifications": [ { "id": "<unit-id>", "band": "<enum>", "reason": "<1 sentence>" } ] }
+
+Units:
+${rows.rows.map(u => JSON.stringify({
+  id: u.id,
+  unit: u.unit_name,
+  tenant: u.tenant_name,
+  zone: u.zone,
+  positioning: u.positioning,
+  lease_expiry: u.lease_expiry,
+  lease_break: u.lease_break,
+  mat_psqft: u.mat_psqft,
+  lfl_percent: u.lfl_percent,
+  occ_cost_percent: u.occ_cost_percent,
+  optimum_target: u.optimum_target,
+  status: u.status,
+  current_band: u.status_band,
+})).join("\n")}`;
+
+    const ai = await callClaude({
+      model: CHATBGP_HELPER_MODEL,
+      max_tokens: 4000,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const raw = (ai.content[0] as any)?.text || "";
+    const parsed = safeParseJSON(raw);
+    const classifications: Array<{ id: string; band: string; reason: string }> = Array.isArray(parsed?.classifications) ? parsed.classifications : [];
+
+    const validBands = new Set(["GREEN_A_HALO", "GREEN_B_HALO", "AMBER_C_MAINTAIN", "DARK_RED_D_DIVEST", "BRIGHT_RED_D_AT_RISK", "GREY_VOID"]);
+    let updated = 0;
+    for (const c of classifications) {
+      if (!c?.id || !validBands.has(c?.band)) continue;
+      const r = await pool.query(
+        `UPDATE leasing_schedule_units
+            SET status_band = $1, updated_at = NOW(), last_updated_by = $2
+          WHERE id = $3 AND property_id = $4 AND (status_band IS NULL OR status_band = '' OR status_band = 'AMBER_C_MAINTAIN')`,
+        [c.band, user?.username || "ai-auto", c.id, req.params.propertyId]
+      );
+      updated += r.rowCount || 0;
+    }
+
+    await logAudit(pool, {
+      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      action: "ai_auto_status_band",
+      newValue: `${updated}/${classifications.length} units auto-classified`,
+    });
+
+    res.json({ updated, attempted: classifications.length, total: rows.rows.length });
+  } catch (e: any) {
+    console.error("[leasing auto-status] failed:", e?.message);
     res.status(500).json({ error: e.message });
   }
 });
