@@ -535,6 +535,23 @@ import { pool } from "./db";
     `CREATE TABLE IF NOT EXISTS land_registry_searches (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, address TEXT NOT NULL, postcode TEXT, freeholds_count INTEGER DEFAULT 0, leaseholds_count INTEGER DEFAULT 0, freeholds JSONB, leaseholds JSONB, intelligence JSONB, ai_summary JSONB, ownership JSONB, crm_property_id VARCHAR, notes TEXT, tags JSONB DEFAULT '[]', status VARCHAR DEFAULT 'New', created_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS leasing_schedule_units (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR NOT NULL, unit_name TEXT, zone TEXT, positioning TEXT, tenant_name TEXT, agent_initials TEXT, lease_expiry TIMESTAMP, lease_break TIMESTAMP, rent_review TIMESTAMP, landlord_break TIMESTAMP, rent_pa REAL, sqft REAL, mat_psqft REAL, lfl_percent REAL, occ_cost_percent REAL, financial_notes TEXT, target_brands TEXT, optimum_target TEXT, priority TEXT, status TEXT, updates TEXT, target_company_ids TEXT[], sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS leasing_schedule_audit (id SERIAL PRIMARY KEY, unit_id VARCHAR, property_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, action TEXT NOT NULL, field_name TEXT, old_value TEXT, new_value TEXT, created_at TIMESTAMP DEFAULT now())`,
+    // Frozen snapshots of a property's Leasing Schedule — used to record what
+    // was presented at a given Monday client meeting. Contents are a JSON
+    // dump of every leasing_schedule_units row for the property at snapshot
+    // time. Past meetings stay reclaimable even as the live schedule moves on.
+    `CREATE TABLE IF NOT EXISTS leasing_schedule_snapshots (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id VARCHAR NOT NULL,
+      meeting_month TEXT,
+      taken_at TIMESTAMP DEFAULT now(),
+      taken_by_id VARCHAR,
+      taken_by_name TEXT,
+      unit_count INTEGER,
+      notes TEXT,
+      data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_leasing_snapshots_property ON leasing_schedule_snapshots(property_id, taken_at DESC)`,
 
     // Tenancy schedule — single source of truth per unit, aligned with the
     // Landsec investment-grade template (see SharePoint: Landsec Leisure -

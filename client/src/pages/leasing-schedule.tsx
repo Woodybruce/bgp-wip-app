@@ -175,6 +175,271 @@ function updatesHeaderLabel(units: any[]): string {
   return `Updates - ${label} - Leasing Meeting`;
 }
 
+// Brand picker — free-type autocomplete against CRM companies. Stores the
+// brand NAME as the field value (matches Landsec sheet semantics) but if the
+// typed name resolves to a tracked CRM company, the deep-link is preserved.
+function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to search brands" }: {
+  unitId: string; field: string; value: string; onSave: (id: string, field: string, value: string) => void; placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value || "");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { data: companies = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/companies-basic"],
+    queryFn: async () => {
+      const r = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d.companies || []);
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name }));
+    },
+    staleTime: 120000,
+  });
+  const matches = useMemo(() => {
+    if (!text.trim()) return [];
+    const q = text.toLowerCase();
+    return companies.filter(c => c.name.toLowerCase().includes(q)).slice(0, 8);
+  }, [companies, text]);
+
+  useEffect(() => { if (editing) setTimeout(() => inputRef.current?.focus(), 30); }, [editing]);
+
+  if (!editing) {
+    return (
+      <span
+        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-[11px] font-medium"
+        onClick={() => { setText(value || ""); setEditing(true); }}
+        data-testid={`brand-cell-${field}-${unitId}`}
+      >
+        {value || <span className="text-muted-foreground italic font-normal">{placeholder}</span>}
+      </span>
+    );
+  }
+  return (
+    <div className="relative" onBlur={(e) => {
+      // Save on blur unless the new focus is inside this picker
+      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+        if (text !== (value || "")) onSave(unitId, field, text);
+        setEditing(false);
+      }
+    }}>
+      <Input
+        ref={inputRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { onSave(unitId, field, text); setEditing(false); }
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="h-6 text-xs px-1 py-0"
+        placeholder={placeholder}
+        data-testid={`brand-input-${field}-${unitId}`}
+      />
+      {matches.length > 0 && (
+        <div className="absolute z-50 mt-0.5 left-0 right-0 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto" data-testid={`brand-suggestions-${field}-${unitId}`}>
+          {matches.map(c => (
+            <button
+              key={c.id}
+              onMouseDown={(e) => { e.preventDefault(); setText(c.name); onSave(unitId, field, c.name); setEditing(false); }}
+              className="w-full text-left px-2 py-1 text-xs hover:bg-muted"
+              data-testid={`brand-suggestion-${c.id}`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Priority is stored as "MMM YYYY" (e.g. "May 2026") — month-year picker.
+function MonthYearCell({ unitId, field, value, onSave }: {
+  unitId: string; field: string; value: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const now = new Date();
+  const years = useMemo(() => Array.from({ length: 6 }, (_, i) => now.getFullYear() + i - 1), [now]);
+  const setVal = (month: string, year: number) => {
+    onSave(unitId, field, `${month} ${year}`);
+    setOpen(false);
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <span className="text-[11px] cursor-pointer px-1 rounded hover:bg-muted inline-block min-w-[60px]" data-testid={`monthyear-${field}-${unitId}`}>
+          {value || <span className="text-muted-foreground italic">Set date</span>}
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="p-2 w-[210px]">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Year</div>
+        <div className="flex flex-wrap gap-1 mb-2">
+          {years.map(y => (
+            <button
+              key={y}
+              onClick={() => { const m = value?.split(" ")[0] && MONTHS.includes(value.split(" ")[0]) ? value.split(" ")[0] : MONTHS[now.getMonth()]; setVal(m, y); }}
+              className={`text-[11px] px-2 py-1 rounded border ${value?.endsWith(` ${y}`) ? "bg-foreground text-background" : "hover:bg-muted"}`}
+              data-testid={`year-${y}-${unitId}`}
+            >
+              {y}
+            </button>
+          ))}
+        </div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Month</div>
+        <div className="grid grid-cols-4 gap-1">
+          {MONTHS.map(m => (
+            <button
+              key={m}
+              onClick={() => { const y = (() => { const parsed = parseInt(value?.split(" ")[1] || ""); return isNaN(parsed) ? now.getFullYear() : parsed; })(); setVal(m, y); }}
+              className={`text-[11px] px-2 py-1 rounded border ${value?.startsWith(`${m} `) ? "bg-foreground text-background" : "hover:bg-muted"}`}
+              data-testid={`month-${m}-${unitId}`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        {value && (
+          <button
+            onClick={() => { onSave(unitId, field, ""); setOpen(false); }}
+            className="mt-2 text-[10px] text-muted-foreground hover:text-foreground underline"
+            data-testid={`monthyear-clear-${unitId}`}
+          >
+            Clear
+          </button>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// Textarea with @-mention autocomplete. On blur, scans for newly added
+// @username tokens and POSTs to /api/leasing-schedule/unit/:id/mention-tasks
+// to create user tasks for each tagged user.
+function MentionTextarea({ unitId, propertyId, value, onSave }: {
+  unitId: string; propertyId: string; value: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value || "");
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState(-1);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { data: allUsers } = useQuery<Array<{ id: string; username: string; name?: string; email?: string }>>({
+    queryKey: ["/api/users"],
+    staleTime: 5 * 60_000,
+  });
+  const userMatches = useMemo(() => {
+    if (mentionQuery == null) return [];
+    const q = mentionQuery.toLowerCase();
+    return (allUsers || []).filter(u => {
+      const local = (u.email || u.username || "").split("@")[0].toLowerCase();
+      const name = (u.name || "").toLowerCase();
+      return local.includes(q) || name.includes(q);
+    }).slice(0, 6);
+  }, [allUsers, mentionQuery]);
+
+  const sync = (newText: string) => {
+    setText(newText);
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const caret = ta.selectionStart;
+    const before = newText.slice(0, caret);
+    const m = before.match(/(?:^|\s)@(\w*)$/);
+    if (m) {
+      setMentionStart(caret - m[1].length - 1);
+      setMentionQuery(m[1]);
+    } else {
+      setMentionQuery(null);
+      setMentionStart(-1);
+    }
+  };
+
+  const insertMention = (user: { username: string; email?: string }) => {
+    const handle = (user.email || user.username || "").split("@")[0];
+    if (mentionStart < 0) return;
+    const before = text.slice(0, mentionStart);
+    const after = text.slice((textareaRef.current?.selectionStart ?? mentionStart + 1));
+    const next = `${before}@${handle} ${after}`;
+    setText(next);
+    setMentionQuery(null);
+    setMentionStart(-1);
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        const pos = before.length + handle.length + 2;
+        ta.setSelectionRange(pos, pos);
+        ta.focus();
+      }
+    }, 10);
+  };
+
+  const commit = async () => {
+    if (text !== (value || "")) {
+      onSave(unitId, "updates", text);
+      // Fire-and-forget task creation for new mentions.
+      try {
+        await fetch(`/api/leasing-schedule/unit/${unitId}/mention-tasks`, {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ text, previousText: value || "", propertyId }),
+        });
+      } catch {}
+    }
+    setEditing(false);
+  };
+
+  // Render — show stylised text when not editing, textarea when editing.
+  if (!editing) {
+    // Highlight @username mentions in display
+    const parts = (value || "").split(/(@[\w.-]+)/g);
+    return (
+      <div
+        className="cursor-text hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-[10px] text-gray-700 dark:text-gray-300 leading-snug min-h-[24px] whitespace-pre-wrap"
+        onClick={() => { setText(value || ""); setEditing(true); setTimeout(() => textareaRef.current?.focus(), 30); }}
+        data-testid={`mention-display-${unitId}`}
+      >
+        {parts.map((p, i) => p.startsWith("@") ? (
+          <span key={i} className="text-blue-600 dark:text-blue-400 font-medium">{p}</span>
+        ) : <span key={i}>{p}</span>)}
+        {!value && <span className="italic text-muted-foreground">Update / agent input (use @ to tag)</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <Textarea
+        ref={textareaRef}
+        value={text}
+        onChange={(e) => sync(e.target.value)}
+        onBlur={() => { if (mentionQuery == null) commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setEditing(false); setText(value || ""); }
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit();
+        }}
+        rows={3}
+        className="text-[10px] resize-y min-h-[60px]"
+        data-testid={`mention-input-${unitId}`}
+      />
+      {userMatches.length > 0 && (
+        <div className="absolute z-50 mt-0.5 left-0 right-0 bg-popover border rounded-md shadow-lg" data-testid={`mention-suggestions-${unitId}`}>
+          {userMatches.map(u => (
+            <button
+              key={u.id}
+              onMouseDown={(e) => { e.preventDefault(); insertMention(u); }}
+              className="w-full text-left px-2 py-1 text-xs hover:bg-muted flex items-center justify-between gap-2"
+              data-testid={`mention-suggestion-${u.username}`}
+            >
+              <span className="font-medium">@{(u.email || u.username || "").split("@")[0]}</span>
+              {u.name && <span className="text-muted-foreground text-[10px]">{u.name}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Zone labels often arrive with a leading "1. " / "2." / etc from imported
 // templates. Strip for display; the order is preserved by sort_order anyway.
 function cleanZoneLabel(zone: string | null | undefined): string {
@@ -869,6 +1134,25 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
 
   const [generatingAll, setGeneratingAll] = useState(false);
   const [aiBanding, setAiBanding] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
+  const [showSnapshots, setShowSnapshots] = useState(false);
+  const handleSnapshot = async () => {
+    if (!confirm("Freeze the current Leasing Schedule as the version presented at this meeting? Past snapshots remain reclaimable.")) return;
+    setSnapshotting(true);
+    try {
+      const meetingMonth = (units.find((u: any) => u.meeting_month) as any)?.meeting_month
+        || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase();
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/snapshot`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingMonth }),
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "Snapshot failed");
+      toast({ title: "Snapshot saved", description: `${out.snapshot.unit_count} units frozen for ${out.snapshot.meeting_month}` });
+    } catch (e: any) {
+      toast({ title: "Snapshot failed", description: e.message, variant: "destructive" });
+    } finally { setSnapshotting(false); }
+  };
   const handleAutoBand = async () => {
     setAiBanding(true);
     try {
@@ -1101,6 +1385,23 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             title="Ask Claude to assign A/B/C/D/Void status bands based on tenant performance + Landsec strategy"
           >
             {aiBanding ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}AI Status Bands
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={handleSnapshot}
+            disabled={snapshotting}
+            data-testid="btn-snapshot"
+            title="Freeze the current schedule as the version presented at this Monday's meeting. Past snapshots remain reclaimable."
+          >
+            {snapshotting ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1" />}Approve &amp; Snapshot
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setShowSnapshots(true)}
+            data-testid="btn-snapshot-history"
+            title="View past snapshots"
+          >
+            <History className="w-3.5 h-3.5 mr-1" />History
           </Button>
           <Button variant="outline" size="sm" onClick={handleExport} data-testid="btn-export">
             <Download className="w-3.5 h-3.5 mr-1" />Export
@@ -1348,15 +1649,15 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                               </td>
                               {/* Optimum Target */}
                               <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} className="text-[11px] font-medium" placeholder="Optimum target" />
+                                <BrandPickerCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} placeholder="Optimum target" />
                               </td>
-                              {/* Priority */}
+                              {/* Priority — month/year */}
                               <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Priority" />
+                                <MonthYearCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} />
                               </td>
-                              {/* Updates */}
+                              {/* Updates — @-mention autocomplete + task creation */}
                               <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-700 dark:text-gray-300 leading-snug" placeholder="Update / agent input" multiline />
+                                <MentionTextarea unitId={u.id} propertyId={propertyId} value={u.updates || ""} onSave={inlineUpdate} />
                               </td>
                               {/* Actions */}
                               <td className="px-3 py-2">
@@ -1410,6 +1711,13 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Unit</DialogTitle></DialogHeader>
           <AddUnitForm propertyId={propertyId} onSave={(data) => addMutation.mutate(data)} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSnapshots} onOpenChange={setShowSnapshots}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader><DialogTitle><History className="w-4 h-4 inline mr-2" />Snapshot history — {propertyName}</DialogTitle></DialogHeader>
+          <SnapshotsPanel propertyId={propertyId} />
         </DialogContent>
       </Dialog>
 
@@ -1968,13 +2276,13 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                               <TargetCompaniesCell unitId={u.id} targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} onUpdate={inlineUpdate} />
                             </td>
                             <td className="px-2 py-1.5">
-                              <InlineEditCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} className="text-[11px] font-medium" placeholder="Optimum target" />
+                              <BrandPickerCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} placeholder="Optimum target" />
                             </td>
                             <td className="px-2 py-1.5">
-                              <InlineEditCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Priority" />
+                              <MonthYearCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} />
                             </td>
                             <td className="px-2 py-1.5">
-                              <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-700 dark:text-gray-300 leading-snug" placeholder="Update / agent input" multiline />
+                              <MentionTextarea unitId={u.id} propertyId={propertyId} value={u.updates || ""} onSave={inlineUpdate} />
                             </td>
                             <td className="px-2 py-1.5">
                               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -2056,6 +2364,55 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// Snapshot history viewer — lists past frozen versions of this property's
+// Leasing Schedule. Click one to see its full row list at the time of freeze.
+function SnapshotsPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading, refetch } = useQuery<{ snapshots: Array<{ id: string; meeting_month: string; taken_at: string; taken_by_name: string; unit_count: number; notes: string | null }> }>({
+    queryKey: ["/api/leasing-schedule/property", propertyId, "snapshots"],
+    queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/snapshots`, { headers: getAuthHeaders() }).then(r => r.json()),
+  });
+  const [openId, setOpenId] = useState<string | null>(null);
+  const { data: detail } = useQuery<{ snapshot: any }>({
+    queryKey: ["/api/leasing-schedule/snapshot", openId],
+    queryFn: () => fetch(`/api/leasing-schedule/snapshot/${openId}`, { headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: !!openId,
+  });
+
+  if (isLoading) return <div className="py-6 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>;
+  if (!data?.snapshots?.length) return <div className="py-6 text-sm text-muted-foreground">No snapshots yet. Use "Approve & Snapshot" after each Monday meeting to freeze a version.</div>;
+
+  return (
+    <div className="space-y-3">
+      <div className="border rounded divide-y">
+        {data.snapshots.map(s => (
+          <div key={s.id} className="px-3 py-2 hover:bg-muted/30 cursor-pointer" onClick={() => setOpenId(s.id === openId ? null : s.id)} data-testid={`snapshot-row-${s.id}`}>
+            <div className="flex items-center justify-between text-xs">
+              <div>
+                <div className="font-medium">{s.meeting_month || "Untitled"}</div>
+                <div className="text-muted-foreground text-[10px]">{new Date(s.taken_at).toLocaleString("en-GB")} {s.taken_by_name ? `· by ${s.taken_by_name}` : ""} · {s.unit_count} units</div>
+              </div>
+              <ChevronRight className={`w-3 h-3 transition-transform ${openId === s.id ? "rotate-90" : ""}`} />
+            </div>
+            {openId === s.id && detail?.snapshot?.data && (
+              <div className="mt-2 pt-2 border-t text-[10px]">
+                <div className="max-h-[300px] overflow-y-auto space-y-0.5">
+                  {(detail.snapshot.data as any[]).map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="font-medium min-w-[100px] truncate">{row.tenant_name || row.unit_name}</span>
+                      <span className="text-muted-foreground truncate">{row.zone || "Unzoned"}</span>
+                      <span className="ml-auto text-muted-foreground truncate max-w-[280px]">{row.updates || ""}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -1781,6 +1781,138 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
   }
 });
 
+// Freeze the property's current Leasing Schedule into a versioned snapshot.
+// Each Monday meeting cycle should end with an Approve → snapshot. Subsequent
+// edits don't affect prior snapshots — historical versions remain reclaimable.
+router.post("/api/leasing-schedule/property/:propertyId/snapshot", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const meetingMonth = req.body?.meetingMonth || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase();
+    const notes = req.body?.notes || null;
+
+    const rows = await pool.query(
+      `SELECT * FROM leasing_schedule_units WHERE property_id = $1 ORDER BY sort_order, zone, unit_name`,
+      [req.params.propertyId]
+    );
+
+    const ins = await pool.query(
+      `INSERT INTO leasing_schedule_snapshots
+        (property_id, meeting_month, taken_by_id, taken_by_name, unit_count, notes, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       RETURNING id, taken_at, meeting_month, unit_count`,
+      [req.params.propertyId, meetingMonth, user?.id || null, user?.username || null, rows.rows.length, notes, JSON.stringify(rows.rows)]
+    );
+
+    await logAudit(pool, {
+      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      action: "snapshot_approve",
+      newValue: `${rows.rows.length} units snapshot for ${meetingMonth}`,
+    });
+
+    res.json({ ok: true, snapshot: ins.rows[0] });
+  } catch (e: any) {
+    console.error("[snapshot] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// List all snapshots for a property — meta only (id, date, who, count).
+router.get("/api/leasing-schedule/property/:propertyId/snapshots", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const rows = await pool.query(
+      `SELECT id, meeting_month, taken_at, taken_by_name, unit_count, notes
+         FROM leasing_schedule_snapshots
+        WHERE property_id = $1
+        ORDER BY taken_at DESC
+        LIMIT 50`,
+      [req.params.propertyId]
+    );
+    res.json({ snapshots: rows.rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Fetch one snapshot's full data (the frozen rows).
+router.get("/api/leasing-schedule/snapshot/:snapshotId", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const row = await pool.query(
+      `SELECT s.*, p.name AS property_name
+         FROM leasing_schedule_snapshots s
+         LEFT JOIN crm_properties p ON p.id = s.property_id
+        WHERE s.id = $1`,
+      [req.params.snapshotId]
+    );
+    if (row.rows.length === 0) return res.status(404).json({ error: "Snapshot not found" });
+    const snap = row.rows[0];
+    const { allowed } = await checkPropertyAccess(pool, req, snap.property_id);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    res.json({ snapshot: snap });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Scan the Updates field for @username mentions and create a user_task per
+// newly added mention. Compares against `previousText` so re-saves don't
+// re-create tasks for existing mentions. Username matches the local part of
+// the user's email (e.g. "@woodybruce" matches woodybruce@brucegillinghampollard.com).
+router.post("/api/leasing-schedule/unit/:unitId/mention-tasks", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { unitId } = req.params;
+    const { text, previousText, propertyId } = req.body || {};
+    if (typeof text !== "string") return res.json({ created: 0 });
+
+    const tokens = (s: string) => Array.from(new Set((s.match(/@[\w.-]+/g) || []).map(m => m.slice(1).toLowerCase())));
+    const newMentions = tokens(text).filter(m => !tokens(previousText || "").includes(m));
+    if (newMentions.length === 0) return res.json({ created: 0 });
+
+    const unit = await pool.query("SELECT unit_name, tenant_name, property_id FROM leasing_schedule_units WHERE id = $1", [unitId]);
+    if (unit.rows.length === 0) return res.status(404).json({ error: "Unit not found" });
+    const u = unit.rows[0];
+    const propId = propertyId || u.property_id;
+    const propRes = await pool.query("SELECT name FROM crm_properties WHERE id = $1", [propId]);
+    const propName = propRes.rows[0]?.name || "Property";
+
+    let created = 0;
+    const creator = await getUserInfo(pool, req);
+    for (const handle of newMentions) {
+      // Resolve handle → user. Try email local-part, then username.
+      const userRow = await pool.query(
+        `SELECT id, email, username FROM users
+          WHERE lower(split_part(email, '@', 1)) = $1
+             OR lower(username) = $1
+          LIMIT 1`,
+        [handle]
+      );
+      const user = userRow.rows[0];
+      if (!user) continue;
+      const tenant = u.tenant_name || u.unit_name || "Unit";
+      const title = `${propName} · ${tenant} · Leasing schedule action`;
+      const description = `Tagged by ${creator?.username || "BGP"} on the Leasing Schedule.\n\n${text}`;
+      await pool.query(
+        `INSERT INTO user_tasks (user_id, title, description, priority, status, category, linked_property_id)
+         VALUES ($1, $2, $3, 'medium', 'todo', 'leasing-schedule', $4)`,
+        [user.id, title, description, propId]
+      );
+      created++;
+    }
+    res.json({ created, mentions: newMentions });
+  } catch (e: any) {
+    console.error("[mention-tasks] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // AI auto-suggest status bands for every unit on this property's leasing
 // schedule. Asks Claude to classify each tenant into one of the Landsec
 // bands using whatever context we have (tenant name, performance, expiry,
