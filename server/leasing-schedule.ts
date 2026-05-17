@@ -100,11 +100,34 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
     const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
     if (!allowed) return res.status(403).json({ error: "You do not have access to this property's leasing schedule" });
 
+    // Join the source Tenancy Schedule row (when linked) so the Existing
+    // column shows live data — tenant name + lease dates flow from tenancy.
+    // Match by tenancy_unit_id FK first, fall back to unit_number on the
+    // same property for older rows that pre-date the FK.
     const result = await pool.query(`
-      SELECT u.*, p.name as property_name, p.leasing_privacy_enabled, c.name as landlord_name
+      SELECT u.*,
+        p.name as property_name,
+        p.leasing_privacy_enabled,
+        c.name as landlord_name,
+        COALESCE(t.tenant_name, u.tenant_name)     AS live_tenant_name,
+        COALESCE(t.lease_expiry, u.lease_expiry)   AS live_lease_expiry,
+        COALESCE(t.break_date,   u.lease_break)    AS live_lease_break,
+        COALESCE(t.next_review_date, u.rent_review) AS live_rent_review,
+        t.id        AS resolved_tenancy_unit_id,
+        tc.id       AS resolved_tenant_company_id,
+        tc.name     AS resolved_tenant_company_name
       FROM leasing_schedule_units u
       JOIN crm_properties p ON u.property_id = p.id
       LEFT JOIN crm_companies c ON p.landlord_id = c.id
+      LEFT JOIN tenancy_schedule_units t
+        ON (u.tenancy_unit_id IS NOT NULL AND t.id = u.tenancy_unit_id)
+        OR (u.tenancy_unit_id IS NULL
+            AND t.property_id = u.property_id
+            AND lower(trim(t.unit_number)) = lower(trim(COALESCE(u.unit_name, ''))))
+      LEFT JOIN crm_companies tc
+        ON tc.id = u.tenant_company_id
+        OR (u.tenant_company_id IS NULL
+            AND lower(trim(tc.name)) = lower(trim(COALESCE(t.tenant_name, u.tenant_name, ''))))
       WHERE u.property_id = $1
       ORDER BY u.sort_order, u.zone, u.unit_name
     `, [req.params.propertyId]);
@@ -2056,11 +2079,22 @@ router.post("/api/leasing-schedule/promote-from-tenancy", requireAuth, async (re
     // Map tenancy → leasing. Tenant becomes "Existing" (current occupant).
     // Status_band defaults to AMBER (Maintain Mix) until set by team.
     const status = (ten.status || "").toLowerCase() === "vacant" ? "Vacant" : "Occupied";
+    // Try to resolve the tenant name to a CRM company so the Existing cell
+    // links through to the brand profile on click. Match case-insensitive.
+    let tenantCompanyId: string | null = null;
+    if (ten.tenant_name) {
+      const cq = await pool.query(
+        "SELECT id FROM crm_companies WHERE lower(trim(name)) = lower(trim($1)) LIMIT 1",
+        [ten.tenant_name]
+      );
+      tenantCompanyId = cq.rows[0]?.id || null;
+    }
     const inserted = await pool.query(`
       INSERT INTO leasing_schedule_units
         (property_id, zone, positioning, unit_name, tenant_name, lease_expiry, lease_break,
-         rent_pa, sqft, status, status_band, sort_order, last_updated_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         rent_pa, sqft, status, status_band, sort_order, last_updated_by,
+         tenancy_unit_id, tenant_company_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       RETURNING *
     `, [
       ten.property_id, ten.grouping || ten.premises || null, ten.permitted_use || null,
@@ -2071,6 +2105,8 @@ router.post("/api/leasing-schedule/promote-from-tenancy", requireAuth, async (re
       status === "Vacant" ? "GREY_VOID" : "AMBER_C_MAINTAIN",
       maxSort.rows[0].next,
       user?.username || null,
+      tenancyUnitId,
+      tenantCompanyId,
     ]);
 
     await pool.query(

@@ -178,6 +178,33 @@ function updatesHeaderLabel(units: any[]): string {
 // Brand picker — free-type autocomplete against CRM companies. Stores the
 // brand NAME as the field value (matches Landsec sheet semantics) but if the
 // typed name resolves to a tracked CRM company, the deep-link is preserved.
+// Existing tenant cell — pulls name LIVE from the linked Tenancy Schedule
+// row when the row is FK'd, otherwise uses leasing_schedule_units.tenant_name.
+// Clickable through to the brand CRM when matched. Inline-editable if no
+// brand match (lets you correct a typo without leaving the schedule).
+function ExistingTenantCell({ unit, nameColour, onSave }: {
+  unit: any; nameColour: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  const tenantName = unit.live_tenant_name || unit.tenant_name || unit.unit_name || "";
+  const linkedCompanyId = unit.resolved_tenant_company_id || unit.tenant_company_id || null;
+  if (linkedCompanyId) {
+    return (
+      <Link
+        href={`/companies/${linkedCompanyId}`}
+        className={`text-sm font-bold leading-tight hover:underline ${nameColour}`}
+        data-testid={`existing-link-${unit.id}`}
+      >
+        {tenantName || "—"}
+      </Link>
+    );
+  }
+  return (
+    <div className={`text-sm font-bold leading-tight ${nameColour}`}>
+      <InlineEditCell unitId={unit.id} field="tenant_name" value={tenantName} onSave={onSave} className="text-sm font-bold" placeholder="Tenant" />
+    </div>
+  );
+}
+
 function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to search brands" }: {
   unitId: string; field: string; value: string; onSave: (id: string, field: string, value: string) => void; placeholder?: string;
 }) {
@@ -206,7 +233,7 @@ function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to 
   if (!editing) {
     return (
       <span
-        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-[11px] font-medium"
+        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-xs font-medium inline-block align-top leading-tight"
         onClick={() => { setText(value || ""); setEditing(true); }}
         data-testid={`brand-cell-${field}-${unitId}`}
       >
@@ -1613,24 +1640,24 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                           const band = statusBandFor((u as any).status_band);
                           const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
                           const nameColour = tenantNameColourFor((u as any).status_band);
-                          const expFmt = formatLandsecDate(u.lease_expiry);
-                          const breakFmt = formatLandsecDate(u.lease_break);
+                          const expFmt = formatLandsecDate((u as any).live_lease_expiry || u.lease_expiry);
+                          const breakFmt = formatLandsecDate((u as any).live_lease_break || u.lease_break);
                           const llBreakFmt = formatLandsecDate((u as any).landlord_break);
-                          const rrFmt = formatLandsecDate(u.rent_review);
+                          const rrFmt = formatLandsecDate((u as any).live_rent_review || u.rent_review);
                           return (
                             <tr key={u.id} className={`border-b hover:brightness-95 transition-all align-top ${rowTint}`} data-testid={`unit-row-${u.id}`}>
-                              {/* Existing — tenant name (bold, larger, colour-coded) + lease dates stacked below */}
-                              <td className="px-3 py-2 min-w-[200px]">
-                                <div className={`text-sm font-bold leading-tight ${nameColour}`}>
-                                  <InlineEditCell unitId={u.id} field="tenant_name" value={u.tenant_name || u.unit_name || ""} onSave={inlineUpdate} className="text-sm font-bold" placeholder="Tenant" />
-                                </div>
+                              {/* Existing — tenant name pulled LIVE from Tenancy Schedule
+                                  when linked; clickable through to brand profile when matched
+                                  to a CRM company. Colour-coded by status band. */}
+                              <td className="px-3 py-2 min-w-[200px] align-top">
+                                <ExistingTenantCell unit={u} nameColour={nameColour} onSave={inlineUpdate} />
                                 <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
                                   {expFmt && <div>(Exp. {expFmt})</div>}
                                   {breakFmt && <div>(TB {breakFmt})</div>}
                                   {llBreakFmt && <div>(LL {llBreakFmt})</div>}
                                   {rrFmt && <div>(RR {rrFmt})</div>}
                                   {!expFmt && !breakFmt && !llBreakFmt && !rrFmt && (
-                                    <div className="italic opacity-60">No lease dates — pull from Tenancy Schedule</div>
+                                    <div className="italic opacity-60">No lease dates — link to Tenancy Schedule</div>
                                   )}
                                 </div>
                               </td>
@@ -2248,16 +2275,14 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                         const band = statusBandFor((u as any).status_band);
                         const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
                         const nameColour = tenantNameColourFor((u as any).status_band);
-                        const expFmt = formatLandsecDate(u.lease_expiry);
-                        const breakFmt = formatLandsecDate(u.lease_break);
+                        const expFmt = formatLandsecDate((u as any).live_lease_expiry || u.lease_expiry);
+                        const breakFmt = formatLandsecDate((u as any).live_lease_break || u.lease_break);
                         const llBreakFmt = formatLandsecDate((u as any).landlord_break);
-                        const rrFmt = formatLandsecDate(u.rent_review);
+                        const rrFmt = formatLandsecDate((u as any).live_rent_review || u.rent_review);
                         return (
                           <tr key={u.id} className={`border-b hover:brightness-95 transition-all align-top group ${rowTint} ${u.status === "Archived" ? "opacity-50" : ""}`} data-testid={`unit-row-${u.id}`}>
-                            <td className="px-2 py-1.5 min-w-[200px]">
-                              <div className={`text-sm font-bold leading-tight ${nameColour}`}>
-                                <InlineEditCell unitId={u.id} field="tenant_name" value={u.tenant_name || u.unit_name || ""} onSave={inlineUpdate} className="text-sm font-bold" placeholder="Tenant" />
-                              </div>
+                            <td className="px-2 py-1.5 min-w-[200px] align-top">
+                              <ExistingTenantCell unit={u} nameColour={nameColour} onSave={inlineUpdate} />
                               <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
                                 {expFmt && <div>(Exp. {expFmt})</div>}
                                 {breakFmt && <div>(TB {breakFmt})</div>}

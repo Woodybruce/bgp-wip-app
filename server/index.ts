@@ -2898,6 +2898,13 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("leasing_schedule_units", "meeting_month", "text");
           await addColIfMissing("leasing_schedule_units", "agent_input", "text");
           await addColIfMissing("leasing_schedule_units", "last_updated_by", "text");
+          // FK to the source tenancy_schedule_units row — when set, the
+          // Leasing Schedule pulls Existing/expiry/break live from tenancy
+          // rather than holding a stale copy.
+          await addColIfMissing("leasing_schedule_units", "tenancy_unit_id", "varchar");
+          // CRM company link for the Existing tenant — drives the click-through
+          // from the Leasing Schedule cell to the brand profile.
+          await addColIfMissing("leasing_schedule_units", "tenant_company_id", "varchar");
 
           // Tenancy schedule — bring in line with the Landsec investment-grade
           // template. Unit Details / Tenant / Lease / Areas (GIA+NIA splits) /
