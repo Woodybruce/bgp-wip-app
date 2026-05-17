@@ -252,6 +252,85 @@ function faviconForUrl(url: string | null | undefined): string | null {
   }
 }
 
+// Publisher name → root domain map. Falls back from URL-based favicon lookup
+// when the article URL is still a Google News wrapper (~95% of imports as of
+// May 2026). Keep in sync with the same map in the brand-profile sidebar.
+const PUBLISHER_DOMAINS: Record<string, string> = {
+  "drapers": "drapersonline.com",
+  "retail week": "retailweek.com",
+  "retail gazette": "retailgazette.co.uk",
+  "property week": "propertyweek.com",
+  "estates gazette": "egi.co.uk",
+  "vogue business": "voguebusiness.com",
+  "business of fashion": "businessoffashion.com",
+  "bof": "businessoffashion.com",
+  "vogue": "vogue.co.uk",
+  "bbc": "bbc.co.uk",
+  "bbc news": "bbc.co.uk",
+  "the times": "thetimes.co.uk",
+  "times": "thetimes.co.uk",
+  "the guardian": "theguardian.com",
+  "guardian": "theguardian.com",
+  "telegraph": "telegraph.co.uk",
+  "the telegraph": "telegraph.co.uk",
+  "financial times": "ft.com",
+  "ft": "ft.com",
+  "reuters": "reuters.com",
+  "bloomberg": "bloomberg.com",
+  "fashionunited": "fashionunited.uk",
+  "who what wear": "whowhatwear.com",
+  "elle": "elle.com",
+  "harpers bazaar": "harpersbazaar.com",
+  "harper's bazaar": "harpersbazaar.com",
+  "gq": "gq.com",
+  "wallpaper": "wallpaper.com",
+  "metro": "metro.co.uk",
+  "yahoo life": "uk.style.yahoo.com",
+  "thisismoney": "thisismoney.co.uk",
+  "daily mail": "dailymail.co.uk",
+  "evening standard": "standard.co.uk",
+  "city am": "cityam.com",
+  "gentleman's journal": "thegentlemansjournal.com",
+  "vogue runway": "vogue.com",
+};
+
+function publisherFavicon(sourceName: string | null | undefined): string | null {
+  if (!sourceName) return null;
+  const clean = sourceName.replace(/\s*\(Google News\)\s*$/i, "").trim().toLowerCase();
+  const domain = PUBLISHER_DOMAINS[clean];
+  if (!domain) return null;
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+}
+
+// Fast backfill — sets a publisher-favicon thumbnail on every article without
+// an image, mapping by source_name. No HTTP calls, runs in seconds even for
+// 100k articles. Doesn't unwrap Google News URLs, doesn't fetch og:image; the
+// per-article scrape (backfillMissingImages) is still available for richer
+// thumbnails on the recent slice.
+async function backfillFaviconsBySourceName(): Promise<{ updated: number; bySource: Record<string, number> }> {
+  const rows = await db.execute(sql`
+    SELECT id, source_name FROM news_articles
+     WHERE (image_url IS NULL OR image_url = '')
+       AND source_name IS NOT NULL AND source_name <> ''`);
+  const bySource: Record<string, number> = {};
+  let updated = 0;
+  const updates: Array<{ id: string; url: string }> = [];
+  for (const row of rows.rows as any[]) {
+    const favicon = publisherFavicon(row.source_name);
+    if (!favicon) continue;
+    updates.push({ id: row.id, url: favicon });
+    bySource[row.source_name] = (bySource[row.source_name] || 0) + 1;
+  }
+  for (const u of updates) {
+    try {
+      await db.update(newsArticles).set({ imageUrl: u.url }).where(eq(newsArticles.id, u.id));
+      updated++;
+    } catch {}
+  }
+  console.log(`[news] Favicon backfill: ${updated} articles updated across ${Object.keys(bySource).length} publishers`);
+  return { updated, bySource };
+}
+
 // Google News RSS URLs (news.google.com/rss/articles/CBM…) are opaque wrappers
 // that redirect to the real article. Without unwrapping, clicking them often
 // dead-ends and og:image extraction is impossible. This function follows the
@@ -1246,6 +1325,19 @@ export function setupNewsFeedRoutes(app: Express) {
       }
     })();
     res.json({ started: true, limit });
+  });
+
+  // Fast favicon-only backfill — maps every imageless article's source_name to
+  // a publisher domain favicon. No HTTP calls, completes in seconds. Use this
+  // first; the slower og:image scraper (backfill-images) can upgrade the slice
+  // we actually look at.
+  app.post("/api/news-feed/backfill-favicons", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await backfillFaviconsBySourceName();
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/news-feed/articles", requireAuth, async (req: Request, res: Response) => {
