@@ -1372,6 +1372,12 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
   const [activeTeamName, setActiveTeamName] = useState<string | null>(null);
   const activeTeam = activeTeamName && teamsToCheck.includes(activeTeamName) ? activeTeamName : teamsToCheck[0] || userTeam;
   const activeTeamIdx = teamsToCheck.indexOf(activeTeam);
+  const [subPath, setSubPath] = useState<string>("");
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // If the CRM record has a stored SharePoint folder URL, prefer that — it
   // resolves to the real folder regardless of name mismatches between CRM
@@ -1379,9 +1385,12 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
   const folderUrl = (sharepointFolderUrl || "").trim();
 
   const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string }>({
-    queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl],
+    queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath],
     queryFn: async () => {
-      const qs = folderUrl ? `?folderUrl=${encodeURIComponent(folderUrl)}` : "";
+      const params = new URLSearchParams();
+      if (folderUrl) params.set("folderUrl", folderUrl);
+      if (subPath) params.set("path", subPath);
+      const qs = params.toString() ? `?${params.toString()}` : "";
       const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeTeam)}/${encodeURIComponent(propertyName)}${qs}`, { credentials: "include" });
       if (!res.ok) {
         if (res.status === 401) return { exists: false, folders: [] };
@@ -1391,6 +1400,37 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
     },
     retry: false,
   });
+
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const folderPath = folderUrl
+        ? "" // when using URL-based browsing, upload routes to SharePoint root for now
+        : `BGP share drive/${activeTeam}/${propertyName}${subPath ? `/${subPath}` : ""}`;
+      formData.append("folderPath", folderPath);
+      const res = await fetch("/api/microsoft/files/upload", { method: "POST", credentials: "include", body: formData });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Upload failed");
+      }
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath] });
+      toast({ title: "File uploaded", description: data.name });
+    },
+    onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setIsDragging(false); dragCounter.current = 0;
+    const files = Array.from(e.dataTransfer.files);
+    for (const f of files) uploadMutation.mutate(f);
+  };
+
+  const breadcrumbs = subPath ? subPath.split("/") : [];
 
   if (isLoading) {
     return (
@@ -1409,50 +1449,101 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
   }
 
   return (
-    <Card data-testid="property-folders-panel">
+    <Card data-testid="property-folders-panel"
+      onDragEnter={(e) => { e.preventDefault(); dragCounter.current++; if (e.dataTransfer.types.includes("Files")) setIsDragging(true); }}
+      onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setIsDragging(false); }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+      className={isDragging ? "ring-2 ring-primary border-primary" : undefined}
+    >
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2 flex-wrap">
             <FolderOpen className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Folders</h3>
+            <h3 className="text-sm font-semibold">Documents</h3>
             {teamsToCheck.map((t, idx) => (
               <Badge
                 key={t}
                 variant={idx === activeTeamIdx ? "default" : "outline"}
                 className={`text-[10px] cursor-pointer ${idx === activeTeamIdx ? "" : "opacity-60"}`}
-                onClick={() => setActiveTeamName(t)}
+                onClick={() => { setActiveTeamName(t); setSubPath(""); }}
                 data-testid={`folder-team-tab-${t}`}
               >
                 {t}
               </Badge>
             ))}
           </div>
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={uploadMutation.isPending} data-testid="btn-upload-property-file">
+              {uploadMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Upload
+            </Button>
+            {folderData?.webUrl && (
+              <a href={folderData.webUrl} target="_blank" rel="noopener noreferrer">
+                <Button size="sm" variant="ghost" className="h-7 text-xs" data-testid="btn-open-sharepoint">
+                  <ExternalLink className="w-3 h-3 mr-1" />SharePoint
+                </Button>
+              </a>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); e.target.value = ""; }}
+            />
+          </div>
         </div>
 
-        {!folderData?.exists ? (
+        {/* Breadcrumb navigation when drilling into subfolders */}
+        {(subPath || folderData?.exists) && (
+          <div className="flex items-center gap-1 mb-2 text-[11px] flex-wrap">
+            <button onClick={() => setSubPath("")} className={`hover:text-primary ${subPath ? "text-primary cursor-pointer" : "text-foreground font-medium"}`} data-testid="breadcrumb-root">
+              {propertyName}
+            </button>
+            {breadcrumbs.map((seg, i) => (
+              <span key={i} className="flex items-center gap-1">
+                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                <button
+                  onClick={() => setSubPath(breadcrumbs.slice(0, i + 1).join("/"))}
+                  className={`hover:text-primary ${i === breadcrumbs.length - 1 ? "text-foreground font-medium" : "text-primary cursor-pointer"}`}
+                  data-testid={`breadcrumb-${i}`}
+                >
+                  {seg}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {isDragging && (
+          <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-md flex items-center justify-center pointer-events-none z-10">
+            <p className="text-sm font-medium text-primary">Drop file here to upload</p>
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+        ) : !folderData?.exists ? (
           <div className="text-center py-6">
             <FolderTree className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No folders set up yet</p>
-            <p className="text-[10px] text-muted-foreground mt-1">Use "Set Up Folders" to create a folder structure</p>
+            <p className="text-xs text-muted-foreground">No folder linked yet</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Drop a file here or click Upload to start</p>
           </div>
         ) : (
           <div className="space-y-1">
             {folderData.folders.filter(f => f.isFolder).map((folder) => (
-              <a
+              <div
                 key={folder.id}
-                href={folder.webUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group"
+                onClick={() => setSubPath(subPath ? `${subPath}/${folder.name}` : folder.name)}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group cursor-pointer"
                 data-testid={`folder-item-${folder.id}`}
               >
-                <FolderOpen className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{folder.name}</span>
                 {folder.childCount > 0 && (
                   <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>
                 )}
-                <ExternalLink className="w-3 h-3 text-muted-foreground invisible group-hover:visible flex-shrink-0" />
-              </a>
+                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+              </div>
             ))}
             {folderData.folders.filter(f => !f.isFolder).map((file) => (
               <a
@@ -1462,12 +1553,17 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group"
                 data-testid={`file-item-${file.id}`}
+                title={file.size ? `${Math.round(file.size / 1024).toLocaleString()} KB` : undefined}
               >
-                <FileText className="w-3.5 h-3.5 text-muted-foreground/60 flex-shrink-0" />
+                <FileText className="w-3.5 h-3.5 text-blue-500/70 flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{file.name}</span>
+                {file.size > 0 && <span className="text-[10px] text-muted-foreground">{file.size < 1024 * 1024 ? `${Math.round(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}</span>}
                 <ExternalLink className="w-3 h-3 text-muted-foreground invisible group-hover:visible flex-shrink-0" />
               </a>
             ))}
+            {folderData.folders.length === 0 && (
+              <p className="text-xs text-muted-foreground italic text-center py-4">This folder is empty. Drop a file or click Upload.</p>
+            )}
           </div>
         )}
       </CardContent>
