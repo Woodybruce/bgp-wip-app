@@ -13,52 +13,84 @@ import {
 } from "lucide-react";
 
 interface TenancyUnit {
-  id: number | string;  // string when synthetic (vacant rows derived from available_units)
+  id: number | string;
   property_id: string;
+  // Unit Details
+  grouping: string | null;
   premises: string;
   unit_number: string;
+  permitted_use: string;
+  status: string;
+  am_initiative: string | null;
+  // Tenant Details
   tenant_name: string;
   trading_name: string;
-  permitted_use: string;
-  area_basement: number;
-  area_ground: number;
-  area_first: number;
-  area_second: number;
-  area_other: number;
-  nia_sqft: number;
+  tenant_mix: string | null;
+  // Lease Details
+  lease_start: string;
+  break_date: string;
+  break_details: string | null;
+  break_notice: string | null;
+  lease_expiry: string;
+  term_years: number;
+  unexpired_term_break: number | null;
+  unexpired_term: number;
+  next_review_date: string | null;
+  outside_lt_act: string;
+  measurement_type: string | null;
+  // Areas — GIA per floor
+  area_basement_gia: number | null;
+  area_ground_gia: number | null;
+  area_first_gia: number | null;
+  area_other_gia: number | null;
+  // Areas — NIA per floor
+  area_basement_nia: number | null;
+  area_ground_nia: number | null;
+  area_first_nia: number | null;
+  area_first_sales_nia: number | null;
+  area_other_nia: number | null;
+  // Areas — ITZA / totals
+  area_ground_itza: number | null;
   gia_sqft: number;
+  nia_sqft: number;
+  itza_sqft: number | null;
+  units_applied: number | null;
+  // Rental Income
   passing_rent_pa: number;
+  marketing_rent_pa: number | null;
+  turnover_rent_payable: number | null;
+  erv_profile: string | null;
+  erv_pa: number;
+  rent_free_value: number | null;
+  capex_value: number | null;
+  // Rates
+  rateable_value: number | null;
+  rates_payable: number | null;
+  // Occupational Costs
+  service_charge: number;
+  service_charge_cap: number | null;
+  insurance: number;
+  // Shortfalls
+  shortfall_liability: string | null;
+  rental_shortfalls: number | null;
+  // NOI
+  topped_up_noi: number | null;
+  noi_pa: number | null;
+  // Comments
+  comments: string | null;
+  leasing_comments: string | null;
+  target_tenants: string | null;
+  target_company_ids: string[] | null;
+  underwriting_comments: string | null;
+  // BGP integration
+  epc_rating: string;
   rent_psf: number;
   turnover_percent: number;
-  landlord_shortfall: number;
-  net_income: number;
-  epc_rating: string;
   blended_erv: number;
-  erv_pa: number;
-  lease_start: string;
-  term_years: number;
-  lease_expiry: string;
-  rent_review_1_date: string;
-  rent_review_1_amount: string;
-  rent_review_2_date: string;
-  rent_review_2_amount: string;
-  rent_review_3_date: string;
-  rent_review_3_amount: string;
-  rent_review_4_date: string;
-  rent_review_4_amount: string;
-  outside_lt_act: string;
-  break_type: string;
-  break_date: string;
-  wault_rent_percent: number;
-  unexpired_term: number;
-  service_charge: number;
-  insurance: number;
-  total_occ_costs: number;
-  occ_costs_psf: number;
-  status: string;
   deal_id: string | null;
   deal_ref?: string | null;
   letting_tracker_unit_id: string | null;
+  in_leasing_schedule: boolean;
   sort_order: number;
   // Synthetic — set true when this row is a vacant derived from
   // available_units (no real tenancy_schedule_units row backing it).
@@ -103,8 +135,85 @@ function fmtDate(v: string) {
   } catch { return v; }
 }
 
+// Full set of data columns rendered in the table — mirrors the Landsec
+// tenancy schedule template grouped by category band. Functional columns
+// (chevron / status / links / delete) live outside this config.
+type ColType = "text" | "num" | "currency" | "currency_psf" | "date";
+interface Col { field: keyof TenancyUnit; label: string; band: string; width: number; align?: "left" | "right" | "center"; type?: ColType }
+
+const BAND_COLOURS: Record<string, string> = {
+  "Unit Details": "bg-slate-700 text-white",
+  "Tenant Details": "bg-slate-700 text-white",
+  "Lease Details": "bg-slate-700 text-white",
+  "Areas — GIA": "bg-slate-600 text-white",
+  "Areas — NIA": "bg-slate-600 text-white",
+  "Areas — Totals": "bg-slate-600 text-white",
+  "Rental Income": "bg-emerald-800 text-white",
+  "MLA": "bg-emerald-800 text-white",
+  "Occupational Costs": "bg-amber-800 text-white",
+  "Shortfalls": "bg-rose-800 text-white",
+  "NOI": "bg-emerald-900 text-white",
+  "Comments": "bg-zinc-700 text-white",
+};
+
+const COLUMNS: Col[] = [
+  { field: "grouping",         label: "Grouping",       band: "Unit Details", width: 110, align: "left" },
+  { field: "unit_number",      label: "Unit",           band: "Unit Details", width: 90,  align: "left" },
+  { field: "permitted_use",    label: "Use",            band: "Unit Details", width: 120, align: "left" },
+  { field: "status",           label: "Status",         band: "Unit Details", width: 90,  align: "left" },
+  { field: "am_initiative",    label: "AM Initiative?", band: "Unit Details", width: 130, align: "left" },
+  { field: "tenant_name",      label: "Tenant",         band: "Tenant Details", width: 160, align: "left" },
+  { field: "trading_name",     label: "Trading As",     band: "Tenant Details", width: 140, align: "left" },
+  { field: "tenant_mix",       label: "Tenant Mix",     band: "Tenant Details", width: 110, align: "left" },
+  { field: "lease_start",      label: "Start",          band: "Lease Details", width: 100, align: "center", type: "date" },
+  { field: "break_date",       label: "Break Date",     band: "Lease Details", width: 100, align: "center", type: "date" },
+  { field: "break_details",    label: "Break Details",  band: "Lease Details", width: 140, align: "left" },
+  { field: "break_notice",     label: "Notice/Note",    band: "Lease Details", width: 120, align: "left" },
+  { field: "lease_expiry",     label: "Expiry",         band: "Lease Details", width: 100, align: "center", type: "date" },
+  { field: "term_years",       label: "Term",           band: "Lease Details", width: 70,  align: "right", type: "num" },
+  { field: "unexpired_term_break", label: "Unexp (Break)", band: "Lease Details", width: 90, align: "right", type: "num" },
+  { field: "unexpired_term",   label: "Unexp (Expiry)", band: "Lease Details", width: 90,  align: "right", type: "num" },
+  { field: "next_review_date", label: "Next Review",    band: "Lease Details", width: 100, align: "center", type: "date" },
+  { field: "outside_lt_act",   label: "L&T Act",        band: "Lease Details", width: 100, align: "left" },
+  { field: "measurement_type", label: "Measurement",    band: "Lease Details", width: 110, align: "left" },
+  { field: "area_basement_gia", label: "Basement",      band: "Areas — GIA", width: 90,  align: "right", type: "num" },
+  { field: "area_ground_gia",   label: "Ground",        band: "Areas — GIA", width: 90,  align: "right", type: "num" },
+  { field: "area_first_gia",    label: "First",         band: "Areas — GIA", width: 90,  align: "right", type: "num" },
+  { field: "area_other_gia",    label: "Other",         band: "Areas — GIA", width: 90,  align: "right", type: "num" },
+  { field: "area_basement_nia", label: "Basement",      band: "Areas — NIA", width: 90,  align: "right", type: "num" },
+  { field: "area_ground_nia",   label: "Ground",        band: "Areas — NIA", width: 90,  align: "right", type: "num" },
+  { field: "area_ground_itza",  label: "Ground ITZA",   band: "Areas — NIA", width: 90,  align: "right", type: "num" },
+  { field: "area_first_sales_nia", label: "First Sales", band: "Areas — NIA", width: 90, align: "right", type: "num" },
+  { field: "area_first_nia",    label: "First",         band: "Areas — NIA", width: 90,  align: "right", type: "num" },
+  { field: "area_other_nia",    label: "Other",         band: "Areas — NIA", width: 90,  align: "right", type: "num" },
+  { field: "gia_sqft",          label: "GIA",           band: "Areas — Totals", width: 90, align: "right", type: "num" },
+  { field: "nia_sqft",          label: "NIA",           band: "Areas — Totals", width: 90, align: "right", type: "num" },
+  { field: "itza_sqft",         label: "ITZA",          band: "Areas — Totals", width: 90, align: "right", type: "num" },
+  { field: "units_applied",     label: "Units Applied", band: "Areas — Totals", width: 100, align: "right", type: "num" },
+  { field: "passing_rent_pa",   label: "Rent (pa)",     band: "Rental Income", width: 110, align: "right", type: "currency" },
+  { field: "marketing_rent_pa", label: "Marketing Rent", band: "Rental Income", width: 120, align: "right", type: "currency" },
+  { field: "turnover_rent_payable", label: "T/O Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
+  { field: "erv_profile",       label: "ERV Profile",   band: "Rental Income", width: 100, align: "left" },
+  { field: "erv_pa",            label: "ERV (pa)",      band: "Rental Income", width: 110, align: "right", type: "currency" },
+  { field: "rent_free_value",   label: "Rent Free",     band: "Rental Income", width: 110, align: "right", type: "currency" },
+  { field: "capex_value",       label: "Capex",         band: "Rental Income", width: 110, align: "right", type: "currency" },
+  { field: "rateable_value",    label: "Rateable Value", band: "MLA", width: 120, align: "right", type: "currency" },
+  { field: "rates_payable",     label: "Rates Payable",  band: "MLA", width: 120, align: "right", type: "currency" },
+  { field: "service_charge",    label: "Service Charge", band: "Occupational Costs", width: 120, align: "right", type: "currency" },
+  { field: "service_charge_cap", label: "SC Cap",       band: "Occupational Costs", width: 100, align: "right", type: "currency" },
+  { field: "insurance",         label: "Insurance",     band: "Occupational Costs", width: 110, align: "right", type: "currency" },
+  { field: "shortfall_liability", label: "Liability (L/T)", band: "Shortfalls", width: 110, align: "left" },
+  { field: "rental_shortfalls",   label: "Total LL Shortfalls", band: "Shortfalls", width: 140, align: "right", type: "currency" },
+  { field: "topped_up_noi",     label: "Topped Up NOI", band: "NOI", width: 120, align: "right", type: "currency" },
+  { field: "noi_pa",            label: "NOI (pa)",      band: "NOI", width: 110, align: "right", type: "currency" },
+  { field: "comments",          label: "Comments",      band: "Comments", width: 200, align: "left" },
+  { field: "leasing_comments",  label: "Leasing Comments", band: "Comments", width: 200, align: "left" },
+  { field: "target_tenants",    label: "Target Tenants", band: "Comments", width: 180, align: "left" },
+  { field: "underwriting_comments", label: "Underwriting Comments", band: "Comments", width: 200, align: "left" },
+];
+
 function InlineEdit({ value, field, unitId, onSave, type = "text", className = "" }: {
-  value: string; field: string; unitId: number; onSave: (id: number, field: string, val: string) => void;
+  value: string; field: string; unitId: string | number; onSave: (id: string | number, field: string, val: string) => void;
   type?: string; className?: string;
 }) {
   const [editing, setEditing] = useState(false);
@@ -143,7 +252,6 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -187,7 +295,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/tenancy-schedule/unit/${id}`),
+    mutationFn: (id: string | number) => apiRequest("DELETE", `/api/tenancy-schedule/unit/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
       toast({ title: "Unit removed" });
@@ -195,7 +303,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
     onError: (err: any) => { toast({ title: "Failed to delete unit", description: err.message, variant: "destructive" }); },
   });
 
-  const inlineUpdate = useCallback((unitId: number, field: string, value: string) => {
+  const inlineUpdate = useCallback((unitId: string | number, field: string, value: string) => {
     updateMutation.mutate({ id: unitId, [field]: value });
   }, [updateMutation]);
 
@@ -246,14 +354,6 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
     setExpandedZones(prev => {
       const next = new Set(prev);
       if (next.has(zone)) next.delete(zone); else next.add(zone);
-      return next;
-    });
-  };
-
-  const toggleRow = (id: number) => {
-    setExpandedRows(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -396,26 +496,38 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
       )}
 
       <div className="overflow-x-auto border rounded-lg">
-        <table className="w-full text-xs">
+        <table className="text-xs" style={{ minWidth: 100 + COLUMNS.reduce((s, c) => s + c.width, 0) + 200 }}>
           <thead>
-            <tr className="bg-gray-50 dark:bg-gray-800 border-b">
-              <th className="text-left p-2 font-medium w-6"></th>
-              <th className="text-left p-2 font-medium min-w-[80px]">Unit</th>
-              <th className="text-left p-2 font-medium min-w-[120px]">Tenant</th>
-              <th className="text-left p-2 font-medium min-w-[100px]">Trading Name</th>
-              <th className="text-left p-2 font-medium">Use</th>
-              <th className="text-right p-2 font-medium">NIA sqft</th>
-              <th className="text-right p-2 font-medium">Rent PA</th>
-              <th className="text-right p-2 font-medium">£ psf</th>
-              <th className="text-right p-2 font-medium">ERV PA</th>
-              <th className="text-center p-2 font-medium">EPC</th>
-              <th className="text-center p-2 font-medium">Lease Start</th>
-              <th className="text-center p-2 font-medium">Expiry</th>
-              <th className="text-center p-2 font-medium">Break</th>
-              <th className="text-right p-2 font-medium">WAULT</th>
-              <th className="text-center p-2 font-medium">Status</th>
-              <th className="text-center p-2 font-medium">Links</th>
-              <th className="text-center p-2 font-medium w-8"></th>
+            {/* Category-band row — one cell per contiguous band, merged via
+                colSpan so the bands mirror the Landsec sheet layout. */}
+            <tr>
+              <th className="bg-slate-800 text-white p-1 font-semibold text-[10px] uppercase tracking-wider sticky left-0 z-10" style={{ width: 30 }}></th>
+              {(() => {
+                const bands: Array<{ name: string; span: number }> = [];
+                for (const c of COLUMNS) {
+                  const last = bands[bands.length - 1];
+                  if (last && last.name === c.band) last.span++;
+                  else bands.push({ name: c.band, span: 1 });
+                }
+                return bands.map((b, i) => (
+                  <th key={i} colSpan={b.span} className={`p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center ${BAND_COLOURS[b.name] || "bg-slate-700 text-white"}`}>
+                    {b.name}
+                  </th>
+                ));
+              })()}
+              <th colSpan={3} className="bg-slate-800 text-white p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center">Actions</th>
+            </tr>
+            {/* Column labels */}
+            <tr className="bg-gray-100 dark:bg-gray-800 border-b">
+              <th className="text-left p-2 font-medium w-8 sticky left-0 bg-gray-100 dark:bg-gray-800 z-10"></th>
+              {COLUMNS.map((c) => (
+                <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}`} style={{ minWidth: c.width }}>
+                  {c.label}
+                </th>
+              ))}
+              <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Status</th>
+              <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
+              <th className="text-center p-2 font-medium w-10"></th>
             </tr>
           </thead>
           <tbody>
@@ -428,9 +540,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
                   zone={zone}
                   units={zoneUnits}
                   isExpanded={isExpanded}
-                  expandedRows={expandedRows}
                   onToggleZone={() => toggleZone(zone)}
-                  onToggleRow={toggleRow}
                   onInlineUpdate={inlineUpdate}
                   onDelete={(id) => deleteMutation.mutate(id)}
                   matchDeal={matchDeal}
@@ -445,35 +555,33 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   );
 }
 
-function ZoneGroup({ zone, units, isExpanded, expandedRows, onToggleZone, onToggleRow, onInlineUpdate, onDelete, matchDeal, matchLetting }: {
-  zone: string; units: TenancyUnit[]; isExpanded: boolean; expandedRows: Set<number>;
-  onToggleZone: () => void; onToggleRow: (id: number) => void;
-  onInlineUpdate: (id: number, field: string, val: string) => void;
-  onDelete: (id: number) => void;
+function ZoneGroup({ zone, units, isExpanded, onToggleZone, onInlineUpdate, onDelete, matchDeal, matchLetting }: {
+  zone: string; units: TenancyUnit[]; isExpanded: boolean;
+  onToggleZone: () => void;
+  onInlineUpdate: (id: string | number, field: string, val: string) => void;
+  onDelete: (id: string | number) => void;
   matchDeal: (u: TenancyUnit) => DealLink | undefined;
   matchLetting: (u: TenancyUnit) => LettingLink | undefined;
 }) {
   if (units.length === 0) return null;
   const zoneRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
+  // Functional cols (chevron + status + links + delete) plus all data COLUMNS.
+  const totalCols = 1 + COLUMNS.length + 3;
 
   return (
     <>
       <tr className="bg-gray-100 dark:bg-gray-700/50 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700" onClick={onToggleZone}>
-        <td colSpan={3} className="p-2 font-semibold text-xs">
+        <td colSpan={totalCols} className="p-2 font-semibold text-xs">
           {isExpanded ? <ChevronDown className="w-3 h-3 inline mr-1" /> : <ChevronRight className="w-3 h-3 inline mr-1" />}
           {zone}
           <Badge variant="secondary" className="ml-2 text-[10px]">{units.length}</Badge>
+          <span className="ml-3 text-muted-foreground font-normal">{fmtCurrency(zoneRent)} total rent</span>
         </td>
-        <td colSpan={3}></td>
-        <td className="text-right p-2 font-semibold text-xs">{fmtCurrency(zoneRent)}</td>
-        <td colSpan={10}></td>
       </tr>
       {isExpanded && units.map(unit => (
         <UnitRow
           key={unit.id}
           unit={unit}
-          isExpanded={expandedRows.has(unit.id)}
-          onToggle={() => onToggleRow(unit.id)}
           onUpdate={onInlineUpdate}
           onDelete={() => onDelete(unit.id)}
           deal={matchDeal(unit)}
@@ -484,32 +592,25 @@ function ZoneGroup({ zone, units, isExpanded, expandedRows, onToggleZone, onTogg
   );
 }
 
-function UnitRow({ unit, isExpanded, onToggle, onUpdate, onDelete, deal, letting }: {
-  unit: TenancyUnit; isExpanded: boolean; onToggle: () => void;
-  onUpdate: (id: number, field: string, val: string) => void;
+function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
+  unit: TenancyUnit;
+  onUpdate: (id: string | number, field: string, val: string) => void;
   onDelete: () => void;
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
+  const totalCols = 1 + COLUMNS.length + 3;
 
-  // Synthetic vacant row sourced from available_units — no DB row to edit,
-  // render a simplified read-only line with a click-through to the deal /
-  // letting tracker entry that owns this unit.
   if (unit.is_vacant) {
     return (
       <tr className="border-b hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-row-${unit.id}`}>
-        <td className="p-1 text-center text-muted-foreground">—</td>
-        <td className="p-1 font-medium">{unit.unit_number || unit.premises || "—"}</td>
-        <td className="p-1 text-amber-700 dark:text-amber-400 font-medium">VACANT</td>
-        <td className="p-1 text-muted-foreground" colSpan={3}>
-          {unit.nia_sqft ? `${unit.nia_sqft.toLocaleString()} sqft` : ""}
-          {unit.nia_sqft && unit.erv_pa ? " · " : ""}
-          {unit.erv_pa ? `£${unit.erv_pa.toLocaleString()} pa asking` : ""}
+        <td className="p-1 text-center text-muted-foreground sticky left-0 bg-amber-50/40 dark:bg-amber-900/10 z-10">—</td>
+        <td className="p-1 font-medium text-amber-700 dark:text-amber-400" colSpan={Math.min(COLUMNS.length, 6)}>
+          VACANT — {unit.unit_number || unit.premises || "—"}
+          {unit.nia_sqft ? ` · ${unit.nia_sqft.toLocaleString()} sqft` : ""}
+          {unit.erv_pa ? ` · £${unit.erv_pa.toLocaleString()} pa asking` : ""}
         </td>
-        <td className="p-1 text-right text-muted-foreground" colSpan={2}>
-          {unit.erv_pa ? `£${unit.erv_pa.toLocaleString()}` : "—"}
-        </td>
-        <td className="p-1 text-center text-muted-foreground" colSpan={5}>—</td>
+        <td className="p-1 text-muted-foreground text-center" colSpan={Math.max(0, COLUMNS.length - 6)}>—</td>
         <td className="p-1 text-center">
           <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 dark:text-amber-400">
             {unit.status || "AVA"}
@@ -538,101 +639,55 @@ function UnitRow({ unit, isExpanded, onToggle, onUpdate, onDelete, deal, letting
   }
 
   return (
-    <>
-      <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
-        <td className="p-1 text-center">
-          <button onClick={onToggle} className="hover:bg-gray-200 dark:hover:bg-gray-600 rounded p-0.5" data-testid={`tenancy-expand-${unit.id}`}>
-            {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-          </button>
-        </td>
-        <td className="p-1"><InlineEdit value={unit.unit_number} field="unit_number" unitId={unit.id} onSave={onUpdate} /></td>
-        <td className="p-1"><InlineEdit value={unit.tenant_name} field="tenant_name" unitId={unit.id} onSave={onUpdate} className={isVacant ? "text-amber-600 font-medium" : ""} /></td>
-        <td className="p-1"><InlineEdit value={unit.trading_name} field="trading_name" unitId={unit.id} onSave={onUpdate} /></td>
-        <td className="p-1"><InlineEdit value={unit.permitted_use} field="permitted_use" unitId={unit.id} onSave={onUpdate} /></td>
-        <td className="p-1 text-right"><InlineEdit value={String(unit.nia_sqft)} field="nia_sqft" unitId={unit.id} onSave={onUpdate} type="number" /></td>
-        <td className="p-1 text-right"><InlineEdit value={String(unit.passing_rent_pa)} field="passing_rent_pa" unitId={unit.id} onSave={onUpdate} type="number" /></td>
-        <td className="p-1 text-right"><InlineEdit value={String(unit.rent_psf)} field="rent_psf" unitId={unit.id} onSave={onUpdate} type="number" /></td>
-        <td className="p-1 text-right"><InlineEdit value={String(unit.erv_pa)} field="erv_pa" unitId={unit.id} onSave={onUpdate} type="number" /></td>
-        <td className="p-1 text-center"><InlineEdit value={unit.epc_rating} field="epc_rating" unitId={unit.id} onSave={onUpdate} /></td>
-        <td className="p-1 text-center"><InlineEdit value={unit.lease_start} field="lease_start" unitId={unit.id} onSave={onUpdate} /></td>
-        <td className="p-1 text-center"><InlineEdit value={unit.lease_expiry} field="lease_expiry" unitId={unit.id} onSave={onUpdate} /></td>
-        <td className="p-1 text-center"><InlineEdit value={unit.break_date} field="break_date" unitId={unit.id} onSave={onUpdate} /></td>
-        <td className="p-1 text-right">{fmtNum(unit.unexpired_term, 1)}</td>
-        <td className="p-1 text-center">
-          <Badge variant={isVacant ? "destructive" : "default"} className="text-[10px] cursor-pointer" onClick={() => onUpdate(unit.id, "status", isVacant ? "Occupied" : "Vacant")} data-testid={`tenancy-status-${unit.id}`}>
-            {unit.status}
-          </Badge>
-        </td>
-        <td className="p-1 text-center">
-          <div className="flex gap-1 justify-center">
-            {deal && (
-              <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
-                <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
-              </a>
-            )}
-            {letting && (
-              <a href={`/available`} className="inline-flex items-center" title={`Letting: ${letting.unit_name} (${letting.marketing_status})`} data-testid={`tenancy-letting-link-${unit.id}`}>
-                <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50"><ExternalLink className="w-2.5 h-2.5" />LT</Badge>
-              </a>
-            )}
-          </div>
-        </td>
-        <td className="p-1 text-center">
-          <button onClick={onDelete} className="text-red-400 hover:text-red-600 p-0.5" data-testid={`tenancy-delete-${unit.id}`}>
-            <Trash2 className="w-3 h-3" />
-          </button>
-        </td>
-      </tr>
-      {isExpanded && <ExpandedDetails unit={unit} onUpdate={onUpdate} />}
-    </>
-  );
-}
-
-function ExpandedDetails({ unit, onUpdate }: { unit: TenancyUnit; onUpdate: (id: number, field: string, val: string) => void }) {
-  return (
-    <tr className="bg-gray-50/50 dark:bg-gray-800/30 border-b" data-testid={`tenancy-detail-${unit.id}`}>
-      <td colSpan={17} className="p-3">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div>
-            <div className="font-semibold text-[10px] uppercase text-gray-500 mb-1">Floor Areas</div>
-            <div className="grid grid-cols-2 gap-1">
-              <span className="text-gray-500">Basement:</span><InlineEdit value={String(unit.area_basement)} field="area_basement" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Ground:</span><InlineEdit value={String(unit.area_ground)} field="area_ground" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">First:</span><InlineEdit value={String(unit.area_first)} field="area_first" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Second:</span><InlineEdit value={String(unit.area_second)} field="area_second" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Other:</span><InlineEdit value={String(unit.area_other)} field="area_other" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">GIA:</span><InlineEdit value={String(unit.gia_sqft)} field="gia_sqft" unitId={unit.id} onSave={onUpdate} type="number" />
-            </div>
-          </div>
-          <div>
-            <div className="font-semibold text-[10px] uppercase text-gray-500 mb-1">Rent Reviews</div>
-            <div className="grid grid-cols-2 gap-1">
-              <span className="text-gray-500">RR1:</span><span><InlineEdit value={unit.rent_review_1_date} field="rent_review_1_date" unitId={unit.id} onSave={onUpdate} /> — <InlineEdit value={unit.rent_review_1_amount} field="rent_review_1_amount" unitId={unit.id} onSave={onUpdate} /></span>
-              <span className="text-gray-500">RR2:</span><span><InlineEdit value={unit.rent_review_2_date} field="rent_review_2_date" unitId={unit.id} onSave={onUpdate} /> — <InlineEdit value={unit.rent_review_2_amount} field="rent_review_2_amount" unitId={unit.id} onSave={onUpdate} /></span>
-              <span className="text-gray-500">RR3:</span><span><InlineEdit value={unit.rent_review_3_date} field="rent_review_3_date" unitId={unit.id} onSave={onUpdate} /> — <InlineEdit value={unit.rent_review_3_amount} field="rent_review_3_amount" unitId={unit.id} onSave={onUpdate} /></span>
-              <span className="text-gray-500">RR4:</span><span><InlineEdit value={unit.rent_review_4_date} field="rent_review_4_date" unitId={unit.id} onSave={onUpdate} /> — <InlineEdit value={unit.rent_review_4_amount} field="rent_review_4_amount" unitId={unit.id} onSave={onUpdate} /></span>
-              <span className="text-gray-500">Outside L&T:</span><InlineEdit value={unit.outside_lt_act} field="outside_lt_act" unitId={unit.id} onSave={onUpdate} />
-              <span className="text-gray-500">Break Type:</span><InlineEdit value={unit.break_type} field="break_type" unitId={unit.id} onSave={onUpdate} />
-            </div>
-          </div>
-          <div>
-            <div className="font-semibold text-[10px] uppercase text-gray-500 mb-1">Income & Costs</div>
-            <div className="grid grid-cols-2 gap-1">
-              <span className="text-gray-500">Turnover %:</span><InlineEdit value={String(unit.turnover_percent)} field="turnover_percent" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">LL Shortfall:</span><InlineEdit value={String(unit.landlord_shortfall)} field="landlord_shortfall" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Net Income:</span><InlineEdit value={String(unit.net_income)} field="net_income" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Service Charge:</span><InlineEdit value={String(unit.service_charge)} field="service_charge" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Insurance:</span><InlineEdit value={String(unit.insurance)} field="insurance" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Total Occ Costs:</span><InlineEdit value={String(unit.total_occ_costs)} field="total_occ_costs" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Occ Costs £psf:</span><InlineEdit value={String(unit.occ_costs_psf)} field="occ_costs_psf" unitId={unit.id} onSave={onUpdate} type="number" />
-              <span className="text-gray-500">Blended ERV:</span><InlineEdit value={String(unit.blended_erv)} field="blended_erv" unitId={unit.id} onSave={onUpdate} type="number" />
-            </div>
-          </div>
+    <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
+      <td className="p-1 text-center sticky left-0 bg-white dark:bg-gray-900 z-10 border-r">
+        <span className="text-muted-foreground text-[10px]">{unit.unit_number || "—"}</span>
+      </td>
+      {COLUMNS.map((c) => {
+        const raw = (unit as any)[c.field];
+        const displayVal = raw == null ? "" : String(raw);
+        const editType = c.type === "num" || c.type === "currency" || c.type === "currency_psf" ? "number" : "text";
+        return (
+          <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+            <InlineEdit
+              value={displayVal}
+              field={c.field as string}
+              unitId={unit.id}
+              onSave={onUpdate}
+              type={editType}
+              className={c.field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}
+            />
+          </td>
+        );
+      })}
+      <td className="p-1 text-center">
+        <Badge variant={isVacant ? "destructive" : "default"} className="text-[10px] cursor-pointer" onClick={() => onUpdate(unit.id, "status", isVacant ? "Occupied" : "Vacant")} data-testid={`tenancy-status-${unit.id}`}>
+          {unit.status}
+        </Badge>
+      </td>
+      <td className="p-1 text-center">
+        <div className="flex gap-1 justify-center">
+          {deal && (
+            <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
+              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+            </a>
+          )}
+          {letting && (
+            <a href={`/available`} className="inline-flex items-center" title={`Letting: ${letting.unit_name} (${letting.marketing_status})`} data-testid={`tenancy-letting-link-${unit.id}`}>
+              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50"><ExternalLink className="w-2.5 h-2.5" />LT</Badge>
+            </a>
+          )}
         </div>
+      </td>
+      <td className="p-1 text-center">
+        <button onClick={onDelete} className="text-red-400 hover:text-red-600 p-0.5" data-testid={`tenancy-delete-${unit.id}`}>
+          <Trash2 className="w-3 h-3" />
+        </button>
       </td>
     </tr>
   );
 }
+
 
 function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
   propertyId: string; onAdd: (data: any) => void; onCancel: () => void; isPending: boolean;
