@@ -1163,6 +1163,22 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const [aiBanding, setAiBanding] = useState(false);
   const [snapshotting, setSnapshotting] = useState(false);
   const [showSnapshots, setShowSnapshots] = useState(false);
+  const [syncingToTenancy, setSyncingToTenancy] = useState(false);
+  const handleSyncToTenancy = async () => {
+    if (!confirm("Create Tenancy Schedule rows for every Leasing unit that lacks one? Links the two so the Existing column pulls live tenant data.")) return;
+    setSyncingToTenancy(true);
+    try {
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/sync-to-tenancy`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "Sync failed");
+      toast({ title: `Synced ${out.scanned} units`, description: `${out.created} created in Tenancy, ${out.linked} linked to existing` });
+      refetchUnits();
+    } catch (e: any) {
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    } finally { setSyncingToTenancy(false); }
+  };
   const handleSnapshot = async () => {
     if (!confirm("Freeze the current Leasing Schedule as the version presented at this meeting? Past snapshots remain reclaimable.")) return;
     setSnapshotting(true);
@@ -1482,6 +1498,15 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             title="Pull vacant units from this property's Tenancy Schedule into the Leasing Schedule"
           >
             <Plus className="w-3.5 h-3.5 mr-1" />From Tenancy
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={handleSyncToTenancy}
+            disabled={syncingToTenancy || !propertyId}
+            data-testid="btn-sync-tenancy"
+            title="Seed missing Tenancy Schedule rows from the Leasing Schedule. One-shot — links the two so the Existing column pulls live."
+          >
+            {syncingToTenancy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}Sync to Tenancy
           </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAddUnit(true)} data-testid="btn-add-unit">
             <Plus className="w-3.5 h-3.5 mr-1" />Add Unit

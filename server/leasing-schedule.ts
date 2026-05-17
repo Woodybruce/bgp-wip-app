@@ -1884,6 +1884,86 @@ router.get("/api/leasing-schedule/snapshot/:snapshotId", requireAuth, async (req
   }
 });
 
+// Backfill the Tenancy Schedule for every Leasing Schedule unit on this
+// property that doesn't already have a linked tenancy_unit_id. The leasing
+// schedule is often imported standalone (e.g. Landsec tracker xlsx) while
+// the Tenancy Schedule lags — this seeds a minimal tenancy row per leasing
+// row so the live cross-link works, and writes the FK back on the leasing
+// row. Idempotent: re-runs only touch units still missing a link.
+router.post("/api/leasing-schedule/property/:propertyId/sync-to-tenancy", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const leasing = await pool.query(
+      `SELECT id, unit_name, tenant_name, status, zone, positioning, sqft, rent_pa,
+              lease_expiry, lease_break, rent_review
+         FROM leasing_schedule_units
+        WHERE property_id = $1 AND (tenancy_unit_id IS NULL OR tenancy_unit_id = '')`,
+      [req.params.propertyId]
+    );
+
+    let created = 0, linked = 0;
+    for (const l of leasing.rows) {
+      // First check if a tenancy row already exists by unit_number — link it.
+      const existing = await pool.query(
+        `SELECT id FROM tenancy_schedule_units
+          WHERE property_id = $1
+            AND lower(trim(unit_number)) = lower(trim($2))
+          LIMIT 1`,
+        [req.params.propertyId, l.unit_name || ""]
+      );
+      let tenancyId: string;
+      if (existing.rows[0]?.id) {
+        tenancyId = existing.rows[0].id;
+        linked++;
+      } else {
+        // Seed a minimal tenancy row.
+        const status = (l.status || "Occupied") === "Vacant" ? "Vacant" : "Occupied";
+        const ins = await pool.query(`
+          INSERT INTO tenancy_schedule_units
+            (property_id, unit_number, premises, grouping, tenant_name, permitted_use,
+             status, nia_sqft, passing_rent_pa, lease_expiry, break_date, next_review_date,
+             in_leasing_schedule)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true)
+          RETURNING id
+        `, [
+          req.params.propertyId,
+          l.unit_name || "",
+          l.zone || null,
+          l.zone || null,
+          l.tenant_name || null,
+          l.positioning || null,
+          status,
+          l.sqft || null,
+          l.rent_pa || null,
+          l.lease_expiry || null,
+          l.lease_break || null,
+          l.rent_review || null,
+        ]);
+        tenancyId = ins.rows[0].id;
+        created++;
+      }
+      // Write the FK back so the live cross-link kicks in.
+      await pool.query(
+        `UPDATE leasing_schedule_units SET tenancy_unit_id = $1 WHERE id = $2`,
+        [tenancyId, l.id]
+      );
+    }
+
+    await logAudit(pool, {
+      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      action: "sync_to_tenancy",
+      newValue: `${created} created + ${linked} linked`,
+    });
+    res.json({ ok: true, created, linked, scanned: leasing.rows.length });
+  } catch (e: any) {
+    console.error("[sync-to-tenancy] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Scan the Updates field for @username mentions and create a user_task per
 // newly added mention. Compares against `previousText` so re-saves don't
 // re-create tasks for existing mentions. Username matches the local part of
