@@ -450,7 +450,9 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
     const buf = await pdfFile.arrayBuffer();
     const doc = await pdfjs.getDocument({ data: buf }).promise;
     const page = await doc.getPage(pageNumber);
-    const viewport = page.getViewport({ scale: 2 });
+    // 3× zoom — keeps tiny unit-number labels readable. Sharp at 4× but
+    // PNG size blows past Claude vision's input limit on dense plans.
+    const viewport = page.getViewport({ scale: 3 });
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
@@ -579,36 +581,58 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
 function AutoDetectButton({ plan }: { plan: Plan }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState<null | "fast" | "hq">(null);
+
+  async function run(mode: "fast" | "hq") {
+    const label = mode === "hq" ? "high-quality (4-tile)" : "standard (single pass)";
+    if (!confirm(`Run ${label} auto-detect on the ${plan.floor} plan? Adds polygons for every unit Claude finds; existing labels are kept.`)) return;
+    setRunning(mode);
+    try {
+      const r = await fetch(`/api/plans/${plan.id}/auto-detect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ highQuality: mode === "hq" }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      const out = await r.json();
+      toast({
+        title: `Detected ${out.detected} units (${out.mode})`,
+        description: `Created ${out.created} polygons · ${out.matched} matched to a CRM unit · ${out.skipped_existing} skipped (already on plan).`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "units"] });
+    } catch (e: any) {
+      toast({ title: "Auto-detect failed", description: e?.message, variant: "destructive" });
+    } finally {
+      setRunning(null);
+    }
+  }
+
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      className="h-7 text-[10px]"
-      disabled={running}
-      onClick={async () => {
-        if (!confirm(`Run AI auto-detect on the ${plan.floor} plan? Adds polygons for every unit Claude finds. Existing polygons are kept.`)) return;
-        setRunning(true);
-        try {
-          const r = await fetch(`/api/plans/${plan.id}/auto-detect`, { method: "POST", credentials: "include" });
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
-          const out = await r.json();
-          toast({
-            title: `Detected ${out.detected} units`,
-            description: `Created ${out.created} polygons · ${out.matched} matched to a CRM unit · ${out.skipped_existing} skipped (already on plan).`,
-          });
-          queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "units"] });
-        } catch (e: any) {
-          toast({ title: "Auto-detect failed", description: e?.message, variant: "destructive" });
-        } finally {
-          setRunning(false);
-        }
-      }}
-      data-testid="button-auto-detect-plan"
-      title="Use Claude vision to detect every unit on this plan and create polygons. Unmatched units render grey — pick the right CRM unit from the drawer."
-    >
-      <Sparkles className={`w-3 h-3 mr-1 ${running ? "animate-spin" : ""}`} /> {running ? "Detecting…" : "Auto-detect"}
-    </Button>
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-[10px]"
+        disabled={running !== null}
+        onClick={() => run("fast")}
+        data-testid="button-auto-detect-plan"
+        title="Single-pass Opus vision call. Fast (~30s), best for small / clean plans."
+      >
+        <Sparkles className={`w-3 h-3 mr-1 ${running === "fast" ? "animate-spin" : ""}`} /> {running === "fast" ? "Detecting…" : "Auto-detect"}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-[10px]"
+        disabled={running !== null}
+        onClick={() => run("hq")}
+        data-testid="button-auto-detect-plan-hq"
+        title="Splits the plan into 4 tiles, runs Opus on each, merges + dedupes. ~4× slower / costlier but reads tiny unit labels on dense centres."
+      >
+        <Sparkles className={`w-3 h-3 mr-1 ${running === "hq" ? "animate-spin" : ""}`} /> {running === "hq" ? "Detecting (HQ)…" : "Auto-detect HQ"}
+      </Button>
+    </>
   );
 }
 

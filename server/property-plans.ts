@@ -239,37 +239,94 @@ router.delete("/api/plan-units/:id", requireAuth, async (req: Request, res: Resp
 
 // ─── AI vision auto-detect ────────────────────────────────────────────
 //
-// Send the plan image to Claude vision and ask for every unit's label
-// + bounding box in normalised 0-1 coords. We then match labels to
-// property_units.unit_name (case-insensitive trim-equal) for the
-// property and create polygons for each detection. Unmatched
-// detections still get a polygon — they show grey ('unlinked') and
-// the user can pick a unit manually from the drawer.
+// Two modes:
+//   Standard — single pass with claude-opus-4-7 (default). Good for
+//     simple plans (≤30 units, big labels, clean SVG-rendered Goad).
+//   High-quality — splits the plan into 2×2 = 4 tiles with 10% overlap,
+//     runs Opus on each, merges bboxes back to global coords, dedupes
+//     by IoU. Much better on dense shopping centres (50+ units, small
+//     labels) where a single-pass call misses half the units because
+//     labels are too small to read at the input-image resolution
+//     Claude downsamples to. ~4× cost / latency.
 //
 // We use the existing /api/plans/:id/image stream as the input, so
 // the AI sees exactly what the user sees. Returns a report so the
 // user can audit what was created vs what was skipped.
 
+const VISION_MODEL = "claude-opus-4-7";
+
 const AUTO_DETECT_PROMPT = `You are looking at a shopping centre / retail park floor plan (Goad or leasing plan).
 
 For EVERY shop unit visible on the plan, return:
-  - label: the text label or unit number printed on the unit (e.g. "LU14", "WU01", "Zara", "M&S"). If only a tenant name is visible, use that.
-  - bbox: a rectangle covering the unit, as [x_min, y_min, x_max, y_max] with each value in 0-1 (0 = left/top, 1 = right/bottom of the image).
+  - label: the text label or unit number printed on the unit (e.g. "LU14", "WU01", "Zara", "M&S"). If only a tenant name is visible, use that. Read carefully — unit numbers are often tiny.
+  - bbox: a rectangle tightly covering the unit, as [x_min, y_min, x_max, y_max] with each value in 0-1 (0 = left/top, 1 = right/bottom of THIS image).
 
 Output ONLY a JSON object of the form:
 {"units": [{"label": "...", "bbox": [x_min, y_min, x_max, y_max]}, ...]}
 
 Rules:
-1. Skip non-unit elements (walls, walkways, lifts, toilets, parking, decorative shapes).
+1. Skip non-unit elements (walls, walkways, lifts, toilets, parking, decorative shapes, anchor logos like the M&S / John Lewis store-name overlays — those are buildings, but the buildings themselves are units; only skip the floating text labels OF the same building).
 2. If a tenant occupies multiple adjacent visible units (an "amalgamation" annotation), output ONE bbox covering the combined area, with the tenant's name as label.
 3. Don't make up units that aren't on the plan.
-4. Don't worry about being pixel-perfect — a slightly loose bbox is fine.
-5. Aim for completeness — better to over-include than miss units.
+4. Be exhaustive — most plans have 30-150 units. If you're returning fewer than 20, look again.
+5. Bboxes should hug the actual unit boundary, not just the label text.
 
 No prose. No markdown. JSON only.`;
 
+interface Detection { label: string; bbox: [number, number, number, number] }
+
+async function callVision(imageBuffer: Buffer, mediaType: string): Promise<Detection[]> {
+  const msg = await anthropic.messages.create({
+    model: VISION_MODEL,
+    max_tokens: 12000,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: mediaType as any, data: imageBuffer.toString("base64") } },
+        { type: "text", text: AUTO_DETECT_PROMPT },
+      ],
+    }],
+  });
+  const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return [];
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    const items = Array.isArray(parsed?.units) ? parsed.units : [];
+    return items
+      .map((d: any) => ({ label: String(d?.label || "").trim(), bbox: d?.bbox }))
+      .filter((d: Detection) => d.label && Array.isArray(d.bbox) && d.bbox.length === 4) as Detection[];
+  } catch {
+    return [];
+  }
+}
+
+// IoU > 0.5 = same unit detected twice (e.g. across overlapping tiles).
+// Keep the one with the longer label (more likely to have a unit number
+// + the tenant name vs just one of them).
+function dedupeDetections(items: Detection[]): Detection[] {
+  const sorted = [...items].sort((a, b) => b.label.length - a.label.length);
+  const kept: Detection[] = [];
+  for (const cand of sorted) {
+    const isDup = kept.some(k => iou(cand.bbox, k.bbox) > 0.5);
+    if (!isDup) kept.push(cand);
+  }
+  return kept;
+}
+
+function iou(a: [number, number, number, number], b: [number, number, number, number]): number {
+  const [ax1, ay1, ax2, ay2] = a;
+  const [bx1, by1, bx2, by2] = b;
+  const interX = Math.max(0, Math.min(ax2, bx2) - Math.max(ax1, bx1));
+  const interY = Math.max(0, Math.min(ay2, by2) - Math.max(ay1, by1));
+  const inter = interX * interY;
+  const union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter;
+  return union > 0 ? inter / union : 0;
+}
+
 router.post("/api/plans/:planId/auto-detect", requireAuth, async (req: Request, res: Response) => {
   try {
+    const highQuality = req.body?.highQuality === true || req.query?.hq === "1";
     const planRows = await pool.query<{ storage_key: string; property_id: string }>(
       `SELECT storage_key, property_id FROM property_plans WHERE id = $1`,
       [req.params.planId]
@@ -284,25 +341,56 @@ router.post("/api/plans/:planId/auto-detect", requireAuth, async (req: Request, 
       ? (file.contentType as "image/jpeg" | "image/png" | "image/webp" | "image/gif")
       : "image/png";
 
-    // Fire vision call. Sonnet is the sweet spot for spatial reasoning
-    // on plans; Haiku misses too many tiny units.
-    const msg = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8000,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: mediaType, data: file.data.toString("base64") } },
-          { type: "text", text: AUTO_DETECT_PROMPT },
-        ],
-      }],
-    });
+    let detections: Detection[] = [];
 
-    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return res.status(502).json({ error: "vision returned no JSON", raw: text.slice(0, 400) });
-    const parsed = JSON.parse(jsonMatch[0]);
-    const detections = Array.isArray(parsed?.units) ? parsed.units : [];
+    if (!highQuality) {
+      // Single-pass vision call.
+      detections = await callVision(file.data, mediaType);
+    } else {
+      // Tile mode: 2×2 grid with 10% overlap so units straddling the
+      // edge of a tile still get caught by an adjacent tile.
+      const sharp = (await import("sharp")).default;
+      const meta = await sharp(file.data).metadata();
+      const W = meta.width || 0;
+      const H = meta.height || 0;
+      if (!W || !H) return res.status(500).json({ error: "couldn't read image dimensions" });
+
+      const overlap = 0.10;
+      const tiles: Array<{ x0: number; y0: number; w: number; h: number; buffer: Buffer }> = [];
+      for (const row of [0, 1]) {
+        for (const col of [0, 1]) {
+          const x0Frac = col === 0 ? 0 : 0.5 - overlap / 2;
+          const y0Frac = row === 0 ? 0 : 0.5 - overlap / 2;
+          const wFrac = col === 0 ? 0.5 + overlap / 2 : 0.5 + overlap / 2;
+          const hFrac = row === 0 ? 0.5 + overlap / 2 : 0.5 + overlap / 2;
+          const x0 = Math.floor(x0Frac * W);
+          const y0 = Math.floor(y0Frac * H);
+          const w = Math.floor(wFrac * W);
+          const h = Math.floor(hFrac * H);
+          // Sharp extract — pixel-level crop.
+          const buf = await sharp(file.data).extract({ left: x0, top: y0, width: Math.min(w, W - x0), height: Math.min(h, H - y0) }).png().toBuffer();
+          tiles.push({ x0: x0Frac, y0: y0Frac, w: wFrac, h: hFrac, buffer: buf });
+        }
+      }
+      // Run all 4 tile detections in parallel.
+      const tileResults = await Promise.all(tiles.map(t => callVision(t.buffer, "image/png").then(items => ({ tile: t, items }))));
+      // Project each tile's local bboxes back into global 0-1 coords.
+      for (const { tile, items } of tileResults) {
+        for (const d of items) {
+          const [lx1, ly1, lx2, ly2] = d.bbox;
+          detections.push({
+            label: d.label,
+            bbox: [
+              tile.x0 + lx1 * tile.w,
+              tile.y0 + ly1 * tile.h,
+              tile.x0 + lx2 * tile.w,
+              tile.y0 + ly2 * tile.h,
+            ],
+          });
+        }
+      }
+      detections = dedupeDetections(detections);
+    }
 
     // Pull all property_units once so we can match labels in-memory.
     const pickable = await pool.query<{ id: string; unit_name: string }>(
@@ -321,10 +409,8 @@ router.post("/api/plans/:planId/auto-detect", requireAuth, async (req: Request, 
     const report: Array<{ label: string; matched_unit_id: string | null; bbox: number[] }> = [];
 
     for (const det of detections) {
-      const label = String(det?.label || "").trim();
-      const bbox = det?.bbox;
-      if (!label || !Array.isArray(bbox) || bbox.length !== 4) continue;
-      const [x1, y1, x2, y2] = bbox.map((n: any) => Math.max(0, Math.min(1, Number(n))));
+      const label = det.label;
+      const [x1, y1, x2, y2] = det.bbox.map(n => Math.max(0, Math.min(1, Number(n))));
       if (!(x2 > x1 && y2 > y1)) continue;
 
       // Skip if there's already a polygon for this label on this plan
@@ -354,6 +440,8 @@ router.post("/api/plans/:planId/auto-detect", requireAuth, async (req: Request, 
 
     res.json({
       ok: true,
+      mode: highQuality ? "high-quality (4 tiles, Opus)" : "standard (single pass, Opus)",
+      model: VISION_MODEL,
       detected: detections.length,
       created,
       matched,
