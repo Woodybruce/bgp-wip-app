@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
-  Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink
+  Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon
 } from "lucide-react";
 
 interface TenancyUnit {
@@ -670,6 +670,25 @@ function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
               <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50"><ExternalLink className="w-2.5 h-2.5" />LT</Badge>
             </a>
           )}
+          {/* View this unit on the plan — sets the URL hash so the
+              PropertyPlansPanel pulses the matching polygon and scrolls
+              into view. Falls back gracefully when no polygon exists. */}
+          <button
+            type="button"
+            onClick={() => {
+              const label = encodeURIComponent(unit.unit_number || unit.unit_name || "");
+              if (!label) return;
+              window.location.hash = `plan-unit-${label}`;
+              document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            className="inline-flex items-center"
+            title="Highlight this unit on the property plan"
+            data-testid={`tenancy-plan-link-${unit.id}`}
+          >
+            <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-violet-50">
+              <MapPinIcon className="w-2.5 h-2.5" />Plan
+            </Badge>
+          </button>
         </div>
       </td>
       <td className="p-1 text-center">

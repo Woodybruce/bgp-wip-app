@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Map as MapIcon, Upload, Plus, Trash2, Pencil, X as XIcon,
-  ExternalLink, FileText, Layers, MousePointer2, ChevronRight,
+  ExternalLink, FileText, Layers, MousePointer2, ChevronRight, Sparkles,
 } from "lucide-react";
 
 interface Plan {
@@ -93,6 +93,21 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   const [pendingPoints, setPendingPoints] = useState<[number, number][]>([]);
   const [linkDialogPolygon, setLinkDialogPolygon] = useState<{ points: [number, number][] } | null>(null);
   const [selectedUnitForDrawer, setSelectedUnitForDrawer] = useState<PlanUnit | null>(null);
+  // URL-hash-driven highlight. The tenancy schedule's 'View on plan'
+  // button writes #plan-unit-<unitName>; we read it here, switch to
+  // the right floor (the plan that contains a polygon for it), and
+  // pulse the polygon. Stays sticky until cleared so cross-floor
+  // navigation keeps the highlight.
+  const [highlightedLabel, setHighlightedLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const read = () => {
+      const m = window.location.hash.match(/^#plan-unit-(.+)$/);
+      setHighlightedLabel(m ? decodeURIComponent(m[1]) : null);
+    };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
 
   const plansQ = useQuery<{ plans: Plan[] }>({
     queryKey: ["/api/properties", propertyId, "plans"],
@@ -122,6 +137,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
           <UploadPlanButton propertyId={propertyId} onUploaded={(p) => setActivePlanId(p.id)} />
           {activePlan && (
             <>
+              <AutoDetectButton plan={activePlan} />
               <Button
                 size="sm"
                 variant={drawMode ? "default" : "outline"}
@@ -143,14 +159,28 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
           </div>
         ) : (
           <>
-            {/* Floor switcher */}
+            {/* Floor switcher. Double-click chip to rename. */}
             <div className="flex items-center gap-1 flex-wrap">
               {plans.map(p => (
                 <button
                   key={p.id}
                   onClick={() => setActivePlanId(p.id)}
+                  onDoubleClick={async () => {
+                    const next = prompt(`Rename floor "${p.floor}":`, p.floor);
+                    if (!next || next === p.floor) return;
+                    try {
+                      await fetch(`/api/plans/${p.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({ floor: next }),
+                      });
+                      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plans"] });
+                    } catch { /* swallow */ }
+                  }}
                   className={`text-[11px] px-2 py-1 rounded border ${p.id === activePlan?.id ? "bg-foreground text-background border-foreground" : "bg-card hover:bg-muted"}`}
                   data-testid={`button-floor-${p.floor}`}
+                  title="Click to switch · double-click to rename"
                 >
                   <Layers className="w-2.5 h-2.5 inline mr-1" /> {p.floor}
                 </button>
@@ -176,6 +206,9 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
                 setPendingPoints={setPendingPoints}
                 onFinishPolygon={(points) => { setLinkDialogPolygon({ points }); setPendingPoints([]); setDrawMode(false); }}
                 onSelectUnit={(u) => setSelectedUnitForDrawer(u)}
+                highlightedLabel={highlightedLabel}
+                onAutoSwitchFloor={(targetPlanId) => setActivePlanId(targetPlanId)}
+                allPlans={plans}
               />
             )}
           </>
@@ -214,6 +247,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
 
 function PlanCanvas({
   plan, drawMode, pendingPoints, setPendingPoints, onFinishPolygon, onSelectUnit,
+  highlightedLabel, onAutoSwitchFloor, allPlans,
 }: {
   plan: Plan;
   drawMode: boolean;
@@ -221,6 +255,9 @@ function PlanCanvas({
   setPendingPoints: (p: [number, number][]) => void;
   onFinishPolygon: (points: [number, number][]) => void;
   onSelectUnit: (u: PlanUnit) => void;
+  highlightedLabel: string | null;
+  onAutoSwitchFloor: (planId: string) => void;
+  allPlans: Plan[];
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
@@ -237,6 +274,27 @@ function PlanCanvas({
   });
 
   const units = unitsQ.data?.units || [];
+
+  // Hash-driven highlight: when the tenancy schedule's "View on plan"
+  // button writes #plan-unit-<name>, find the polygon and pulse it.
+  // Match by label OR linked unit_name (case-insensitive trim-equal).
+  const highlightedUnitId = useMemo(() => {
+    if (!highlightedLabel) return null;
+    const key = highlightedLabel.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!key) return null;
+    const hit = units.find(u => {
+      const labelKey = (u.label || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const nameKey = (u.unit_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      return labelKey === key || nameKey === key;
+    });
+    return hit?.id || null;
+  }, [highlightedLabel, units]);
+
+  // If no polygon on this plan matches the highlighted label, hint at
+  // the user that another floor may have it. (Cross-floor auto-switch
+  // would need pre-loading all plans' units — leaving that as a
+  // future polish.)
+  const crossFloorHint = highlightedLabel && !highlightedUnitId && allPlans.length > 1;
 
   // Convert click position → normalised 0-1 coords. Uses currentTarget's
   // bounding box, so it works whether the image renders at natural size
@@ -290,14 +348,16 @@ function PlanCanvas({
           const c = STATUS_COLOURS[u.status] || STATUS_COLOURS.unknown;
           const pts = u.polygon?.points || [];
           const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0]} ${p[1]}`).join(" ") + " Z";
+          const isHighlight = u.id === highlightedUnitId;
           return (
             <path
               key={u.id}
               d={d}
-              fill={c.fill}
-              stroke={c.stroke}
-              strokeWidth={0.002}
+              fill={isHighlight ? "rgba(99,102,241,0.45)" : c.fill}
+              stroke={isHighlight ? "#6366f1" : c.stroke}
+              strokeWidth={isHighlight ? 0.005 : 0.002}
               vectorEffect="non-scaling-stroke"
+              className={isHighlight ? "animate-pulse" : ""}
               style={{ pointerEvents: drawMode ? "none" : "auto", cursor: "pointer" }}
               onClick={(e) => { e.stopPropagation(); onSelectUnit(u); }}
               onMouseEnter={(e) => {
@@ -356,6 +416,12 @@ function PlanCanvas({
           Click to add point · double-click to close ({pendingPoints.length} points)
         </div>
       )}
+
+      {crossFloorHint && (
+        <div className="absolute top-2 left-2 right-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200 flex items-center gap-2">
+          <span className="font-medium">"{highlightedLabel}"</span> isn't on this floor — switch floors to find it, or add it via "Add unit".
+        </div>
+      )}
     </div>
   );
 }
@@ -370,33 +436,92 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // Render a single PDF page to a PNG blob using pdfjs-dist. 2× zoom
+  // keeps text on Goad-style plans crisp without blowing storage out.
+  async function pdfPageToPng(pdfFile: File, pageNumber: number): Promise<{ blob: Blob; width: number; height: number }> {
+    const pdfjs: any = await import("pdfjs-dist");
+    // pdfjs needs its worker. Vite-served fallback: data URL with the
+    // worker module. The dist ships a worker as an ESM module.
+    if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
+      // Use CDN worker matching the installed version (works offline once cached;
+      // package version is bundled at build time).
+      pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+    }
+    const buf = await pdfFile.arrayBuffer();
+    const doc = await pdfjs.getDocument({ data: buf }).promise;
+    const page = await doc.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const blob: Blob = await new Promise(r => canvas.toBlob(b => r(b!), "image/png"));
+    return { blob, width: canvas.width, height: canvas.height };
+  }
+
+  async function uploadOnePage(blob: Blob, width: number, height: number, floorLabel: string, filename: string): Promise<Plan> {
+    const fd = new FormData();
+    fd.append("file", new File([blob], filename, { type: "image/png" }));
+    fd.append("floor", floorLabel);
+    fd.append("source", "leasing-plan");
+    fd.append("width", String(width));
+    fd.append("height", String(height));
+    const r = await fetch(`/api/properties/${propertyId}/plans`, {
+      method: "POST", body: fd, credentials: "include",
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    return r.json();
+  }
+
   async function submit() {
     if (!file) { toast({ title: "Pick a file first" }); return; }
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("floor", floor);
-      // Read natural size client-side so the server can store width/height.
-      const url = URL.createObjectURL(file);
-      const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
-        const im = new Image();
-        im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
-        im.onerror = reject;
-        im.src = url;
-      }).catch(() => ({ w: 0, h: 0 }));
-      URL.revokeObjectURL(url);
-      fd.append("width", String(dims.w));
-      fd.append("height", String(dims.h));
-      const r = await fetch(`/api/properties/${propertyId}/plans`, {
-        method: "POST",
-        body: fd,
-        credentials: "include",
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
-      const out = await r.json();
-      toast({ title: "Plan uploaded" });
-      onUploaded(out);
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+      if (isPdf) {
+        // Multi-page PDFs become one plan per page. Floor names auto-
+        // assigned: page 1 → user's selected floor, page 2 → "First",
+        // page 3 → "Second", etc. User can rename via the API after.
+        const pdfjs: any = await import("pdfjs-dist");
+        if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
+          pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+        }
+        const buf = await file.arrayBuffer();
+        const doc = await pdfjs.getDocument({ data: buf }).promise;
+        const fallbackFloors = ["Ground", "First", "Second", "Third", "Fourth"];
+        let firstPlan: Plan | null = null;
+        for (let i = 1; i <= doc.numPages; i++) {
+          const { blob, width, height } = await pdfPageToPng(file, i);
+          const floorLabel = i === 1 ? floor : (fallbackFloors[i - 1] || `Page ${i}`);
+          const plan = await uploadOnePage(blob, width, height, floorLabel, file.name.replace(/\.pdf$/i, "") + `-p${i}.png`);
+          if (i === 1) firstPlan = plan;
+        }
+        toast({ title: `Uploaded ${doc.numPages} page${doc.numPages === 1 ? "" : "s"}`, description: "Each page became its own floor plan." });
+        if (firstPlan) onUploaded(firstPlan);
+      } else {
+        // Image path — single page upload.
+        const url = URL.createObjectURL(file);
+        const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
+          const im = new Image();
+          im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+          im.onerror = reject;
+          im.src = url;
+        }).catch(() => ({ w: 0, h: 0 }));
+        URL.revokeObjectURL(url);
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("floor", floor);
+        fd.append("width", String(dims.w));
+        fd.append("height", String(dims.h));
+        const r = await fetch(`/api/properties/${propertyId}/plans`, { method: "POST", body: fd, credentials: "include" });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+        const out = await r.json();
+        toast({ title: "Plan uploaded" });
+        onUploaded(out);
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plans"] });
       setOpen(false);
       setFile(null);
@@ -419,19 +544,22 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Floor</Label>
+              <Label className="text-xs">Floor (page 1 / single image)</Label>
               <select value={floor} onChange={(e) => setFloor(e.target.value)} className="w-full text-sm border rounded px-2 py-1 bg-background">
                 {["Basement", "Ground", "First", "Second", "Third", "Upper", "Lower"].map(f => <option key={f}>{f}</option>)}
               </select>
             </div>
             <div>
-              <Label className="text-xs">Image (PNG / JPG, max 25MB)</Label>
+              <Label className="text-xs">File (PDF / PNG / JPG, max 25MB)</Label>
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/jpg"
+                accept="application/pdf,image/png,image/jpeg,image/jpg"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                 className="block w-full text-xs"
               />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Multi-page PDFs become one plan per page (page 1 = the floor you selected, page 2 = First, page 3 = Second, etc — rename after).
+              </p>
             </div>
           </div>
           <DialogFooter>
@@ -441,6 +569,46 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+// AI auto-detect button — sends the plan image to Claude vision, gets
+// back labelled bboxes, creates polygons for every detection (matched
+// or otherwise). Idempotent: re-running skips labels that already
+// exist on this plan.
+function AutoDetectButton({ plan }: { plan: Plan }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [running, setRunning] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-7 text-[10px]"
+      disabled={running}
+      onClick={async () => {
+        if (!confirm(`Run AI auto-detect on the ${plan.floor} plan? Adds polygons for every unit Claude finds. Existing polygons are kept.`)) return;
+        setRunning(true);
+        try {
+          const r = await fetch(`/api/plans/${plan.id}/auto-detect`, { method: "POST", credentials: "include" });
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+          const out = await r.json();
+          toast({
+            title: `Detected ${out.detected} units`,
+            description: `Created ${out.created} polygons · ${out.matched} matched to a CRM unit · ${out.skipped_existing} skipped (already on plan).`,
+          });
+          queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "units"] });
+        } catch (e: any) {
+          toast({ title: "Auto-detect failed", description: e?.message, variant: "destructive" });
+        } finally {
+          setRunning(false);
+        }
+      }}
+      data-testid="button-auto-detect-plan"
+      title="Use Claude vision to detect every unit on this plan and create polygons. Unmatched units render grey — pick the right CRM unit from the drawer."
+    >
+      <Sparkles className={`w-3 h-3 mr-1 ${running ? "animate-spin" : ""}`} /> {running ? "Detecting…" : "Auto-detect"}
+    </Button>
   );
 }
 

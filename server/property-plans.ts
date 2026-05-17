@@ -18,9 +18,12 @@
 //   6. anything else               — "unknown"
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
+import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { saveFile, getFile } from "./file-storage";
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -231,6 +234,135 @@ router.delete("/api/plan-units/:id", requireAuth, async (req: Request, res: Resp
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "delete failed" });
+  }
+});
+
+// ─── AI vision auto-detect ────────────────────────────────────────────
+//
+// Send the plan image to Claude vision and ask for every unit's label
+// + bounding box in normalised 0-1 coords. We then match labels to
+// property_units.unit_name (case-insensitive trim-equal) for the
+// property and create polygons for each detection. Unmatched
+// detections still get a polygon — they show grey ('unlinked') and
+// the user can pick a unit manually from the drawer.
+//
+// We use the existing /api/plans/:id/image stream as the input, so
+// the AI sees exactly what the user sees. Returns a report so the
+// user can audit what was created vs what was skipped.
+
+const AUTO_DETECT_PROMPT = `You are looking at a shopping centre / retail park floor plan (Goad or leasing plan).
+
+For EVERY shop unit visible on the plan, return:
+  - label: the text label or unit number printed on the unit (e.g. "LU14", "WU01", "Zara", "M&S"). If only a tenant name is visible, use that.
+  - bbox: a rectangle covering the unit, as [x_min, y_min, x_max, y_max] with each value in 0-1 (0 = left/top, 1 = right/bottom of the image).
+
+Output ONLY a JSON object of the form:
+{"units": [{"label": "...", "bbox": [x_min, y_min, x_max, y_max]}, ...]}
+
+Rules:
+1. Skip non-unit elements (walls, walkways, lifts, toilets, parking, decorative shapes).
+2. If a tenant occupies multiple adjacent visible units (an "amalgamation" annotation), output ONE bbox covering the combined area, with the tenant's name as label.
+3. Don't make up units that aren't on the plan.
+4. Don't worry about being pixel-perfect — a slightly loose bbox is fine.
+5. Aim for completeness — better to over-include than miss units.
+
+No prose. No markdown. JSON only.`;
+
+router.post("/api/plans/:planId/auto-detect", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const planRows = await pool.query<{ storage_key: string; property_id: string }>(
+      `SELECT storage_key, property_id FROM property_plans WHERE id = $1`,
+      [req.params.planId]
+    );
+    if (planRows.rows.length === 0) return res.status(404).json({ error: "plan not found" });
+    const { storage_key, property_id } = planRows.rows[0];
+
+    const file = await getFile(storage_key);
+    if (!file) return res.status(404).json({ error: "image missing" });
+
+    const mediaType = (file.contentType || "image/png").startsWith("image/")
+      ? (file.contentType as "image/jpeg" | "image/png" | "image/webp" | "image/gif")
+      : "image/png";
+
+    // Fire vision call. Sonnet is the sweet spot for spatial reasoning
+    // on plans; Haiku misses too many tiny units.
+    const msg = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 8000,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: mediaType, data: file.data.toString("base64") } },
+          { type: "text", text: AUTO_DETECT_PROMPT },
+        ],
+      }],
+    });
+
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return res.status(502).json({ error: "vision returned no JSON", raw: text.slice(0, 400) });
+    const parsed = JSON.parse(jsonMatch[0]);
+    const detections = Array.isArray(parsed?.units) ? parsed.units : [];
+
+    // Pull all property_units once so we can match labels in-memory.
+    const pickable = await pool.query<{ id: string; unit_name: string }>(
+      `SELECT id, unit_name FROM property_units WHERE property_id = $1`,
+      [property_id]
+    );
+    const byName = new Map<string, string>();
+    for (const row of pickable.rows) {
+      const key = (row.unit_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (key) byName.set(key, row.id);
+    }
+
+    let created = 0;
+    let matched = 0;
+    let skippedExisting = 0;
+    const report: Array<{ label: string; matched_unit_id: string | null; bbox: number[] }> = [];
+
+    for (const det of detections) {
+      const label = String(det?.label || "").trim();
+      const bbox = det?.bbox;
+      if (!label || !Array.isArray(bbox) || bbox.length !== 4) continue;
+      const [x1, y1, x2, y2] = bbox.map((n: any) => Math.max(0, Math.min(1, Number(n))));
+      if (!(x2 > x1 && y2 > y1)) continue;
+
+      // Skip if there's already a polygon for this label on this plan
+      // (idempotent re-run).
+      const existing = await pool.query(
+        `SELECT 1 FROM property_plan_units WHERE plan_id = $1 AND LOWER(label) = LOWER($2)`,
+        [req.params.planId, label]
+      );
+      if (existing.rows.length > 0) { skippedExisting++; continue; }
+
+      const matchKey = label.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const matchedUnitId = byName.get(matchKey) || null;
+      if (matchedUnitId) matched++;
+
+      const polygon = {
+        points: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]] as Array<[number, number]>,
+      };
+
+      await pool.query(
+        `INSERT INTO property_plan_units (plan_id, unit_id, label, polygon)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+        [req.params.planId, matchedUnitId, label, JSON.stringify(polygon)]
+      );
+      created++;
+      report.push({ label, matched_unit_id: matchedUnitId, bbox: [x1, y1, x2, y2] });
+    }
+
+    res.json({
+      ok: true,
+      detected: detections.length,
+      created,
+      matched,
+      skipped_existing: skippedExisting,
+      report,
+    });
+  } catch (err: any) {
+    console.error("[plan auto-detect]", err?.message || err);
+    res.status(500).json({ error: err?.message || "auto-detect failed" });
   }
 });
 
