@@ -1433,6 +1433,93 @@ export async function registerRoutes(
     }
   });
 
+  // ── HM Land Registry CCOD / UCOD ingestion ─────────────────────────────
+  // Three operating modes:
+  //   POST { latest: true, source: "CCOD" }              fetch + ingest the
+  //                                                       most recent FULL
+  //                                                       monthly file via
+  //                                                       the HMLR API (uses
+  //                                                       HMLR_API_KEY).
+  //   POST { filename, source }                           same, but for a
+  //                                                       specific filename.
+  //   POST { url, source, filename? }                     ingest directly from
+  //                                                       a pre-resolved URL
+  //                                                       (e.g. a manually-
+  //                                                       downloaded mirror).
+  // Always runs in the background; poll /status. CCOD file is ~150MB so
+  // expect 10-30 min depending on instance size.
+  app.post("/api/admin/ingest-ccod", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { ingestCcodFromUrl, ingestLatestFor, resolveHmlrDownloadUrl, getIngestProgress } = await import("./land-registry-ccod");
+      const progress = getIngestProgress();
+      if (progress.state === "downloading" || progress.state === "parsing") {
+        return res.status(202).json({ accepted: true, alreadyRunning: true, progress });
+      }
+      const body = req.body || {};
+      const source = (String(body.source || "CCOD").toUpperCase() === "UCOD" ? "UCOD" : "CCOD") as "CCOD" | "UCOD";
+
+      // Kick off in the background; respond 202 immediately so Railway's
+      // edge proxy doesn't time out on the 10-30 min ingest.
+      if (body.latest) {
+        ingestLatestFor(source).catch(err => console.error("[ccod] ingestLatestFor failed:", err?.message));
+      } else if (body.filename) {
+        (async () => {
+          try {
+            const url = await resolveHmlrDownloadUrl(source, body.filename);
+            await ingestCcodFromUrl(url, source, body.filename);
+          } catch (err: any) { console.error("[ccod] filename ingest failed:", err?.message); }
+        })();
+      } else if (body.url) {
+        ingestCcodFromUrl(body.url, source, body.filename || "manual-upload.csv")
+          .catch(err => console.error("[ccod] url ingest failed:", err?.message));
+      } else {
+        return res.status(400).json({ error: "pass { latest: true } | { filename } | { url }" });
+      }
+      res.status(202).json({ accepted: true, message: `Started ${source} ingest. Poll /api/admin/ingest-ccod/status for progress.` });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "ingest failed" });
+    }
+  });
+
+  app.get("/api/admin/ingest-ccod/status", requireAuth, requireAdmin, async (_req, res) => {
+    const { getIngestProgress } = await import("./land-registry-ccod");
+    res.json(getIngestProgress());
+  });
+
+  app.get("/api/admin/ingest-ccod/files", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { listHmlrFiles } = await import("./land-registry-ccod");
+      const source = (String(req.query.source || "CCOD").toUpperCase() === "UCOD" ? "UCOD" : "CCOD") as "CCOD" | "UCOD";
+      const files = await listHmlrFiles(source);
+      res.json({ source, files });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "list failed" });
+    }
+  });
+
+  // Land Registry titles for a given company, matched by CH number.
+  // Used by the Ownership block on the landlord profile.
+  app.get("/api/landlord/:companyId/land-registry-titles", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const { rows } = await pool.query(
+        `SELECT companies_house_number FROM crm_companies WHERE id = $1`,
+        [companyId]
+      );
+      const ch = rows[0]?.companies_house_number;
+      if (!ch) return res.json({ chNumber: null, count: 0, titles: [] });
+
+      const { getTitlesForCompany, countTitlesForCompany } = await import("./land-registry-ccod");
+      const [titles, count] = await Promise.all([
+        getTitlesForCompany(ch, 500),
+        countTitlesForCompany(ch),
+      ]);
+      res.json({ chNumber: ch, count, titles });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "lookup failed" });
+    }
+  });
+
   app.get("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const status = await getPipnetCredsStatus();

@@ -115,6 +115,7 @@ interface BrandProfile {
   contacts: Array<{ id: string; name: string; role: string | null; email: string | null; phone: string | null; linkedin_url: string | null; avatar_url: string | null; last_contacted_at: string | null; enrichment_source: string | null }>;
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
   ownedProperties: Array<{ id: string; name: string; address: any; postcode: string | null; status: string | null; asset_class: string | null; lat: number | null; lng: number | null; unit_count: number | null }>;
+  landRegistryTitles: Array<{ title_number: string; tenure: string | null; property_address: string | null; postcode: string | null; district: string | null; county: string | null; region: string | null; price_paid: number | null; date_proprietor_added: string | null; source: string }>;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null }>;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
@@ -928,6 +929,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const aiFields = c.ai_generated_fields || {};
   const stores = data.stores || [];
   const ownedProperties = data.ownedProperties || [];
+  const landRegistryTitles = data.landRegistryTitles || [];
   // Landlord-shaped CRM rows render a different profile: the brand "UK
   // stores" block becomes "Ownership" (their portfolio), Best-sellers /
   // Menu intel is hidden (irrelevant for investors), and the right
@@ -1726,14 +1728,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                   <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
                   <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-                    Ownership ({ownedProperties.length})
+                    Ownership
                   </span>
-                  {ownedProperties.length === 0 && (
-                    <span className="text-[10px] italic text-muted-foreground">
-                      no properties linked yet — see Files / Folders below
-                    </span>
-                  )}
+                  <span className="text-[10px] text-muted-foreground">
+                    CRM: {ownedProperties.length} · Land Registry: {landRegistryTitles.length}
+                  </span>
                 </div>
+
+                {/* CRM properties — the curated, human-linked list. Map +
+                    list as before. */}
                 {ownedProperties.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
                     <BrandPortfolioMap
@@ -1759,9 +1762,42 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       ))}
                     </div>
                   </div>
-                ) : (
+                ) : landRegistryTitles.length === 0 ? (
                   <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-[11px] text-muted-foreground leading-snug">
-                    No properties linked to this landlord yet. To populate: link existing CRM properties via the property page's Landlord field, or ask ChatBGP to import their portfolio from Land Registry / their website.
+                    No properties linked to this landlord yet. To populate: link existing CRM properties via the property page's Landlord field, ingest HM Land Registry CCOD (admin → ingest-ccod), or ask ChatBGP to scrape their portfolio page.
+                  </div>
+                ) : null}
+
+                {/* Land Registry titles — the authoritative truth from
+                    HMLR CCOD/UCOD. Often hundreds for a big REIT; we
+                    cap render at 50 and show a "view all" link. Each
+                    row is a registered title, not a building. */}
+                {landRegistryTitles.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-border/30">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+                      Land Registry titles ({landRegistryTitles.length}{landRegistryTitles.length >= 200 ? "+" : ""})
+                    </div>
+                    <div className="max-h-[280px] overflow-y-auto pr-1 text-[11px] grid grid-cols-1 gap-y-0.5">
+                      {landRegistryTitles.slice(0, 50).map((t: any) => (
+                        <div key={t.title_number} className="leading-snug px-1.5 py-0.5 rounded hover:bg-muted/40">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono text-[10px] text-muted-foreground shrink-0">{t.title_number}</span>
+                            <span className="truncate">{t.property_address || "(no address)"}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                            {t.tenure && <span>{t.tenure}</span>}
+                            {t.postcode && <span>· {t.postcode}</span>}
+                            {t.district && <span>· {t.district}</span>}
+                            {t.price_paid && <span>· £{Number(t.price_paid).toLocaleString()}</span>}
+                          </div>
+                        </div>
+                      ))}
+                      {landRegistryTitles.length > 50 && (
+                        <div className="text-[10px] italic text-muted-foreground pt-1">
+                          + {landRegistryTitles.length - 50} more titles — ask ChatBGP to summarise by region or pull a CSV.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

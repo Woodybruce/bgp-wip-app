@@ -349,6 +349,27 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Land Registry titles (CCOD / UCOD) for this company by CH number.
+    // Counts every UK title where this company is proprietor 1 — the
+    // authoritative answer to "what do they actually own". A landlord
+    // with 0 CRM properties might have hundreds of registered titles
+    // here; this block lets the user see the gap.
+    const landRegistryQ = pool.query(
+      `SELECT t.title_number, t.tenure, t.property_address, t.postcode, t.district,
+              t.county, t.region, t.price_paid, t.date_proprietor_added, t.source
+         FROM land_registry_titles t
+        WHERE t.company_registration_number = (
+                SELECT CASE
+                  WHEN companies_house_number ~ '^[0-9]+$' THEN LPAD(companies_house_number, 8, '0')
+                  ELSE UPPER(companies_house_number)
+                END
+                FROM crm_companies WHERE id = $1
+              )
+        ORDER BY t.postcode NULLS LAST, t.property_address
+        LIMIT 200`,
+      [companyId]
+    ).catch(() => ({ rows: [] })); // table may not exist yet if CCOD never ingested
+
     // Turnover data — most recent per period
     const turnoverQ = pool.query(
       `SELECT period, turnover, turnover_per_sqft, confidence, source, notes
@@ -530,14 +551,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
-      rolloutMonthly, kycInvestigation, ownedProperties,
+      rolloutMonthly, kycInvestigation, ownedProperties, landRegistry,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
-      safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ),
+      safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -726,6 +747,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       contacts: contacts.rows,
       stores: stores.rows,
       ownedProperties: ownedProperties.rows,
+      landRegistryTitles: landRegistry.rows,
       turnover: turnover.rows,
       covenant,
       coverers,
