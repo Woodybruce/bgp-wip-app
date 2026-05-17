@@ -4522,34 +4522,39 @@ function PropertiesList({
   }, [teamFilter, allUsers]);
 
   const filteredItems = useMemo(() => {
+    const hasSearch = !!search.trim();
     return items.filter((item) => {
-      if (teamUserIds) {
-        const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
-        if (assignedIds.length > 0 && !assignedIds.some(id => teamUserIds.has(id))) return false;
+      // When a search term is active, every group / status / asset / tenure /
+      // engagement filter is ignored so search is global across the portfolio.
+      if (!hasSearch) {
+        if (teamUserIds) {
+          const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
+          if (assignedIds.length > 0 && !assignedIds.some(id => teamUserIds.has(id))) return false;
+        }
+        if (activeGroup === "all" && HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
+        if (activeGroup === "Investment Comps" && !HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
+        if (activeGroup !== "all" && activeGroup !== "Investment Comps" && item.groupName !== activeGroup) return false;
+
+        const statusFilters = columnFilters["status"] || [];
+        if (statusFilters.length > 0 && (!item.status || !statusFilters.includes(item.status))) return false;
+
+        const assetFilters = columnFilters["assetClass"] || [];
+        if (assetFilters.length > 0) {
+          const itemAssets = Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? [item.assetClass] : [];
+          if (!itemAssets.some(a => assetFilters.includes(a))) return false;
+        }
+
+        const tenureFilters = columnFilters["tenure"] || [];
+        if (tenureFilters.length > 0 && (!item.tenure || !tenureFilters.includes(item.tenure))) return false;
+
+        const engagementFilters = columnFilters["engagement"] || [];
+        if (engagementFilters.length > 0) {
+          const itemEngagements = Array.isArray(item.bgpEngagement) ? item.bgpEngagement : item.bgpEngagement ? [item.bgpEngagement] : [];
+          if (!itemEngagements.some(e => engagementFilters.includes(e))) return false;
+        }
       }
-      if (activeGroup === "all" && HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
-      if (activeGroup === "Investment Comps" && !HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
-      if (activeGroup !== "all" && activeGroup !== "Investment Comps" && item.groupName !== activeGroup) return false;
 
-      const statusFilters = columnFilters["status"] || [];
-      if (statusFilters.length > 0 && (!item.status || !statusFilters.includes(item.status))) return false;
-
-      const assetFilters = columnFilters["assetClass"] || [];
-      if (assetFilters.length > 0) {
-        const itemAssets = Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? [item.assetClass] : [];
-        if (!itemAssets.some(a => assetFilters.includes(a))) return false;
-      }
-
-      const tenureFilters = columnFilters["tenure"] || [];
-      if (tenureFilters.length > 0 && (!item.tenure || !tenureFilters.includes(item.tenure))) return false;
-
-      const engagementFilters = columnFilters["engagement"] || [];
-      if (engagementFilters.length > 0) {
-        const itemEngagements = Array.isArray(item.bgpEngagement) ? item.bgpEngagement : item.bgpEngagement ? [item.bgpEngagement] : [];
-        if (!itemEngagements.some(e => engagementFilters.includes(e))) return false;
-      }
-
-      if (search) {
+      if (hasSearch) {
         const s = search.toLowerCase();
         const nameMatch = item.name.toLowerCase().includes(s);
         const addrMatch = formatAddress(item.address).toLowerCase().includes(s);
