@@ -562,4 +562,45 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
   }
 });
 
+// Audit: how many rows have non-null data in each column we're considering
+// dropping as part of the Landsec-template alignment. Tells us if any of the
+// legacy columns has live data we'd need to migrate before removing.
+router.get("/api/tenancy-schedule/audit-legacy-columns", requireAuth, async (_req, res) => {
+  try {
+    const pool = await getPool();
+    const legacyCols = [
+      "area_basement", "area_ground", "area_first", "area_second", "area_other",
+      "landlord_shortfall", "net_income", "total_occ_costs", "occ_costs_psf",
+      "wault_rent_percent", "break_type",
+      "rent_review_1_date", "rent_review_1_amount",
+      "rent_review_2_date", "rent_review_2_amount",
+      "rent_review_3_date", "rent_review_3_amount",
+      "rent_review_4_date", "rent_review_4_amount",
+    ];
+    const total = await pool.query("SELECT COUNT(*)::int AS n FROM tenancy_schedule_units");
+    const out: Array<{ column: string; nonNullRows: number; sampleValues: string[] }> = [];
+    for (const col of legacyCols) {
+      try {
+        const c = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM tenancy_schedule_units WHERE ${col} IS NOT NULL AND ${col}::text <> '' AND ${col}::text <> '0'`
+        );
+        const samples = await pool.query(
+          `SELECT DISTINCT ${col}::text AS v FROM tenancy_schedule_units WHERE ${col} IS NOT NULL AND ${col}::text <> '' AND ${col}::text <> '0' LIMIT 3`
+        );
+        out.push({
+          column: col,
+          nonNullRows: c.rows[0]?.n ?? 0,
+          sampleValues: samples.rows.map((r: any) => String(r.v)),
+        });
+      } catch (e: any) {
+        out.push({ column: col, nonNullRows: -1, sampleValues: [`error: ${e.message}`] });
+      }
+    }
+    out.sort((a, b) => b.nonNullRows - a.nonNullRows);
+    res.json({ totalRows: total.rows[0]?.n ?? 0, columns: out });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
