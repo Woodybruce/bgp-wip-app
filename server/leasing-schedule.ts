@@ -159,7 +159,9 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
       "lease_expiry", "lease_break", "rent_review", "landlord_break",
       "rent_pa", "sqft", "mat_psqft", "lfl_percent", "occ_cost_percent",
       "financial_notes", "target_brands", "optimum_target", "priority", "status", "updates",
-      "target_company_ids"
+      "target_company_ids",
+      // Landsec leasing-tracker additions
+      "status_band", "meeting_month", "agent_input",
     ];
 
     const setClauses: string[] = [];
@@ -193,6 +195,10 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     if (setClauses.length === 0) return res.status(400).json({ error: "No fields to update" });
 
     setClauses.push("updated_at = NOW()");
+    if (user?.username) {
+      setClauses.push(`last_updated_by = $${values.length + 1}`);
+      values.push(user.username);
+    }
 
     const result = await pool.query(
       `UPDATE leasing_schedule_units SET ${setClauses.join(", ")} WHERE id = $1 RETURNING *`,
@@ -210,7 +216,8 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
     const pool = await getPool();
     const { property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
       lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
-      occ_cost_percent, target_brands, optimum_target, priority, status, updates } = req.body;
+      occ_cost_percent, target_brands, optimum_target, priority, status, updates,
+      status_band, meeting_month, agent_input, target_company_ids } = req.body;
 
     if (!property_id || !unit_name) return res.status(400).json({ error: "property_id and unit_name required" });
 
@@ -224,15 +231,18 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
       INSERT INTO leasing_schedule_units
         (property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
          lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
-         occ_cost_percent, target_brands, optimum_target, priority, status, updates, sort_order)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         occ_cost_percent, target_brands, optimum_target, priority, status, updates, sort_order,
+         status_band, meeting_month, agent_input, target_company_ids, last_updated_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
       RETURNING *
     `, [property_id, zone || null, positioning || null, unit_name, tenant_name || unit_name,
       agent_initials || null, lease_expiry || null, lease_break || null, rent_review || null,
       landlord_break || null, rent_pa || null, sqft || null, mat_psqft || null,
       lfl_percent || null, occ_cost_percent || null, target_brands || null,
       optimum_target || null, priority || null, status || 'Occupied', updates || null,
-      maxSort.rows[0].next]);
+      maxSort.rows[0].next,
+      status_band || "AMBER_C_MAINTAIN", meeting_month || null, agent_input || null,
+      target_company_ids || null, user?.username || null]);
 
     await logAudit(pool, {
       unitId: result.rows[0].id?.toString(),
@@ -1712,5 +1722,208 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
     res.status(500).json({ error: e.message });
   }
 });
+
+// Pull vacant units from a property's Tenancy Schedule and offer them up to
+// be promoted into the Leasing Schedule. Tenancy Schedule is the source of
+// truth for "what units exist at this property"; Leasing Schedule subscribes
+// to a subset via the `in_leasing_schedule` flag.
+router.get("/api/leasing-schedule/property/:propertyId/available-from-tenancy", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    // Tenancy units not already mirrored into leasing_schedule_units by unit name.
+    const result = await pool.query(`
+      SELECT t.id, t.unit_number, t.premises, t.grouping, t.tenant_name, t.trading_name,
+             t.permitted_use, t.status, t.nia_sqft, t.gia_sqft, t.passing_rent_pa, t.erv_pa,
+             t.lease_expiry, t.in_leasing_schedule
+        FROM tenancy_schedule_units t
+       WHERE t.property_id = $1
+         AND COALESCE(t.unit_number, '') <> ''
+         AND NOT EXISTS (
+           SELECT 1 FROM leasing_schedule_units l
+            WHERE l.property_id = t.property_id
+              AND lower(trim(l.unit_name)) = lower(trim(COALESCE(t.unit_number, '')))
+         )
+       ORDER BY t.grouping NULLS LAST, t.premises NULLS LAST, t.sort_order, t.unit_number
+    `, [req.params.propertyId]);
+    res.json({ units: result.rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Promote a Tenancy Schedule unit into the Leasing Schedule. Creates a
+// leasing_schedule_units row pre-filled with the tenancy data, and flips the
+// `in_leasing_schedule` flag on the tenancy row so it shows up in the
+// "already on leasing schedule" view.
+router.post("/api/leasing-schedule/promote-from-tenancy", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { tenancyUnitId } = req.body;
+    if (!tenancyUnitId) return res.status(400).json({ error: "tenancyUnitId required" });
+
+    const t = await pool.query("SELECT * FROM tenancy_schedule_units WHERE id = $1", [tenancyUnitId]);
+    if (t.rows.length === 0) return res.status(404).json({ error: "Tenancy unit not found" });
+    const ten = t.rows[0];
+    const { allowed, user } = await checkPropertyAccess(pool, req, ten.property_id);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const maxSort = await pool.query(
+      "SELECT COALESCE(MAX(sort_order), 0) + 1 as next FROM leasing_schedule_units WHERE property_id = $1",
+      [ten.property_id]
+    );
+
+    // Map tenancy → leasing. Tenant becomes "Existing" (current occupant).
+    // Status_band defaults to AMBER (Maintain Mix) until set by team.
+    const status = (ten.status || "").toLowerCase() === "vacant" ? "Vacant" : "Occupied";
+    const inserted = await pool.query(`
+      INSERT INTO leasing_schedule_units
+        (property_id, zone, positioning, unit_name, tenant_name, lease_expiry, lease_break,
+         rent_pa, sqft, status, status_band, sort_order, last_updated_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      RETURNING *
+    `, [
+      ten.property_id, ten.grouping || ten.premises || null, ten.permitted_use || null,
+      ten.unit_number, ten.tenant_name || null,
+      ten.lease_expiry || null, ten.break_date || null,
+      ten.passing_rent_pa || null, ten.nia_sqft || null,
+      status,
+      status === "Vacant" ? "GREY_VOID" : "AMBER_C_MAINTAIN",
+      maxSort.rows[0].next,
+      user?.username || null,
+    ]);
+
+    await pool.query(
+      "UPDATE tenancy_schedule_units SET in_leasing_schedule = true, updated_at = NOW() WHERE id = $1",
+      [tenancyUnitId]
+    );
+
+    await logAudit(pool, {
+      unitId: inserted.rows[0].id?.toString(),
+      propertyId: ten.property_id,
+      userId: user.id,
+      userName: user.username,
+      action: "promote_from_tenancy",
+      fieldName: "unit_name",
+      newValue: ten.unit_number,
+    });
+    res.json(inserted.rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bluewater (and any Landsec-formatted xlsx) one-shot import. Parses the
+// uploaded file, finds the Bluewater section by sheet/header text, creates
+// leasing_schedule_units rows with status_band populated. Doesn't touch the
+// tenancy schedule — that's its own import. Subsequent re-imports overwrite
+// by unit name within the same property.
+const landsecImportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+router.post(
+  "/api/leasing-schedule/import-landsec",
+  requireAuth,
+  landsecImportUpload.single("file"),
+  async (req: any, res) => {
+    try {
+      const pool = await getPool();
+      const propertyId = req.body.propertyId;
+      const meetingMonth = req.body.meetingMonth || null;
+      if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+      const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
+      if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(req.file.buffer);
+      // Bluewater sheet — could be the first sheet OR named "Bluewater". Try both.
+      const sheetName =
+        wb.SheetNames.find((s: string) => /bluewater/i.test(s))
+        || wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[];
+
+      // Find header row — the one with "Zone" + "Existing" + "Targets" together.
+      let headerIdx = -1;
+      for (let i = 0; i < Math.min(15, data.length); i++) {
+        const row = (data[i] || []).map((c: any) => String(c || "").toLowerCase());
+        if (row.some(c => c.includes("zone")) && row.some(c => c.includes("existing"))) {
+          headerIdx = i;
+          break;
+        }
+      }
+      if (headerIdx === -1) return res.status(400).json({ error: "Couldn't find Landsec header row (Zone / Existing / Targets)" });
+
+      // Map column index → field
+      const header = (data[headerIdx] || []).map((c: any) => String(c || "").toLowerCase());
+      const idx = {
+        zone: header.findIndex(h => h.includes("zone")),
+        positioning: header.findIndex(h => h.includes("positioning")),
+        existing: header.findIndex(h => h.includes("existing")),
+        targets: header.findIndex(h => h.includes("target") && !h.includes("optimum")),
+        optimum: header.findIndex(h => h.includes("optimum")),
+        performance: header.findIndex(h => h.includes("performance")),
+        priority: header.findIndex(h => h.includes("priority")),
+        updates: header.findIndex(h => h.includes("updates")),
+      };
+
+      let imported = 0, sortOrder = 0;
+      for (let r = headerIdx + 1; r < data.length; r++) {
+        const row = data[r] || [];
+        const existing = String(row[idx.existing] ?? "").trim();
+        const zone = idx.zone >= 0 ? String(row[idx.zone] ?? "").trim() : "";
+        const unitName = existing || zone || `Row ${r}`;
+        if (!existing && !zone) continue;
+
+        sortOrder++;
+        const performance = idx.performance >= 0 ? String(row[idx.performance] ?? "").trim() : "";
+        // Parse MAT/psf, LFL%, Occ% out of the freeform performance cell.
+        const matMatch = performance.match(/£?\s*([\d,]+(?:\.\d+)?)/);
+        const lflMatch = performance.match(/(-?\d+(?:\.\d+)?)\s*%\s*lfl/i) || performance.match(/lfl[^\d-]*(-?\d+(?:\.\d+)?)/i);
+        const ocMatch  = performance.match(/(\d+(?:\.\d+)?)\s*%\s*oc/i)  || performance.match(/oc[^\d-]*(\d+(?:\.\d+)?)/i);
+
+        await pool.query(`
+          INSERT INTO leasing_schedule_units
+            (property_id, zone, positioning, unit_name, tenant_name,
+             target_brands, optimum_target, mat_psqft, lfl_percent, occ_cost_percent,
+             priority, status, status_band, updates, meeting_month, sort_order, last_updated_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        `, [
+          propertyId,
+          zone || null,
+          idx.positioning >= 0 ? String(row[idx.positioning] ?? "").trim() || null : null,
+          unitName,
+          existing || null,
+          idx.targets >= 0 ? String(row[idx.targets] ?? "").trim() || null : null,
+          idx.optimum >= 0 ? String(row[idx.optimum] ?? "").trim() || null : null,
+          matMatch?.[1] || null,
+          lflMatch?.[1] || null,
+          ocMatch?.[1] || null,
+          idx.priority >= 0 ? String(row[idx.priority] ?? "").trim() || null : null,
+          "Occupied",
+          "AMBER_C_MAINTAIN",
+          idx.updates >= 0 ? String(row[idx.updates] ?? "").trim() || null : null,
+          meetingMonth,
+          sortOrder,
+          user?.username || null,
+        ]);
+        imported++;
+      }
+
+      await logAudit(pool, {
+        propertyId, userId: user.id, userName: user.username,
+        action: "import_landsec",
+        newValue: `${imported} rows imported from "${sheetName}"`,
+      });
+
+      res.json({ imported, sheetName, headerRow: headerIdx + 1 });
+    } catch (e: any) {
+      console.error("[leasing import-landsec] failed:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
 
 export default router;

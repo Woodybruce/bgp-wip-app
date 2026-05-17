@@ -2862,6 +2862,12 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("leasing_schedule_units", "financial_notes", "text");
           await addColIfMissing("leasing_schedule_units", "target_company_ids", "text[]");
           await addColIfMissing("leasing_schedule_units", "sort_order", "integer DEFAULT 0");
+          // Landsec leasing-tracker alignment — status band drives row colour,
+          // meeting_month flags which monthly client meeting this cycle is for.
+          await addColIfMissing("leasing_schedule_units", "status_band", "text");
+          await addColIfMissing("leasing_schedule_units", "meeting_month", "text");
+          await addColIfMissing("leasing_schedule_units", "agent_input", "text");
+          await addColIfMissing("leasing_schedule_units", "last_updated_by", "text");
 
           // Tenancy schedule — bring in line with the Landsec investment-grade
           // template. Unit Details / Tenant / Lease / Areas (GIA+NIA splits) /
