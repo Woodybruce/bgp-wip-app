@@ -334,6 +334,21 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Properties this company OWNS (as landlord) — surfaced on the
+    // Ownership block of the landlord profile. lat/lng come through so
+    // the same map renderer used for brand stores can plot them. Cast
+    // to float because crm_properties stores coords as text.
+    const ownedPropertiesQ = pool.query(
+      `SELECT p.id, p.name, p.address, p.postcode, p.status, p.asset_class,
+              NULLIF(p.latitude, '')::float8 AS lat,
+              NULLIF(p.longitude, '')::float8 AS lng,
+              (SELECT COUNT(*) FROM leasing_schedule_units u WHERE u.property_id = p.id) AS unit_count
+         FROM crm_properties p
+        WHERE p.landlord_id = $1
+        ORDER BY p.name ASC`,
+      [companyId]
+    );
+
     // Turnover data — most recent per period
     const turnoverQ = pool.query(
       `SELECT period, turnover, turnover_per_sqft, confidence, source, notes
@@ -515,14 +530,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
-      rolloutMonthly, kycInvestigation,
+      rolloutMonthly, kycInvestigation, ownedProperties,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
-      safe(rolloutMonthlyQ), safe(kycInvestigationQ),
+      safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -710,6 +725,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       pitchedTo: pitchedTo.rows,
       contacts: contacts.rows,
       stores: stores.rows,
+      ownedProperties: ownedProperties.rows,
       turnover: turnover.rows,
       covenant,
       coverers,

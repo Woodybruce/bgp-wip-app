@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
+import { PropertyFoldersPanel } from "@/pages/properties";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
@@ -113,6 +114,7 @@ interface BrandProfile {
   pitchedTo: Array<{ id: string; unit_name: string | null; target_brands: string | null; status: string | null; priority: string | null; property_id: string; property_name: string; property_address: string | null; updated_at: string | null }>;
   contacts: Array<{ id: string; name: string; role: string | null; email: string | null; phone: string | null; linkedin_url: string | null; avatar_url: string | null; last_contacted_at: string | null; enrichment_source: string | null }>;
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
+  ownedProperties: Array<{ id: string; name: string; address: any; postcode: string | null; status: string | null; asset_class: string | null; lat: number | null; lng: number | null; unit_count: number | null }>;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null }>;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
@@ -925,6 +927,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
   const stores = data.stores || [];
+  const ownedProperties = data.ownedProperties || [];
+  // Landlord-shaped CRM rows render a different profile: the brand "UK
+  // stores" block becomes "Ownership" (their portfolio), Best-sellers /
+  // Menu intel is hidden (irrelevant for investors), and the right
+  // sidebar shows a SharePoint Folders panel like the property page so
+  // we can drop legal-DD / accounts / cash-flow packs into one place.
+  const isLandlord = (() => {
+    const t = (c.company_type || "").toLowerCase();
+    if (!t) return false;
+    return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
+  })();
   const pitchedTo = data.pitchedTo || [];
   const requirements = data.requirements || [];
   const completedDeals = data.completedDeals || [];
@@ -1658,11 +1671,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 fn is kept in the file for re-use if/when we buy company
                 lookup credits and the rich payload becomes available. */}
 
-            {/* ── Stores — UK only. The UK/Global toggle + Research-global
-                 button were rolled back May 2026 — global research wasn't
-                 working reliably. Backend + brand_stores.country schema
-                 are still in place so we can re-enable later. */}
-            {stores.length > 0 && (() => {
+            {/* ── Stores — brand-side only. Landlords get the Ownership
+                 block below instead. UK/Global toggle was rolled back
+                 May 2026; backend + brand_stores.country schema kept in
+                 place so we can re-enable later. */}
+            {!isLandlord && stores.length > 0 && (() => {
               const visible = stores.filter((s: any) => !s.country || s.country === "GB");
               return (
                 <div className="border-t border-border/40 mt-3 pt-2 order-5">
@@ -1694,6 +1707,65 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               );
             })()}
+
+            {/* ── Ownership (landlords only). Today: properties already
+                 linked to this landlord via crm_properties.landlord_id.
+                 Tomorrow's unlock for "find them all":
+                   • HM Land Registry CCOD (UK companies) + UCOD
+                     (offshore) — free monthly CSVs, matched by CH number,
+                     covers the vast majority of commercial portfolios.
+                   • Their /portfolio | /assets | /investments page on
+                     their website (scrape).
+                   • CH charges filings — every commercial mortgage names
+                     the secured property.
+                 For now the block surfaces what's in our CRM and points
+                 at the gaps so the user can spot a landlord with 0
+                 properties → known portfolio, time to ingest CCOD. */}
+            {isLandlord && (
+              <div className="border-t border-border/40 mt-3 pt-2 order-5">
+                <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                  <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+                    Ownership ({ownedProperties.length})
+                  </span>
+                  {ownedProperties.length === 0 && (
+                    <span className="text-[10px] italic text-muted-foreground">
+                      no properties linked yet — see Files / Folders below
+                    </span>
+                  )}
+                </div>
+                {ownedProperties.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
+                    <BrandPortfolioMap
+                      stores={ownedProperties.map((p: any) => ({
+                        id: p.id, name: p.name,
+                        address: typeof p.address === "string" ? p.address : (p.address?.formatted || p.postcode || null),
+                        lat: p.lat, lng: p.lng,
+                      })) as any}
+                      height={380}
+                    />
+                    <div className="max-h-[380px] overflow-y-auto pr-1 text-xs grid grid-cols-1 gap-y-1 content-start">
+                      {ownedProperties.map((p: any) => (
+                        <Link key={p.id} href={`/properties/${p.id}`}>
+                          <div className="leading-snug px-1.5 py-1 rounded hover:bg-muted cursor-pointer">
+                            <div className="font-medium truncate">{p.name}</div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                              {p.asset_class && <span>{p.asset_class}</span>}
+                              {p.unit_count != null && p.unit_count > 0 && <span>· {p.unit_count} units</span>}
+                              {p.postcode && <span>· {p.postcode}</span>}
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-[11px] text-muted-foreground leading-snug">
+                    No properties linked to this landlord yet. To populate: link existing CRM properties via the property page's Landlord field, or ask ChatBGP to import their portfolio from Land Registry / their website.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── Zone 4: BGP Relationship ──────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
@@ -3656,6 +3728,15 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
+  // Landlord-shaped CRM rows skip the Menu / Best-sellers card and get
+  // a SharePoint Folders panel (like the property page) instead of the
+  // brand-style Documents & Gallery block. Same heuristic as the main
+  // panel so the two halves agree.
+  const isLandlord = (() => {
+    const t = (c.company_type || "").toLowerCase();
+    if (!t) return false;
+    return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
+  })();
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
   const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
@@ -4048,41 +4129,62 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       <BrandInstagramCard companyId={companyId} />
 
       {/* Menu / Best-sellers — F&B brands get menu items, retailers
-          get best-sellers. Refreshed via Perplexity. */}
-      <MenuIntelCard
-        companyId={companyId}
-        companyName={c.name}
-        industry={c.industry}
-        companyType={c.company_type}
-        intel={c.menu_intel}
-        refreshedAt={c.menu_intel_at}
-      />
+          get best-sellers. Hidden for landlords (no consumer product). */}
+      {!isLandlord && (
+        <MenuIntelCard
+          companyId={companyId}
+          companyName={c.name}
+          industry={c.industry}
+          companyType={c.company_type}
+          intel={c.menu_intel}
+          refreshedAt={c.menu_intel_at}
+        />
+      )}
 
-      {/* Documents & Gallery */}
+      {/* Folders — landlord-only. Reuses the property folder panel so
+          legal-DD packs, accounts, cash-flow models live in the same
+          SharePoint folder structure as a property deal. Defaults to
+          the Investment team since most landlord engagements run
+          through them. */}
+      {isLandlord && (
+        <PropertyFoldersPanel
+          propertyName={c.name}
+          folderTeams={["Investment"]}
+          sharepointFolderUrl={null}
+        />
+      )}
+
+      {/* Documents & Gallery (brand) / Gallery (landlord, photos only —
+          docs live in the SharePoint Folders panel above). */}
       <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <FileText className="w-3.5 h-3.5" /> Documents &amp; Gallery
+            <FileText className="w-3.5 h-3.5" /> {isLandlord ? "Gallery" : "Documents & Gallery"}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 space-y-2">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-            onClick={() => {
-              fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
-                .then(r => r.json())
-                .then(d => {
-                  const url = d.items?.[0]?.webUrl
-                    ? d.items[0].webUrl.replace(/\/[^/]+$/, "")
-                    : `https://bgp.sharepoint.com`;
-                  window.open(url, "_blank");
-                })
-                .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
-            }}
-          >
-            <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
-          </button>
+          {/* SharePoint folder shortcut — brand only. Landlords get the
+              richer Folders panel rendered above, which lists subfolders
+              and lets the team set up structure. */}
+          {!isLandlord && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+              onClick={() => {
+                fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
+                  .then(r => r.json())
+                  .then(d => {
+                    const url = d.items?.[0]?.webUrl
+                      ? d.items[0].webUrl.replace(/\/[^/]+$/, "")
+                      : `https://bgp.sharepoint.com`;
+                    window.open(url, "_blank");
+                  })
+                  .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
+              }}
+            >
+              <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
+            </button>
+          )}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <div className="text-[10px] text-muted-foreground">{data.images.length} image{data.images.length === 1 ? "" : "s"}</div>
