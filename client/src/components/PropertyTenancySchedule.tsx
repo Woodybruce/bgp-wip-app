@@ -364,7 +364,6 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
     const isAccessDenied = (unitsError as Error)?.message === "ACCESS_DENIED";
     return (
       <div className="space-y-3" data-testid="property-tenancy-schedule">
-        <h3 className="font-semibold text-sm flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" />Tenancy Schedule</h3>
         <div className="text-center py-6 text-gray-400 border rounded-lg">
           <Lock className="w-6 h-6 mx-auto mb-1 opacity-40" />
           <p className="text-xs">{isAccessDenied ? "Access restricted" : "Failed to load"}</p>
@@ -406,10 +405,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   if (units.length === 0 && !showAddUnit) {
     return (
       <div className="space-y-3" data-testid="property-tenancy-schedule">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-sm flex items-center gap-2">
-            <FileSpreadsheet className="w-4 h-4" />Tenancy Schedule
-          </h3>
+        <div className="flex items-center justify-end">
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
@@ -437,10 +433,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   return (
     <div className="space-y-3" data-testid="property-tenancy-schedule">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <FileSpreadsheet className="w-4 h-4" />Tenancy Schedule
-          <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
-        </h3>
+        <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
         <div className="flex gap-2 flex-wrap">
           <div className="relative">
             <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />

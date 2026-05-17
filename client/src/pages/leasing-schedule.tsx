@@ -4,7 +4,6 @@ import { useRoute, useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
-import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
@@ -174,6 +173,13 @@ function updatesHeaderLabel(units: any[]): string {
   const mm = units.find((u: any) => u.meeting_month)?.meeting_month;
   const label = (mm || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" })).toUpperCase();
   return `Updates - ${label} - Leasing Meeting`;
+}
+
+// Zone labels often arrive with a leading "1. " / "2." / etc from imported
+// templates. Strip for display; the order is preserved by sort_order anyway.
+function cleanZoneLabel(zone: string | null | undefined): string {
+  if (!zone) return "Unzoned";
+  return String(zone).replace(/^\s*\d+\.\s*/, "").trim() || "Unzoned";
 }
 
 function formatLandsecDate(d: string | null | undefined): string | null {
@@ -1189,8 +1195,6 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         ))}
       </div>
 
-      <PropertyPlanningCard propertyId={propertyId} />
-
       <ImportAnythingDialog
         open={showImport}
         onOpenChange={setShowImport}
@@ -1277,7 +1281,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
               data-testid={`zone-toggle-${zone}`}
             >
               {isZoneExpanded(zone) ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
-              <span className="font-semibold text-sm">{zone}</span>
+              <span className="font-semibold text-sm">{cleanZoneLabel(zone)}</span>
               <Badge variant="secondary" className="text-[10px] ml-1">{zoneUnits.length}</Badge>
               {zoneUnits[0]?.positioning && (
                 <span className="text-[10px] text-gray-400 ml-2 truncate">{zoneUnits[0].positioning}</span>
@@ -1709,7 +1713,6 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
     const isAccessDenied = (unitsError as Error)?.message === "ACCESS_DENIED";
     return (
       <div className="space-y-3" data-testid="property-leasing-schedule">
-        <h3 className="font-semibold text-sm flex items-center gap-2"><Building2 className="w-4 h-4" />Leasing Schedule</h3>
         <div className="text-center py-6 text-gray-400 border rounded-lg">
           <Lock className="w-6 h-6 mx-auto mb-1 opacity-40" />
           <p className="text-xs">{isAccessDenied ? "You don't have access to this property's leasing schedule" : "Failed to load leasing schedule"}</p>
@@ -1719,10 +1722,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   }
   if (units.length === 0 && !showAddUnit) return (
     <div className="space-y-3" data-testid="property-leasing-schedule">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <Building2 className="w-4 h-4" />Leasing Schedule
-        </h3>
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => importFileRef.current?.click()} disabled={importParsing} data-testid="btn-import-first">
             {importParsing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
@@ -1824,10 +1824,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   return (
     <div className="space-y-3" data-testid="property-leasing-schedule">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <Building2 className="w-4 h-4" />Leasing Schedule
-          <Badge variant="secondary" className="text-[10px]">{stats.total} units</Badge>
-        </h3>
+        <Badge variant="secondary" className="text-[10px]">{stats.total} units</Badge>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search className="absolute left-2 top-1.5 w-3 h-3 text-gray-400" />
@@ -1919,7 +1916,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                 data-testid={`zone-header-${zone}`}
               >
                 {isExpanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
-                <span className="font-medium text-xs">{zone}</span>
+                <span className="font-medium text-xs">{cleanZoneLabel(zone)}</span>
                 <Badge variant="secondary" className="text-[9px]">{zoneUnits.length}</Badge>
                 <span className="text-[9px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
               </button>
@@ -1928,74 +1925,79 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                   <table className="w-full">
                     <thead>
                       <tr className="bg-gray-50/30 border-b text-left text-sm">
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[140px]">Unit</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[120px]">Tenant</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[75px]">Status</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[85px]">Expiry</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[85px]">Break</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[80px]">Rent PA</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[60px]">Sq Ft</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[70px]">MAT/psf</th>
-                        <th className="px-2 py-1 font-medium text-gray-500">Targets</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[140px]">Updates</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[200px]">Existing</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Positioning</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[160px]">Status Band</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[200px]">Targets</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Optimum Target</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[110px]">Priority</th>
+                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[220px]">{updatesHeaderLabel(zoneUnits)}</th>
                         <th className="px-2 py-1 w-8"></th>
                       </tr>
                     </thead>
                     <tbody className="text-xs">
-                      {zoneUnits.map(u => (
-                        <tr key={u.id} className={`border-b hover:bg-gray-50 dark:hover:bg-gray-900/50 group ${u.status === "Archived" ? "opacity-50" : ""}`} data-testid={`unit-row-${u.id}`}>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" placeholder="Unit name" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="tenant_name" value={u.tenant_name || ""} onSave={inlineUpdate} placeholder="Tenant" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineDateCell unitId={u.id} field="lease_expiry" value={u.lease_expiry} onSave={inlineUpdate}
-                              className={isExpired(u.lease_expiry) ? "text-red-600" : isExpiringSoon(u.lease_expiry) ? "text-amber-600" : ""} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineDateCell unitId={u.id} field="lease_break" value={u.lease_break} onSave={inlineUpdate} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="rent_pa" value={u.rent_pa?.toString() || ""} onSave={inlineUpdate} placeholder="£" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="sqft" value={u.sqft?.toString() || ""} onSave={inlineUpdate} placeholder="sqft" />
-                          </td>
-                          <td className="px-2 py-1 text-[10px]">
-                            <InlineEditCell unitId={u.id} field="mat_psqft" value={u.mat_psqft || ""} onSave={inlineUpdate} placeholder="—" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <TargetCompaniesCell unitId={u.id} targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} onUpdate={inlineUpdate} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} placeholder="Notes..." multiline />
-                          </td>
-                          <td className="px-2 py-1">
-                            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
-                                className={u.status === "Archived" ? "text-emerald-500 hover:text-emerald-700" : "text-gray-400 hover:text-amber-600"}
-                                title={u.status === "Archived" ? "Restore" : "Archive"}
-                                data-testid={`btn-archive-unit-${u.id}`}
-                              >
-                                {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
-                              </button>
-                              <button
-                                onClick={() => { if (confirm("Delete this unit permanently?")) deleteMutation.mutate(u.id); }}
-                                className="text-red-400 hover:text-red-600"
-                                data-testid={`btn-delete-unit-${u.id}`}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {zoneUnits.map(u => {
+                        const band = statusBandFor((u as any).status_band);
+                        const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
+                        const nameColour = tenantNameColourFor((u as any).status_band);
+                        const expFmt = formatLandsecDate(u.lease_expiry);
+                        const breakFmt = formatLandsecDate(u.lease_break);
+                        const llBreakFmt = formatLandsecDate((u as any).landlord_break);
+                        const rrFmt = formatLandsecDate(u.rent_review);
+                        return (
+                          <tr key={u.id} className={`border-b hover:brightness-95 transition-all align-top group ${rowTint} ${u.status === "Archived" ? "opacity-50" : ""}`} data-testid={`unit-row-${u.id}`}>
+                            <td className="px-2 py-1.5 min-w-[200px]">
+                              <div className={`text-sm font-bold leading-tight ${nameColour}`}>
+                                <InlineEditCell unitId={u.id} field="tenant_name" value={u.tenant_name || u.unit_name || ""} onSave={inlineUpdate} className="text-sm font-bold" placeholder="Tenant" />
+                              </div>
+                              <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                                {expFmt && <div>(Exp. {expFmt})</div>}
+                                {breakFmt && <div>(TB {breakFmt})</div>}
+                                {llBreakFmt && <div>(LL {llBreakFmt})</div>}
+                                {rrFmt && <div>(RR {rrFmt})</div>}
+                              </div>
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <InlineEditCell unitId={u.id} field="positioning" value={(u as any).positioning || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Set positioning" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <StatusBandCell unitId={u.id} value={(u as any).status_band} onSave={inlineUpdate} />
+                              <div className="mt-1"><InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} /></div>
+                            </td>
+                            <td className="px-2 py-1.5 min-w-[200px]">
+                              <TargetCompaniesCell unitId={u.id} targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} onUpdate={inlineUpdate} />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <InlineEditCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} className="text-[11px] font-medium" placeholder="Optimum target" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <InlineEditCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} className="text-[11px]" placeholder="Priority" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-700 dark:text-gray-300 leading-snug" placeholder="Update / agent input" multiline />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
+                                  className={u.status === "Archived" ? "text-emerald-500 hover:text-emerald-700" : "text-gray-400 hover:text-amber-600"}
+                                  title={u.status === "Archived" ? "Restore" : "Archive"}
+                                  data-testid={`btn-archive-unit-${u.id}`}
+                                >
+                                  {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                                </button>
+                                <button
+                                  onClick={() => { if (confirm("Delete this unit permanently?")) deleteMutation.mutate(u.id); }}
+                                  className="text-red-400 hover:text-red-600"
+                                  data-testid={`btn-delete-unit-${u.id}`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
