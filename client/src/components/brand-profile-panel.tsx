@@ -135,7 +135,8 @@ interface BrandProfile {
     error: string | null;
   } | null;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
-  coverers: Array<{ id: string; name: string; email: string | null }>;
+  coverers: Array<{ id: string; name: string; email: string | null; role: string | null }>;
+  pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null }>;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
   // Contacts get interaction_count + last_interaction_at decorated on
   // the server so the key-contacts panel can show BGP-relationship
@@ -1784,14 +1785,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
             </div>
             <div className="space-y-2.5">
-            {/* BGP coverage — who covers this brand internally */}
+            {/* BGP coverage — who covers this brand internally, plus
+                a click-to-edit role per person so we can label
+                Charlotte = Investment lead, Harriette = Leasing. */}
             {data.coverers && data.coverers.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap border-t pt-2">
                 <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
                 {data.coverers.map((cov: any) => (
-                  <span key={cov.id} className="inline-flex items-center gap-1 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">
-                    <Users className="w-2.5 h-2.5" /> {cov.name}
-                  </span>
+                  <CovererChip key={cov.id} cov={cov} companyId={companyId} />
                 ))}
               </div>
             )}
@@ -3459,6 +3460,107 @@ function KeyContactRow({ contact, companyId }: { contact: any; companyId: string
   );
 }
 
+// Email senders we've corresponded with at this company's domain
+// who aren't yet CRM contacts. Each row has an Add button that
+// creates a stub contact (name parsed from local part) linked to
+// this company. Hidden when no suggestions.
+function PendingSendersList({ data, companyId }: { data: BrandProfile; companyId: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const suggestions = data.pendingContactSuggestions || [];
+  const promote = useMutation({
+    mutationFn: async (email: string) => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/promote-sender`, { email });
+      return res.json();
+    },
+    onSuccess: (out, email) => {
+      toast({ title: "Contact added", description: `${out.name} (${email}) is now a CRM contact.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" }),
+  });
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="mt-3 pt-2 border-t border-border/40">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+        From BGP inboxes ({suggestions.length} not in CRM)
+      </div>
+      <div className="space-y-0.5 max-h-[180px] overflow-y-auto pr-1">
+        {suggestions.map((s) => (
+          <div key={s.email} className="flex items-center gap-1.5 text-[11px] px-1 py-1 rounded hover:bg-muted/50">
+            <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
+            <span className="truncate flex-1 font-mono text-[10px]">{s.email}</span>
+            <span className="text-[9px] text-muted-foreground shrink-0">{s.touches}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
+            <button
+              onClick={() => promote.mutate(s.email)}
+              disabled={promote.isPending}
+              className="text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 shrink-0"
+              title="Create a CRM contact for this email and link to this company"
+            >
+              <Plus className="w-2.5 h-2.5 inline" /> Add
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// BGP staff coverer chip — name + click-to-edit role. Saves to
+// crm_company_bgp_roles via POST /api/brand/:id/bgp-role. Empty role
+// clears the row. Same inline-edit pattern as KeyContactRow so the
+// behaviour is consistent.
+function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null }; companyId: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(cov.role || "");
+
+  const save = useMutation({
+    mutationFn: async (value: string) => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/bgp-role`, { userId: cov.id, role: value });
+      return res.json();
+    },
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">
+      <Users className="w-2.5 h-2.5" />
+      <span className="font-medium">{cov.name}</span>
+      {editing ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft.trim() !== (cov.role || "").trim()) save.mutate(draft.trim());
+            else setEditing(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save.mutate(draft.trim());
+            if (e.key === "Escape") { setEditing(false); setDraft(cov.role || ""); }
+          }}
+          placeholder="role…"
+          className="text-[10px] w-24 border-0 bg-transparent focus:outline-none focus:bg-white dark:focus:bg-purple-900/50 rounded px-1"
+        />
+      ) : (
+        <button
+          onClick={() => setEditing(true)}
+          className="text-[10px] text-purple-600 hover:text-purple-900 hover:underline decoration-dotted"
+          title="Click to edit role for this account"
+        >
+          {cov.role || <span className="italic opacity-70">add role…</span>}
+        </button>
+      )}
+    </span>
+  );
+}
+
 // Compact relative-time formatter ("3d", "2w", "5mo") for the touches
 // badge — full date is in the tooltip.
 function formatRelativeShort(iso: string): string {
@@ -3548,6 +3650,7 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
             {showAll ? `Show property-tier only (${propertyContacts.length})` : `Show all ${allContacts.length} contacts`}
           </button>
         )}
+        <PendingSendersList data={data} companyId={companyId} />
       </CardContent>
     </Card>
   );

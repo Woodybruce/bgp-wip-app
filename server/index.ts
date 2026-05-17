@@ -720,6 +720,19 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS annual_report_storage_key TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS annual_report_fetched_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_notes TEXT`,
+    // Per-account roles for BGP staff covering a brand / landlord.
+    // bgp_contact_user_ids[] answers WHO covers the account; this
+    // table answers WHAT each of them does for it (Charlotte =
+    // Investment lead, Harriette = Leasing). Row exists only when
+    // someone has typed a role; missing row → no role assigned.
+    `CREATE TABLE IF NOT EXISTS crm_company_bgp_roles (
+       company_id TEXT NOT NULL,
+       user_id TEXT NOT NULL,
+       role TEXT,
+       created_at TIMESTAMPTZ DEFAULT NOW(),
+       updated_at TIMESTAMPTZ DEFAULT NOW(),
+       PRIMARY KEY (company_id, user_id)
+     )`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
     // Indexes for compliance-board counterparty joins (otherwise /api/kyc/board

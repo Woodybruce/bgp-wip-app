@@ -1593,6 +1593,62 @@ export async function registerRoutes(
     }
   });
 
+  // Per-account BGP staff role. POST { userId, role } upserts a row
+  // in crm_company_bgp_roles so the coverer chip on the panel can show
+  // "Charlotte — Investment lead". Empty role string removes the row.
+  app.post("/api/brand/:companyId/bgp-role", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const userId = String(req.body?.userId || "").trim();
+      const role = String(req.body?.role || "").trim();
+      if (!userId) return res.status(400).json({ error: "userId required" });
+      if (!role) {
+        await pool.query(`DELETE FROM crm_company_bgp_roles WHERE company_id = $1 AND user_id = $2`, [companyId, userId]);
+        return res.json({ ok: true, cleared: true });
+      }
+      await pool.query(
+        `INSERT INTO crm_company_bgp_roles (company_id, user_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (company_id, user_id) DO UPDATE SET role = $3, updated_at = NOW()`,
+        [companyId, userId, role]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "save failed" });
+    }
+  });
+
+  // Promote a pending email-sender suggestion into a CRM contact.
+  // Body: { email, name? } — name parsed from the email local part
+  // if not supplied. Returns the new contact id.
+  app.post("/api/brand/:companyId/promote-sender", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      if (!email || !email.includes("@")) return res.status(400).json({ error: "valid email required" });
+      // Derive a name from the local part if the caller didn't pass one
+      // ("sara.ciullaserino@hm.com" → "Sara Ciullaserino"). Cheap, and
+      // the user can fix it inline via the existing role-edit flow.
+      const localPart = email.split("@")[0];
+      const derived = localPart
+        .replace(/[._-]+/g, " ")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+      const name = (req.body?.name && String(req.body.name).trim()) || derived || email;
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO crm_contacts (name, email, company_id, enrichment_source)
+         VALUES ($1, $2, $3, 'promoted-from-email')
+         RETURNING id`,
+        [name, email, companyId]
+      );
+      res.json({ id: rows[0].id, name, email });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
   // Create a crm_properties row from a scraped item and link it to this
   // landlord. Used by the per-row "Create CRM property" button in the
   // Ownership block. Returns the new property id so the client can

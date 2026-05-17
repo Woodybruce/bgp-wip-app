@@ -591,15 +591,52 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     const c = company.rows[0];
 
-    // Resolve bgp_contact_user_ids → user display names
-    let coverers: Array<{ id: string; name: string; email: string | null }> = [];
+    // Resolve bgp_contact_user_ids → user display names + per-account
+    // roles from crm_company_bgp_roles (Charlotte = Investment lead).
+    let coverers: Array<{ id: string; name: string; email: string | null; role: string | null }> = [];
     if (Array.isArray(c.bgp_contact_user_ids) && c.bgp_contact_user_ids.length > 0) {
       const cov = await pool.query(
-        `SELECT id, COALESCE(name, username, email) AS name, email
-           FROM users WHERE id = ANY($1::text[]) ORDER BY name`,
-        [c.bgp_contact_user_ids]
+        `SELECT u.id, COALESCE(u.name, u.username, u.email) AS name, u.email,
+                r.role
+           FROM users u
+           LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = $2
+          WHERE u.id = ANY($1::text[]) ORDER BY u.name`,
+        [c.bgp_contact_user_ids, companyId]
       ).catch(() => empty);
       coverers = cov.rows;
+    }
+
+    // Email senders we've corresponded with at this company's domain
+    // who AREN'T yet CRM contacts. Surfaced under Key contacts so the
+    // user can promote them with one click. Excludes BGP's own staff
+    // (anything @brucegillinghampollard.com).
+    const companyDomain = (c.domain || c.domain_url || "").toString().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+    let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null }> = [];
+    if (companyDomain) {
+      try {
+        const ps = await pool.query(
+          `SELECT p AS email,
+                  COUNT(*)::int AS touches,
+                  MAX(interaction_date) AS last_touch
+             FROM crm_interactions
+             CROSS JOIN LATERAL unnest(participants) AS p
+            WHERE participants IS NOT NULL
+              AND p ILIKE $1
+              AND p NOT ILIKE '%@brucegillinghampollard.com'
+              AND p NOT IN (
+                SELECT LOWER(email) FROM crm_contacts
+                 WHERE company_id = $2 AND email IS NOT NULL
+              )
+            GROUP BY p
+            ORDER BY touches DESC, last_touch DESC
+            LIMIT 20`,
+          [`%@${companyDomain}`, companyId]
+        );
+        pendingContactSuggestions = ps.rows;
+      } catch {
+        // Older databases may not have the participants column populated —
+        // not fatal; just don't surface suggestions.
+      }
     }
 
     // Latest social-stats per platform — sub-query to skip if table missing
@@ -794,6 +831,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       turnover: turnover.rows,
       covenant,
       coverers,
+      pendingContactSuggestions,
       interactions: bgpInteractionsList.rows,
       socialStats,
       rolloutVelocity,
