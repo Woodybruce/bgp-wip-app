@@ -129,6 +129,7 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     let idx = 1;
 
     const allowedFields = [
+      // Existing core
       'premises', 'unit_number', 'tenant_name', 'trading_name', 'permitted_use',
       'area_basement', 'area_ground', 'area_first', 'area_second', 'area_other',
       'nia_sqft', 'gia_sqft', 'passing_rent_pa', 'rent_psf', 'turnover_percent',
@@ -138,7 +139,18 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
       'rent_review_3_date', 'rent_review_3_amount', 'rent_review_4_date', 'rent_review_4_amount',
       'outside_lt_act', 'break_type', 'break_date', 'wault_rent_percent', 'unexpired_term',
       'service_charge', 'insurance', 'total_occ_costs', 'occ_costs_psf', 'status',
-      'deal_id', 'letting_tracker_unit_id', 'sort_order'
+      'deal_id', 'letting_tracker_unit_id', 'sort_order',
+      // Landsec-template additions
+      'grouping', 'am_initiative', 'tenant_mix',
+      'break_details', 'break_notice', 'unexpired_term_break', 'next_review_date', 'measurement_type',
+      'area_basement_gia', 'area_ground_gia', 'area_first_gia', 'area_other_gia',
+      'area_basement_nia', 'area_ground_nia', 'area_first_nia', 'area_first_sales_nia', 'area_other_nia',
+      'area_ground_itza', 'itza_sqft', 'units_applied',
+      'marketing_rent_pa', 'turnover_rent_payable', 'erv_profile', 'rent_free_value', 'capex_value',
+      'rateable_value', 'rates_payable', 'service_charge_cap',
+      'shortfall_liability', 'rental_shortfalls', 'topped_up_noi',
+      'comments', 'leasing_comments', 'target_tenants', 'target_company_ids', 'underwriting_comments',
+      'in_leasing_schedule',
     ];
 
     for (const f of allowedFields) {

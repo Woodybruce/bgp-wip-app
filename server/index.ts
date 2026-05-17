@@ -2731,6 +2731,55 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("leasing_schedule_units", "financial_notes", "text");
           await addColIfMissing("leasing_schedule_units", "target_company_ids", "text[]");
           await addColIfMissing("leasing_schedule_units", "sort_order", "integer DEFAULT 0");
+
+          // Tenancy schedule — bring in line with the Landsec investment-grade
+          // template. Unit Details / Tenant / Lease / Areas (GIA+NIA splits) /
+          // Rental Income / Rates / Occ Costs / Shortfalls / NOI / Comments.
+          // `in_leasing_schedule` toggle flags rows that should also surface
+          // on the Leasing Schedule view (single source of truth pattern).
+          await addColIfMissing("tenancy_schedule_units", "grouping", "text");
+          await addColIfMissing("tenancy_schedule_units", "am_initiative", "text");
+          await addColIfMissing("tenancy_schedule_units", "tenant_mix", "text");
+          await addColIfMissing("tenancy_schedule_units", "break_details", "text");
+          await addColIfMissing("tenancy_schedule_units", "break_notice", "text");
+          await addColIfMissing("tenancy_schedule_units", "unexpired_term_break", "real");
+          await addColIfMissing("tenancy_schedule_units", "next_review_date", "date");
+          await addColIfMissing("tenancy_schedule_units", "measurement_type", "text");
+          // Per-floor GIA / NIA splits + ITZA
+          await addColIfMissing("tenancy_schedule_units", "area_basement_gia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_ground_gia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_first_gia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_other_gia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_basement_nia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_ground_nia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_first_nia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_first_sales_nia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_other_nia", "real");
+          await addColIfMissing("tenancy_schedule_units", "area_ground_itza", "real");
+          await addColIfMissing("tenancy_schedule_units", "itza_sqft", "real");
+          await addColIfMissing("tenancy_schedule_units", "units_applied", "real");
+          // Rental income detail
+          await addColIfMissing("tenancy_schedule_units", "marketing_rent_pa", "real");
+          await addColIfMissing("tenancy_schedule_units", "turnover_rent_payable", "real");
+          await addColIfMissing("tenancy_schedule_units", "erv_profile", "text");
+          await addColIfMissing("tenancy_schedule_units", "rent_free_value", "real");
+          await addColIfMissing("tenancy_schedule_units", "capex_value", "real");
+          // Rates
+          await addColIfMissing("tenancy_schedule_units", "rateable_value", "real");
+          await addColIfMissing("tenancy_schedule_units", "rates_payable", "real");
+          // Occupational costs
+          await addColIfMissing("tenancy_schedule_units", "service_charge_cap", "real");
+          // Shortfalls & NOI
+          await addColIfMissing("tenancy_schedule_units", "shortfall_liability", "text");
+          await addColIfMissing("tenancy_schedule_units", "rental_shortfalls", "real");
+          await addColIfMissing("tenancy_schedule_units", "topped_up_noi", "real");
+          // Comments + leasing link-through
+          await addColIfMissing("tenancy_schedule_units", "comments", "text");
+          await addColIfMissing("tenancy_schedule_units", "leasing_comments", "text");
+          await addColIfMissing("tenancy_schedule_units", "target_tenants", "text");
+          await addColIfMissing("tenancy_schedule_units", "target_company_ids", "text[]");
+          await addColIfMissing("tenancy_schedule_units", "underwriting_comments", "text");
+          await addColIfMissing("tenancy_schedule_units", "in_leasing_schedule", "boolean DEFAULT false");
           await addColIfMissing("image_studio_images", "brand_sector", "text");
           await addColIfMissing("crm_companies", "brand_analysis", "text");
           await addColIfMissing("crm_companies", "brand_analysis_at", "timestamp");
