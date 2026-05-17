@@ -432,6 +432,11 @@ async function performAutoKyc(companyId: string, opts: {
   if (!chNumber || isExistingDissolved || (opts.forceFromWebsite && domain)) {
     const storedEntityName = (company as any).ukEntityName as string | null;
     let searchName = storedEntityName || company.name;
+    // True only when searchName came from a legitimate UK-entity source
+    // (website scrape, manual entry, T&Cs URL extraction, or an existing
+    // stored uk_entity_name). False when we've only got the brand display
+    // name to fall back on — in which case we refuse to search CH by it.
+    let haveSpecificEntityName = !!storedEntityName;
     let websiteContext = "";
 
     // ── User-provided override (highest priority) ────────────────────────
@@ -459,6 +464,7 @@ async function performAutoKyc(companyId: string, opts: {
       }
     } else if (opts.manualEntityName) {
       searchName = opts.manualEntityName.trim();
+      haveSpecificEntityName = true;
       websiteContext = `User-provided UK entity name: ${searchName}`;
       diagnostics.push({ step: "manual_entity_name", outcome: "accepted", detail: `Searching CH for "${searchName}".` });
     } else if (opts.manualTcsUrl) {
@@ -537,6 +543,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
           }
           if (!chNumber && extractedEntity) {
             searchName = extractedEntity;
+            haveSpecificEntityName = true;
             websiteContext = `T&Cs URL (${opts.manualTcsUrl}) extraction → ${extractedEntity}`;
             await db.update(crmCompanies).set({ ukEntityName: extractedEntity } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
             diagnostics.push({ step: "manual_tcs_url", outcome: "entity_only", detail: `Extracted entity name "${extractedEntity}" from user-supplied T&Cs URL.` });
@@ -561,6 +568,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
         });
         if (scraped.entityName) {
           searchName = scraped.entityName;
+          haveSpecificEntityName = true;
           if (!storedEntityName) {
             await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
           }
@@ -636,103 +644,73 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     }
 
     if (!chNumber) {
-      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=10`);
+      // STRICT POLICY (May 2026): a CH number can only be assigned via
+      //   1) the website scraper finding a clear UK entity, OR
+      //   2) a manual entry / ChatBGP instruction (manualChNumber /
+      //      manualEntityName / manualTcsUrl), OR
+      //   3) Perplexity returning a CH number that we've verified
+      //      against CH (handled above — that path already verified
+      //      the number, no fuzzy matching involved).
+      // We do NOT fuzzy-search Companies House by the brand's display
+      // name — that's how brands like "Supreme" get matched to random
+      // unrelated UK companies. If we don't have a specific UK entity
+      // name from one of the trusted sources above, park it.
+      if (!haveSpecificEntityName) {
+        diagnostics.push({
+          step: "ch_search",
+          outcome: "skipped_no_specific_entity",
+          detail: `No specific UK entity name available (scraper found nothing on website, no manual entry). Refusing to search CH by brand display name "${searchName}" — fuzzy name matches land on the wrong company. Paste the T&Cs URL, enter the entity name, or give the CH number directly.`,
+        });
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `Can't resolve a Companies House entity for "${company.name}" without a specific UK trading name. The website scraper found nothing${domain ? ` on ${domain}` : " (no domain)"} and nothing was entered manually. Searching CH by the brand name alone reliably picks the wrong company, so we're parking this and asking for help. To fix: paste the brand's UK T&Cs URL, type the legal entity name, or give the CH number.`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
+      }
+
+      // We have a specific entity name (from website scrape or manual entry).
+      // Look it up on CH but ONLY accept an EXACT case-insensitive title match.
+      // No AI picker, no nearest-name fallback — if CH doesn't have an exact
+      // match for the name we trust, the right move is to ask for help, not
+      // to guess at the closest sound-alike.
+      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=20`);
       const items = searchData.items || [];
       if (items.length === 0) {
         diagnostics.push({ step: "ch_search", outcome: "no_results", detail: `query: "${searchName}"` });
-        return { success: false, kycStatus: "not_found", message: `No Companies House match found for "${searchName}".`, diagnostics };
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `Searched Companies House for "${searchName}" (the entity name we have on file) and got zero results. The name might be a trading name rather than the registered company name — try entering the full registered name or the CH number directly.`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
       }
       const nameLower = searchName.toLowerCase().trim();
-      const activeItems = items.filter((i: any) => i.company_status === "active");
-      const candidatePool = activeItems.length > 0 ? activeItems : items;
+      const exactNameHit = items.find((i: any) => i.title?.toLowerCase().trim() === nameLower);
+      if (!exactNameHit) {
+        const top = items.slice(0, 5).map((i: any) => `${i.title} (${i.company_number}, ${i.company_status})`).join(", ");
+        diagnostics.push({
+          step: "ch_search",
+          outcome: "no_exact_match",
+          detail: `query: "${searchName}" — ${items.length} hits but none had an exact title match. Top: ${top}. Refusing to pick the closest by similarity.`,
+        });
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `Companies House returned ${items.length} hits for "${searchName}" but no exact name match (closest: ${items[0].title} / CH ${items[0].company_number}). Refusing to pick by similarity. If that's the right entity, paste the CH number directly; otherwise correct the entity name.`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
+      }
+      chNumber = exactNameHit.company_number;
+      resolvedFrom = "exact_name_match";
       diagnostics.push({
         step: "ch_search",
-        outcome: "candidates",
-        detail: `query: "${searchName}" → ${items.length} hits (${activeItems.length} active). Top: ${candidatePool.slice(0, 5).map((i: any) => `${i.title}#${i.company_number}`).join(", ")}`,
+        outcome: "exact_match",
+        detail: `${exactNameHit.title} (CH ${exactNameHit.company_number}, ${exactNameHit.company_status})`,
       });
-
-      const exactNameHit = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower);
-      // hasContext = we have a real grounded signal (scraped entity name OR
-      // Perplexity-suggested name OR website-derived URL evidence). A bare
-      // domain alone is NOT context — without a successful scrape/Perplexity
-      // result, the AI picker is choosing from a fuzzy name search with
-      // nothing to ground it, and will land on the wrong company every time.
-      const hasContext = !!websiteContext;
-
-      // If the brand has a website but BOTH the scraper and Perplexity
-      // returned nothing, refuse to blind-pick from a name-only CH search.
-      // UK law (Companies Act 2006) requires brands to display their
-      // trading entity on their website — if we couldn't find it, ask the
-      // user for help rather than silently picking the wrong company.
-      if (!hasContext && domain) {
-        diagnostics.push({
-          step: "ai_picker",
-          outcome: "skipped",
-          detail: `No grounded signal (website scrape + Perplexity both returned nothing). Refusing to pick from name-only CH search to avoid landing on the wrong company.`,
-        });
-        return {
-          success: false,
-          kycStatus: "not_found",
-          message: `Couldn't ground a Companies House match for "${company.name}". The website T&Cs scraper found nothing on ${domain} (UK trading entities are legally required to be displayed there), and Perplexity didn't resolve a UK entity either${parentGroup ? ` despite knowing the parent group (${parentGroup})` : ""}. Refusing to pick from a generic name search — that's how brands get matched to unrelated companies. To fix: paste the brand's UK T&Cs URL, or enter the UK entity name / Companies House number directly.`,
-          diagnostics,
-          needsHelp: true,
-        } as any;
-      }
-
-      const needsAiPicker = hasContext
-        ? candidatePool.length > 1
-        : !exactNameHit && candidatePool.length > 1;
-      let aiPicked: string | null = null;
-      let aiError: string | null = null;
-      if (needsAiPicker) {
-        try {
-          aiPicked = await pickChCandidateWithAi({
-            brandName: company.name,
-            domain,
-            websiteContext,
-            parentGroup,
-            formerParent,
-            candidates: candidatePool.slice(0, 8),
-          });
-        } catch (err: any) {
-          aiError = err?.message || "unknown";
-          console.warn(`[auto-kyc] AI picker failed for "${company.name}":`, err?.message);
-        }
-      }
-      if (aiPicked) {
-        chNumber = aiPicked;
-        resolvedFrom = "ai_picker";
-        const picked = candidatePool.find((i: any) => i.company_number === aiPicked);
-        diagnostics.push({
-          step: "ai_picker",
-          outcome: "picked",
-          detail: picked ? `${picked.title} (CH ${aiPicked})` : `CH ${aiPicked}`,
-        });
-      } else if (hasContext) {
-        diagnostics.push({
-          step: "ai_picker",
-          outcome: aiError ? "error" : "rejected_all",
-          detail: aiError ? aiError : `Claude rejected all ${candidatePool.length} candidates as not matching "${company.name}" (${domain})`,
-        });
-        return {
-          success: false,
-          kycStatus: "not_found",
-          message: `No CH candidate matched "${company.name}" (${domain || "no domain"}). The website-entity scraper found nothing usable, Perplexity didn't resolve a UK entity, and Claude rejected all ${candidatePool.length} CH search hits as wrong matches. Paste the T&Cs URL or enter the entity name / CH number directly.`,
-          diagnostics,
-          needsHelp: true,
-        } as any;
-      } else {
-        const bestMatch = exactNameHit
-          || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
-          || candidatePool[0];
-        chNumber = bestMatch.company_number;
-        resolvedFrom = "name_match";
-        diagnostics.push({
-          step: "name_match",
-          outcome: "picked",
-          detail: `${bestMatch.title} (CH ${bestMatch.company_number}) — fallback nearest-name; no domain to verify`,
-        });
-      }
     }
   }
 
