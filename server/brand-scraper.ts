@@ -340,35 +340,69 @@ function extractInstagramHandle(html: string): string | null {
   return null;
 }
 
-// Backfill instagram_handle for brands that don't have one by scraping the
-// homepage and pulling the first instagram.com/<handle> link from the markup
-// (footer / social bar). Free, fast, ~one HTTP call per brand. Skips brands
-// that already have a handle or no domain.
+// Backfill instagram_handle for brands that don't have one. Strategy:
+//   1. Scrape the homepage WITH JS rendering (render: true) so SPA sites
+//      like Aesop / Glossier hydrate their footer social links before we
+//      look for them. The previous render=false hit only the initial HTML
+//      and missed every modern brand site.
+//   2. If the regex still finds nothing (some sites don't link IG from
+//      the homepage at all), ask Haiku to suggest the handle for the
+//      brand. We only accept the AI's answer if it's a plausible IG
+//      handle string — letters/digits/dot/underscore, 1-30 chars.
+//
+// Covers every brand with a domain (no longer gated on is_tracked_brand)
+// so we get full coverage rather than the slow auto-enrichment cycle.
+// Scheduled weekly by the Sunday cron in server/index.ts.
 export async function backfillInstagramHandles(limit = 500): Promise<{
-  attempted: number; filled: number; skipped: number; errors: number;
+  attempted: number; filled: number; filledFromHtml: number; filledFromAi: number; skipped: number; errors: number;
 }> {
-  if (!isScraperApiAvailable()) {
-    return { attempted: 0, filled: 0, skipped: 0, errors: 0 };
-  }
   const rows = await pool.query<{ id: string; name: string; domain: string | null; domain_url: string | null }>(
     `SELECT id, name, domain, domain_url FROM crm_companies
       WHERE (instagram_handle IS NULL OR instagram_handle = '')
         AND (domain IS NOT NULL OR domain_url IS NOT NULL)
-        AND is_tracked_brand = true
-      ORDER BY name
+        AND merged_into_id IS NULL
+      ORDER BY is_tracked_brand DESC, name
       LIMIT $1`,
     [limit]
   );
-  let filled = 0, skipped = 0, errors = 0;
+  let filled = 0, filledFromHtml = 0, filledFromAi = 0, skipped = 0, errors = 0;
+
   for (const b of rows.rows) {
     const root = buildBrandRoot(b);
     if (!root) { skipped++; continue; }
+
+    let handle: string | null = null;
+
+    // Step 1 — render the homepage with JS so SPA footers materialise.
+    // Requires ScraperAPI for the render proxy; if not configured, we'll
+    // skip straight to the AI fallback.
+    if (isScraperApiAvailable()) {
+      try {
+        const res = await scraperFetch(root, { uk: true, render: true, timeoutMs: 30000 });
+        if (res.ok) {
+          const html = await res.text().catch(() => "");
+          handle = extractInstagramHandle(html);
+          if (handle) filledFromHtml++;
+        }
+      } catch {
+        // fall through to AI
+      }
+    }
+
+    // Step 2 — ask Haiku. Cheap, well-known brands (Aesop, Glossier, etc)
+    // are reliably resolved this way even when their site hides the link.
+    if (!handle && process.env.ANTHROPIC_API_KEY) {
+      try {
+        handle = await askAiForInstagramHandle(b.name, root);
+        if (handle) filledFromAi++;
+      } catch {
+        // fall through to skipped
+      }
+    }
+
+    if (!handle) { skipped++; continue; }
+
     try {
-      const res = await scraperFetch(root, { uk: true, render: false, timeoutMs: 15000 });
-      if (!res.ok) { errors++; continue; }
-      const html = await res.text().catch(() => "");
-      const handle = extractInstagramHandle(html);
-      if (!handle) { skipped++; continue; }
       await pool.query(
         `UPDATE crm_companies SET instagram_handle = $1 WHERE id = $2 AND (instagram_handle IS NULL OR instagram_handle = '')`,
         [handle, b.id]
@@ -378,7 +412,28 @@ export async function backfillInstagramHandles(limit = 500): Promise<{
       errors++;
     }
   }
-  return { attempted: rows.rows.length, filled, skipped, errors };
+  return { attempted: rows.rows.length, filled, filledFromHtml, filledFromAi, skipped, errors };
+}
+
+// AI fallback: ask Haiku for the brand's primary IG handle. We give it
+// the brand name + website so it can disambiguate similarly-named brands.
+// Strict validation on the way out — Haiku can hallucinate, so anything
+// that isn't a plain a-z/0-9/./_ string gets rejected.
+async function askAiForInstagramHandle(brandName: string, websiteUrl: string): Promise<string | null> {
+  const prompt = `What is the primary Instagram handle for the brand "${brandName}" (website: ${websiteUrl})? Respond with just the handle, no @, no other text. If you don't know with high confidence, respond with the single word "unknown".`;
+  const msg = await anthropic.messages.create({
+    model: HAIKU,
+    max_tokens: 50,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const txt = msg.content
+    .map((b: any) => (b.type === "text" ? b.text : ""))
+    .join("")
+    .trim()
+    .replace(/^@/, "");
+  if (!txt || txt.toLowerCase() === "unknown") return null;
+  if (!/^[a-zA-Z0-9._]{1,30}$/.test(txt)) return null;
+  return txt;
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────────

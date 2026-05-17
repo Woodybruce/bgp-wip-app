@@ -2662,6 +2662,15 @@ app.use("/api/branding/assets", express.static(
               .then(r => console.log(`[ch-accounts] weekly: ${r.downloaded} new / ${r.upToDate} up-to-date / ${r.errored} errors (${r.total} total)`))
               .catch(err => console.error("[ch-accounts] cron run failed:", err?.message));
           }
+          // Weekly Instagram-handle backfill — Sunday 04:00. Renders each
+          // brand's homepage with JS to catch SPA-injected social links,
+          // then falls back to Haiku for brands the scraper can't pick up.
+          if (now.getDay() === 0 && now.getHours() === 4 && now.getMinutes() < 60) {
+            import("./brand-scraper")
+              .then(m => m.backfillInstagramHandles(2000))
+              .then(r => console.log(`[ig-backfill] weekly: ${r.filled}/${r.attempted} filled (${r.filledFromHtml} html, ${r.filledFromAi} AI), ${r.skipped} skipped, ${r.errors} errors`))
+              .catch(err => console.error("[ig-backfill] cron run failed:", err?.message));
+          }
           // Monthly Perplexity refresh — 1st of month, 03:00
           if (now.getDate() === 1 && now.getHours() === 3 && now.getMinutes() < 60) {
             runMonthlyPerplexityRefresh().catch(err =>
