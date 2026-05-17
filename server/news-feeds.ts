@@ -331,6 +331,33 @@ async function backfillFaviconsBySourceName(): Promise<{ updated: number; bySour
   return { updated, bySource };
 }
 
+// Most articles have source_name = "<brand> (Google News)" (the BGP brand the
+// article was fetched for, not the publisher). Map those to the BGP brand-logo
+// endpoint so each article gets the brand's own logo as a thumbnail. The
+// img tag fetches /api/brand-logo/<name> with session cookies; 404s are
+// hidden by the UI's onError handler.
+async function backfillBrandLogosBySourceName(): Promise<{ updated: number; sampleNames: string[] }> {
+  const rows = await db.execute(sql`
+    SELECT id, source_name FROM news_articles
+     WHERE (image_url IS NULL OR image_url = '')
+       AND source_name IS NOT NULL AND source_name <> ''`);
+  let updated = 0;
+  const seen = new Set<string>();
+  const sampleNames: string[] = [];
+  for (const row of rows.rows as any[]) {
+    const clean = String(row.source_name).replace(/\s*\(Google News\)\s*$/i, "").trim();
+    if (!clean) continue;
+    const url = `/api/brand-logo/${encodeURIComponent(clean)}`;
+    try {
+      await db.update(newsArticles).set({ imageUrl: url }).where(eq(newsArticles.id, row.id));
+      updated++;
+      if (!seen.has(clean) && sampleNames.length < 20) { seen.add(clean); sampleNames.push(clean); }
+    } catch {}
+  }
+  console.log(`[news] Brand-logo backfill: ${updated} articles updated, ${seen.size} unique brands`);
+  return { updated, sampleNames };
+}
+
 // Google News RSS URLs (news.google.com/rss/articles/CBM…) are opaque wrappers
 // that redirect to the real article. Without unwrapping, clicking them often
 // dead-ends and og:image extraction is impossible. This function follows the
@@ -1334,6 +1361,18 @@ export function setupNewsFeedRoutes(app: Express) {
   app.post("/api/news-feed/backfill-favicons", requireAuth, async (_req: Request, res: Response) => {
     try {
       const result = await backfillFaviconsBySourceName();
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Most articles are Google-News-sourced per BGP brand — source_name is the
+  // brand name. Map each to its /api/brand-logo URL so the thumbnail shows the
+  // brand's logo. Covers ~all articles in one shot.
+  app.post("/api/news-feed/backfill-brand-logos", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await backfillBrandLogosBySourceName();
       res.json({ ok: true, ...result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
