@@ -95,56 +95,52 @@ function useAssetBrief(propertyId: string) {
 }
 
 // Compact covering strip — Asset Owner logo + Asset Lead avatar +
-// Last activity. Sits in the property's top board, replacing the
-// old Tenants + Comp. Instructed row. Same data as the brief
-// panel; react-query dedupes the network call.
+// Last activity, packed into a tight single row. Replaces the
+// earlier roomy 3-column header that had too much vertical space.
 export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
   const { data, isLoading } = useAssetBrief(propertyId);
   if (isLoading || !data) {
     return (
-      <div className="flex items-center gap-3">
-        <Skeleton className="w-10 h-10 rounded" />
-        <Skeleton className="w-32 h-8" />
+      <div className="flex items-center gap-2 h-8">
+        <Skeleton className="w-8 h-8 rounded" />
+        <Skeleton className="w-24 h-4" />
       </div>
     );
   }
   return (
-    <div className="flex items-center gap-3 flex-wrap">
+    <div className="flex items-center gap-3 text-xs">
       {data.owner ? (
-        <div className="flex items-center gap-2">
+        <Link href={`/companies/${data.owner.id}`} className="flex items-center gap-1.5 min-w-0 hover:underline">
           <img
             src={data.owner.logo_url}
             alt={data.owner.name}
-            className="w-10 h-10 rounded border bg-white object-contain p-1 shrink-0"
+            className="w-7 h-7 rounded border bg-white object-contain p-0.5 shrink-0"
             onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
           />
-          <div className="min-w-0">
-            <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">Asset owner</div>
-            <Link href={`/companies/${data.owner.id}`}>
-              <div className="text-sm font-semibold hover:underline truncate">{data.owner.name}</div>
-            </Link>
-          </div>
-        </div>
+          <span className="font-semibold truncate">{data.owner.name}</span>
+        </Link>
       ) : (
-        <div className="text-[11px] text-muted-foreground italic">Set freeholder / landlord above to show owner.</div>
+        <span className="text-[11px] text-muted-foreground italic">Set freeholder above</span>
       )}
       {data.asset_lead && (
-        <div className="flex items-center gap-2 border-l pl-3 ml-1">
-          <div className="w-8 h-8 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[10px] font-semibold shrink-0">
-            {data.asset_lead.avatar_url
-              ? <img src={data.asset_lead.avatar_url} alt="" className="w-full h-full object-cover" />
-              : data.asset_lead.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+        <>
+          <span className="text-muted-foreground/40">·</span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="w-5 h-5 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[9px] font-semibold shrink-0">
+              {data.asset_lead.avatar_url
+                ? <img src={data.asset_lead.avatar_url} alt="" className="w-full h-full object-cover" />
+                : data.asset_lead.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+            </div>
+            <span className="text-muted-foreground truncate">
+              Lead <span className="text-foreground font-medium">{data.asset_lead.name.split(" ")[0]}</span>
+            </span>
           </div>
-          <div className="min-w-0">
-            <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">Asset lead</div>
-            <div className="text-sm font-semibold truncate">{data.asset_lead.name}</div>
-          </div>
-        </div>
+        </>
       )}
-      <div className="ml-auto text-right">
-        <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">Last activity</div>
-        <div className="text-xs font-medium">{timeAgo(data.property.last_updated_at)}</div>
-      </div>
+      <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+        <span className="uppercase tracking-wider mr-1">Last activity</span>
+        <span className="text-foreground font-medium">{timeAgo(data.property.last_updated_at)}</span>
+      </span>
     </div>
   );
 }

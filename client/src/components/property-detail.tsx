@@ -503,11 +503,13 @@ export function PropertyDetail({ id }: { id: string }) {
                 Stacks 1-col on smaller screens. */}
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
               <Card>
-                <CardContent className="p-3 space-y-3">
-                  {/* Property covering strip — Asset Owner logo +
-                      Asset Lead + Last activity. Top of the card so
-                      the client identity reads first. */}
-                  <PropertyCoveringStrip propertyId={property.id} />
+                <CardContent className="p-3 space-y-2">
+                  {/* Property covering strip — Asset Owner + Asset
+                      Lead + Last activity packed into a single tight
+                      row at the top of the card. */}
+                  <div className="pb-2 border-b">
+                    <PropertyCoveringStrip propertyId={property.id} />
+                  </div>
 
                   {/* Top strip — 4 cells, one field each. Tenure
                       removed. Sq Ft + Competitor Agent moved to a
@@ -532,23 +534,22 @@ export function PropertyDetail({ id }: { id: string }) {
                     </div>
                   </div>
 
-                <div className="border-t pt-3">
-                  <p className="text-[10px] text-muted-foreground leading-tight mb-2 flex items-center gap-1">
+                <div className="border-t pt-2">
+                  <p className="text-[10px] text-muted-foreground leading-tight mb-1.5 flex items-center gap-1">
                     <Landmark className="w-3 h-3" /> Ownership
                   </p>
-                  {/* Compact label-left / input-right stack — 4 rows
-                      down the left side of the half-width card. Far
-                      more compact than the previous 4-column grid that
-                      wrapped wide. */}
-                  <div className="space-y-1.5 text-[11px]">
+                  {/* 2-col grid (4 owner rows arranged 2×2) so the
+                      right half of the card isn't dead space when
+                      most slots are empty. */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                     {[
                       { label: "Freeholder",       field: "freeholderId",      id: (property as any).freeholderId },
                       { label: "Long Leaseholder", field: "longLeaseholderId", id: (property as any).longLeaseholderId },
                       { label: "Senior Lender",    field: "seniorLenderId",    id: (property as any).seniorLenderId },
                       { label: "Junior Lender",    field: "juniorLenderId",    id: (property as any).juniorLenderId },
                     ].map(row => (
-                      <div key={row.field} className="grid grid-cols-[120px,1fr] items-center gap-2">
-                        <span className="text-muted-foreground leading-tight">{row.label}</span>
+                      <div key={row.field} className="grid grid-cols-[90px,1fr] items-center gap-2">
+                        <span className="text-muted-foreground leading-tight truncate">{row.label}</span>
                         <div className="min-w-0">
                           <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
                         </div>
@@ -559,10 +560,10 @@ export function PropertyDetail({ id }: { id: string }) {
 
                 {/* Area + Competitor Agent — fills the bottom of the
                     card. Sq Ft and the competitor-agent picker sit
-                    side-by-side as one row. Competitor agent now
-                    links to a crm_companies row (company_type='Agent')
-                    with an inline 'Add new agent' shortcut. */}
-                <div className="border-t pt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                    side-by-side. Competitor agent links to a
+                    crm_companies row (company_type='Agent') with an
+                    inline 'Add new agent' shortcut. */}
+                <div className="border-t pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Area</p>
                     <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
