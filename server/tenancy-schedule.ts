@@ -112,7 +112,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
 // (create) and PUT (update) below + by the xlsx import header → field mapper.
 const TENANCY_FIELDS = [
   // Unit Details
-  "grouping", "premises", "unit_number", "permitted_use", "status", "am_initiative",
+  "grouping", "floor_level", "premises", "unit_number", "permitted_use", "status", "am_initiative",
   // Tenant Details
   "tenant_name", "trading_name", "tenant_mix",
   // Lease Details
@@ -303,7 +303,9 @@ function normaliseHeader(h: any): string {
 const HEADER_ALIASES: Record<string, string> = {
   // Unit
   "grouping": "grouping",
-  "floor": "grouping",          // Landsec Bluewater feed uses "Floor"
+  "zone": "grouping",                 // Zone heading (Wintergarden / Plaza)
+  "floor": "floor_level",             // Landsec Bluewater feed "Floor 100/101"
+  "floor level": "floor_level",
   "unit": "unit_number",
   "unit name": "unit_number",   // Landsec Bluewater feed
   "unit number": "unit_number",

@@ -17,11 +17,16 @@ interface TenancyUnit {
   property_id: string;
   // Unit Details
   grouping: string | null;
+  floor_level: string | null;
   premises: string;
   unit_number: string;
   permitted_use: string;
   status: string;
   am_initiative: string | null;
+  // Covenant
+  credit_rating: string | null;
+  deposit_held: number | null;
+  arrears_balance: number | null;
   // Tenant Details
   tenant_name: string;
   trading_name: string;
@@ -153,11 +158,13 @@ const BAND_COLOURS: Record<string, string> = {
   "Occupational Costs": "bg-amber-800 text-white",
   "Shortfalls": "bg-rose-800 text-white",
   "NOI": "bg-emerald-900 text-white",
+  "Covenant": "bg-indigo-800 text-white",
   "Comments": "bg-zinc-700 text-white",
 };
 
 const COLUMNS: Col[] = [
-  { field: "grouping",         label: "Floor",          band: "Unit Details", width: 110, align: "left" },
+  { field: "grouping",         label: "Zone",           band: "Unit Details", width: 110, align: "left" },
+  { field: "floor_level" as any, label: "Floor",        band: "Unit Details", width: 110, align: "left" },
   { field: "unit_number",      label: "Unit",           band: "Unit Details", width: 90,  align: "left" },
   { field: "permitted_use",    label: "Use",            band: "Unit Details", width: 120, align: "left" },
   { field: "status",           label: "Status",         band: "Unit Details", width: 90,  align: "left" },
@@ -206,6 +213,9 @@ const COLUMNS: Col[] = [
   { field: "rental_shortfalls",   label: "Total LL Shortfalls", band: "Shortfalls", width: 140, align: "right", type: "currency" },
   { field: "topped_up_noi",     label: "Topped Up NOI", band: "NOI", width: 120, align: "right", type: "currency" },
   { field: "noi_pa",            label: "NOI (pa)",      band: "NOI", width: 110, align: "right", type: "currency" },
+  { field: "credit_rating" as any,   label: "Credit Check Rating", band: "Covenant", width: 130, align: "left" },
+  { field: "deposit_held" as any,    label: "Deposit Held",        band: "Covenant", width: 110, align: "right", type: "currency" },
+  { field: "arrears_balance" as any, label: "Arrears",             band: "Covenant", width: 110, align: "right", type: "currency" },
   { field: "comments",          label: "Comments",      band: "Comments", width: 200, align: "left" },
   { field: "leasing_comments",  label: "Leasing Comments", band: "Comments", width: 200, align: "left" },
   { field: "target_tenants",    label: "Target Tenants", band: "Comments", width: 180, align: "left" },
@@ -220,14 +230,32 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", className = "
   const [val, setVal] = useState(value || "");
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Date fields use the caller-passed type="date" rather than relying on
+  // field-name pattern matching — covers lease_expiry / break_date /
+  // landlord_break_date / next_review_date / lease_start in one go.
+  const isDate = type === "date";
+  const isNumber = type === "number";
+
   if (!editing) {
+    let display: string;
+    if (isDate) {
+      display = value ? fmtDate(value) : "—";
+    } else if (isNumber) {
+      if (field.includes("rent") || field.includes("income") || field.includes("charge") || field.includes("insurance") || field.includes("occ_costs") || field.includes("erv") || field.includes("shortfall")) {
+        display = fmtCurrency(value);
+      } else {
+        display = fmtNum(value, field.includes("psf") || field.includes("percent") || field.includes("term") ? 2 : 0);
+      }
+    } else {
+      display = value || "—";
+    }
     return (
       <span
         className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-xs ${className}`}
         onClick={() => { setVal(value || ""); setEditing(true); setTimeout(() => inputRef.current?.focus(), 50); }}
         data-testid={`tenancy-cell-${field}-${unitId}`}
       >
-        {type === "number" ? (field.includes("rent") || field.includes("income") || field.includes("charge") || field.includes("insurance") || field.includes("occ_costs") || field.includes("erv") || field.includes("shortfall") ? fmtCurrency(value) : fmtNum(value, field.includes("psf") || field.includes("percent") || field.includes("term") ? 2 : 0)) : (field.includes("lease_start") || field.includes("lease_expiry") ? fmtDate(value) : (value || "—"))}
+        {display}
       </span>
     );
   }
@@ -240,7 +268,7 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", className = "
       onBlur={() => { setEditing(false); if (val !== (value || "")) onSave(unitId, field, val); }}
       onKeyDown={(e) => { if (e.key === "Enter") { setEditing(false); if (val !== (value || "")) onSave(unitId, field, val); } if (e.key === "Escape") setEditing(false); }}
       className="h-6 text-xs px-1 py-0 w-full"
-      type={type === "number" ? "number" : "text"}
+      type={isDate ? "date" : isNumber ? "number" : "text"}
       data-testid={`tenancy-input-${field}-${unitId}`}
     />
   );
@@ -632,8 +660,20 @@ function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
     <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
       {COLUMNS.map((c) => {
         const raw = (unit as any)[c.field];
-        const displayVal = raw == null ? "" : String(raw);
-        const editType = c.type === "num" || c.type === "currency" || c.type === "currency_psf" ? "number" : "text";
+        // Date fields arrive as ISO strings from the API (or as timestamptz
+        // strings with the T00:00 suffix). Format for display, hand the
+        // canonical ISO date to the edit input.
+        const isDateField = c.type === "date";
+        let displayVal: string;
+        if (isDateField && raw) {
+          const dt = new Date(raw);
+          displayVal = isNaN(dt.getTime()) ? String(raw) : dt.toISOString().slice(0, 10);
+        } else {
+          displayVal = raw == null ? "" : String(raw);
+        }
+        const editType = c.type === "num" || c.type === "currency" || c.type === "currency_psf"
+          ? "number"
+          : isDateField ? "date" : "text";
         return (
           <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
             <InlineEdit

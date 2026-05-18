@@ -2975,6 +2975,10 @@ app.use("/api/branding/assets", express.static(
           // Per-property BGP staff role (Lead / Investment / Leasing /
           // Letting Surveyor) so the contacts pills don't all look the same.
           await addColIfMissing("crm_property_agents", "role", "text");
+          // Floor-level distinct from Zone — Landsec sheets give the floor
+          // code (Floor 100 / 101) as a separate column; the Zone label
+          // (Wintergarden / Plaza) is the higher-level grouping.
+          await addColIfMissing("tenancy_schedule_units", "floor_level", "text");
 
           // Tenancy schedule — bring in line with the Landsec investment-grade
           // template. Unit Details / Tenant / Lease / Areas (GIA+NIA splits) /
