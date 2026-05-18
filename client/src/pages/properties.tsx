@@ -522,19 +522,22 @@ export function InlineAgents({
           <Popover key={user.id}>
             <PopoverTrigger asChild>
               <button
-                className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded text-white hover:opacity-90 ${bg}`}
+                className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded text-white hover:opacity-90 ${bg}`}
                 data-testid={`agent-badge-${propertyId}-${user.id}`}
                 title={role ? `${user.name} — ${role}` : user.name}
               >
-                <span className="font-medium">{user.name.split(" ")[0]}</span>
-                {role && <span className="text-[9px] opacity-80 border-l border-white/40 pl-1">{role}</span>}
+                <span className="font-semibold">{user.name.split(" ")[0]}</span>
+                {role && <span className="text-[11px] opacity-90 border-l border-white/40 pl-1.5">{role}</span>}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-3" align="start">
               <div className="space-y-2">
                 <div>
                   <div className="text-sm font-semibold">{user.name}</div>
-                  {role && <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{role}</div>}
+                  {(user as any).role && (
+                    <div className="text-xs text-muted-foreground">{(user as any).role}</div>
+                  )}
+                  {role && <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">On this property: <span className="font-medium text-foreground">{role}</span></div>}
                 </div>
                 <div className="space-y-1 text-xs">
                   {user.email ? (
