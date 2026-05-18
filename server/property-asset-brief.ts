@@ -776,17 +776,19 @@ router.get("/api/properties/:id/orphan-deals", requireAuth, async (req: Request,
 
 // Adopt an orphan deal onto this property — writes property_id and
 // (if the deal's tenant resolves to a tenancy_schedule row on this
-// property) the matching unit_id. One click → linked.
+// property) the matching tenancy_unit_id + unit_id. One click → fully
+// linked on the canonical spine.
 router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, res: Response) => {
   try {
     const propertyId = req.params.id;
     const { dealId } = req.body as { dealId: string };
     if (!dealId) return res.status(400).json({ error: "dealId required" });
 
-    // Try to find a matching unit on this property — by tenant brand
-    // first (most reliable), then by tenant name string.
-    const unit = await pool.query<{ unit_id: string | null }>(
-      `SELECT pu.id AS unit_id
+    // Resolve the canonical tenancy row first — match by tenant brand
+    // FK (cleanest), then by tenant name string. From there we can
+    // also resolve a property_units id by unit_number match.
+    const match = await pool.query<{ tenancy_unit_id: string | null; unit_id: string | null }>(
+      `SELECT t.id AS tenancy_unit_id, pu.id AS unit_id
          FROM crm_deals d
          LEFT JOIN tenancy_schedule_units t
            ON t.property_id = $1
@@ -800,15 +802,19 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
         LIMIT 1`,
       [propertyId, dealId]
     );
-    const unitId = unit.rows[0]?.unit_id || null;
+    const tenancyUnitId = match.rows[0]?.tenancy_unit_id || null;
+    const unitId = match.rows[0]?.unit_id || null;
+
+    const sets: string[] = ["property_id = $1"];
+    const params: any[] = [propertyId, dealId];
+    if (unitId) { sets.push(`unit_id = $${params.length + 1}`); params.push(unitId); }
+    if (tenancyUnitId) { sets.push(`tenancy_unit_id = $${params.length + 1}`); params.push(tenancyUnitId); }
 
     await pool.query(
-      `UPDATE crm_deals
-          SET property_id = $1${unitId ? ", unit_id = $3" : ""}
-        WHERE id = $2`,
-      unitId ? [propertyId, dealId, unitId] : [propertyId, dealId]
+      `UPDATE crm_deals SET ${sets.join(", ")} WHERE id = $2`,
+      params
     );
-    res.json({ ok: true, unitId });
+    res.json({ ok: true, unitId, tenancyUnitId });
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
   }
