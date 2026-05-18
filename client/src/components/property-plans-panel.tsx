@@ -64,19 +64,18 @@ interface PickableUnit {
   lease_status: string | null;
 }
 
-// Status colour palette. Fills kept low (10-20% alpha) so overlapping
-// polygons don't stack into a dark blob — auto-detect bboxes around
-// neighbouring units routinely overlap by a few pixels. Unlinked
-// polygons render OUTLINE-ONLY (no fill) so the underlying plan stays
-// fully legible until they're wired to a unit.
+// Status colour palette. Fills are ALL transparent — colour comes
+// through the stroke only, so the plan underneath stays fully
+// legible. Hover bumps stroke width; tooltip / drawer carries the
+// actual data.
 const STATUS_COLOURS: Record<string, { fill: string; stroke: string; label: string }> = {
-  occupied:          { fill: "rgba(16,185,129,0.14)",  stroke: "#10b981", label: "Occupied" },
-  lease_event:       { fill: "rgba(250,204,21,0.18)",  stroke: "#eab308", label: "Lease event <18m" },
-  under_offer:       { fill: "rgba(249,115,22,0.18)",  stroke: "#f97316", label: "Under offer" },
-  deal_in_progress:  { fill: "rgba(59,130,246,0.18)",  stroke: "#3b82f6", label: "Deal in progress" },
-  vacant:            { fill: "rgba(244,63,94,0.18)",   stroke: "#f43f5e", label: "Vacant" },
-  unlinked:          { fill: "transparent",            stroke: "#94a3b8", label: "Unlinked" },
-  unknown:           { fill: "transparent",            stroke: "#94a3b8", label: "Unknown" },
+  occupied:          { fill: "transparent", stroke: "#10b981", label: "Occupied" },
+  lease_event:       { fill: "transparent", stroke: "#eab308", label: "Lease event <18m" },
+  under_offer:       { fill: "transparent", stroke: "#f97316", label: "Under offer" },
+  deal_in_progress:  { fill: "transparent", stroke: "#3b82f6", label: "Deal in progress" },
+  vacant:            { fill: "transparent", stroke: "#f43f5e", label: "Vacant" },
+  unlinked:          { fill: "transparent", stroke: "#94a3b8", label: "Unlinked" },
+  unknown:           { fill: "transparent", stroke: "#94a3b8", label: "Unknown" },
 };
 
 function formatMoney(n: number | null | undefined): string {
@@ -417,13 +416,19 @@ function PlanCanvas({
           const pts = u.polygon?.points || [];
           const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0]} ${p[1]}`).join(" ") + " Z";
           const isHighlight = u.id === highlightedUnitId;
+          const isHover = hoverUnit?.id === u.id;
+          // Hover provides the visual feedback that fills used to —
+          // a subtle stroke-coloured wash + thicker stroke. Highlight
+          // (hash-jump from the schedule) uses an indigo pulse on the
+          // stroke only, so the plan underneath stays visible.
           return (
             <path
               key={u.id}
               d={d}
-              fill={isHighlight ? "rgba(99,102,241,0.45)" : c.fill}
+              fill={isHover ? c.stroke : "transparent"}
+              fillOpacity={isHover ? 0.18 : 0}
               stroke={isHighlight ? "#6366f1" : c.stroke}
-              strokeWidth={isHighlight ? 0.005 : 0.002}
+              strokeWidth={isHighlight ? 0.006 : (isHover ? 0.004 : 0.002)}
               vectorEffect="non-scaling-stroke"
               className={isHighlight ? "animate-pulse" : ""}
               style={{ pointerEvents: drawMode ? "none" : "auto", cursor: "pointer" }}
