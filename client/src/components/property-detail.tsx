@@ -81,6 +81,7 @@ import {
   InlineAgents,
   InlineLandlord,
   InlineOwnerLink,
+  InlineCompetitorAgent,
   InlineBillingEntity,
   InlineDeals,
   InlineTenants,
@@ -495,10 +496,12 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
-            {/* Top-row strip: property summary card on the left, latest
-                property news on the right (lg+). Stacks on smaller
-                screens. Replaces the previous full-width empty space. */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {/* Top-row strip: property summary card on the left,
+                latest property news on the right (lg+). News gets
+                more breathing room than 50/50 — typical news
+                content (image + 3-4 headlines) wants a wider column.
+                Stacks 1-col on smaller screens. */}
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
               <Card>
                 <CardContent className="p-3 space-y-3">
                   {/* Property covering strip — Asset Owner logo +
@@ -506,10 +509,10 @@ export function PropertyDetail({ id }: { id: string }) {
                       the client identity reads first. */}
                   <PropertyCoveringStrip propertyId={property.id} />
 
-                  {/* Top strip — 4 cells. Tenure removed. Website
-                      pairs under Team, Competitor Agent pairs under
-                      Sq Ft (same cell, stacked) so the related fields
-                      sit together without bloating the row count. */}
+                  {/* Top strip — 4 cells, one field each. Tenure
+                      removed. Sq Ft + Competitor Agent moved to a
+                      dedicated 'Area & agent' row below Ownership
+                      so the bottom of the card isn't empty. */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
                     <div>
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
@@ -519,37 +522,13 @@ export function PropertyDetail({ id }: { id: string }) {
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
                       <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
                     </div>
-                    <div className="space-y-1.5">
-                      <div>
-                        <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
-                        <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                        <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate" />
-                      </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
+                      <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
                     </div>
-                    <div className="space-y-1.5">
-                      <div>
-                        <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Sq Ft</p>
-                        <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1 mb-0.5">
-                          <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
-                          {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
-                            Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
-                              <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
-                            ) : null
-                          )}
-                        </div>
-                        <InlineText
-                          value={property.competitorAgent || ""}
-                          onSave={(val) => inlineUpdate("competitorAgent", val || null)}
-                          placeholder="e.g. CBRE"
-                          className="text-sm"
-                        />
-                      </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
+                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate" />
                     </div>
                   </div>
 
@@ -575,6 +554,34 @@ export function PropertyDetail({ id }: { id: string }) {
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+
+                {/* Area + Competitor Agent — fills the bottom of the
+                    card. Sq Ft and the competitor-agent picker sit
+                    side-by-side as one row. Competitor agent now
+                    links to a crm_companies row (company_type='Agent')
+                    with an inline 'Add new agent' shortcut. */}
+                <div className="border-t pt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Area</p>
+                    <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
+                      {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
+                        Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
+                        ) : null
+                      )}
+                    </div>
+                    <InlineCompetitorAgent
+                      propertyId={id}
+                      competitorAgentId={(property as any).competitorAgentId}
+                      competitorAgent={property.competitorAgent}
+                      allCompanies={allCompanies}
+                    />
                   </div>
                 </div>
 

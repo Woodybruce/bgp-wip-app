@@ -758,7 +758,8 @@ export const crmProperties = pgTable("crm_properties", {
   leasingPrivacyEnabled: boolean("leasing_privacy_enabled").default(false),
   sharepointFolderUrl: text("sharepoint_folder_url"),
   // ── Letting hunter — track competitor agent on non-BGP-instructed stock ──
-  competitorAgent: text("competitor_agent"), // e.g. "CBRE", "Knight Frank"
+  competitorAgent: text("competitor_agent"), // legacy free-text e.g. "CBRE"
+  competitorAgentId: varchar("competitor_agent_id"), // FK to crm_companies (company_type='Agent')
   competitorAgentInstructedAt: timestamp("competitor_agent_instructed_at"),
   competitorAgentStatus: text("competitor_agent_status"), // active | won_by_bgp | lost
   // ── Ownership stack ──────────────────────────────────────────────────────

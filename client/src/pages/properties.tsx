@@ -851,6 +851,142 @@ export function InlineOwnerLink({
   );
 }
 
+// Competitor Agent picker — like InlineOwnerLink but scoped to
+// crm_companies with company_type === 'Agent'. Has an inline 'Add
+// new agent' option that POSTs to /api/crm/companies and then
+// links the new row to the property in one go. Stores both the
+// FK (competitorAgentId) and the display name (competitorAgent,
+// legacy text column) so anything that reads the text keeps
+// working.
+export function InlineCompetitorAgent({
+  propertyId,
+  competitorAgentId,
+  competitorAgent,
+  allCompanies,
+}: {
+  propertyId: string;
+  competitorAgentId: string | null | undefined;
+  competitorAgent: string | null | undefined;
+  allCompanies: CrmCompany[];
+}) {
+  const { toast } = useToast();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [creating, setCreating] = useState(false);
+  const linked = competitorAgentId ? allCompanies.find(c => c.id === competitorAgentId) : null;
+  // Display name fallback to the legacy text column for properties
+  // that were typed in pre-linkage.
+  const displayName = linked?.name || competitorAgent || null;
+
+  const agentCompanies = allCompanies.filter(c => (c.companyType || "") === "Agent");
+  const filtered = searchTerm
+    ? agentCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
+    : agentCompanies.slice(0, 20);
+
+  const setMutation = useMutation({
+    mutationFn: async (payload: { id: string | null; name: string | null }) => {
+      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, {
+        competitorAgentId: payload.id,
+        competitorAgent: payload.name,
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] }),
+    onError: (err: any) => toast({ title: "Couldn't link agent", description: err.message, variant: "destructive" }),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType: "Agent" });
+      return res.json();
+    },
+    onSuccess: async (newCompany: any) => {
+      await setMutation.mutateAsync({ id: newCompany.id, name: newCompany.name });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      setCreating(false);
+      setSearchTerm("");
+      toast({ title: `Added agent: ${newCompany.name}` });
+    },
+    onError: (err: any) => toast({ title: "Couldn't create agent", description: err.message, variant: "destructive" }),
+  });
+
+  if (displayName && !creating) {
+    return (
+      <div className="flex items-center gap-1">
+        {linked ? (
+          <Link href={`/companies/${linked.id}`}>
+            <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted">
+              <Building2 className="w-3 h-3 mr-1 text-muted-foreground" />
+              {displayName}
+            </Badge>
+          </Link>
+        ) : (
+          // Legacy text-only value with no FK — show as a chip but
+          // tag it to indicate it's not linked to a CRM row yet.
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 border-amber-300 text-amber-700" title="Free-text — link to a CRM agent row to enable agent profile">
+            {displayName}
+          </Badge>
+        )}
+        <button
+          className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
+          onClick={() => setMutation.mutate({ id: null, name: null })}
+          title="Remove competitor agent"
+        >
+          <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+          <Plus className="w-3 h-3" />
+          Competitor agent
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-72" align="start">
+        <div className="p-2">
+          <Input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search agents…"
+            className="h-7 text-xs"
+            autoFocus
+          />
+        </div>
+        <div className="max-h-[260px] overflow-y-auto">
+          {filtered.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setMutation.mutate({ id: c.id, name: c.name })}
+              className="w-full text-left px-3 py-1.5 hover:bg-muted text-xs flex items-center gap-2"
+              data-testid={`competitor-agent-option-${c.id}`}
+            >
+              <Building2 className="w-3 h-3 text-muted-foreground shrink-0" />
+              <span className="truncate">{c.name}</span>
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="px-3 py-1.5 text-[11px] text-muted-foreground italic">
+              No matching agent companies.
+            </div>
+          )}
+        </div>
+        {searchTerm.trim() && !filtered.some(c => c.name.toLowerCase() === searchTerm.trim().toLowerCase()) && (
+          <button
+            onClick={() => createMutation.mutate(searchTerm.trim())}
+            disabled={createMutation.isPending}
+            className="w-full text-left px-3 py-2 border-t hover:bg-emerald-50 dark:hover:bg-emerald-950 text-xs flex items-center gap-2 text-emerald-700 dark:text-emerald-400"
+          >
+            <Plus className="w-3 h-3" />
+            <span>Add "<span className="font-medium">{searchTerm.trim()}</span>" as a new agent</span>
+          </button>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function InlineBillingEntity({
   propertyId,
   billingEntityId,
