@@ -300,7 +300,13 @@ function FinancialPerformanceCell({ unit, onSave }: { unit: any; onSave: (id: st
 function ExistingTenantCell({ unit, nameColour, onSave }: {
   unit: any; nameColour: string; onSave: (id: string, field: string, value: string) => void;
 }) {
+  // The brand-board link follows the Trading As name (= the brand), not the
+  // legal entity. live_trading_name comes from the tenancy_schedule join;
+  // fall back to live_tenant_name when no trading-as is recorded.
+  const tradingName = unit.live_trading_name || "";
   const tenantName = unit.live_tenant_name || unit.tenant_name || unit.unit_name || "";
+  const displayName = tradingName || tenantName;
+  const brandLookupName = tradingName || tenantName;
   const linkedCompanyId = unit.resolved_tenant_company_id || unit.tenant_company_id || null;
   return (
     <div>
@@ -310,11 +316,21 @@ function ExistingTenantCell({ unit, nameColour, onSave }: {
           className={`text-sm font-bold leading-tight hover:underline ${nameColour}`}
           data-testid={`existing-link-${unit.id}`}
         >
-          {tenantName || "—"}
+          {displayName || "—"}
         </Link>
       ) : (
-        <div className={`text-sm font-bold leading-tight ${nameColour}`}>
+        <div className={`text-sm font-bold leading-tight ${nameColour} flex items-center gap-1`}>
           <InlineEditCell unitId={unit.id} field="tenant_name" value={tenantName} onSave={onSave} className="text-sm font-bold" placeholder="Tenant" />
+          {brandLookupName && (
+            <Link
+              href={`/companies?q=${encodeURIComponent(brandLookupName)}`}
+              title="Open brand board for this tenant"
+              onClick={(e: any) => e.stopPropagation()}
+              data-testid={`existing-search-${unit.id}`}
+            >
+              <ExternalLink className="w-2.5 h-2.5 text-indigo-500 hover:text-indigo-700" />
+            </Link>
+          )}
         </div>
       )}
       <div className="mt-1 flex items-center gap-1.5 flex-wrap">

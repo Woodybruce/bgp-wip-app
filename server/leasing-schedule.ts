@@ -110,6 +110,7 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
         p.leasing_privacy_enabled,
         c.name as landlord_name,
         COALESCE(t.tenant_name, u.tenant_name)     AS live_tenant_name,
+        t.trading_name                             AS live_trading_name,
         COALESCE(t.lease_expiry, u.lease_expiry)   AS live_lease_expiry,
         COALESCE(t.break_date,   u.lease_break)    AS live_lease_break,
         COALESCE(t.next_review_date, u.rent_review) AS live_rent_review,
@@ -127,7 +128,7 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
       LEFT JOIN crm_companies tc
         ON tc.id = u.tenant_company_id
         OR (u.tenant_company_id IS NULL
-            AND lower(trim(tc.name)) = lower(trim(COALESCE(t.tenant_name, u.tenant_name, ''))))
+            AND lower(trim(tc.name)) = lower(trim(COALESCE(t.trading_name, t.tenant_name, u.tenant_name, ''))))
       WHERE u.property_id = $1
       ORDER BY u.sort_order, u.zone, u.unit_name
     `, [req.params.propertyId]);
