@@ -46,6 +46,8 @@ import {
   PipelinePerformanceBoard,
   WeeklyFocusCard,
   RiskRegisterCard,
+  PropertyRecentActivityCard,
+  BgpCommentaryCard,
 } from "@/components/property-asset-brief";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
@@ -182,6 +184,23 @@ function PropertyComplianceBoardWrapper({
   );
 }
 
+// Pull the commentary fields off the asset-brief payload and pass
+// them into the purple BgpCommentaryCard so the card stays generic
+// (it's also used elsewhere in the panel stack via the shared
+// useAssetBrief query — same cache hit).
+function BgpCommentaryWrapper({ propertyId }: { propertyId: string }) {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/properties", propertyId, "asset-brief"],
+    queryFn: async () => {
+      const res = await fetch(`/api/properties/${propertyId}/asset-brief`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+  if (!data) return <Card><CardContent className="p-3"><Skeleton className="h-16 w-full" /></CardContent></Card>;
+  return <BgpCommentaryCard propertyId={propertyId} commentary={data.bgp_commentary} updatedAt={data.bgp_commentary_at} />;
+}
+
 function CollapsibleCard({
   open,
   onToggle,
@@ -274,6 +293,7 @@ export function PropertyDetail({ id }: { id: string }) {
     landRegistry: false,
     images: true,
     compliance: false,
+    activity: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -613,17 +633,11 @@ export function PropertyDetail({ id }: { id: string }) {
               <PropertyAssetBriefPanel propertyId={property.id} />
             </ErrorBoundary>
 
-            {/* Asset Lead commentary — the existing notes field
-                rendered at the bottom of the brief stack for
-                running colour. Kept editable inline so MW can drop
-                "cinema deal expected Q3" type lines without a
-                dedicated CRUD. */}
-            <Card>
-              <CardContent className="p-3 space-y-1">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Asset lead commentary</p>
-                <InlineText value={property.notes || ""} onSave={(val) => inlineUpdate("notes", val)} placeholder="What MW thinks is happening — colour, rumours, plans not yet on the deals board…" className="text-sm" multiline />
-              </CardContent>
-            </Card>
+            {/* BGP Commentary — purple AI card. Pulls commentary
+                + last-generated timestamp from the asset-brief
+                payload and renders the same purple treatment used
+                on the brand profile's brand_analysis. */}
+            <BgpCommentaryWrapper propertyId={property.id} />
 
             {streetViewExpanded ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -847,6 +861,28 @@ export function PropertyDetail({ id }: { id: string }) {
                 <div className="px-4 pb-3">
                   <ErrorBoundary compact name="Property compliance & KYC">
                     <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
+                  </ErrorBoundary>
+                </div>
+              )}
+            </div>
+
+            {/* Recent activity — moved out of the main column. Same
+                sanitised summaries (no email body content) so
+                client users like Mark see headline touches without
+                content leakage. */}
+            <div className="border-b">
+              <button onClick={() => toggleSection("activity")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-activity-section">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Recent activity</span>
+                  <Badge variant="secondary" className="text-[10px]">14d</Badge>
+                </div>
+                {sidebarSections.activity ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </button>
+              {sidebarSections.activity && (
+                <div className="px-4 pb-3">
+                  <ErrorBoundary compact name="Property recent activity">
+                    <PropertyRecentActivityCard propertyId={property.id} />
                   </ErrorBoundary>
                 </div>
               )}

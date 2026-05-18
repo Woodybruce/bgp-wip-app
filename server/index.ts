@@ -994,6 +994,12 @@ import { pool } from "./db";
     // brief (active deals, activity feed, risks, performance) is
     // derived live from other tables.
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS weekly_focus JSONB DEFAULT '[]'::jsonb`,
+    // BGP Commentary — Claude-generated 3-5 sentence narrative on
+    // what's happening at the property, written from the asset-brief
+    // payload (active deals, risks, leasing schedule, recent activity).
+    // Re-rolls on demand via the panel's refresh button.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS bgp_commentary TEXT`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS bgp_commentary_at TIMESTAMP`,
     // Backfill: existing landlord_id → freeholder_id (best default; user can correct)
     `UPDATE crm_properties SET freeholder_id = landlord_id WHERE freeholder_id IS NULL AND landlord_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_crm_properties_freeholder ON crm_properties(freeholder_id) WHERE freeholder_id IS NOT NULL`,

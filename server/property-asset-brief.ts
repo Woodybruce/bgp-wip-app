@@ -268,6 +268,16 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     ].filter(Boolean).map(d => new Date(d as any).getTime());
     const lastUpdatedAt = allDates.length > 0 ? new Date(Math.max(...allDates)).toISOString() : p.updated_at;
 
+    // BGP Commentary — Claude-generated narrative paragraph,
+    // persisted on crm_properties.bgp_commentary. Surfaced raw
+    // here; regenerated via POST .../bgp-commentary/regenerate.
+    const commentaryRow = await pool.query<{ bgp_commentary: string | null; bgp_commentary_at: string | null }>(
+      `SELECT bgp_commentary, bgp_commentary_at FROM crm_properties WHERE id = $1`,
+      [propertyId]
+    );
+    const commentaryText = commentaryRow.rows[0]?.bgp_commentary || null;
+    const commentaryAt = commentaryRow.rows[0]?.bgp_commentary_at || null;
+
     res.json({
       property: {
         id: p.id,
@@ -285,6 +295,8 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       risks,
       performance,
       commentary: p.notes || "",
+      bgp_commentary: commentaryText,
+      bgp_commentary_at: commentaryAt,
     });
   } catch (err: any) {
     console.error("[asset-brief]", err?.message, err?.stack);
@@ -364,6 +376,83 @@ function buildActivitySummary(a: any): string {
   const dealRef = a.deal_name ? ` re ${a.deal_name}` : "";
   return `${by}${verb} ${who}${dealRef}`.trim();
 }
+
+// Regenerate the BGP Commentary — pulls the same data the brief
+// renders (asset lead, owner, active deals, recent activity, risks,
+// performance) and asks Claude Sonnet to write a 3-5 sentence
+// operational narrative. Persisted on crm_properties so the panel
+// always has a value even when offline.
+router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = req.params.id;
+    // Re-hit our own asset-brief route so we re-use all the join
+    // logic (active deals / activity / risks / performance). Easier
+    // than re-doing the SQL here and keeps the narrative in sync
+    // with what the user actually sees on the panel.
+    const baseUrl = `http://127.0.0.1:${process.env.PORT || "5000"}`;
+    const cookie = (req.headers?.cookie as string) || "";
+    const auth = (req.headers?.authorization as string) || "";
+    const briefRes = await fetch(`${baseUrl}/api/properties/${propertyId}/asset-brief`, {
+      headers: {
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...(auth ? { Authorization: auth } : {}),
+      },
+    });
+    if (!briefRes.ok) return res.status(briefRes.status).json({ error: "Couldn't load asset brief" });
+    const brief = await briefRes.json();
+
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const fmtMoney = (p: number | null | undefined) => p == null ? "—" : `£${Math.round(Number(p) / 100).toLocaleString()}`;
+    const dealLines = (brief.active_deals as any[]).slice(0, 15).map(d => `- ${d.tenant_name || d.name}${d.unit_name ? ` @ ${d.unit_name}` : ""} — ${d.stage_label} (${fmtMoney(d.fee_pence)} fee)`).join("\n") || "(none)";
+    const activityLines = (brief.activity as any[]).slice(0, 8).map(a => `- ${a.summary} (${new Date(a.date).toLocaleDateString("en-GB")})`).join("\n") || "(none in last 14 days)";
+    const riskLines = (brief.risks as any[]).map(r => `- ${r.severity.toUpperCase()}: ${r.message}`).join("\n") || "(none flagged)";
+    const focusLines = (brief.weekly_focus as any[]).map(f => `- ${f.text}`).join("\n") || "(none set)";
+    const ownerName = brief.owner?.name || "the asset owner";
+    const propertyName = brief.property?.name || "this property";
+
+    const prompt = `You are a BGP analyst writing the commentary section of a client-facing operational brief on ${propertyName}, owned by ${ownerName}.
+
+Active deals on the property:
+${dealLines}
+
+Recent activity (last 14 days):
+${activityLines}
+
+Risks flagged:
+${riskLines}
+
+Asset lead's stated focus this week:
+${focusLines}
+
+Performance: ${(brief.performance.vacancy_rate * 100).toFixed(1)}% vacancy${brief.performance.wault_years != null ? `, WAULT ${brief.performance.wault_years.toFixed(1)} yrs` : ""}.
+
+Write a 3-5 sentence operational paragraph for the asset owner reading this. Cover:
+1. What's actively moving on the property right now (the big-ticket live deals).
+2. The risks worth flagging (vacancies / expiries / covenant).
+3. Where BGP's focus is this week + a forward-looking line.
+
+Rules: British English, partner-tone, no hype, no "I'm pleased to". Reference the actual tenants / units / £ figures above — don't generalise. No bullet points or headings, prose only. No preamble or "here is".`;
+
+    const msg = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 600,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    if (!text) return res.status(502).json({ error: "Claude returned empty commentary" });
+
+    await pool.query(
+      `UPDATE crm_properties SET bgp_commentary = $1, bgp_commentary_at = NOW(), updated_at = NOW() WHERE id = $2`,
+      [text, propertyId]
+    );
+    res.json({ ok: true, bgp_commentary: text, bgp_commentary_at: new Date().toISOString() });
+  } catch (err: any) {
+    console.error("[bgp-commentary]", err?.message, err?.stack);
+    res.status(500).json({ error: err?.message || "regenerate failed" });
+  }
+});
 
 // Tasks scoped to this property — covers every BGP user's tasks
 // linked to the property directly OR to a deal whose unit lives

@@ -51,6 +51,8 @@ interface AssetBrief {
     bottom_psqft: Array<{ unit_name: string; tenant_name: string | null; mat_psqft: number | null; lfl_percent: string | null }>;
   };
   commentary: string;
+  bgp_commentary: string | null;
+  bgp_commentary_at: string | null;
 }
 
 function timeAgo(iso: string): string {
@@ -260,42 +262,9 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
           counts still feed the Pipeline & Performance card above
           Plans. */}
 
-      {/* Activity feed (sanitised summaries — no email body content) */}
-      <Card>
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <Activity className="w-3.5 h-3.5" /> Recent activity
-            <Badge variant="secondary" className="text-[10px]">last 14 days</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0">
-          {data.activity.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground italic">No emails / calls / meetings logged in the last 14 days.</p>
-          ) : (
-            <div className="space-y-0.5 max-h-[260px] overflow-y-auto pr-1">
-              {data.activity.map(a => {
-                const Icon = a.kind === "email" ? Mail : a.kind === "call" ? Phone : a.kind === "meeting" ? Users : Activity;
-                return (
-                  <div key={a.id} className="flex items-start gap-2 text-[11px] px-1.5 py-1 rounded hover:bg-muted/40">
-                    <Icon className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate">{a.summary}</div>
-                      <div className="text-[10px] text-muted-foreground">{timeAgo(a.date)}</div>
-                    </div>
-                    {a.deal_id && (
-                      <Link href={`/deals/${a.deal_id}`}>
-                        <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">
-                          deal →
-                        </Badge>
-                      </Link>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Recent activity moved to the right sidebar via the
+          PropertyRecentActivityCard export. BGP Commentary renders
+          standalone via BgpCommentaryCard in property-detail. */}
 
       {/* Risk register now lives in the top-strip 2-col row beside
           Weekly Focus, via the standalone RiskRegisterCard export. */}
@@ -322,15 +291,108 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {data.risks.length === 0 ? (
-          <p className="text-[11px] text-muted-foreground italic">No flagged risks. All long-expiry tenants have live deals.</p>
+          <p className="text-xs text-muted-foreground italic">No flagged risks. All long-expiry tenants have live deals.</p>
         ) : (
-          <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
+          <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1">
             {data.risks.map((r, i) => (
-              <div key={i} className="flex items-start gap-2 text-[11px] px-1.5 py-1 rounded">
+              <div key={i} className="flex items-start gap-2 text-sm px-1.5 py-1 rounded leading-snug">
                 <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${r.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
                 <div className="flex-1 min-w-0">{r.message}</div>
               </div>
             ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Recent activity (last 14 days) — extracted for use in the right
+// sidebar dropdown rather than the main column. Sanitised summaries
+// only, no email body content (per the access rules for client
+// users like Mark at Landsec).
+export function PropertyRecentActivityCard({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useAssetBrief(propertyId);
+  if (isLoading || !data) {
+    return <Skeleton className="h-24 w-full" />;
+  }
+  if (data.activity.length === 0) {
+    return <p className="text-xs text-muted-foreground italic">No emails / calls / meetings logged in the last 14 days.</p>;
+  }
+  return (
+    <div className="space-y-0.5 max-h-[360px] overflow-y-auto pr-1">
+      {data.activity.map(a => {
+        const Icon = a.kind === "email" ? Mail : a.kind === "call" ? Phone : a.kind === "meeting" ? Users : Activity;
+        return (
+          <div key={a.id} className="flex items-start gap-2 text-xs px-1.5 py-1 rounded hover:bg-muted/40">
+            <Icon className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="leading-snug">{a.summary}</div>
+              <div className="text-[10px] text-muted-foreground">{timeAgo(a.date)}</div>
+            </div>
+            {a.deal_id && (
+              <Link href={`/deals/${a.deal_id}`}>
+                <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">
+                  deal →
+                </Badge>
+              </Link>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// BGP Commentary — purple AI panel matching the brand_analysis
+// design pattern. Reads from data.bgp_commentary; refresh button
+// regenerates via Claude from the live asset-brief context.
+export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { propertyId: string; commentary: string | null; updatedAt: string | null }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const regenerate = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/properties/${propertyId}/bgp-commentary/regenerate`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "BGP Commentary refreshed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't regenerate", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
+        <CardTitle className="text-xs flex items-center gap-2 text-purple-700 dark:text-purple-300">
+          <Sparkles className="w-3.5 h-3.5" /> BGP Commentary
+          {updatedAt && (
+            <span className="text-[10px] text-muted-foreground font-normal ml-auto">
+              {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            </span>
+          )}
+        </CardTitle>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 text-[10px] text-purple-700 dark:text-purple-300"
+          onClick={() => regenerate.mutate()}
+          disabled={regenerate.isPending}
+          title="Re-run Claude over the latest deals / activity / risks"
+        >
+          <Sparkles className={`w-3 h-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
+          {regenerate.isPending ? "Thinking…" : (commentary ? "Refresh" : "Generate")}
+        </Button>
+      </CardHeader>
+      <CardContent className="p-3 pt-0">
+        {commentary ? (
+          <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-3">
+            <p className="text-sm leading-relaxed text-foreground/90">{commentary}</p>
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-purple-200 dark:border-purple-900 p-3 text-center">
+            <p className="text-xs text-muted-foreground">No commentary yet. Generate one based on the live deals, activity feed, risks, and leasing schedule for this property.</p>
           </div>
         )}
       </CardContent>
