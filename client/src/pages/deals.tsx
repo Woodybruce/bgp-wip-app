@@ -577,6 +577,104 @@ function formToPayloadWithLearning(form: DealFormData, changeReason: string | un
 }
 
 
+// Unit picker that overlays the tenancy schedule (canonical spine)
+// on top of property_units. Picking a tenancy row whose name matches
+// a property_units row writes the property_units.id — the server
+// then auto-stamps tenancy_unit_id. When a tenancy row has no
+// matching property_units yet, the user is prompted to promote the
+// spine on the property page first.
+function DealUnitPicker({
+  propertyId, unitOptions, value, onChange,
+}: {
+  propertyId: string;
+  unitOptions: Array<{ id: string; unitName: string; propertyId: string }>;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const { data: tenancyUnits = [] } = useQuery<Array<{
+    id: string | number; unit_number: string; tenant_name: string | null;
+    status: string | null; nia_sqft: number | null;
+  }>>({
+    queryKey: ["/api/tenancy-schedule/property", propertyId],
+    queryFn: async () => {
+      if (!propertyId) return [];
+      const r = await fetch(`/api/tenancy-schedule/property/${propertyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!propertyId,
+    staleTime: 60_000,
+  });
+
+  type Opt = { id: string; name: string; tenant: string | null; source: "tenancy" | "property"; orphan: boolean };
+  const options: Opt[] = (() => {
+    const seen = new Set<string>();
+    const out: Opt[] = [];
+    const pUnitsByName = new Map<string, string>();
+    for (const pu of unitOptions) {
+      pUnitsByName.set((pu.unitName || "").trim().toLowerCase(), pu.id);
+    }
+    for (const t of tenancyUnits) {
+      const key = (t.unit_number || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const matchedId = pUnitsByName.get(key);
+      out.push({
+        id: matchedId || `__tenancy__${t.id}`,
+        name: t.unit_number,
+        tenant: t.tenant_name || null,
+        source: "tenancy",
+        orphan: !matchedId,
+      });
+    }
+    for (const pu of unitOptions) {
+      const key = (pu.unitName || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ id: pu.id, name: pu.unitName, tenant: null, source: "property", orphan: false });
+    }
+    return out;
+  })();
+
+  return (
+    <>
+      <Select
+        value={value || undefined}
+        onValueChange={(v) => onChange(v === "__clear__" ? "" : v)}
+        disabled={!propertyId}
+      >
+        <SelectTrigger data-testid="select-deal-unit">
+          <SelectValue placeholder={propertyId ? "Select unit" : "Pick a property first"} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__clear__">None</SelectItem>
+          {options.map(o => (
+            <SelectItem key={o.id} value={o.id} disabled={o.orphan}>
+              <span className="inline-flex items-center gap-1.5">
+                <span>{o.name}</span>
+                {o.source === "tenancy" && !o.orphan && (
+                  <span className="text-[9px] px-1 py-0 rounded bg-purple-100 text-purple-700">tenancy</span>
+                )}
+                {o.orphan && (
+                  <span className="text-[9px] px-1 py-0 rounded bg-amber-100 text-amber-700">needs promote</span>
+                )}
+                {o.tenant && (
+                  <span className="text-[10px] text-muted-foreground">· {o.tenant}</span>
+                )}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {options.some(o => o.orphan) && propertyId && (
+        <p className="text-[10px] text-amber-700 mt-0.5">
+          Some tenancy units don't have a property_units row yet — open the property page and click "Promote orphans to tenancy" to make them pickable here.
+        </p>
+      )}
+    </>
+  );
+}
+
 export function DealFormDialog({
   open,
   onOpenChange,
@@ -729,21 +827,12 @@ export function DealFormDialog({
               return (
                 <div className="sm:col-span-2">
                   <Label>Unit{needsUnit ? " *" : " (optional for property-level deals)"}</Label>
-                  <Select
-                    value={form.unitId || undefined}
-                    onValueChange={(v) => set("unitId", v === "__clear__" ? "" : v)}
-                    disabled={!form.propertyId}
-                  >
-                    <SelectTrigger data-testid="select-deal-unit">
-                      <SelectValue placeholder={form.propertyId ? "Select unit" : "Pick a property first"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__clear__">None</SelectItem>
-                      {unitOptions.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <DealUnitPicker
+                    propertyId={form.propertyId}
+                    unitOptions={unitOptions}
+                    value={form.unitId}
+                    onChange={(v) => set("unitId", v)}
+                  />
                   {needsUnit && !form.unitId && form.propertyId && (
                     <p className="text-[11px] text-rose-600 mt-1">A {form.dealType} requires a specific unit on the property.</p>
                   )}
