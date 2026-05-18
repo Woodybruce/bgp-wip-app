@@ -95,7 +95,6 @@ import {
   PropertyIntelligencePanel,
   PropertyKycPanel,
   PropertyNewsPanel,
-  Property360Panel,
   LinkedLandRegistryPanel,
   StreetViewCard,
   type DealLink,
@@ -306,7 +305,6 @@ export function PropertyDetail({ id }: { id: string }) {
     leasingSchedule: true,
     tenancy: true,
     pathway: false,
-    property360: false,
     kyc: false,
     intel: false,
     pitch: false,
@@ -684,12 +682,16 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
 
             <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Leasing Schedule" testId="toggle-leasing-schedule">
-              <PropertyLeasingSchedule propertyId={property.id} />
+              <div className="max-h-[640px] overflow-y-auto pr-1">
+                <PropertyLeasingSchedule propertyId={property.id} />
+              </div>
             </CollapsibleCard>
 
             <ErrorBoundary compact name="Tenancy schedule">
               <CollapsibleCard open={mainSections.tenancy} onToggle={() => toggleMain("tenancy")} icon={Users} title="Tenancy Schedule" testId="toggle-tenancy">
-                <PropertyTenancySchedule propertyId={property.id} />
+                <div className="max-h-[640px] overflow-y-auto pr-1">
+                  <PropertyTenancySchedule propertyId={property.id} />
+                </div>
               </CollapsibleCard>
             </ErrorBoundary>
 
@@ -700,12 +702,6 @@ export function PropertyDetail({ id }: { id: string }) {
                   address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
                   postcode={(property as any).postcode || (property.address as any)?.postcode}
                 />
-              </CollapsibleCard>
-            </ErrorBoundary>
-
-            <ErrorBoundary compact name="Property 360">
-              <CollapsibleCard open={mainSections.property360} onToggle={() => toggleMain("property360")} icon={Activity} title="Property 360" testId="toggle-property360">
-                <Property360Panel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
 
@@ -776,7 +772,7 @@ export function PropertyDetail({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="w-[500px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+        <div className="w-[420px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">

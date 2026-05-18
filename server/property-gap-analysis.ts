@@ -197,11 +197,32 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         return acc;
       }, {});
 
+    // Matching brand-side requirements — pulled in from the old
+    // Property 360 panel (since merged in). Surfaces brands that
+    // have an active leasing requirement compatible with this
+    // property's available units (use class match).
+    const matchingRequirements = await pool.query(
+      `SELECT r.id, r.name, r.use, r.size, r.requirement_locations,
+              r.company_id, c.name AS company_name, c.domain
+         FROM crm_requirements_leasing r
+         LEFT JOIN crm_companies c ON c.id = r.company_id
+        WHERE r.status = 'Active'
+          AND EXISTS (
+            SELECT 1 FROM available_units au
+             WHERE au.property_id = $1
+               AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
+          )
+        ORDER BY r.created_at DESC
+        LIMIT 30`,
+      [propertyId]
+    ).then(r => r.rows).catch(() => [] as any[]);
+
     res.json({
       property: { id: propertyId, name: location.name, postcode: location.postcode, lat: location.lat, lng: location.lng },
       onScheme: onScheme.map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
       wider: wider.map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
       gap: gap.map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
+      matchingRequirements,
       categorySignature,
       radii: { onScheme: onSchemeRadiusKm, wider: widerRadiusKm },
       stats: {

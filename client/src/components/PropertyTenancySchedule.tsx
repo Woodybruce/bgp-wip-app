@@ -986,6 +986,39 @@ function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
         }
         if (c.field === "tenant_name" || c.field === "trading_name") {
           const linkedId = unit.resolved_tenant_company_id || null;
+          // When the tenant is resolved to a CRM company, the name
+          // itself is the one-click link to the brand/company board.
+          // Pencil icon on the right opens inline edit for corrections.
+          if (linkedId && displayVal) {
+            return (
+              <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap group`}>
+                <div className="flex items-center gap-1">
+                  <Link
+                    href={`/companies/${linkedId}`}
+                    title={`Open ${unit.resolved_tenant_company_name || displayVal} board`}
+                    onClick={(e: any) => e.stopPropagation()}
+                  >
+                    <span
+                      className={`text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer font-medium ${c.field === "tenant_name" && isVacant ? "text-amber-600" : ""}`}
+                      data-testid={`tenancy-tenant-link-${c.field}-${unit.id}`}
+                    >
+                      {displayVal}
+                    </span>
+                  </Link>
+                  <InlineEdit
+                    value={displayVal}
+                    field={c.field as string}
+                    unitId={unit.id}
+                    onSave={onUpdate}
+                    type={editType}
+                    className="opacity-0 group-hover:opacity-60 text-[10px]"
+                  />
+                </div>
+              </td>
+            );
+          }
+          // Unresolved — let the user edit the name. Show a tiny CRM
+          // search shortcut for when they want to manually find it.
           return (
             <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
               <div className="flex items-center gap-1">
@@ -997,17 +1030,17 @@ function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
                   type={editType}
                   className={c.field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}
                 />
-                {displayVal && (
+                {displayVal && !isVacant && (
                   <Link
-                    href={linkedId ? `/companies/${linkedId}` : `/companies?q=${encodeURIComponent(displayVal)}`}
-                    title={linkedId ? "Open KYC brand board" : "Search for this tenant in CRM"}
+                    href={`/companies?q=${encodeURIComponent(displayVal)}`}
+                    title="Find this tenant in CRM (no match yet)"
                     onClick={(e: any) => e.stopPropagation()}
                   >
                     <span
-                      className="inline-flex items-center text-indigo-500 hover:text-indigo-700 cursor-pointer"
-                      data-testid={`tenancy-tenant-link-${c.field}-${unit.id}`}
+                      className="inline-flex items-center text-gray-400 hover:text-indigo-500 cursor-pointer"
+                      data-testid={`tenancy-tenant-search-${c.field}-${unit.id}`}
                     >
-                      <ExternalLink className="w-2.5 h-2.5" />
+                      <Search className="w-2.5 h-2.5" />
                     </span>
                   </Link>
                 )}

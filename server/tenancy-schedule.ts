@@ -30,16 +30,40 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     // crm_companies on a lowercased trimmed tenant_name to resolve
     // a clickable company link for the Tenant / Trading As cells
     // (mirrors the pattern used in the leasing schedule GET).
+    // Strip common company-name noise so "Pret a Manger Ltd" matches
+    // the "Pret A Manger" board. Suffix list covers the legal forms
+    // we typically see in Landsec tenancy schedules; punctuation /
+    // multiple spaces are normalised too. The same regex applies to
+    // both the schedule name and the crm_companies name so they meet
+    // in the middle.
     const occupied = await pool.query(
-      `SELECT t.*,
+      `WITH norm_co AS (
+         SELECT id, name,
+                regexp_replace(
+                  regexp_replace(lower(trim(name)),
+                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
+                    '', 'g'),
+                  '[^a-z0-9]+', ' ', 'g') AS norm_name
+           FROM crm_companies
+          WHERE merged_into_id IS NULL
+       )
+       SELECT t.*,
               tc.id   AS resolved_tenant_company_id,
               tc.name AS resolved_tenant_company_name
-       FROM tenancy_schedule_units t
-       LEFT JOIN crm_companies tc
-         ON lower(trim(tc.name)) = lower(trim(coalesce(t.trading_name, t.tenant_name, '')))
-         OR lower(trim(tc.name)) = lower(trim(coalesce(t.tenant_name, '')))
-       WHERE t.property_id = $1
-       ORDER BY t.premises, t.sort_order, t.id`,
+         FROM tenancy_schedule_units t
+         LEFT JOIN norm_co tc
+           ON tc.norm_name = trim(regexp_replace(
+                regexp_replace(lower(trim(coalesce(t.trading_name, ''))),
+                  '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
+                  '', 'g'),
+                '[^a-z0-9]+', ' ', 'g'))
+           OR tc.norm_name = trim(regexp_replace(
+                regexp_replace(lower(trim(coalesce(t.tenant_name, ''))),
+                  '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
+                  '', 'g'),
+                '[^a-z0-9]+', ' ', 'g'))
+        WHERE t.property_id = $1
+        ORDER BY t.premises, t.sort_order, t.id`,
       [propertyId]
     );
 

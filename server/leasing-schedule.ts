@@ -128,7 +128,18 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
       LEFT JOIN crm_companies tc
         ON tc.id = u.tenant_company_id
         OR (u.tenant_company_id IS NULL
-            AND lower(trim(tc.name)) = lower(trim(COALESCE(t.trading_name, t.tenant_name, u.tenant_name, ''))))
+            AND tc.merged_into_id IS NULL
+            AND regexp_replace(
+                  regexp_replace(lower(trim(tc.name)),
+                    '\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\.?$',
+                    '', 'g'),
+                  '[^a-z0-9]+', ' ', 'g')
+                =
+                regexp_replace(
+                  regexp_replace(lower(trim(COALESCE(t.trading_name, t.tenant_name, u.tenant_name, ''))),
+                    '\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\.?$',
+                    '', 'g'),
+                  '[^a-z0-9]+', ' ', 'g'))
       WHERE u.property_id = $1
       ORDER BY u.sort_order, u.zone, u.unit_name
     `, [req.params.propertyId]);

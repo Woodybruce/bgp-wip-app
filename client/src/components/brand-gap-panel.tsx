@@ -5,7 +5,7 @@ import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
-import { Target, MapPin, TrendingUp, AlertCircle } from "lucide-react";
+import { Target, MapPin, TrendingUp, AlertCircle, FileText } from "lucide-react";
 
 interface BrandGapResult {
   property: { id: string; name: string; postcode: string | null; lat: number; lng: number };
@@ -36,6 +36,16 @@ interface BrandGapResult {
     gap_score: number;
   }>;
   categorySignature: Record<string, number>;
+  matchingRequirements?: Array<{
+    id: string;
+    name: string | null;
+    use: string[] | null;
+    size: string | null;
+    requirement_locations: string | null;
+    company_id: string | null;
+    company_name: string | null;
+    domain: string | null;
+  }>;
   stats: { totalBrands: number; brandsWithStores: number };
 }
 
@@ -88,6 +98,42 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Matching brand requirements — active leasing reqs that fit available units */}
+        {data.matchingRequirements && data.matchingRequirements.length > 0 && (
+          <div className="rounded-md border border-purple-200 bg-purple-50/60 p-2">
+            <div className="text-[11px] text-purple-700 mb-1 flex items-center gap-1 font-medium">
+              <FileText className="w-3 h-3" />
+              Matching brand requirements ({data.matchingRequirements.length}) — use-class fits an available unit
+            </div>
+            <div className="space-y-0.5">
+              {data.matchingRequirements.slice(0, 12).map(r => (
+                <Link
+                  key={r.id}
+                  href={r.company_id ? `/companies/${r.company_id}` : `/requirements/${r.id}`}
+                  className="text-xs flex items-center gap-1.5 hover:bg-white/60 rounded px-1 py-0.5"
+                >
+                  <span className="font-medium truncate flex-1">
+                    {r.company_name || r.name || "Unnamed"}
+                  </span>
+                  {r.use && r.use.length > 0 && (
+                    <Badge variant="outline" className="text-[9px] shrink-0 bg-white">
+                      {r.use.slice(0, 2).join(", ")}{r.use.length > 2 ? "…" : ""}
+                    </Badge>
+                  )}
+                  {r.size && (
+                    <span className="text-[10px] text-muted-foreground shrink-0">{r.size}</span>
+                  )}
+                </Link>
+              ))}
+              {data.matchingRequirements.length > 12 && (
+                <p className="text-[10px] text-muted-foreground pl-1">
+                  +{data.matchingRequirements.length - 12} more matching requirements
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* On-scheme brands */}
         {data.onScheme.length > 0 && (
           <div>
