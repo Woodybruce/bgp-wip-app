@@ -91,6 +91,8 @@ import {
   BookmarkCheck,
   Link2,
   Upload,
+  Mail,
+  Phone,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
@@ -444,6 +446,16 @@ function getInitials(name: string): string {
   return name.split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2);
 }
 
+// Roles BGP staff can hold on a single property. Sort priority follows this
+// list — Lead surfaces first, then Investment, Leasing, Letting Surveyor,
+// then anyone with no role at the end.
+const PROPERTY_AGENT_ROLES = ["Lead", "Investment", "Leasing", "Letting Surveyor"] as const;
+type PropertyAgentRole = typeof PROPERTY_AGENT_ROLES[number];
+function rolePriority(role: string | null | undefined): number {
+  const idx = PROPERTY_AGENT_ROLES.indexOf((role || "") as PropertyAgentRole);
+  return idx === -1 ? 99 : idx;
+}
+
 export function InlineAgents({
   propertyId,
   agentLinks,
@@ -451,24 +463,40 @@ export function InlineAgents({
   colorMap,
 }: {
   propertyId: string;
-  agentLinks: { propertyId: string; userId: string }[];
+  agentLinks: Array<{ propertyId: string; userId: string; role?: string | null }>;
   allUsers: User[];
   colorMap?: Record<string, string>;
 }) {
   const { toast } = useToast();
-  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => l.userId);
-  const assignedUsers = allUsers.filter(u => assignedUserIds.includes(String(u.id)));
+  const assignedLinks = agentLinks.filter(l => l.propertyId === propertyId);
+  const assignedUserIds = assignedLinks.map(l => l.userId);
+  const linksByUser = new Map(assignedLinks.map(l => [l.userId, l]));
+  const assignedUsers = allUsers
+    .filter(u => assignedUserIds.includes(String(u.id)))
+    .sort((a, b) => rolePriority(linksByUser.get(String(a.id))?.role) - rolePriority(linksByUser.get(String(b.id))?.role));
   const unassignedUsers = allUsers.filter(u => !assignedUserIds.includes(String(u.id)));
 
   const addMutation = useMutation({
-    mutationFn: async (userId: string) => {
-      await apiRequest("POST", `/api/crm/properties/${propertyId}/agents`, { userId });
+    mutationFn: async (vars: { userId: string; role?: string | null }) => {
+      await apiRequest("POST", `/api/crm/properties/${propertyId}/agents`, vars);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-agents"] });
     },
     onError: (err: any) => {
       toast({ title: "Failed to assign agent", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateRoleMutation = useMutation({
+    mutationFn: async (vars: { userId: string; role: string | null }) => {
+      await apiRequest("PATCH", `/api/crm/properties/${propertyId}/agents/${vars.userId}`, { role: vars.role });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/property-agents"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to update role", description: err.message, variant: "destructive" });
     },
   });
 
@@ -488,22 +516,69 @@ export function InlineAgents({
     <div className="flex items-center gap-1 flex-wrap">
       {assignedUsers.map(user => {
         const bg = colorMap?.[user.name] || "bg-zinc-500";
+        const link = linksByUser.get(String(user.id));
+        const role = (link?.role || "").trim();
         return (
-        <span key={user.id} className="inline-flex items-center gap-0.5">
-          <Badge
-            className={`text-[10px] px-1.5 py-0 text-white ${bg}`}
-            data-testid={`agent-badge-${propertyId}-${user.id}`}
-          >
-            {user.name.split(" ")[0]}
-          </Badge>
-          <button
-            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
-            onClick={() => removeMutation.mutate(String(user.id))}
-            data-testid={`remove-agent-${propertyId}-${user.id}`}
-          >
-            <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
-          </button>
-        </span>
+          <Popover key={user.id}>
+            <PopoverTrigger asChild>
+              <button
+                className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded text-white hover:opacity-90 ${bg}`}
+                data-testid={`agent-badge-${propertyId}-${user.id}`}
+                title={role ? `${user.name} — ${role}` : user.name}
+              >
+                <span className="font-medium">{user.name.split(" ")[0]}</span>
+                {role && <span className="text-[9px] opacity-80 border-l border-white/40 pl-1">{role}</span>}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-3" align="start">
+              <div className="space-y-2">
+                <div>
+                  <div className="text-sm font-semibold">{user.name}</div>
+                  {role && <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{role}</div>}
+                </div>
+                <div className="space-y-1 text-xs">
+                  {user.email ? (
+                    <a href={`mailto:${user.email}`} className="flex items-center gap-1.5 text-primary hover:underline" data-testid={`agent-email-${user.id}`}>
+                      <Mail className="w-3 h-3" />{user.email}
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground italic">No email on file</span>
+                  )}
+                  {user.phone ? (
+                    <a href={`tel:${user.phone}`} className="flex items-center gap-1.5 text-primary hover:underline" data-testid={`agent-phone-${user.id}`}>
+                      <Phone className="w-3 h-3" />{user.phone}
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground italic block">No mobile on file</span>
+                  )}
+                </div>
+                <div className="border-t pt-2">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Role on this property</div>
+                  <div className="flex flex-wrap gap-1">
+                    {PROPERTY_AGENT_ROLES.map(r => (
+                      <button
+                        key={r}
+                        onClick={() => updateRoleMutation.mutate({ userId: String(user.id), role: r === role ? null : r })}
+                        className={`text-[10px] px-2 py-0.5 rounded border ${r === role ? "bg-foreground text-background border-foreground" : "border-border text-foreground hover:bg-muted"}`}
+                        data-testid={`agent-role-${r}-${user.id}`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="border-t pt-2 flex justify-end">
+                  <button
+                    onClick={() => removeMutation.mutate(String(user.id))}
+                    className="text-[10px] text-destructive hover:underline flex items-center gap-1"
+                    data-testid={`remove-agent-${propertyId}-${user.id}`}
+                  >
+                    <X className="w-2.5 h-2.5" />Remove from property
+                  </button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
         );
       })}
       <DropdownMenu>
@@ -522,7 +597,7 @@ export function InlineAgents({
             unassignedUsers.map(user => (
               <DropdownMenuItem
                 key={user.id}
-                onClick={() => addMutation.mutate(String(user.id))}
+                onClick={() => addMutation.mutate({ userId: String(user.id) })}
                 data-testid={`assign-agent-${user.id}`}
               >
                 <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
@@ -4352,7 +4427,7 @@ function PropertiesList({
   });
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
 
-  const { data: agentLinks = [] } = useQuery<{ propertyId: string; userId: string }[]>({
+  const { data: agentLinks = [] } = useQuery<Array<{ propertyId: string; userId: string; role?: string | null }>>({
     queryKey: ["/api/crm/property-agents"],
   });
 

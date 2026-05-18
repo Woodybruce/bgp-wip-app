@@ -143,7 +143,7 @@ export function PropertyDetail({ id }: { id: string }) {
     queryKey: ["/api/users"],
   });
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
-  const { data: agentLinks = [] } = useQuery<{ propertyId: string; userId: string }[]>({
+  const { data: agentLinks = [] } = useQuery<Array<{ propertyId: string; userId: string; role?: string | null }>>({
     queryKey: ["/api/crm/property-agents"],
   });
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({

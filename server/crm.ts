@@ -2148,12 +2148,30 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/properties/:id/agents", async (req, res) => {
     try {
-      const { userId } = req.body;
+      const { userId, role } = req.body;
       if (!userId) return res.status(400).json({ error: "userId required" });
+      const cleanRole = typeof role === "string" && role.trim() ? role.trim() : null;
       const existing = await db.select().from(crmPropertyAgents).where(and(eq(crmPropertyAgents.propertyId, req.params.id), eq(crmPropertyAgents.userId, userId)));
-      if (existing.length > 0) return res.json(existing[0]);
-      const [link] = await db.insert(crmPropertyAgents).values({ propertyId: req.params.id, userId }).returning();
+      if (existing.length > 0) {
+        if (cleanRole && (existing[0] as any).role !== cleanRole) {
+          await db.execute(sql`UPDATE crm_property_agents SET role = ${cleanRole} WHERE id = ${existing[0].id}`);
+        }
+        return res.json({ ...existing[0], role: cleanRole ?? (existing[0] as any).role });
+      }
+      const [link] = await db.insert(crmPropertyAgents).values({ propertyId: req.params.id, userId, role: cleanRole } as any).returning();
       res.json(link);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Patch only the role for an existing link — used by the role picker on
+  // the property page so the user can change someone from Lead to Letting
+  // Surveyor without dropping + re-adding them.
+  app.patch("/api/crm/properties/:id/agents/:userId", async (req, res) => {
+    try {
+      const { role } = req.body;
+      const cleanRole = typeof role === "string" && role.trim() ? role.trim() : null;
+      await db.execute(sql`UPDATE crm_property_agents SET role = ${cleanRole} WHERE property_id = ${req.params.id} AND user_id = ${req.params.userId}`);
+      res.json({ success: true, role: cleanRole });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

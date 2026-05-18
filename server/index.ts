@@ -2972,6 +2972,9 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("tenancy_schedule_units", "deposit_held", "real");
           await addColIfMissing("tenancy_schedule_units", "arrears_balance", "real");
           await addColIfMissing("crm_properties", "asset_manager", "text");
+          // Per-property BGP staff role (Lead / Investment / Leasing /
+          // Letting Surveyor) so the contacts pills don't all look the same.
+          await addColIfMissing("crm_property_agents", "role", "text");
 
           // Tenancy schedule — bring in line with the Landsec investment-grade
           // template. Unit Details / Tenant / Lease / Areas (GIA+NIA splits) /

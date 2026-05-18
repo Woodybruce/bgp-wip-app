@@ -1197,6 +1197,10 @@ export const crmPropertyAgents = pgTable("crm_property_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
   userId: varchar("user_id").notNull(),
+  // Per-property role for this BGP staff member. One of: Lead, Investment,
+  // Leasing, Letting Surveyor. Drives the pill label and sort order on the
+  // property page.
+  role: text("role"),
 });
 
 export const crmPropertyTenants = pgTable("crm_property_tenants", {
