@@ -30,38 +30,54 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     // crm_companies on a lowercased trimmed tenant_name to resolve
     // a clickable company link for the Tenant / Trading As cells
     // (mirrors the pattern used in the leasing schedule GET).
-    // Strip common company-name noise so "Pret a Manger Ltd" matches
-    // the "Pret A Manger" board. Suffix list covers the legal forms
-    // we typically see in Landsec tenancy schedules; punctuation /
-    // multiple spaces are normalised too. The same regex applies to
-    // both the schedule name and the crm_companies name so they meet
-    // in the middle.
+    // Resolution chain: tenant_name → brand_keys → brand company.
+    // brand_keys collects both the brand's crm_companies.name AND any
+    // trading_entities[].name (so "Pret A Manger Trading Ltd" resolves
+    // to the "Pret A Manger" board). Names normalised the same way on
+    // both sides: lowercase, strip Ltd/Plc/Group/UK etc., punctuation
+    // and multiple spaces collapsed.
     const occupied = await pool.query(
-      `WITH norm_co AS (
-         SELECT id, name,
-                regexp_replace(
-                  regexp_replace(lower(trim(name)),
+      `WITH brand_keys AS (
+         SELECT id AS brand_id, lower(trim(name)) AS raw FROM crm_companies WHERE merged_into_id IS NULL
+         UNION ALL
+         SELECT c.id, lower(trim(entity->>'name'))
+           FROM crm_companies c,
+                jsonb_array_elements(coalesce(c.trading_entities, '[]'::jsonb)) AS entity
+          WHERE c.merged_into_id IS NULL
+            AND entity->>'name' IS NOT NULL
+            AND length(trim(entity->>'name')) > 0
+       ),
+       brand_keys_norm AS (
+         SELECT brand_id,
+                trim(regexp_replace(
+                  regexp_replace(raw,
                     '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
                     '', 'g'),
-                  '[^a-z0-9]+', ' ', 'g') AS norm_name
-           FROM crm_companies
-          WHERE merged_into_id IS NULL
+                  '[^a-z0-9]+', ' ', 'g')) AS norm_key
+           FROM brand_keys
+       ),
+       tenancy_norm AS (
+         SELECT t.id,
+                trim(regexp_replace(
+                  regexp_replace(lower(trim(coalesce(t.trading_name, t.tenant_name, ''))),
+                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
+                    '', 'g'),
+                  '[^a-z0-9]+', ' ', 'g')) AS norm_tenant
+           FROM tenancy_schedule_units t
+          WHERE t.property_id = $1
+       ),
+       matched AS (
+         SELECT DISTINCT ON (tn.id) tn.id, bkn.brand_id
+           FROM tenancy_norm tn
+           LEFT JOIN brand_keys_norm bkn ON bkn.norm_key = tn.norm_tenant AND bkn.norm_key <> ''
+          ORDER BY tn.id, bkn.brand_id NULLS LAST
        )
        SELECT t.*,
               tc.id   AS resolved_tenant_company_id,
               tc.name AS resolved_tenant_company_name
          FROM tenancy_schedule_units t
-         LEFT JOIN norm_co tc
-           ON tc.norm_name = trim(regexp_replace(
-                regexp_replace(lower(trim(coalesce(t.trading_name, ''))),
-                  '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
-                  '', 'g'),
-                '[^a-z0-9]+', ' ', 'g'))
-           OR tc.norm_name = trim(regexp_replace(
-                regexp_replace(lower(trim(coalesce(t.tenant_name, ''))),
-                  '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
-                  '', 'g'),
-                '[^a-z0-9]+', ' ', 'g'))
+         LEFT JOIN matched m ON m.id = t.id
+         LEFT JOIN crm_companies tc ON tc.id = m.brand_id
         WHERE t.property_id = $1
         ORDER BY t.premises, t.sort_order, t.id`,
       [propertyId]

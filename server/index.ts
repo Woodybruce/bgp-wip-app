@@ -3113,6 +3113,7 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("crm_companies", "brand_analysis", "text");
           await addColIfMissing("crm_companies", "brand_analysis_at", "timestamp");
           await addColIfMissing("crm_companies", "concept_status", "text");
+          await addColIfMissing("crm_companies", "trading_entities", "jsonb");
 
           // Auto-track all tenant companies as brands (idempotent).
           await db.execute(sql.raw(`

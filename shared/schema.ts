@@ -482,6 +482,12 @@ export const crmCompanies = pgTable("crm_companies", {
   hunterFlag: boolean("hunter_flag").default(false), // manually flagged as a hot expansion target
   stockTicker: text("stock_ticker"), // e.g. "JD.L", "NKE", "LULU" — Yahoo Finance ticker for listed brands
   ukEntityName: text("uk_entity_name"), // UK contracting/operating entity, e.g. "AFH Stores UK Limited"
+  // Multiple trading/legal entities under one brand — these are the
+  // names that appear on leases / tenancy schedules. Each entry:
+  // { name, companies_house_number?, kyc_status?, notes? }. The
+  // tenancy schedule resolves tenant_name → trading entity → brand,
+  // so the brand board surfaces from any legal-entity tenant name.
+  tradingEntities: jsonb("trading_entities"),
   agentType: text("agent_type"), // tenant_rep | landlord_rep | investment | null (for non-agents)
   conceptStatus: text("concept_status"), // watching | pitching | parked | won_deal | lost_deal — BGP pipeline stage for the brand
   // AI-enrichment provenance — which fields were auto-written vs human
