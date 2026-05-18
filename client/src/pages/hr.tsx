@@ -1425,13 +1425,16 @@ function SalaryTimelineChart({ person, history }: { person: StaffMember; history
       return byDate.get(d)!;
     };
 
-    for (const h of history) {
+    // Defensive: useQuery's `= []` default only applies when data is
+    // undefined. If the endpoint returns null / an object / an error
+    // body, iteration would throw 'u is not iterable'.
+    for (const h of Array.isArray(history) ? history : []) {
       if (!h.effective_date) continue;
       const slot = ensure(h.effective_date);
       slot.salary = h.salary_pence / 100;
       slot.tooltip.push(`Salary £${(h.salary_pence / 100).toLocaleString()} (${h.reason?.replace(/_/g, " ") || "salary"})`);
     }
-    for (const b of bonuses) {
+    for (const b of Array.isArray(bonuses) ? bonuses : []) {
       if (!b.effective_date) continue;
       const slot = ensure(b.effective_date);
       slot.bonus = (slot.bonus || 0) + b.amount_pence / 100;
@@ -4123,7 +4126,7 @@ function BenefitsTab() {
   });
   const credBySlug = useMemo(() => {
     const m = new Map<string, { member_number: string | null; member_email: string | null }>();
-    for (const c of credentials) m.set(c.benefit_slug, c);
+    for (const c of Array.isArray(credentials) ? credentials : []) m.set(c.benefit_slug, c);
     return m;
   }, [credentials]);
   const [editing, setEditing] = useState<Benefit | null>(null);
@@ -4563,7 +4566,7 @@ function RecognitionPanel({ userId }: { userId: string }) {
   // consistent with the rest of the firm's reporting.
   const totalsByYear = useMemo(() => {
     const map = new Map<string, number>();
-    for (const e of bruceyEntries) {
+    for (const e of Array.isArray(bruceyEntries) ? bruceyEntries : []) {
       const d = new Date(e.created_at);
       const schemeYearStart = d.getMonth() >= 4 ? d.getFullYear() : d.getFullYear() - 1;
       const label = `${schemeYearStart}/${String(schemeYearStart + 1).slice(2)}`;
@@ -4969,7 +4972,7 @@ function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
 
   const byCategory = useMemo(() => {
     const map: Record<string, PolicyDoc[]> = {};
-    for (const p of policies) {
+    for (const p of Array.isArray(policies) ? policies : []) {
       (map[p.category] ??= []).push(p);
     }
     return map;
@@ -5164,7 +5167,7 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin, matchedIds, hasFilter 
   // Real staff = those with a staff_profiles row. Excludes shared mailboxes
   // / placeholder accounts (e.g. "Accounts") that would otherwise win the
   // "no manager" race purely on alphabetical ordering.
-  const realStaff = useMemo(() => allStaff.filter(s => s.profile_id), [allStaff]);
+  const realStaff = useMemo(() => (Array.isArray(allStaff) ? allStaff : []).filter(s => s.profile_id), [allStaff]);
   const root = useMemo(() => {
     const md = realStaff.find(s => (s.title || "").toLowerCase().includes("managing director"));
     if (md) return md;
@@ -5174,7 +5177,7 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin, matchedIds, hasFilter 
   }, [realStaff]);
   const childrenByManager = useMemo(() => {
     const map = new Map<string, StaffMember[]>();
-    for (const s of realStaff) {
+    for (const s of Array.isArray(realStaff) ? realStaff : []) {
       if (!s.manager_id) continue;
       const list = map.get(s.manager_id) || [];
       list.push(s);
@@ -5618,11 +5621,12 @@ export default function HRPage() {
   const displayPerson = allStaff.find(s => s.id === displayId) || null;
 
   const departments = useMemo(() => {
-    const depts = new Set(allStaff.map(s => s.hr_department || s.team || "").filter(Boolean));
+    const staff = Array.isArray(allStaff) ? allStaff : [];
+    const depts = new Set(staff.map(s => s.hr_department || s.team || "").filter(Boolean));
     return Array.from(depts).sort();
   }, [allStaff]);
 
-  const filtered = useMemo(() => allStaff.filter(s => {
+  const filtered = useMemo(() => (Array.isArray(allStaff) ? allStaff : []).filter(s => {
     const q = search.toLowerCase();
     const matchSearch = !q || s.name.toLowerCase().includes(q) || s.title?.toLowerCase().includes(q) || s.email?.toLowerCase().includes(q);
     const matchDept = deptFilter === "all" || (s.hr_department || s.team || "") === deptFilter;
@@ -5630,7 +5634,7 @@ export default function HRPage() {
   }), [allStaff, search, deptFilter]);
 
   const hasFilter = search.trim().length > 0 || deptFilter !== "all";
-  const matchedIds = useMemo(() => new Set(filtered.map(s => s.id)), [filtered]);
+  const matchedIds = useMemo(() => new Set((Array.isArray(filtered) ? filtered : []).map(s => s.id)), [filtered]);
 
   // Drill-in to a single profile (admin or self viewing anyone, non-admin
   // viewing themselves). Non-admins clicking on a colleague see the same
