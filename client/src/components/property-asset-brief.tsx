@@ -24,7 +24,7 @@ import { apiRequest } from "@/lib/queryClient";
 import {
   Target, Handshake, Activity, AlertTriangle, BarChart3, Building2,
   Pencil, Plus, Trash2, ChevronRight, Mail, Phone, Users,
-  Calendar as CalendarIcon, TrendingUp, TrendingDown,
+  Calendar as CalendarIcon, TrendingUp, TrendingDown, Sparkles,
 } from "lucide-react";
 
 interface AssetBrief {
