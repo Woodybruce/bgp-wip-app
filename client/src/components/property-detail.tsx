@@ -383,9 +383,13 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
-            <Card>
-              <CardContent className="p-3 space-y-3">
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
+            {/* Top-row strip: property summary card on the left, latest
+                property news on the right (lg+). Stacks on smaller
+                screens. Replaces the previous full-width empty space. */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <Card>
+                <CardContent className="p-3 space-y-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
                     <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
@@ -483,8 +487,25 @@ export function PropertyDetail({ id }: { id: string }) {
                     </div>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+
+              {/* Property news preview — newsroom mode of
+                  PropertyNewsPanel sits in the right column. The full
+                  Property News card lower down stays as the detail
+                  view; this slot is for the latest 3-4 headlines. */}
+              <Card>
+                <CardContent className="p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-semibold">Property News</span>
+                  </div>
+                  <ErrorBoundary compact name="Property news (top-strip preview)">
+                    <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+                  </ErrorBoundary>
+                </CardContent>
+              </Card>
+            </div>
 
             <Card>
               <CardContent className="p-3 space-y-1">
@@ -561,10 +582,12 @@ export function PropertyDetail({ id }: { id: string }) {
 
             {/* Property Intelligence + Leasing Pitch are pre-instruction
                  tools (catchment / Land Registry research; brand pitch
-                 to landlords we don't yet act for). Once it's a BGP
-                 Instruction we're past pitching, into delivery — hide
-                 both so the page focuses on the operational view. */}
-            {!(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction" || property.status === "Sales Instruction") && (
+                 to landlords we don't yet act for). Once the property
+                 is on any kind of instruction (Leasing / Lease
+                 Advisory / Sales / generic 'BGP Instruction') we're
+                 past pitching, into delivery — hide both so the page
+                 focuses on the operational view. */}
+            {!/instruction/i.test(property.status || "") && (
               <>
                 <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
                   <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
