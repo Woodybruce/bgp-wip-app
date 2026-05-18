@@ -135,6 +135,30 @@ function InlineEditCell({ unitId, field, value, onSave, className = "", placehol
   </span>;
 }
 
+// Shared column widths for every per-zone <table> on the Leasing Schedule.
+// Each zone renders its own <table>; without a fixed layout the columns
+// auto-size to the content of each zone independently, so the boundaries
+// don't line up vertically across zones. A common <colgroup> + table-layout
+// fixed locks every zone table to identical column widths.
+const LEASING_COL_WIDTHS = [
+  { key: "existing",   width: 220 },
+  { key: "positioning", width: 160 },
+  { key: "financial",   width: 160 },
+  { key: "targets",     width: 240 },
+  { key: "optimum",     width: 160 },
+  { key: "priority",    width: 120 },
+  { key: "updates",     width: 280 },
+  { key: "actions",     width: 60 },
+];
+function LeasingColgroup() {
+  return (
+    <colgroup>
+      {LEASING_COL_WIDTHS.map(c => <col key={c.key} style={{ width: `${c.width}px` }} />)}
+    </colgroup>
+  );
+}
+const LEASING_TABLE_MIN_WIDTH = LEASING_COL_WIDTHS.reduce((s, c) => s + c.width, 0);
+
 // Landsec leasing-tracker status bands. The bracketed label is what Landsec
 // uses internally; we store the enum value in `status_band` and render the
 // label + colour. Drives the row tint on the Leasing Schedule.
@@ -213,7 +237,7 @@ function PositioningCell({ unitId, group, subType, onSave }: {
           {group ? (
             <div>
               <div className="font-medium text-[11px]">{group}</div>
-              {subType && <div className="text-[10px] text-muted-foreground">{subType}</div>}
+              {subType && <div className="text-[11px] text-muted-foreground">{subType}</div>}
             </div>
           ) : subType ? (
             <span className="text-[11px]">{subType}</span>
@@ -223,7 +247,7 @@ function PositioningCell({ unitId, group, subType, onSave }: {
         </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="p-3 w-[260px]">
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Group (Key ii)</div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Group (Key ii)</div>
         <div className="flex flex-wrap gap-1 mb-3">
           {POSITIONING_GROUPS.map(g => (
             <button
@@ -236,7 +260,7 @@ function PositioningCell({ unitId, group, subType, onSave }: {
             </button>
           ))}
         </div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Sub-type</div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Sub-type</div>
         {draftGroup && (
           <div className="flex flex-wrap gap-1 mb-2">
             {(POSITIONING_SUBTYPES[draftGroup] || []).map(t => (
@@ -279,11 +303,11 @@ function FinancialPerformanceCell({ unit, onSave }: { unit: any; onSave: (id: st
       <span className="text-right tabular-nums truncate">
         <InlineEditCell unitId={unit.id} field={field} value={value} onSave={onSave} className={valueClass} placeholder="—" />
       </span>
-      <span className="text-[9px] text-muted-foreground whitespace-nowrap">{label}</span>
+      <span className="text-[10px] text-muted-foreground whitespace-nowrap">{label}</span>
     </div>
   );
   return (
-    <div className="text-[10px]">
+    <div className="text-[11px]">
       <Row label="% LFL" value={lfl} field="lfl_percent" valueClass={lfl ? (String(lfl).startsWith("-") ? "text-rose-600" : "text-emerald-700") : "text-muted-foreground"} />
       <Row label="£ MAT/sqft" value={mat} field="mat_psqft" valueClass="font-medium" />
       <Row label="% Occ" value={occ} field="occ_cost_percent" valueClass="text-muted-foreground" />
@@ -436,7 +460,7 @@ function MonthYearCell({ unitId, field, value, onSave }: {
         </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="p-2 w-[210px]">
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Year</div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Year</div>
         <div className="flex flex-wrap gap-1 mb-2">
           {years.map(y => (
             <button
@@ -449,7 +473,7 @@ function MonthYearCell({ unitId, field, value, onSave }: {
             </button>
           ))}
         </div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Month</div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Month</div>
         <div className="grid grid-cols-4 gap-1">
           {MONTHS.map(m => (
             <button
@@ -465,7 +489,7 @@ function MonthYearCell({ unitId, field, value, onSave }: {
         {value && (
           <button
             onClick={() => { onSave(unitId, field, ""); setOpen(false); }}
-            className="mt-2 text-[10px] text-muted-foreground hover:text-foreground underline"
+            className="mt-2 text-[11px] text-muted-foreground hover:text-foreground underline"
             data-testid={`monthyear-clear-${unitId}`}
           >
             Clear
@@ -557,7 +581,7 @@ function MentionTextarea({ unitId, propertyId, value, onSave }: {
     const parts = (value || "").split(/(@[\w.-]+)/g);
     return (
       <div
-        className="cursor-text hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-[10px] text-gray-700 dark:text-gray-300 leading-snug min-h-[24px] whitespace-pre-wrap"
+        className="cursor-text hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-[11px] text-gray-700 dark:text-gray-300 leading-snug min-h-[24px] whitespace-pre-wrap"
         onClick={() => { setText(value || ""); setEditing(true); setTimeout(() => textareaRef.current?.focus(), 30); }}
         data-testid={`mention-display-${unitId}`}
       >
@@ -581,7 +605,7 @@ function MentionTextarea({ unitId, propertyId, value, onSave }: {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit();
         }}
         rows={3}
-        className="text-[10px] resize-y min-h-[60px]"
+        className="text-[11px] resize-y min-h-[60px]"
         data-testid={`mention-input-${unitId}`}
       />
       {userMatches.length > 0 && (
@@ -594,7 +618,7 @@ function MentionTextarea({ unitId, propertyId, value, onSave }: {
               data-testid={`mention-suggestion-${u.username}`}
             >
               <span className="font-medium">@{(u.email || u.username || "").split("@")[0]}</span>
-              {u.name && <span className="text-muted-foreground text-[10px]">{u.name}</span>}
+              {u.name && <span className="text-muted-foreground text-[11px]">{u.name}</span>}
             </button>
           ))}
         </div>
@@ -620,12 +644,21 @@ function formatLandsecDate(d: string | null | undefined): string | null {
 
 function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: string | null | undefined; onSave: (id: string, field: string, value: string) => void }) {
   const band = statusBandFor(value);
+  // Render the trigger as a real <button> rather than a Badge wrapped in
+  // <DropdownMenuTrigger asChild>. Badge is a plain function component
+  // without forwardRef, so Radix can't reliably hook up the ref/anchor and
+  // the dropdown often fails to open. A button avoids the issue entirely
+  // while keeping the Badge-style chip look.
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Badge variant="outline" className={`text-[9px] cursor-pointer whitespace-nowrap ${band?.pillClass || "border-gray-300 text-gray-500"}`} data-testid={`inline-statusband-${unitId}`}>
+        <button
+          type="button"
+          className={`inline-flex items-center whitespace-nowrap rounded-md border px-2.5 py-0.5 text-[10px] font-semibold cursor-pointer hover:brightness-95 ${band?.pillClass || "border-gray-300 text-gray-500"}`}
+          data-testid={`inline-statusband-${unitId}`}
+        >
           {band?.label || "— Set band"}
-        </Badge>
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[220px]" data-testid={`statusband-menu-${unitId}`}>
         {STATUS_BANDS.map(b => (
@@ -638,6 +671,15 @@ function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: stri
             <span className={`inline-block w-3 h-3 rounded mr-2 align-middle ${b.rowClass}`}></span>{b.label}
           </DropdownMenuItem>
         ))}
+        {value && (
+          <DropdownMenuItem
+            onClick={() => onSave(unitId, "status_band", "")}
+            className="text-xs cursor-pointer text-muted-foreground border-t mt-1"
+            data-testid={`statusband-option-clear-${unitId}`}
+          >
+            <span className="inline-block w-3 h-3 rounded mr-2 align-middle bg-transparent border" />Clear
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -655,7 +697,7 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Badge variant="outline" className={`text-[9px] cursor-pointer ${colors[value] || "border-gray-300"}`} data-testid={`inline-status-${unitId}`}>
+        <Badge variant="outline" className={`text-[10px] cursor-pointer ${colors[value] || "border-gray-300"}`} data-testid={`inline-status-${unitId}`}>
           {value}
         </Badge>
       </DropdownMenuTrigger>
@@ -766,15 +808,15 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
         {linkedCompanies.length > 0 ? (
           linkedCompanies.map(c => (
             <Link key={c.id} href={`/companies/${c.id}`} onClick={e => e.stopPropagation()}>
-              <Badge variant="outline" className="text-[9px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
+              <Badge variant="outline" className="text-[10px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
                 {c.name}
               </Badge>
             </Link>
           ))
         ) : targetBrands ? (
-          <span className="text-[10px] text-gray-500">{targetBrands}</span>
+          <span className="text-[11px] text-gray-500">{targetBrands}</span>
         ) : (
-          <span className="text-gray-300 italic text-[10px]">+ Target</span>
+          <span className="text-gray-300 italic text-[11px]">+ Target</span>
         )}
       </div>
       {open && (
@@ -782,7 +824,7 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
           <div className="p-1.5">
             <div className="flex flex-wrap gap-0.5 mb-1">
               {linkedCompanies.map(c => (
-                <Badge key={c.id} variant="outline" className="text-[9px] border-teal-300 text-teal-700 bg-teal-50 pl-1.5 pr-0.5 py-0 gap-0.5">
+                <Badge key={c.id} variant="outline" className="text-[10px] border-teal-300 text-teal-700 bg-teal-50 pl-1.5 pr-0.5 py-0 gap-0.5">
                   {c.name}
                   <button onClick={() => removeCompany(c.id)} className="hover:text-red-500 ml-0.5 p-0.5" data-testid={`remove-target-${c.id}-${unitId}`}>
                     <X className="w-2.5 h-2.5" />
@@ -905,7 +947,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
           )}
         </div>
         {target.rationale && (
-          <button onClick={() => setShowRationale(!showRationale)} className="text-[10px] text-gray-400 hover:text-gray-600 mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
+          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-gray-400 hover:text-gray-600 mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
             {showRationale ? target.rationale : "View rationale..."}
           </button>
         )}
@@ -1005,15 +1047,15 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   if (unitTargets.length === 0 && !generating) {
     return (
       <div className="flex items-center gap-2">
-        <button onClick={handleGenerate} className="flex items-center gap-1 text-[10px] text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded px-1.5 py-0.5" data-testid={`generate-targets-${unitId}`}>
+        <button onClick={handleGenerate} className="flex items-center gap-1 text-[11px] text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded px-1.5 py-0.5" data-testid={`generate-targets-${unitId}`}>
           <Sparkles className="w-3 h-3" />AI Targets
         </button>
-        <button onClick={() => setShowAdd(true)} className="text-[10px] text-gray-400 hover:text-gray-600" data-testid={`manual-target-${unitId}`}>
+        <button onClick={() => setShowAdd(true)} className="text-[11px] text-gray-400 hover:text-gray-600" data-testid={`manual-target-${unitId}`}>
           <Plus className="w-3 h-3" />
         </button>
         {showAdd && (
           <div className="flex items-center gap-1">
-            <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[10px] w-[120px]" data-testid={`new-target-input-${unitId}`}
+            <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[11px] w-[120px]" data-testid={`new-target-input-${unitId}`}
               onKeyDown={e => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }} autoFocus />
             <button onClick={handleAdd} className="text-emerald-500 p-0.5"><Check className="w-3 h-3" /></button>
             <button onClick={() => setShowAdd(false)} className="text-gray-400 p-0.5"><X className="w-3 h-3" /></button>
@@ -1026,7 +1068,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   return (
     <div className="space-y-0.5" data-testid={`target-panel-${unitId}`}>
       {generating && (
-        <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] text-violet-500">
+        <div className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-violet-500">
           <Loader2 className="w-3 h-3 animate-spin" />Generating AI targets...
         </div>
       )}
@@ -1034,18 +1076,18 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
         <TargetTenantRow key={t.id} target={t} onUpdate={handleUpdate} onDelete={handleDelete} />
       ))}
       <div className="flex items-center gap-1 pt-0.5">
-        <button onClick={handleGenerate} disabled={generating} className="flex items-center gap-1 text-[9px] text-violet-400 hover:text-violet-600 px-1 py-0.5 rounded hover:bg-violet-50" data-testid={`regenerate-${unitId}`}>
+        <button onClick={handleGenerate} disabled={generating} className="flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-600 px-1 py-0.5 rounded hover:bg-violet-50" data-testid={`regenerate-${unitId}`}>
           <Sparkles className="w-2.5 h-2.5" />{generating ? "Generating..." : "More"}
         </button>
-        <button onClick={() => setShowAdd(!showAdd)} className="text-[9px] text-gray-400 hover:text-gray-600 px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
+        <button onClick={() => setShowAdd(!showAdd)} className="text-[10px] text-gray-400 hover:text-gray-600 px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
           <Plus className="w-2.5 h-2.5 inline" />Add
         </button>
       </div>
       {showAdd && (
         <div className="flex items-center gap-1 px-2 py-1">
-          <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[10px] w-[120px]" data-testid={`new-target-input-${unitId}`}
+          <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[11px] w-[120px]" data-testid={`new-target-input-${unitId}`}
             onKeyDown={e => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }} autoFocus />
-          <select value={newRating} onChange={e => setNewRating(e.target.value)} className="border rounded px-1 py-0.5 text-[10px]" data-testid={`new-target-rating-${unitId}`}>
+          <select value={newRating} onChange={e => setNewRating(e.target.value)} className="border rounded px-1 py-0.5 text-[11px]" data-testid={`new-target-rating-${unitId}`}>
             <option value="green">Green</option>
             <option value="amber">Amber</option>
             <option value="red">Red</option>
@@ -1072,12 +1114,12 @@ function PropertyCard({ prop }: { prop: LeasingProperty }) {
           </div>
           <div className="flex gap-1.5 items-center">
             {prop.leasing_privacy_enabled && (
-              <Badge variant="outline" className="text-[10px] border-violet-300 text-violet-700 bg-violet-50" data-testid={`privacy-badge-${prop.id}`}>
+              <Badge variant="outline" className="text-[11px] border-violet-300 text-violet-700 bg-violet-50" data-testid={`privacy-badge-${prop.id}`}>
                 <Lock className="w-2.5 h-2.5 mr-0.5" />Private
               </Badge>
             )}
             {prop.expiring_soon > 0 && (
-              <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">
+              <Badge variant="outline" className="text-[11px] border-amber-300 text-amber-700 bg-amber-50">
                 <AlertTriangle className="w-3 h-3 mr-0.5" />{prop.expiring_soon} expiring
               </Badge>
             )}
@@ -1093,7 +1135,7 @@ function PropertyCard({ prop }: { prop: LeasingProperty }) {
           </div>
           <span className="text-[11px] font-medium text-gray-600">{occupancy}%</span>
         </div>
-        <div className="flex gap-3 mt-2 text-[10px]">
+        <div className="flex gap-3 mt-2 text-[11px]">
           <span className="text-emerald-600">{prop.occupied_count} occupied</span>
           <span className="text-gray-400">{prop.vacant_count} vacant</span>
         </div>
@@ -1535,7 +1577,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
               <h2 className="text-lg font-bold hover:text-blue-600 hover:underline cursor-pointer transition-colors" data-testid="property-title">{propertyName}</h2>
             </Link>
             {privacyInfo?.privacy_enabled && (
-              <Badge variant="outline" className="text-[10px] border-violet-300 text-violet-700 bg-violet-50">
+              <Badge variant="outline" className="text-[11px] border-violet-300 text-violet-700 bg-violet-50">
                 <Lock className="w-2.5 h-2.5 mr-0.5" />Private
               </Badge>
             )}
@@ -1670,14 +1712,14 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             )}
             {meetingMonth && (
               <span className="inline-flex items-center gap-1 ml-2">
-                <Badge variant="outline" className="text-[10px]">For {meetingMonth} meeting</Badge>
+                <Badge variant="outline" className="text-[11px]">For {meetingMonth} meeting</Badge>
               </span>
             )}
           </div>
         );
       })()}
       {/* Landsec status-band legend */}
-      <div className="flex items-center gap-2 flex-wrap text-[10px] pt-2 pb-1 border-b border-border/40">
+      <div className="flex items-center gap-2 flex-wrap text-[11px] pt-2 pb-1 border-b border-border/40">
         <span className="text-muted-foreground uppercase tracking-wider mr-1">Status bands:</span>
         {STATUS_BANDS.map(b => (
           <span key={b.value} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border ${b.pillClass}`}>
@@ -1733,26 +1775,26 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       <div className="flex gap-3 flex-wrap">
         <button onClick={() => { setStatFilter(null); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${!statFilter ? "ring-2 ring-gray-400 bg-gray-100 dark:bg-gray-700" : "bg-gray-50 dark:bg-gray-800 hover:bg-gray-100"}`} data-testid="stat-total">
           <p className="text-lg font-bold">{stats.total}</p>
-          <p className="text-[10px] text-gray-500">Total Units</p>
+          <p className="text-[11px] text-gray-500">Total Units</p>
         </button>
         <button onClick={() => { setStatFilter(statFilter === "occupied" ? null : "occupied"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "occupied" ? "ring-2 ring-emerald-400 bg-emerald-100 dark:bg-emerald-900/40" : "bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100"}`} data-testid="stat-occupied">
           <p className="text-lg font-bold text-emerald-700">{stats.occupied}</p>
-          <p className="text-[10px] text-emerald-600">Occupied</p>
+          <p className="text-[11px] text-emerald-600">Occupied</p>
         </button>
         <button onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "vacant" ? "ring-2 ring-gray-400 bg-gray-200 dark:bg-gray-600" : "bg-gray-50 dark:bg-gray-800 hover:bg-gray-100"}`} data-testid="stat-vacant">
           <p className="text-lg font-bold text-gray-500">{stats.vacant}</p>
-          <p className="text-[10px] text-gray-500">Vacant</p>
+          <p className="text-[11px] text-gray-500">Vacant</p>
         </button>
         {stats.expiringSoon > 0 && (
           <button onClick={() => { setStatFilter(statFilter === "expiring" ? null : "expiring"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expiring" ? "ring-2 ring-amber-400 bg-amber-100 dark:bg-amber-900/40" : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`} data-testid="stat-expiring">
             <p className="text-lg font-bold text-amber-700">{stats.expiringSoon}</p>
-            <p className="text-[10px] text-amber-600">Expiring &lt;12m</p>
+            <p className="text-[11px] text-amber-600">Expiring &lt;12m</p>
           </button>
         )}
         {stats.expired > 0 && (
           <button onClick={() => { setStatFilter(statFilter === "expired" ? null : "expired"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expired" ? "ring-2 ring-red-400 bg-red-100 dark:bg-red-900/40" : "bg-red-50 dark:bg-red-950/20 hover:bg-red-100"}`} data-testid="stat-expired">
             <p className="text-lg font-bold text-red-700">{stats.expired}</p>
-            <p className="text-[10px] text-red-600">Expired</p>
+            <p className="text-[11px] text-red-600">Expired</p>
           </button>
         )}
       </div>
@@ -1800,27 +1842,28 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             >
               {isZoneExpanded(zone) ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
               <span className="font-semibold text-sm">{cleanZoneLabel(zone)}</span>
-              <Badge variant="secondary" className="text-[10px] ml-1">{zoneUnits.length}</Badge>
+              <Badge variant="secondary" className="text-[11px] ml-1">{zoneUnits.length}</Badge>
               {zoneUnits[0]?.positioning && (
-                <span className="text-[10px] text-gray-400 ml-2 truncate">{zoneUnits[0].positioning}</span>
+                <span className="text-[11px] text-gray-400 ml-2 truncate">{zoneUnits[0].positioning}</span>
               )}
             </button>
             {isZoneExpanded(zone) && (
               <div className="overflow-x-auto">
-                <table className="w-full" data-testid={`zone-table-${zone}`}>
+                <table className="w-full" style={{ tableLayout: "fixed", minWidth: `${LEASING_TABLE_MIN_WIDTH}px` }} data-testid={`zone-table-${zone}`}>
+                  <LeasingColgroup />
                   <thead>
                     <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b text-left text-sm">
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[200px]">Existing</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Positioning</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Financial Performance</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[220px]">Targets</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Optimum Target</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[110px]">Priority</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[260px]">{updatesHeaderLabel(zoneUnits)}</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 w-[60px]"></th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Existing</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Positioning</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Financial Performance</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Targets</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Optimum Target</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Priority</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">{updatesHeaderLabel(zoneUnits)}</th>
+                      <th className="px-3 py-1.5"></th>
                     </tr>
                   </thead>
-                  <tbody className="text-xs">
+                  <tbody className="text-[13px]">
                     {(() => {
                       const showAll = expandedRowZones.has(zone);
                       const visible = showAll ? zoneUnits : zoneUnits.slice(0, ZONE_ROW_LIMIT);
@@ -1839,9 +1882,9 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                               {/* Existing — tenant name pulled LIVE from Tenancy Schedule
                                   when linked; clickable through to brand profile when matched
                                   to a CRM company. Colour-coded by status band. */}
-                              <td className="px-3 py-2 min-w-[200px] align-top">
+                              <td className="px-3 py-2 align-top">
                                 <ExistingTenantCell unit={u} nameColour={nameColour} onSave={inlineUpdate} />
-                                <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                                <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
                                   {expFmt && <div>(Exp. {expFmt})</div>}
                                   {breakFmt && <div>(TB {breakFmt})</div>}
                                   {llBreakFmt && <div>(LL {llBreakFmt})</div>}
@@ -1860,7 +1903,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                                 <FinancialPerformanceCell unit={u} onSave={inlineUpdate} />
                               </td>
                               {/* Targets */}
-                              <td className="px-3 py-2 min-w-[220px]">
+                              <td className="px-3 py-2 align-top">
                                 <TargetTenantPanel unitId={u.id} propertyId={propertyId} targets={allTargets} onRefresh={() => refetchTargets()} />
                               </td>
                               {/* Optimum Target */}
@@ -1962,7 +2005,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                   </div>
                   <div className="shrink-0 font-medium text-gray-600 w-[80px]">{entry.user_name}</div>
                   <div className="flex-1">
-                    <Badge variant="outline" className={`text-[9px] mr-1.5 ${
+                    <Badge variant="outline" className={`text-[10px] mr-1.5 ${
                       entry.action === "create" ? "border-emerald-300 text-emerald-700" :
                       entry.action === "delete" ? "border-red-300 text-red-700" :
                       entry.action === "privacy_toggle" ? "border-violet-300 text-violet-700" :
@@ -2266,7 +2309,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <Plus className="w-3 h-3 mr-1" />Add Unit
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer">
+            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
@@ -2276,7 +2319,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
       <div className="text-center py-6 text-gray-400 border rounded-lg">
         <Building2 className="w-6 h-6 mx-auto mb-1 opacity-40" />
         <p className="text-xs">No units in leasing schedule</p>
-        <p className="text-[10px] mt-0.5">Add units or import a landlord Excel to track this property's leasing schedule</p>
+        <p className="text-[11px] mt-0.5">Add units or import a landlord Excel to track this property's leasing schedule</p>
       </div>
 
       <Dialog open={!!importPreview} onOpenChange={(v) => !v && setImportPreview(null)}>
@@ -2348,7 +2391,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   return (
     <div className="space-y-3" data-testid="property-leasing-schedule">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <Badge variant="secondary" className="text-[10px]">{stats.total} units</Badge>
+        <Badge variant="secondary" className="text-[11px]">{stats.total} units</Badge>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search className="absolute left-2 top-1.5 w-3 h-3 text-gray-400" />
@@ -2380,7 +2423,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <Plus className="w-3 h-3" />Add
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
+            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
@@ -2402,14 +2445,14 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
               data-testid={`stat-${s.key}`}
             >
               <div className={`text-lg font-bold ${statusFilter === s.key ? "" : "text-foreground"}`}>{s.count}</div>
-              <div className={`text-[10px] font-medium ${statusFilter === s.key ? "" : "text-muted-foreground"}`}>{s.label}</div>
+              <div className={`text-[11px] font-medium ${statusFilter === s.key ? "" : "text-muted-foreground"}`}>{s.label}</div>
             </button>
           ))}
         </div>
         {archivedCount > 0 && (
           <button
             onClick={() => setIncludeArchived(!includeArchived)}
-            className={`flex items-center gap-1 px-2 py-1 rounded border text-[10px] transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50"}`}
+            className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50"}`}
             data-testid="toggle-include-archived-prop"
           >
             <Eye className="w-3 h-3" />
@@ -2422,11 +2465,11 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
 
       <div className="border rounded-lg overflow-hidden">
         <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border-b">
-          <button onClick={toggleAll} className="text-[10px] text-gray-500 hover:text-gray-700 flex items-center gap-1" data-testid="btn-toggle-all-zones">
+          <button onClick={toggleAll} className="text-[11px] text-gray-500 hover:text-gray-700 flex items-center gap-1" data-testid="btn-toggle-all-zones">
             {allExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
             {allExpanded ? "Collapse all" : "Expand all"}
           </button>
-          <span className="text-[10px] text-gray-400">{filteredUnits.length} of {units.length} units</span>
+          <span className="text-[11px] text-gray-400">{filteredUnits.length} of {units.length} units</span>
         </div>
 
         {zoneGroups.map(([zone, zoneUnits]) => {
@@ -2441,25 +2484,26 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
               >
                 {isExpanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
                 <span className="font-medium text-xs">{cleanZoneLabel(zone)}</span>
-                <Badge variant="secondary" className="text-[9px]">{zoneUnits.length}</Badge>
-                <span className="text-[9px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
+                <Badge variant="secondary" className="text-[10px]">{zoneUnits.length}</Badge>
+                <span className="text-[10px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
               </button>
               {isExpanded && (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full" style={{ tableLayout: "fixed", minWidth: `${LEASING_TABLE_MIN_WIDTH}px` }}>
+                    <LeasingColgroup />
                     <thead>
                       <tr className="bg-gray-50/30 border-b text-left text-sm">
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[200px]">Existing</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Positioning</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Financial Performance</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[200px]">Targets</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[140px]">Optimum Target</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[110px]">Priority</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 min-w-[220px]">{updatesHeaderLabel(zoneUnits)}</th>
-                        <th className="px-2 py-1 w-8"></th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Existing</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Positioning</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Financial Performance</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Targets</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Optimum Target</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Priority</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">{updatesHeaderLabel(zoneUnits)}</th>
+                        <th className="px-2 py-1"></th>
                       </tr>
                     </thead>
-                    <tbody className="text-xs">
+                    <tbody className="text-[13px]">
                       {zoneUnits.map(u => {
                         const band = statusBandFor((u as any).status_band);
                         const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
@@ -2470,9 +2514,9 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                         const rrFmt = formatLandsecDate((u as any).live_rent_review || u.rent_review);
                         return (
                           <tr key={u.id} className={`border-b hover:brightness-95 transition-all align-top group ${rowTint} ${u.status === "Archived" ? "opacity-50" : ""}`} data-testid={`unit-row-${u.id}`}>
-                            <td className="px-2 py-1.5 min-w-[200px] align-top">
+                            <td className="px-2 py-1.5 align-top">
                               <ExistingTenantCell unit={u} nameColour={nameColour} onSave={inlineUpdate} />
-                              <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                              <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
                                 {expFmt && <div>(Exp. {expFmt})</div>}
                                 {breakFmt && <div>(TB {breakFmt})</div>}
                                 {llBreakFmt && <div>(LL {llBreakFmt})</div>}
@@ -2485,7 +2529,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                             <td className="px-2 py-1.5 align-top">
                               <FinancialPerformanceCell unit={u} onSave={inlineUpdate} />
                             </td>
-                            <td className="px-2 py-1.5 min-w-[200px]">
+                            <td className="px-2 py-1.5 align-top">
                               <TargetCompaniesCell unitId={u.id} targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} onUpdate={inlineUpdate} />
                             </td>
                             <td className="px-2 py-1.5">
@@ -2686,7 +2730,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
           ) : (
             <>
               <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={startEdit} data-testid="btn-edit-principles"><Pencil className="w-3 h-3 mr-1" />Edit</Button>
-              <Button size="sm" variant="ghost" className="h-7 text-[10px] text-muted-foreground" onClick={() => save.mutate({ ...principles, enabled: false })} data-testid="btn-disable-principles">Hide</Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground" onClick={() => save.mutate({ ...principles, enabled: false })} data-testid="btn-disable-principles">Hide</Button>
             </>
           )}
         </div>
@@ -2787,12 +2831,12 @@ function SnapshotsPanel({ propertyId }: { propertyId: string }) {
             <div className="flex items-center justify-between text-xs">
               <div>
                 <div className="font-medium">{s.meeting_month || "Untitled"}</div>
-                <div className="text-muted-foreground text-[10px]">{new Date(s.taken_at).toLocaleString("en-GB")} {s.taken_by_name ? `· by ${s.taken_by_name}` : ""} · {s.unit_count} units</div>
+                <div className="text-muted-foreground text-[11px]">{new Date(s.taken_at).toLocaleString("en-GB")} {s.taken_by_name ? `· by ${s.taken_by_name}` : ""} · {s.unit_count} units</div>
               </div>
               <ChevronRight className={`w-3 h-3 transition-transform ${openId === s.id ? "rotate-90" : ""}`} />
             </div>
             {openId === s.id && detail?.snapshot?.data && (
-              <div className="mt-2 pt-2 border-t text-[10px]">
+              <div className="mt-2 pt-2 border-t text-[11px]">
                 <div className="max-h-[300px] overflow-y-auto space-y-0.5">
                   {(detail.snapshot.data as any[]).map((row, i) => (
                     <div key={i} className="flex items-center gap-2">
@@ -2874,8 +2918,8 @@ function PullFromTenancyPanel({ propertyId, onDone }: { propertyId: string; onDo
               <div className="flex-1 min-w-0 text-xs">
                 <div className="font-medium flex items-center gap-2">
                   {u.unit_number || u.premises || "—"}
-                  {isVacant && <Badge variant="outline" className="text-[9px] border-amber-400 text-amber-700">VACANT</Badge>}
-                  {u.in_leasing_schedule && <Badge variant="outline" className="text-[9px] border-blue-400 text-blue-700">Flagged</Badge>}
+                  {isVacant && <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700">VACANT</Badge>}
+                  {u.in_leasing_schedule && <Badge variant="outline" className="text-[10px] border-blue-400 text-blue-700">Flagged</Badge>}
                 </div>
                 <div className="text-muted-foreground truncate">
                   {u.tenant_name || "No tenant"}{u.permitted_use ? ` · ${u.permitted_use}` : ""}{u.nia_sqft ? ` · ${u.nia_sqft.toLocaleString()} sqft NIA` : ""}{u.passing_rent_pa ? ` · £${u.passing_rent_pa.toLocaleString()} pa` : ""}
@@ -2907,17 +2951,17 @@ function PropAddUnitForm({ propertyId, onSave, onCancel, isPending }: {
     <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50 space-y-2">
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <label className="text-[10px] text-gray-500 block mb-0.5">Unit Name *</label>
+          <label className="text-[11px] text-gray-500 block mb-0.5">Unit Name *</label>
           <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Unit 1A"
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="input-new-unit-name" />
         </div>
         <div>
-          <label className="text-[10px] text-gray-500 block mb-0.5">Zone</label>
+          <label className="text-[11px] text-gray-500 block mb-0.5">Zone</label>
           <input value={zone} onChange={e => setZone(e.target.value)} placeholder="e.g. Ground Floor"
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="input-new-unit-zone" />
         </div>
         <div>
-          <label className="text-[10px] text-gray-500 block mb-0.5">Status</label>
+          <label className="text-[11px] text-gray-500 block mb-0.5">Status</label>
           <select value={status} onChange={e => setStatus(e.target.value)}
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="select-new-unit-status">
             <option value="Occupied">Occupied</option>
@@ -2975,9 +3019,9 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-sm flex items-center gap-2">
           <Building2 className="w-4 h-4" />Leasing Schedule
-          <Badge variant="secondary" className="text-[10px]">{totalUnits} units across {byProperty.size} properties</Badge>
+          <Badge variant="secondary" className="text-[11px]">{totalUnits} units across {byProperty.size} properties</Badge>
         </h3>
-        <div className="flex items-center gap-3 text-[10px]">
+        <div className="flex items-center gap-3 text-[11px]">
           <span className="text-emerald-600">{occupied} occupied</span>
           {expiring > 0 && <span className="text-amber-600">{expiring} expiring</span>}
           <Link href="/leasing-schedule">
@@ -3002,11 +3046,11 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
             >
               {expanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />}
               <span className="font-medium text-sm">{name}</span>
-              <Badge variant="secondary" className="text-[10px]">{propUnits.length}</Badge>
-              <span className="text-[10px] text-emerald-600 ml-auto">{propOccupied} occ</span>
-              {propExpiring > 0 && <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600 ml-1">{propExpiring} exp</Badge>}
+              <Badge variant="secondary" className="text-[11px]">{propUnits.length}</Badge>
+              <span className="text-[11px] text-emerald-600 ml-auto">{propOccupied} occ</span>
+              {propExpiring > 0 && <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-600 ml-1">{propExpiring} exp</Badge>}
               <Link href={`/leasing-schedule/${propId}`}>
-                <span className="text-[10px] text-indigo-500 hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
+                <span className="text-[11px] text-indigo-500 hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
               </Link>
             </button>
             {expanded && (
@@ -3028,21 +3072,21 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
                         <td className="px-3 py-1.5 text-gray-500 max-w-[120px] truncate">{u.zone}</td>
                         <td className="px-3 py-1.5 font-medium">{u.unit_name}</td>
                         <td className="px-3 py-1.5">
-                          <Badge variant="outline" className={`text-[9px] ${u.status === "Occupied" ? "border-emerald-300 text-emerald-700" : "border-gray-300 text-gray-500"}`}>{u.status}</Badge>
+                          <Badge variant="outline" className={`text-[10px] ${u.status === "Occupied" ? "border-emerald-300 text-emerald-700" : "border-gray-300 text-gray-500"}`}>{u.status}</Badge>
                         </td>
                         <td className={`px-3 py-1.5 ${isExpired(u.lease_expiry) ? "text-red-600" : isExpiringSoon(u.lease_expiry) ? "text-amber-600" : "text-gray-600"}`}>
                           {u.lease_expiry ? formatDate(u.lease_expiry) : "—"}
                         </td>
-                        <td className="px-3 py-1.5 text-[10px]">
+                        <td className="px-3 py-1.5 text-[11px]">
                           {u.mat_psqft && <span>{u.mat_psqft}</span>}
                           {u.lfl_percent && <span className={`ml-1 ${u.lfl_percent.startsWith("-") ? "text-red-500" : "text-emerald-600"}`}>{u.lfl_percent}</span>}
                         </td>
-                        <td className="px-3 py-1.5 text-[10px] text-gray-500 max-w-[150px]">
+                        <td className="px-3 py-1.5 text-[11px] text-gray-500 max-w-[150px]">
                           <TargetCompanyNames targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} />
                         </td>
                       </tr>
                     ))}
-                    {propUnits.length > 20 && <tr><td colSpan={6} className="px-3 py-1 text-center text-[10px] text-gray-400">+{propUnits.length - 20} more</td></tr>}
+                    {propUnits.length > 20 && <tr><td colSpan={6} className="px-3 py-1 text-center text-[11px] text-gray-400">+{propUnits.length - 20} more</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -3457,7 +3501,7 @@ export default function LeasingSchedulePage() {
                       <TableCell className="text-center text-sm text-gray-400">{p.vacant_count}</TableCell>
                       <TableCell className="text-center text-sm">
                         {p.expiring_soon > 0 ? (
-                          <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">{p.expiring_soon}</Badge>
+                          <Badge variant="outline" className="text-[11px] border-amber-300 text-amber-700 bg-amber-50">{p.expiring_soon}</Badge>
                         ) : "—"}
                       </TableCell>
                       <TableCell className="text-center">
@@ -3491,7 +3535,7 @@ export default function LeasingSchedulePage() {
                     <span className="hover:underline cursor-pointer text-blue-600 dark:text-blue-400" data-testid={`link-landlord-${landlordId}`}>{landlord}</span>
                   </Link>
                 ) : landlord}
-                <Badge variant="secondary" className="text-[10px]">{props.reduce((s, p) => s + p.unit_count, 0)} units</Badge>
+                <Badge variant="secondary" className="text-[11px]">{props.reduce((s, p) => s + p.unit_count, 0)} units</Badge>
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {props.map(p => <PropertyCard key={p.id} prop={p} />)}
@@ -3553,7 +3597,7 @@ export default function LeasingSchedulePage() {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                  Default property <span className="text-[10px] opacity-70">(used when the file has only one scheme; for multi-scheme files you'll map each scheme individually next)</span>
+                  Default property <span className="text-[11px] opacity-70">(used when the file has only one scheme; for multi-scheme files you'll map each scheme individually next)</span>
                 </label>
                 <Select value={importPropertyId} onValueChange={setImportPropertyId}>
                   <SelectTrigger className="h-9 text-sm" data-testid="select-import-property">
@@ -3659,9 +3703,9 @@ export default function LeasingSchedulePage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="text-sm font-medium truncate">{scheme.schemeHint}</p>
-                              {showError && <Badge variant="destructive" className="text-[10px]">error</Badge>}
-                              {showSkipped && <Badge variant="secondary" className="text-[10px]">skipped</Badge>}
-                              {hasUnits && <Badge variant="outline" className="text-[10px] border-emerald-500 text-emerald-700">{scheme.units.length} units</Badge>}
+                              {showError && <Badge variant="destructive" className="text-[11px]">error</Badge>}
+                              {showSkipped && <Badge variant="secondary" className="text-[11px]">skipped</Badge>}
+                              {hasUnits && <Badge variant="outline" className="text-[11px] border-emerald-500 text-emerald-700">{scheme.units.length} units</Badge>}
                             </div>
                             <p className="text-[11px] text-muted-foreground">
                               Sheet "{scheme.sheetName}"
