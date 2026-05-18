@@ -1,5 +1,8 @@
-// Design-oriented ChatBGP tools — Gamma for fresh decks, pdf-lib for stitching
-// existing brochure pages, and Dropbox→SharePoint bridge for filing raw PDFs.
+// Design-oriented ChatBGP tools — pdf-lib for stitching existing brochure
+// pages, and Dropbox→SharePoint bridge for filing raw PDFs. The Claude
+// HTML→PDF design path (server/why-buy-design.ts) handles fresh decks; the
+// Gamma integration was removed (Nov 2025) after repeated API
+// breakages and consistently underwhelming output vs the Claude path.
 //
 // Each helper returns a chat-media URL the model can hand back to the user as
 // a download link. Keeping them in this module keeps chatbgp.ts manageable.
@@ -9,70 +12,10 @@ import path from "path";
 import fs from "fs/promises";
 import crypto from "crypto";
 import { PDFDocument } from "pdf-lib";
-import { gammaGenerate, gammaWaitFor, gammaDownloadExport, type GammaFormat, type GammaExportAs } from "./gamma";
 import { saveFile } from "./file-storage";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { systemSettings } from "@shared/schema";
-
-// ─── Gamma designed-deck generation ──────────────────────────────────────────
-
-export interface DesignedDeckArgs {
-  title: string;
-  inputText: string;
-  format?: GammaFormat;
-  numCards?: number;
-  themeName?: string;
-  exportAs?: GammaExportAs;
-  additionalInstructions?: string;
-}
-
-export async function generateDesignedDeck(args: DesignedDeckArgs): Promise<any> {
-  if (!process.env.GAMMA_API_KEY) {
-    return { error: "GAMMA_API_KEY not configured on the server. Ask an admin to add it in Railway." };
-  }
-
-  if (!args.inputText || args.inputText.length < 50) {
-    return { error: "inputText too short — provide at least 50 characters of content. The richer the text, the better the design." };
-  }
-
-  const format: GammaFormat = args.format || "document";
-  const exportAs: GammaExportAs = args.exportAs || "pdf";
-
-  const { generationId } = await gammaGenerate({
-    inputText: args.inputText,
-    format,
-    exportAs,
-    numCards: args.numCards,
-    themeName: args.themeName,
-    additionalInstructions: args.additionalInstructions,
-  });
-
-  const gen = await gammaWaitFor(generationId, { timeoutMs: 6 * 60 * 1000, intervalMs: 5000 });
-  if (!gen.exportUrl) return { error: "Gamma generation completed but returned no export URL." };
-
-  const buffer = await gammaDownloadExport(gen.exportUrl);
-  const safeTitle = args.title.replace(/[^a-zA-Z0-9-_]/g, "_").slice(0, 60) || "Designed_Deck";
-  const storageFilename = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeTitle}.${exportAs}`;
-  const displayName = `${args.title}.${exportAs}`;
-  const mime = exportAs === "pptx"
-    ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    : "application/pdf";
-  await saveFile(`chat-media/${storageFilename}`, buffer, mime, displayName);
-  const downloadUrl = `/api/chat-media/${storageFilename}`;
-
-  return {
-    success: true,
-    title: args.title,
-    format,
-    exportAs,
-    gammaUrl: gen.gammaUrl,
-    downloadUrl,
-    chatMediaFilename: storageFilename,
-    downloadMarkdown: `[Download ${displayName}](${downloadUrl})`,
-    message: `Generated a designed ${format} "${args.title}" via Gamma. Open in the browser with the Gamma link, or download the ${exportAs.toUpperCase()}.`,
-  };
-}
 
 // ─── Brochure compilation — stitch real pages from existing PDFs ─────────────
 

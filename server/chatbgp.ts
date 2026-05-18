@@ -1140,7 +1140,7 @@ You are an active operational agent with full CRM read/write access, internet se
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_designed_deck\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -1155,7 +1155,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
 - **Leasing schedule**: query_leasing_schedule for read. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
 - **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
-- **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
+- **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **compile_brochure_from_pdfs** (stitch real BGP brochure pages, see below) for bespoke documents, OR the Property Pathway's Why Buy generator (Claude-designed HTML → PDF via the in-app preview) for new-build decks. NEVER use generate_pdf for these — generate_pdf is text-only. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
 - **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
@@ -2400,7 +2400,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "generate_pdf",
-      description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
+      description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures) or run a Property Pathway and use its Claude-designed Why Buy generator.",
       parameters: {
         type: "object",
         properties: {
@@ -3306,27 +3306,6 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           returning: { type: "boolean", description: "Default true — return the affected rows. Set false for huge bulk ops where you don't need them." },
         },
         required: ["table", "op"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "generate_designed_deck",
-      description: "Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Document title (also used for the filename)." },
-          inputText: { type: "string", description: "The full content to build the deck from — Gamma turns this into a designed document. Write 500-3000 words of structured content with headings and bullet points. Be specific and substantive — Gamma uses this verbatim to design the pages." },
-          format: { type: "string", enum: ["presentation", "document", "social"], description: "'presentation' = slide deck (use for pitches/decks), 'document' = long-form brochure (use for playbooks/reports), 'social' = square social post. Default: 'document'." },
-          numCards: { type: "number", description: "Target number of pages/slides (default: let Gamma decide)." },
-          themeName: { type: "string", description: "Gamma theme name for visual style (optional — Gamma picks a good default)." },
-          exportAs: { type: "string", enum: ["pdf", "pptx"], description: "Output format. Default 'pdf'. Use 'pptx' if the user wants to edit in PowerPoint." },
-          additionalInstructions: { type: "string", description: "Style guidance for Gamma, e.g. 'Use a minimal design with lots of imagery. Tone: property investment, British, professional.'" },
-        },
-        required: ["title", "inputText"],
       },
     },
   });
@@ -6719,17 +6698,6 @@ async function executeCrmToolRaw(
     } catch (pdfErr: any) {
       console.error("[chatbgp] PDF generation error:", pdfErr?.message);
       return { data: { error: `Failed to generate PDF: ${pdfErr?.message || "Unknown error"}` } };
-    }
-  }
-
-  if (fnName === "generate_designed_deck") {
-    try {
-      const { generateDesignedDeck } = await import("./chatbgp-design-tools");
-      const result = await generateDesignedDeck(fnArgs);
-      return { data: result };
-    } catch (err: any) {
-      console.error("[chatbgp] generate_designed_deck error:", err?.message);
-      return { data: { error: `Gamma deck generation failed: ${err?.message}` } };
     }
   }
 

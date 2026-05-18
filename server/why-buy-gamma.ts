@@ -1,13 +1,12 @@
-// Why Buy — Gamma variant.
+// Why Buy — brief builder.
 //
-// Parallel path to `why-buy-renderer.ts` (pdfkit). Reads the same pathway run
-// state, flattens it into a structured markdown brief, and hands the brief to
-// Gamma's Generate API. Downloads the resulting PDF, saves to the usual
-// image_studio_images table + SharePoint so the UI can link to it next to the
-// existing Why Buy PDF for comparison.
+// Reads a pathway run's stage results and flattens them into a structured
+// markdown brief that the Why Buy generator consumes. Originally paired
+// with a Gamma renderer (removed Nov 2025); now feeds the Claude-designed
+// HTML renderer in server/why-buy-design.ts. The filename is kept for
+// import-path stability — buildBrief is referenced from several call
+// sites — but the Gamma integration is gone.
 
-import fs from "fs";
-import path from "path";
 import { eq, desc } from "drizzle-orm";
 import { db } from "./db";
 import {
@@ -17,10 +16,7 @@ import {
   imageStudioImages,
   crmCompanies,
 } from "@shared/schema";
-import { gammaGenerate, gammaWaitFor, gammaDownloadExport } from "./gamma";
 import { getPlanningSummary, getPlanningSummaryForLocation, planningSummaryToMarkdown } from "./planning-summary";
-
-const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy-gamma");
 
 function fmtMoney(n?: number | null): string {
   if (n === undefined || n === null || !Number.isFinite(Number(n))) return "—";

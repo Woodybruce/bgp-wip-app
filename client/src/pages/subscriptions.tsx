@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, Presentation, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw, Zap, Loader2 } from "lucide-react";
+import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw, Zap, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -162,15 +162,6 @@ const subscriptions: Subscription[] = [
     color: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     hasApi: true,
     apiNote: "REST API for contact lookups and enrichment",
-  },
-  {
-    name: "Gamma",
-    category: "Presentations",
-    description: "AI-powered presentation and document creation tool.",
-    url: "https://gamma.app",
-    icon: Presentation,
-    color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-    hasApi: false,
   },
   {
     name: "Real Capital Analytics",
