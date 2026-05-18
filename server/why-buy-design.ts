@@ -8,6 +8,8 @@
 // re-emits the full HTML which we save as a new version.
 
 import type { Express, Request, Response } from "express";
+import path from "path";
+import fs from "fs";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { buildBrief } from "./why-buy-gamma";
@@ -258,4 +260,91 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       res.status(500).json({ error: e.message });
     }
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pathway Stage 9 entry point — Claude-designed Why Buy → PDF → SharePoint.
+//
+// Replaces the legacy template-based renderWhyBuy: builds the brief,
+// runs Claude with the house-style preferences, saves the HTML to
+// why_buy_designs (so the in-app preview shows the same artefact),
+// renders headless-Chrome PDF, and uploads to SharePoint. Falls back
+// to the legacy pdfkit renderer if Claude or puppeteer fail (Stage 9
+// must always produce SOMETHING).
+// ─────────────────────────────────────────────────────────────────────────
+export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ documentUrl?: string; sharepointUrl?: string; pdfPath: string; designVersionId?: string }> {
+  const runId = args.runId;
+
+  // 1. Brief + house style preferences
+  const built = await buildBrief(runId);
+  const housePrefs = await preferencesPromptFor(PREFERENCES_SCOPE);
+  const userPrompt = housePrefs
+    ? `${BASE_PROMPT}\n\n${housePrefs}\n\n--- DEAL BRIEF ---\n\n${built.brief}`
+    : `${BASE_PROMPT}\n\n--- DEAL BRIEF ---\n\n${built.brief}`;
+
+  // 2. Claude → HTML
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const msg = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 16000,
+    messages: [{ role: "user", content: userPrompt }],
+  });
+  const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+  const html = safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+  if (!html || html.length < 200) throw new Error("Claude returned empty/too-short HTML for Why Buy");
+
+  // 3. Save the design as version N so the in-app preview lights up
+  // and the user can iterate from there. Skipped silently if the
+  // run row isn't found (table also serves the legacy path).
+  let designVersionId: string | undefined;
+  try {
+    const next = await pool.query(
+      `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
+      [runId]
+    );
+    const version = next.rows[0].v;
+    const inserted = await pool.query(
+      `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_snapshot)
+       VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`,
+      [runId, version, "Stage 9 — Pathway auto-generation", html, JSON.stringify({ title: built.title, address: built.address })]
+    );
+    designVersionId = inserted.rows[0].id;
+  } catch (e: any) {
+    console.warn("[stage9-claude] saving design version failed:", e?.message);
+  }
+
+  // 4. HTML → PDF via the shared puppeteer helper
+  const { htmlToPdfForWhyBuy } = await import("./document-briefs");
+  const pdfBuf = await htmlToPdfForWhyBuy(html);
+
+  // 5. Persist + upload
+  const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy");
+  if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
+  const fileName = `why-buy-${runId}-${Date.now()}.pdf`;
+  const pdfPath = path.join(OUT_DIR, fileName);
+  fs.writeFileSync(pdfPath, pdfBuf);
+
+  let sharepointUrl: string | undefined;
+  try {
+    const { uploadFileToSharePoint } = await import("./microsoft");
+    const { db } = await import("./db");
+    const { propertyPathwayRuns } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+    const folderPath = run?.sharepointFolderPath
+      ? `${run.sharepointFolderPath}/Why Buy Deck`
+      : `BGP share drive/Investment/${(run?.address || built.address || "Property").replace(/[\/\\:*?"<>|]/g, "-")}/Why Buy Deck`;
+    const upload = await uploadFileToSharePoint(pdfBuf, fileName, "application/pdf", folderPath);
+    sharepointUrl = upload.webUrl;
+  } catch (err: any) {
+    console.warn("[stage9-claude] SharePoint upload failed:", err?.message);
+  }
+
+  return {
+    documentUrl: `/uploads/why-buy/${fileName}`,
+    sharepointUrl,
+    pdfPath,
+    designVersionId,
+  };
 }

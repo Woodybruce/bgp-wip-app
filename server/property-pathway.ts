@@ -4536,22 +4536,45 @@ async function runStage9(runId: string, req: Request): Promise<void> {
   await setStageStatus(runId, "stage9", "running");
 
   try {
-    let wbModErr: string | undefined;
-    const wbMod = await import("./why-buy-renderer").catch((e: any) => { wbModErr = e?.message; return null as any; });
-    if (!wbMod?.renderWhyBuy) {
-      console.error("[pathway stage9] why-buy-renderer load failed:", wbModErr);
-      await setStageStatus(runId, "stage9", "failed", {
-        stage9: { reason: wbModErr || "Why Buy renderer could not be loaded" } as any,
-      });
-      return;
+    // Preferred path: Claude designs the deck per the house style
+    // (preferencesPromptFor("why_buy")) + BGP brand cues. Falls back
+    // to the legacy pdfkit renderer if Claude / puppeteer fail —
+    // Stage 9 must always produce something.
+    let result: { documentUrl?: string; sharepointUrl?: string; pdfPath: string; designVersionId?: string } | null = null;
+    let usedRenderer: "claude-design" | "legacy-pdfkit" = "claude-design";
+    let claudeErr: string | undefined;
+
+    try {
+      const designMod = await import("./why-buy-design");
+      result = await designMod.renderClaudeWhyBuy({ runId });
+    } catch (e: any) {
+      claudeErr = e?.message || String(e);
+      console.warn("[pathway stage9] Claude design renderer failed, falling back to legacy:", claudeErr);
     }
-    const result = await wbMod.renderWhyBuy({ runId, req });
+
+    if (!result) {
+      usedRenderer = "legacy-pdfkit";
+      let wbModErr: string | undefined;
+      const wbMod = await import("./why-buy-renderer").catch((e: any) => { wbModErr = e?.message; return null as any; });
+      if (!wbMod?.renderWhyBuy) {
+        console.error("[pathway stage9] both renderers failed:", { claude: claudeErr, legacy: wbModErr });
+        await setStageStatus(runId, "stage9", "failed", {
+          stage9: { reason: `Claude: ${claudeErr || "n/a"} · Legacy: ${wbModErr || "renderer missing"}` } as any,
+        });
+        return;
+      }
+      result = await wbMod.renderWhyBuy({ runId, req });
+    }
+
     await setStageStatus(runId, "stage9", "completed", {
       stage9: {
         documentUrl: result.documentUrl,
         sharepointUrl: result.sharepointUrl,
         pdfPath: result.pdfPath,
-      },
+        designVersionId: result.designVersionId,
+        renderer: usedRenderer,
+        claudeError: claudeErr,
+      } as any,
     });
     await updateRun(runId, { whyBuyDocumentUrl: result.sharepointUrl || result.documentUrl, completedAt: new Date() });
   } catch (err: any) {

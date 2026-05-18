@@ -1187,6 +1187,13 @@ function safeHtml(s: string): string {
  *      SPARTICUZ_CHROMIUM_URL (or the default GitHub release URL)
  * Throws a clear error if neither is configured.
  */
+// Exported wrapper so the Pathway Stage 9 (Claude-designed Why Buy)
+// can reuse the same puppeteer pipeline. Defaults to landscape A4 to
+// match the pitch-deck aesthetic the design prompt requests.
+export async function htmlToPdfForWhyBuy(html: string): Promise<Buffer> {
+  return htmlToPdfBuffer(html, { format: "A4", landscape: true });
+}
+
 async function htmlToPdfBuffer(html: string, options?: { format?: "A4" | "Letter"; landscape?: boolean }): Promise<Buffer> {
   let puppeteer: any;
   let executablePath: string | undefined;
