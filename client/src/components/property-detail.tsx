@@ -95,9 +95,20 @@ import {
 // Property Compliance & KYC wrapper — fetches the brand-profile
 // payload for whichever company owns this property (freeholder >
 // long leaseholder > landlord, first one set wins) and renders the
-// existing ComplianceBoard inline. Falls back to a quiet empty
-// state when no owner is set so the panel doesn't shout at the user.
-function PropertyComplianceBoardWrapper({ property }: { property: CrmProperty }) {
+// existing ComplianceBoard inline. Also surfaces the per-property
+// Billing Entity at the top — sometimes the entity that gets
+// invoiced (the SPV) differs from the corporate owner.
+//
+// embedded=true means we're rendering inside a sidebar section
+// that already provides the heading + Card chrome, so we drop our
+// own wrapper.
+function PropertyComplianceBoardWrapper({
+  property, allCompanies, embedded = false,
+}: {
+  property: CrmProperty;
+  allCompanies: CrmCompany[];
+  embedded?: boolean;
+}) {
   const ownerId: string | null =
     (property as any).freeholderId
     || (property as any).longLeaseholderId
@@ -114,34 +125,54 @@ function PropertyComplianceBoardWrapper({ property }: { property: CrmProperty })
     enabled: !!ownerId,
   });
 
+  // Billing entity row — rendered above the brand checks via the
+  // ComplianceBoard's `prefix` slot.
+  const billingEntityRow = (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
+        Billing entity
+        <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
+      </div>
+      <InlineBillingEntity propertyId={property.id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
+      <p className="text-[10px] text-muted-foreground mt-1 leading-snug">
+        The corporate entity invoiced for fees. Often a property SPV distinct from the freeholder / landlord above.
+      </p>
+    </div>
+  );
+
   if (!ownerId) {
-    return (
-      <Card>
-        <CardContent className="p-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-1.5">
-            <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
-          </div>
-          <p className="text-[11px] text-muted-foreground italic">
-            Add a freeholder, long leaseholder, or landlord above to enable Companies House lookups, accounts download, and AML checks.
-          </p>
-        </CardContent>
-      </Card>
+    const empty = (
+      <div className="space-y-2.5">
+        {billingEntityRow}
+        <p className="text-[11px] text-muted-foreground italic border-t pt-2">
+          Add a freeholder, long leaseholder, or landlord above to enable Companies House lookups, accounts download, and AML checks.
+        </p>
+      </div>
     );
+    if (embedded) return empty;
+    return <Card><CardContent className="p-3">{empty}</CardContent></Card>;
   }
 
   if (isLoading || !data?.company) {
-    return (
-      <Card>
-        <CardContent className="p-3 space-y-1.5">
-          <Skeleton className="h-3 w-32" />
-          <Skeleton className="h-6 w-full" />
-          <Skeleton className="h-3 w-3/4" />
-        </CardContent>
-      </Card>
+    const skel = (
+      <div className="space-y-1.5">
+        <Skeleton className="h-3 w-32" />
+        <Skeleton className="h-6 w-full" />
+        <Skeleton className="h-3 w-3/4" />
+      </div>
     );
+    if (embedded) return skel;
+    return <Card><CardContent className="p-3">{skel}</CardContent></Card>;
   }
 
-  return <ComplianceBoard companyId={ownerId} company={data.company} />;
+  return (
+    <ComplianceBoard
+      companyId={ownerId}
+      company={data.company}
+      embedded={embedded}
+      prefix={billingEntityRow}
+    />
+  );
 }
 
 function CollapsibleCard({
@@ -235,6 +266,7 @@ export function PropertyDetail({ id }: { id: string }) {
     availableUnits: true,
     landRegistry: false,
     images: true,
+    compliance: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -442,28 +474,52 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <Card>
                 <CardContent className="p-3 space-y-3">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
-                    <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
+                  {/* Top strip — 4 cells. Tenure removed. Website
+                      pairs under Team, Competitor Agent pairs under
+                      Sq Ft (same cell, stacked) so the related fields
+                      sit together without bloating the row count. */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+                    <div>
+                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
+                      <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
+                      <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div>
+                        <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
+                        <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
+                        <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate" />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div>
+                        <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Sq Ft</p>
+                        <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1 mb-0.5">
+                          <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
+                          {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
+                            Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
+                              <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
+                            ) : null
+                          )}
+                        </div>
+                        <InlineText
+                          value={property.competitorAgent || ""}
+                          onSave={(val) => inlineUpdate("competitorAgent", val || null)}
+                          placeholder="e.g. CBRE"
+                          className="text-sm"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
-                    <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Tenure</p>
-                    <InlineLabelSelect value={property.tenure} options={TENURE_OPTIONS} colorMap={TENURE_COLORS} onSave={(val) => inlineUpdate("tenure", val)} placeholder="Set tenure" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
-                    <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Sq Ft</p>
-                    <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
-                  </div>
-                </div>
 
                 <div className="border-t pt-3">
                   <p className="text-[10px] text-muted-foreground leading-tight mb-2 flex items-center gap-1">
@@ -490,33 +546,13 @@ export function PropertyDetail({ id }: { id: string }) {
                   </div>
                 </div>
 
-                <div className="border-t pt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
-                  <div>
-                    <div className="flex items-center gap-1 mb-0.5">
-                      <p className="text-[10px] text-muted-foreground leading-tight">Billing Entity</p>
-                      <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
-                    </div>
-                    <InlineBillingEntity propertyId={id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
-                  </div>
+                {/* Tenants + comp-instructed date — the remaining bits
+                    after Billing Entity moved to Compliance, and Website
+                    + Competitor Agent moved up into the main strip. */}
+                <div className="border-t pt-3 grid grid-cols-2 gap-x-4 gap-y-2">
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Tenants</p>
                     <InlineTenants propertyId={id} tenantLinks={tenantLinks} allCompanies={allCompanies} />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1 mb-0.5">
-                      <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
-                      {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
-                        Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
-                        ) : null
-                      )}
-                    </div>
-                    <InlineText
-                      value={property.competitorAgent || ""}
-                      onSave={(val) => inlineUpdate("competitorAgent", val || null)}
-                      placeholder="e.g. CBRE"
-                      className="text-sm"
-                    />
                   </div>
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Comp. Instructed</p>
@@ -526,19 +562,6 @@ export function PropertyDetail({ id }: { id: string }) {
                       placeholder="YYYY-MM-DD"
                       className="text-sm"
                     />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                    <div className="flex items-center gap-1.5">
-                      <div className="min-w-0 flex-1">
-                        <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate" />
-                      </div>
-                      {property.website && (
-                        <a href={property.website.startsWith("http") ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground shrink-0">
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
                   </div>
                 </div>
                 </CardContent>
@@ -561,15 +584,10 @@ export function PropertyDetail({ id }: { id: string }) {
               </Card>
             </div>
 
-            {/* Compliance & KYC — re-uses the ComplianceBoard from the
-                brand profile, scoped to whichever company owns this
-                property (freeholder if set, otherwise landlord). Gives
-                the property page the same UK-entity / CH-accounts /
-                annual-report / officers+PSCs stack the brand profile
-                has, without duplicating 200 lines of UI. */}
-            <ErrorBoundary compact name="Property compliance & KYC">
-              <PropertyComplianceBoardWrapper property={property} />
-            </ErrorBoundary>
+            {/* Compliance & KYC now lives in the right sidebar as a
+                dropdown section (see below) — closer to where the asset
+                lead toggles other reference cards (Files, BGP Contacts,
+                Available Units etc.). */}
 
             <Card>
               <CardContent className="p-3 space-y-1">
@@ -778,6 +796,29 @@ export function PropertyDetail({ id }: { id: string }) {
                 <div className="px-4 pb-3 space-y-3">
                   <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
                   <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
+                </div>
+              )}
+            </div>
+
+            {/* Compliance & KYC — billing entity + owner brand checks
+                (UK trading entity, accounts PDF, annual report PDF,
+                officers + PSCs, Red Flag, AML PEP). Single source of
+                truth lives in brand-profile-panel's ComplianceBoard;
+                we embed it here so the asset lead can flip checks
+                without leaving the property page. */}
+            <div className="border-b">
+              <button onClick={() => toggleSection("compliance")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-compliance-section">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Compliance &amp; KYC</span>
+                </div>
+                {sidebarSections.compliance ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </button>
+              {sidebarSections.compliance && (
+                <div className="px-4 pb-3">
+                  <ErrorBoundary compact name="Property compliance & KYC">
+                    <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
+                  </ErrorBoundary>
                 </div>
               )}
             </div>

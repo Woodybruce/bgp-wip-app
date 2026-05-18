@@ -3666,9 +3666,19 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
 export function ComplianceBoard({
   companyId,
   company,
+  embedded = false,
+  prefix,
 }: {
   companyId: string;
   company: BrandProfile["company"];
+  // embedded=true skips the outer Card + CardHeader so callers
+  // (e.g. PropertyComplianceBoardWrapper) can host the contents
+  // inside their own card / sidebar section.
+  embedded?: boolean;
+  // prefix renders at the very top of CardContent before the UK
+  // trading entity row — used to inject the property's billing
+  // entity field above the brand checks.
+  prefix?: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -3735,17 +3745,12 @@ export function ComplianceBoard({
     ? `https://find-and-update.company-information.service.gov.uk/company/${company.companies_house_number}`
     : null;
 
-  return (
-    <Card>
-      <CardHeader className="p-3 pb-2">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-2.5">
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
-            UK trading entity
+  const inner = (
+    <div className="space-y-2.5">
+      {prefix}
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
+          UK trading entity
             {hasEntity && !editing && (
               <Badge variant="outline" className="text-[9px] font-normal bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">
                 <Check className="w-2.5 h-2.5 mr-0.5" /> set
@@ -3918,7 +3923,18 @@ export function ComplianceBoard({
             </p>
           )}
         </div>
-      </CardContent>
+    </div>
+  );
+
+  if (embedded) return inner;
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0">{inner}</CardContent>
     </Card>
   );
 }
