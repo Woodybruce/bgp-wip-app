@@ -7707,7 +7707,10 @@ Be thorough — include every unit row you can classify, across all properties i
         return { data: { error: propertyFilter ? `No property matching "${fnArgs.propertyFilter}" found in file.` : "No properties could be extracted from the file." } };
       }
 
-      const userRes = await pool.query("SELECT id, username FROM users WHERE id = $1 LIMIT 1", [userId]);
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      const userRes = userId
+        ? await pool.query("SELECT id, username FROM users WHERE id = $1 LIMIT 1", [userId])
+        : { rows: [] as Array<{ id: string; username: string }> };
       const user = userRes.rows[0];
 
       const results: any[] = [];
