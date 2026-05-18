@@ -523,6 +523,35 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       <a className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">← Back to Letting Tracker</a>
                     </Link>
                   )}
+                  {/* Spine state — green chip when the deal is linked
+                      to the canonical tenancy unit, amber when it
+                      isn't yet (so the property page doesn't see this
+                      deal on a specific row). Clicking the green chip
+                      jumps to the unit on the property's tenancy
+                      schedule. */}
+                  {linkedProperty && !isInvestment && (
+                    (deal as any).tenancyUnitId ? (
+                      <Link href={`/properties/${linkedProperty.id}#tenancy-unit-${(deal as any).tenancyUnitId}`}>
+                        <a
+                          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                          title="Linked to the tenancy schedule (canonical spine)"
+                          data-testid="chip-on-tenancy-spine"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          On tenancy spine
+                        </a>
+                      </Link>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700"
+                        title="This deal isn't yet linked to a tenancy schedule row. Use Resolve on the property page to fix."
+                        data-testid="chip-off-tenancy-spine"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        Off tenancy spine
+                      </span>
+                    )
+                  )}
                 </div>
               </>
             );

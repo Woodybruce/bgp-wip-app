@@ -814,6 +814,7 @@ export const crmDeals = pgTable("crm_deals", {
   groupName: text("group_name"),
   propertyId: varchar("property_id"),
   unitId: varchar("unit_id"), // → property_units.id (one unit may have many deals over time)
+  tenancyUnitId: varchar("tenancy_unit_id"), // → tenancy_schedule_units.id (canonical spine)
   landlordId: varchar("landlord_id"),
   landlordContactId: varchar("landlord_contact_id"),
   dealType: text("deal_type"),
@@ -1680,6 +1681,8 @@ export const availableUnits = pgTable("available_units", {
   lastViewingDate: text("last_viewing_date"),
   marketingStartDate: text("marketing_start_date"),
   leasingScheduleUnitId: varchar("leasing_schedule_unit_id"), // → leasing_schedule_units.id (single source of truth link)
+  tenancyUnitId: varchar("tenancy_unit_id"), // → tenancy_schedule_units.id (canonical spine)
+  tenantCompanyId: varchar("tenant_company_id"), // → crm_companies.id (resolved brand for occupied vacant)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -2212,6 +2215,8 @@ export const leasingScheduleUnits = pgTable("leasing_schedule_units", {
   updates: text("updates"),
   targetCompanyIds: text("target_company_ids").array(),
   sortOrder: integer("sort_order").default(0),
+  tenancyUnitId: varchar("tenancy_unit_id"), // → tenancy_schedule_units.id (canonical spine)
+  tenantCompanyId: varchar("tenant_company_id"), // → crm_companies.id (brand FK)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
