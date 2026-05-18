@@ -1099,4 +1099,96 @@ router.post("/api/properties/:propertyId/assign-tenant-brand", requireAuth, asyn
   }
 });
 
+// Promote downstream orphans into the tenancy spine. When the team
+// has leasing-schedule rows or available_units rows on a property
+// that don't yet exist on the tenancy schedule (i.e. tenancy_unit_id
+// is NULL because no matching unit_number was found), create the
+// missing tenancy_schedule_units row from the leasing/available data
+// and stamp tenancy_unit_id back. The tenancy schedule becomes the
+// complete spine in one click.
+//
+// Vacant units come across with status='Vacant', occupied leasing
+// rows come across as Occupied. Either way the row is on the spine
+// and the dashboard sees the unit consistently from then on.
+router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId } = req.params;
+
+    // Leasing rows without a matching tenancy unit on the same
+    // property. Create one tenancy row per distinct unit_name, then
+    // stamp the FK back on the leasing rows that match.
+    const leasingPromoted = await pool.query(
+      `WITH orphans AS (
+         SELECT DISTINCT ON (lower(trim(u.unit_name)))
+                u.unit_name, u.tenant_name, u.positioning, u.zone,
+                u.sqft AS nia_sqft, u.rent_pa AS passing_rent_pa,
+                u.lease_expiry, u.lease_break, u.tenant_company_id
+           FROM leasing_schedule_units u
+          WHERE u.property_id = $1
+            AND u.tenancy_unit_id IS NULL
+            AND coalesce(trim(u.unit_name), '') <> ''
+            AND NOT EXISTS (
+              SELECT 1 FROM tenancy_schedule_units ts
+               WHERE ts.property_id = $1
+                 AND lower(trim(ts.unit_number)) = lower(trim(u.unit_name))
+            )
+       )
+       INSERT INTO tenancy_schedule_units (
+         property_id, unit_number, premises, tenant_name, permitted_use,
+         nia_sqft, passing_rent_pa, lease_expiry, break_date,
+         status, tenant_company_id
+       )
+       SELECT $1, o.unit_name, o.zone, o.tenant_name, o.positioning,
+              o.nia_sqft, o.passing_rent_pa, o.lease_expiry, o.lease_break,
+              CASE WHEN coalesce(trim(o.tenant_name), '') = '' OR lower(o.tenant_name) IN ('vacant', 'void') THEN 'Vacant' ELSE 'Occupied' END,
+              o.tenant_company_id
+         FROM orphans o
+       RETURNING id`,
+      [propertyId]
+    );
+
+    // Same for available_units — vacant rows on the tracker that
+    // aren't on the tenancy spine.
+    const availablePromoted = await pool.query(
+      `WITH orphans AS (
+         SELECT DISTINCT ON (lower(trim(au.unit_name)))
+                au.unit_name, au.floor, au.sqft, au.use_class, au.asking_rent
+           FROM available_units au
+          WHERE au.property_id = $1
+            AND au.tenancy_unit_id IS NULL
+            AND coalesce(trim(au.unit_name), '') <> ''
+            AND NOT EXISTS (
+              SELECT 1 FROM tenancy_schedule_units ts
+               WHERE ts.property_id = $1
+                 AND lower(trim(ts.unit_number)) = lower(trim(au.unit_name))
+            )
+       )
+       INSERT INTO tenancy_schedule_units (
+         property_id, unit_number, floor_level, permitted_use,
+         nia_sqft, erv_pa, status, tenant_name
+       )
+       SELECT $1, o.unit_name, o.floor, o.use_class,
+              o.sqft, o.asking_rent, 'Vacant', 'VACANT'
+         FROM orphans o
+       RETURNING id`,
+      [propertyId]
+    );
+
+    // Now backfill tenancy_unit_id on every leasing / available row
+    // — same resolver as the normal backfill path.
+    const units = await backfillPropertyUnitFks(propertyId);
+
+    res.json({
+      tenancy_rows_created: (leasingPromoted.rowCount || 0) + (availablePromoted.rowCount || 0),
+      leasing_promoted: leasingPromoted.rowCount || 0,
+      available_promoted: availablePromoted.rowCount || 0,
+      ...units,
+    });
+  } catch (e: any) {
+    console.error("[promote-orphans]", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

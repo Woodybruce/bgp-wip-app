@@ -350,6 +350,28 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
     }
   };
 
+  const [promoting, setPromoting] = useState(false);
+  const runPromote = async () => {
+    setPromoting(true);
+    try {
+      const res = await fetch(`/api/properties/${propertyId}/promote-orphans-to-tenancy`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      toast({
+        title: "Promoted to tenancy spine",
+        description: `${j.tenancy_rows_created || 0} new tenancy rows · ${j.leasing_promoted || 0} leasing + ${j.available_promoted || 0} vacant lifted on`,
+      });
+      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
+      qc.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Promote failed", description: e.message, variant: "destructive" });
+    } finally {
+      setPromoting(false);
+    }
+  };
+
   if (isLoading || !data) {
     return <Skeleton className="h-24 w-full" />;
   }
@@ -374,7 +396,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
         <p className="text-[10px] text-muted-foreground leading-snug mb-1.5">
           Every tenant row should resolve to a CRM brand. Linked tenants click straight to the brand board; unlinked ones won't surface deals, KYC, or news.
         </p>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 flex-wrap">
           <Button
             size="sm" variant="default" className="h-6 text-[11px] gap-1 bg-purple-600 hover:bg-purple-700"
             onClick={runResolve} disabled={resolving}
@@ -383,6 +405,16 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
             {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
             Resolve unmatched tenants
           </Button>
+          {((data.integrity?.leasing_units_no_unit_fk || 0) > 0 || (data.integrity?.available_units_no_unit_fk || 0) > 0) && (
+            <Button
+              size="sm" variant="outline" className="h-6 text-[11px] gap-1 border-purple-300 text-purple-700 hover:bg-purple-50"
+              onClick={runPromote} disabled={promoting}
+              data-testid="btn-promote-orphans"
+            >
+              {promoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Promote orphans to tenancy
+            </Button>
+          )}
           {tr.unresolved > 0 && (
             <Button
               size="sm" variant="outline" className="h-6 text-[11px] gap-1"
