@@ -73,7 +73,35 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       deal_ref: v.deal_ref,
     }));
 
-    res.json([...occupied.rows, ...derivedVacant]);
+    // Compute unexpired-term (months) on the fly. `unexpired_term` runs to
+    // lease expiry; `unexpired_term_before_break` runs to the earliest of
+    // expiry / tenant break / landlord break. Keeps the value fresh without
+    // a daily cron — client sees today's number every render.
+    const now = Date.now();
+    const monthsBetween = (iso: string | Date | null | undefined): number | null => {
+      if (!iso) return null;
+      const t = new Date(iso).getTime();
+      if (!t || isNaN(t)) return null;
+      const diffMs = t - now;
+      return Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24 * 30.4375)));
+    };
+    const earliest = (...dates: (string | Date | null | undefined)[]): Date | null => {
+      let min: number | null = null;
+      for (const d of dates) {
+        if (!d) continue;
+        const t = new Date(d).getTime();
+        if (!t || isNaN(t)) continue;
+        if (min === null || t < min) min = t;
+      }
+      return min === null ? null : new Date(min);
+    };
+    const withComputed = occupied.rows.map((r: any) => ({
+      ...r,
+      unexpired_term: r.unexpired_term ?? monthsBetween(r.lease_expiry),
+      unexpired_term_before_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
+    }));
+
+    res.json([...withComputed, ...derivedVacant]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -113,6 +141,8 @@ const TENANCY_FIELDS = [
   // BGP integration
   "epc_rating", "rent_psf", "turnover_percent", "blended_erv",
   "deal_id", "letting_tracker_unit_id", "in_leasing_schedule", "sort_order",
+  // Landsec Bluewater feed additions
+  "landlord_break_date", "credit_rating", "deposit_held", "arrears_balance",
 ];
 
 const NUMERIC_FIELDS = new Set([
@@ -126,9 +156,12 @@ const NUMERIC_FIELDS = new Set([
   "service_charge", "service_charge_cap", "insurance",
   "rental_shortfalls", "topped_up_noi", "noi_pa",
   "rent_psf", "turnover_percent", "blended_erv", "sort_order",
+  "deposit_held", "arrears_balance",
 ]);
 
-const DATE_FIELDS = new Set(["lease_start", "break_date", "lease_expiry", "next_review_date"]);
+const DATE_FIELDS = new Set([
+  "lease_start", "break_date", "lease_expiry", "next_review_date", "landlord_break_date",
+]);
 
 function normaliseFieldValue(field: string, raw: any): any {
   if (raw === undefined) return undefined;
@@ -270,31 +303,43 @@ function normaliseHeader(h: any): string {
 const HEADER_ALIASES: Record<string, string> = {
   // Unit
   "grouping": "grouping",
+  "floor": "grouping",          // Landsec Bluewater feed uses "Floor"
   "unit": "unit_number",
+  "unit name": "unit_number",   // Landsec Bluewater feed
   "unit number": "unit_number",
   "use": "permitted_use",
+  "unit type": "permitted_use", // Landsec Bluewater feed
   "permitted use": "permitted_use",
   "status": "status",
+  "void status": "status",      // Landsec Bluewater feed
   "am initiative": "am_initiative",
   // Tenant
   "tenant": "tenant_name",
   "tenant name": "tenant_name",
+  "tenant account": "tenant_name", // Landsec Bluewater feed
   "trading as": "trading_name",
   "trading name": "trading_name",
   "tenant mix": "tenant_mix",
+  "future tenant": "target_tenants", // Landsec Bluewater feed
   // Lease
   "start": "lease_start",
   "lease start": "lease_start",
+  "letting start date": "lease_start", // Landsec Bluewater feed
   "break date": "break_date",
+  "earliest tenant break": "break_date",  // Landsec Bluewater feed
+  "earliest landlord break": "landlord_break_date", // Landsec Bluewater feed
   "details": "break_details",
   "notice note": "break_notice",
   "expiry": "lease_expiry",
   "lease expiry": "lease_expiry",
+  "letting expiry date": "lease_expiry", // Landsec Bluewater feed
   "term": "term_years",
   "term yrs": "term_years",
   "unexp term break": "unexpired_term_break",
   "unexp term expiry": "unexpired_term",
+  "months to expiry": "unexpired_term",  // Landsec feed gives months not years
   "next review": "next_review_date",
+  "review basis": "erv_profile",   // Landsec Bluewater feed
   "l t act": "outside_lt_act",
   "outside l t act": "outside_lt_act",
   "measurement": "measurement_type",
@@ -313,29 +358,43 @@ const HEADER_ALIASES: Record<string, string> = {
   "ground itza": "area_ground_itza",
   "gia sq ft": "gia_sqft",
   "nia sq ft": "nia_sqft",
+  "unit lettable area": "nia_sqft",   // Landsec Bluewater feed
   "itza itgf sq ft": "itza_sqft",
   "itza sq ft": "itza_sqft",
   "units applied": "units_applied",
-  // Rental
+  // Rental — Landsec's "Target Rent" is the ERV not the passing rent, so it
+  // lands in erv_pa. If a feed labels its real passing rent explicitly we'll
+  // still pick it up.
   "rent pa": "passing_rent_pa",
   "passing rent pa": "passing_rent_pa",
+  "target rent": "erv_pa",            // Landsec Bluewater feed — ERV not passing
   "marketing rent pa": "marketing_rent_pa",
   "t o rent payable": "turnover_rent_payable",
+  "t o": "turnover_percent",          // Landsec "T/O %" column
   "erv profile": "erv_profile",
   "erv pa": "erv_pa",
   "rent free value": "rent_free_value",
   "capex value": "capex_value",
+  "target rent psf": "rent_psf",      // Landsec Bluewater feed
   // Rates
   "rateable value": "rateable_value",
+  "unit rateable value": "rateable_value",  // Landsec Bluewater feed
   "rates payable pa": "rates_payable",
   "rates payable": "rates_payable",
+  "unit rates payable": "rates_payable",  // Landsec Bluewater feed
   // Occ costs
   "service charge pa": "service_charge",
   "service charge": "service_charge",
+  "unit service charge": "service_charge",  // Landsec Bluewater feed
   "service charge cap pa": "service_charge_cap",
   "service charge cap": "service_charge_cap",
   "insurance pa": "insurance",
   "insurance": "insurance",
+  "unit insurance": "insurance",      // Landsec Bluewater feed
+  // Landsec Bluewater feed — covenant fields
+  "credit check rating": "credit_rating",
+  "deposit held": "deposit_held",
+  "total arrears": "arrears_balance",
   // Shortfalls
   "shortfall liability l t": "shortfall_liability",
   "shortfall liability": "shortfall_liability",

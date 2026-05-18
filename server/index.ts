@@ -2964,6 +2964,14 @@ app.use("/api/branding/assets", express.static(
           // Per-property Strategic Principles & Priorities (Landsec key block).
           // JSONB: { enabled, fivePriorities[], positioningKey[], rules[], topThree[] }
           await addColIfMissing("crm_properties", "strategic_principles", "jsonb");
+          // Tenancy schedule additions from the Landsec Bluewater feed mapping
+          // (Earliest Landlord Break / Credit Check Rating / Deposit Held /
+          // Total Arrears). Portfolio Asset Manager lives on the property row.
+          await addColIfMissing("tenancy_schedule_units", "landlord_break_date", "date");
+          await addColIfMissing("tenancy_schedule_units", "credit_rating", "text");
+          await addColIfMissing("tenancy_schedule_units", "deposit_held", "real");
+          await addColIfMissing("tenancy_schedule_units", "arrears_balance", "real");
+          await addColIfMissing("crm_properties", "asset_manager", "text");
 
           // Tenancy schedule — bring in line with the Landsec investment-grade
           // template. Unit Details / Tenant / Lease / Areas (GIA+NIA splits) /

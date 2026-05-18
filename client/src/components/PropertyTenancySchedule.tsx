@@ -157,7 +157,7 @@ const BAND_COLOURS: Record<string, string> = {
 };
 
 const COLUMNS: Col[] = [
-  { field: "grouping",         label: "Grouping",       band: "Unit Details", width: 110, align: "left" },
+  { field: "grouping",         label: "Floor",          band: "Unit Details", width: 110, align: "left" },
   { field: "unit_number",      label: "Unit",           band: "Unit Details", width: 90,  align: "left" },
   { field: "permitted_use",    label: "Use",            band: "Unit Details", width: 120, align: "left" },
   { field: "status",           label: "Status",         band: "Unit Details", width: 90,  align: "left" },
@@ -494,7 +494,6 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
             {/* Category-band row — one cell per contiguous band, merged via
                 colSpan so the bands mirror the Landsec sheet layout. */}
             <tr>
-              <th className="bg-slate-800 text-white p-1 font-semibold text-[10px] uppercase tracking-wider sticky left-0 z-10" style={{ width: 30 }}></th>
               {(() => {
                 const bands: Array<{ name: string; span: number }> = [];
                 for (const c of COLUMNS) {
@@ -512,7 +511,6 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
             </tr>
             {/* Column labels */}
             <tr className="bg-gray-100 dark:bg-gray-800 border-b">
-              <th className="text-left p-2 font-medium w-8 sticky left-0 bg-gray-100 dark:bg-gray-800 z-10"></th>
               {COLUMNS.map((c) => (
                 <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}`} style={{ minWidth: c.width }}>
                   {c.label}
@@ -524,20 +522,20 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
             </tr>
           </thead>
           <tbody>
-            {zones.map(zone => {
-              const zoneUnits = filtered.filter(u => (u.premises || "Unassigned") === zone);
-              const isExpanded = expandedZones.has("__all__") || expandedZones.has(zone);
+            {/* Flat one-line-per-unit render — earlier zone-header rows
+                ("Bluewater Welcome Hall · £1.2m total rent") were doubling up
+                the visual line count without adding info. Floor is now its
+                own column so groups remain visible at a glance. */}
+            {filtered.map(unit => {
+              const isExpanded = true;
               return (
-                <ZoneGroup
-                  key={zone}
-                  zone={zone}
-                  units={zoneUnits}
-                  isExpanded={isExpanded}
-                  onToggleZone={() => toggleZone(zone)}
-                  onInlineUpdate={inlineUpdate}
-                  onDelete={(id) => deleteMutation.mutate(id)}
-                  matchDeal={matchDeal}
-                  matchLetting={matchLetting}
+                <UnitRow
+                  key={unit.id}
+                  unit={unit}
+                  onUpdate={inlineUpdate}
+                  onDelete={() => deleteMutation.mutate(unit.id)}
+                  deal={matchDeal(unit)}
+                  letting={matchLetting(unit)}
                 />
               );
             })}
@@ -592,12 +590,11 @@ function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
-  const totalCols = 1 + COLUMNS.length + 3;
+  const totalCols = COLUMNS.length + 3;
 
   if (unit.is_vacant) {
     return (
       <tr className="border-b hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-row-${unit.id}`}>
-        <td className="p-1 text-center text-muted-foreground sticky left-0 bg-amber-50/40 dark:bg-amber-900/10 z-10">—</td>
         <td className="p-1 font-medium text-amber-700 dark:text-amber-400" colSpan={Math.min(COLUMNS.length, 6)}>
           VACANT — {unit.unit_number || unit.premises || "—"}
           {unit.nia_sqft ? ` · ${unit.nia_sqft.toLocaleString()} sqft` : ""}
@@ -633,9 +630,6 @@ function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
 
   return (
     <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
-      <td className="p-1 text-center sticky left-0 bg-white dark:bg-gray-900 z-10 border-r">
-        <span className="text-muted-foreground text-[10px]">{unit.unit_number || "—"}</span>
-      </td>
       {COLUMNS.map((c) => {
         const raw = (unit as any)[c.field];
         const displayVal = raw == null ? "" : String(raw);
