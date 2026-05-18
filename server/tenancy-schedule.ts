@@ -258,6 +258,38 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
       ).catch((e: any) => console.warn("[tenancy] auto-resolve on insert failed:", e?.message));
     }
 
+    // Auto-knit: any existing leasing / available / deal rows on the
+    // same property with a matching unit_number should attach to the
+    // new spine row. Drops the "Promote orphans" pressure since the
+    // attachment now happens at insert time.
+    if (newId) {
+      const newRow = result.rows[0];
+      const unitNum = (newRow?.unit_number || "").trim().toLowerCase();
+      if (unitNum) {
+        await Promise.all([
+          pool.query(
+            `UPDATE leasing_schedule_units SET tenancy_unit_id = $1
+              WHERE property_id = $2 AND tenancy_unit_id IS NULL
+                AND lower(trim(coalesce(unit_name, ''))) = $3`,
+            [newId, d.property_id, unitNum]
+          ),
+          pool.query(
+            `UPDATE available_units SET tenancy_unit_id = $1
+              WHERE property_id = $2 AND tenancy_unit_id IS NULL
+                AND lower(trim(coalesce(unit_name, ''))) = $3`,
+            [newId, d.property_id, unitNum]
+          ),
+          pool.query(
+            `UPDATE crm_deals d SET tenancy_unit_id = $1
+              WHERE d.property_id = $2 AND d.tenancy_unit_id IS NULL
+                AND lower(trim(coalesce(
+                  (SELECT unit_name FROM property_units WHERE id = d.unit_id), ''))) = $3`,
+            [newId, d.property_id, unitNum]
+          ),
+        ]).catch((e: any) => console.warn("[tenancy] auto-knit downstream failed:", e?.message));
+      }
+    }
+
     res.json(result.rows[0]);
   } catch (e: any) {
     console.error("[tenancy] create unit failed:", e?.message);
@@ -300,6 +332,47 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
           WHERE id = $1`,
         [id]
       ).catch((e: any) => console.warn("[tenancy] re-resolve failed:", e?.message));
+    }
+
+    // If the unit_number was renamed, re-knit downstream projections:
+    // detach rows still pointing at the old name, attach rows whose
+    // unit_name matches the new one. Keeps the spine ↔ projection
+    // joins coherent without a manual re-resolve.
+    if ("unit_number" in d) {
+      const newRow = result.rows[0];
+      const propId = newRow?.property_id;
+      const newUnit = (newRow?.unit_number || "").trim().toLowerCase();
+      if (propId) {
+        await Promise.all([
+          // Detach rows whose unit_name no longer matches the spine row.
+          pool.query(
+            `UPDATE leasing_schedule_units SET tenancy_unit_id = NULL
+              WHERE tenancy_unit_id = $1
+                AND lower(trim(coalesce(unit_name, ''))) <> $2`,
+            [id, newUnit]
+          ),
+          pool.query(
+            `UPDATE available_units SET tenancy_unit_id = NULL
+              WHERE tenancy_unit_id = $1
+                AND lower(trim(coalesce(unit_name, ''))) <> $2`,
+            [id, newUnit]
+          ),
+          // Attach rows on the same property whose unit_name matches
+          // the new value and that don't yet have a tenancy_unit_id.
+          newUnit ? pool.query(
+            `UPDATE leasing_schedule_units SET tenancy_unit_id = $1
+              WHERE property_id = $2 AND tenancy_unit_id IS NULL
+                AND lower(trim(coalesce(unit_name, ''))) = $3`,
+            [id, propId, newUnit]
+          ) : Promise.resolve(),
+          newUnit ? pool.query(
+            `UPDATE available_units SET tenancy_unit_id = $1
+              WHERE property_id = $2 AND tenancy_unit_id IS NULL
+                AND lower(trim(coalesce(unit_name, ''))) = $3`,
+            [id, propId, newUnit]
+          ) : Promise.resolve(),
+        ]).catch((e: any) => console.warn("[tenancy] rename re-knit failed:", e?.message));
+      }
     }
 
     res.json(result.rows[0]);
