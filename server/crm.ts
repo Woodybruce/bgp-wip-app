@@ -2389,6 +2389,26 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         if (priceItza !== null) (deal as any).priceItza = priceItza;
       }
 
+      // Canonical unit FK: when the new deal points at a property_units
+      // row, stamp the matching tenancy_schedule_units id so the deal
+      // is bound to the canonical unit by ID, not by a soft-matched
+      // unit_name. No-op for deals that aren't linked to a unit yet.
+      if ((deal as any).propertyId && (deal as any).unitId) {
+        await pool.query(
+          `UPDATE crm_deals d
+              SET tenancy_unit_id = (
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = d.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
+                     (SELECT unit_name FROM property_units WHERE id = d.unit_id), '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              )
+            WHERE d.id = $1 AND d.tenancy_unit_id IS NULL`,
+          [deal.id]
+        ).catch((e: any) => console.warn("[deals] tenancy_unit_id stamp failed:", e?.message));
+      }
+
       res.status(201).json(deal);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
@@ -2563,6 +2583,28 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if ("learning" in req.body) delete req.body.learning;
 
       const deal = await storage.updateCrmDeal(req.params.id, req.body);
+
+      // Re-resolve tenancy_unit_id whenever property_id or unit_id
+      // changes — the canonical unit FK must stay aligned with the
+      // (property, unit) pair the deal points at. Best-effort.
+      if ("propertyId" in req.body || "unitId" in req.body) {
+        await pool.query(
+          `UPDATE crm_deals d
+              SET tenancy_unit_id = CASE
+                WHEN d.unit_id IS NULL THEN NULL
+                ELSE (
+                  SELECT ts.id FROM tenancy_schedule_units ts
+                   WHERE ts.property_id = d.property_id
+                     AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
+                       (SELECT unit_name FROM property_units WHERE id = d.unit_id), '')))
+                     AND coalesce(trim(ts.unit_number), '') <> ''
+                   LIMIT 1
+                )
+              END
+            WHERE d.id = $1`,
+          [req.params.id]
+        ).catch((e: any) => console.warn("[deals] tenancy_unit_id re-stamp failed:", e?.message));
+      }
 
       // Auto-copy to comps schedule on COM transition (snapshot, deal stays on tracker until INV).
       // Best-effort: never fails the deal update.

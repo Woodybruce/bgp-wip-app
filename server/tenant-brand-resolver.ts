@@ -138,3 +138,76 @@ export async function resolveBrandIdForTenantName(tenantName: string): Promise<s
   );
   return rows[0]?.brand_id || null;
 }
+
+// SQL fragment that resolves a free-text unit reference (unit_name /
+// premises) on a given property to a tenancy_schedule_units.id —
+// the canonical unit FK. Used to backfill tenancy_unit_id on deals,
+// available_units, and leasing_schedule_units. Soft match by
+// lowercased trimmed unit_number; collisions return any matching
+// row (no good way to disambiguate without manual help).
+//
+// Pass the property param name as $propertyParam and the unit-name
+// param as $unitParam (caller's $N placeholders).
+export function resolveTenancyUnitIdSubquery(propertyParam: string, unitParam: string): string {
+  return `(
+    SELECT id FROM tenancy_schedule_units
+     WHERE property_id = ${propertyParam}
+       AND lower(trim(unit_number)) = lower(trim(coalesce(${unitParam}, '')))
+       AND coalesce(trim(unit_number), '') <> ''
+     LIMIT 1
+  )`;
+}
+
+// Property-wide backfill of crm_deals.tenancy_unit_id + the same on
+// available_units. Matches by unit_name on the deal/vacant row →
+// tenancy_schedule_units.unit_number on the same property. Returns
+// the count linked so the UI can show progress.
+export async function backfillPropertyUnitFks(propertyId: string): Promise<{
+  deals_linked: number; available_linked: number; leasing_linked: number;
+}> {
+  // Deals: link via property_units.unit_name → tenancy.unit_number.
+  // Only deals that already point at a property_units row get a
+  // tenancy_unit_id — anything else is genuinely unattached and the
+  // team has to pick a unit before it links.
+  const deals = await pool.query(
+    `UPDATE crm_deals d
+        SET tenancy_unit_id = (
+          SELECT ts.id FROM tenancy_schedule_units ts
+           WHERE ts.property_id = $1
+             AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
+               (SELECT unit_name FROM property_units WHERE id = d.unit_id), '')))
+             AND coalesce(trim(ts.unit_number), '') <> ''
+           LIMIT 1
+        )
+      WHERE (d.property_id = $1 OR EXISTS (
+              SELECT 1 FROM property_units pu WHERE pu.id = d.unit_id AND pu.property_id = $1
+            ))
+        AND d.unit_id IS NOT NULL
+        AND d.tenancy_unit_id IS NULL`,
+    [propertyId]
+  );
+
+  const available = await pool.query(
+    `UPDATE available_units au
+        SET tenancy_unit_id = ${resolveTenancyUnitIdSubquery("$1", "au.unit_name")}
+      WHERE au.property_id = $1
+        AND au.tenancy_unit_id IS NULL
+        AND coalesce(trim(au.unit_name), '') <> ''`,
+    [propertyId]
+  );
+
+  const leasing = await pool.query(
+    `UPDATE leasing_schedule_units u
+        SET tenancy_unit_id = ${resolveTenancyUnitIdSubquery("$1", "u.unit_name")}
+      WHERE u.property_id = $1
+        AND u.tenancy_unit_id IS NULL
+        AND coalesce(trim(u.unit_name), '') <> ''`,
+    [propertyId]
+  );
+
+  return {
+    deals_linked: deals.rowCount || 0,
+    available_linked: available.rowCount || 0,
+    leasing_linked: leasing.rowCount || 0,
+  };
+}

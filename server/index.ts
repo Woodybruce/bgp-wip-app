@@ -3119,6 +3119,15 @@ app.use("/api/branding/assets", express.static(
           // path joins on this in preference to the soft name match.
           await addColIfMissing("tenancy_schedule_units", "tenant_company_id", "varchar");
           await addColIfMissing("available_units", "tenant_company_id", "varchar");
+          // Canonical unit FK — every downstream row (deal, vacant
+          // unit, leasing row) should point at a tenancy_schedule row
+          // by ID. Stops the unit_name string drift between three
+          // overlapping tables. leasing_schedule_units.tenancy_unit_id
+          // was added earlier; add to crm_deals + available_units to
+          // match. Backfilled by resolveTenancyUnitForRow during
+          // import + the property-level adopt buttons.
+          await addColIfMissing("crm_deals", "tenancy_unit_id", "varchar");
+          await addColIfMissing("available_units", "tenancy_unit_id", "varchar");
 
           // Auto-track all tenant companies as brands (idempotent).
           await db.execute(sql.raw(`

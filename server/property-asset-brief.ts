@@ -102,6 +102,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          FROM crm_deals d
          LEFT JOIN crm_properties p ON p.id = d.property_id
          LEFT JOIN property_units pu ON pu.id = d.unit_id
+         LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
          LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
          LEFT JOIN LATERAL (
            SELECT array_agg(da2.user_id) AS user_ids
@@ -111,7 +112,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
            SELECT SUM(amount_pence)::bigint AS amount_pence
              FROM deal_fee_allocations fa WHERE fa.deal_id = d.id
          ) df ON true
-        WHERE (d.property_id = $1 OR pu.property_id = $1)
+        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
           AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')
         ORDER BY d.updated_at DESC NULLS LAST
         LIMIT 60`,
@@ -160,7 +161,8 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          LEFT JOIN crm_companies co ON co.id = c.company_id
          LEFT JOIN crm_deals d ON d.id = i.deal_id
          LEFT JOIN property_units pu ON pu.id = d.unit_id
-        WHERE (d.property_id = $1 OR pu.property_id = $1)
+         LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
           AND i.interaction_date > NOW() - INTERVAL '14 days'
         ORDER BY i.interaction_date DESC
         LIMIT 30`,
@@ -499,7 +501,8 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
     const activeDealsLinked = await pool.query<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM crm_deals d
          LEFT JOIN property_units pu ON pu.id = d.unit_id
-        WHERE (d.property_id = $1 OR pu.property_id = $1)
+         LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
           AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')`,
       [propertyId]
     ).then(r => r.rows[0]?.n || 0);
@@ -598,6 +601,62 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
       [propertyId]
     ).then(r => r.rows[0] || { total: 0, resolved: 0, unresolved: 0 });
 
+    // Integrity gaps — things the audit was previously blind to.
+    //
+    // 1. Duplicate unit_numbers on the tenancy schedule for this
+    //    property. Soft-matched joins downstream collide on these so
+    //    deals + available_units can end up pointing at the wrong
+    //    row. We don't enforce uniqueness yet (might break existing
+    //    data) but we surface the duplicates so the team can rename.
+    //
+    // 2. Tenancy rows where tenant_company_id points at a brand that
+    //    has been merged into another brand. The FK is technically
+    //    set but the row no longer rolls up to the right brand board.
+    //    Easy to miss because the brand still has a name.
+    //
+    // 3. Deals whose unit_id sits on a different property than their
+    //    declared property_id. Either the unit moved or the property
+    //    was edited — either way the deal is now ambiguous.
+    //
+    // 4. available_units rows whose deal_id points at a deal on
+    //    another property. Same shape as #3 but for the leasing
+    //    tracker side.
+    //
+    // 5. Schedule rows that still don't have a tenancy_unit_id FK on
+    //    the leasing schedule / available_units / deals — the unit
+    //    spine is incomplete.
+    const integrity = await pool.query(
+      `WITH dups AS (
+         SELECT lower(trim(unit_number)) AS key, COUNT(*) AS n
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND coalesce(trim(unit_number), '') <> ''
+          GROUP BY 1 HAVING COUNT(*) > 1
+       )
+       SELECT
+         (SELECT COUNT(*)::int FROM dups) AS duplicate_unit_numbers,
+         (SELECT COUNT(*)::int FROM tenancy_schedule_units t
+            JOIN crm_companies c ON c.id = t.tenant_company_id
+           WHERE t.property_id = $1 AND c.merged_into_id IS NOT NULL) AS tenants_pointing_at_merged_brand,
+         (SELECT COUNT(*)::int FROM crm_deals d
+            JOIN property_units pu ON pu.id = d.unit_id
+           WHERE d.property_id IS NOT NULL
+             AND d.unit_id IS NOT NULL
+             AND pu.property_id <> d.property_id
+             AND (d.property_id = $1 OR pu.property_id = $1)) AS deals_with_property_unit_mismatch,
+         (SELECT COUNT(*)::int FROM available_units au
+            JOIN crm_deals d ON d.id = au.deal_id
+           WHERE au.property_id = $1
+             AND d.property_id IS NOT NULL
+             AND d.property_id <> au.property_id) AS available_units_deal_on_other_property,
+         (SELECT COUNT(*)::int FROM available_units WHERE property_id = $1 AND tenancy_unit_id IS NULL) AS available_units_no_unit_fk,
+         (SELECT COUNT(*)::int FROM leasing_schedule_units WHERE property_id = $1 AND tenancy_unit_id IS NULL) AS leasing_units_no_unit_fk,
+         (SELECT COUNT(*)::int FROM crm_deals
+           WHERE (property_id = $1 OR EXISTS (SELECT 1 FROM property_units pu WHERE pu.id = unit_id AND pu.property_id = $1))
+             AND COALESCE(status, '') NOT IN ('WIT', 'COM', 'INV')
+             AND tenancy_unit_id IS NULL) AS active_deals_no_unit_fk`,
+      [propertyId]
+    ).then(r => r.rows[0] || {});
+
     // Contacts surfaced via deals on this property.
     const contactsViaDeals = await pool.query<{ n: number }>(
       `SELECT COUNT(DISTINCT contact_id)::int AS n FROM (
@@ -635,6 +694,15 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
       },
       tenants_unlinked_to_crm_company: tenantsInScheduleUnlinked,
       tenancy_resolution: tenancyResolution,
+      integrity: {
+        duplicate_unit_numbers: Number(integrity.duplicate_unit_numbers) || 0,
+        tenants_pointing_at_merged_brand: Number(integrity.tenants_pointing_at_merged_brand) || 0,
+        deals_with_property_unit_mismatch: Number(integrity.deals_with_property_unit_mismatch) || 0,
+        available_units_deal_on_other_property: Number(integrity.available_units_deal_on_other_property) || 0,
+        available_units_no_unit_fk: Number(integrity.available_units_no_unit_fk) || 0,
+        leasing_units_no_unit_fk: Number(integrity.leasing_units_no_unit_fk) || 0,
+        active_deals_no_unit_fk: Number(integrity.active_deals_no_unit_fk) || 0,
+      },
     });
   } catch (err: any) {
     console.error("[linkage-audit]", err?.message, err?.stack);

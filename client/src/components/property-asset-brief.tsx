@@ -421,9 +421,26 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
         <Row label="available_units" value={data.units.available_units} />
         <Row label="Schedule units not yet in master" value={data.units.schedule_units_missing_from_property_units} warn />
       </div>
-      {(data.deals.landlord_orphans > 0 || data.units.schedule_units_missing_from_property_units > 0 || tr.unresolved > 0) && (
+
+      {data.integrity && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Integrity gaps</div>
+          <Row label="Duplicate unit numbers on tenancy" value={data.integrity.duplicate_unit_numbers} warn />
+          <Row label="Tenants linked to a merged brand" value={data.integrity.tenants_pointing_at_merged_brand} warn />
+          <Row label="Deals with property/unit mismatch" value={data.integrity.deals_with_property_unit_mismatch} warn />
+          <Row label="Available units' deal on other property" value={data.integrity.available_units_deal_on_other_property} warn />
+          <Row label="Active deals not yet on tenancy unit" value={data.integrity.active_deals_no_unit_fk} warn />
+          <Row label="Available units not on tenancy unit" value={data.integrity.available_units_no_unit_fk} warn />
+          <Row label="Leasing rows not on tenancy unit" value={data.integrity.leasing_units_no_unit_fk} warn />
+        </div>
+      )}
+
+      {(data.deals.landlord_orphans > 0
+        || data.units.schedule_units_missing_from_property_units > 0
+        || tr.unresolved > 0
+        || (data.integrity && Object.values(data.integrity).some((v: any) => Number(v) > 0))) && (
         <p className="text-[10px] text-muted-foreground italic pt-1 border-t leading-snug">
-          Red numbers = something the dashboard can't see yet. Resolve unmatched tenants above, tag deals with property_id, or promote schedule units into the master.
+          Red numbers = something the dashboard can't see yet. Hit "Resolve unmatched tenants" above — it also stamps the canonical unit FK on every deal / available / leasing row. Then adopt any orphan deals and rename duplicate units on the tenancy schedule.
         </p>
       )}
 

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import multer from "multer";
-import { backfillPropertyTenants, resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { backfillPropertyTenants, backfillPropertyUnitFks, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -995,15 +995,19 @@ router.get("/api/tenancy-schedule/audit-legacy-columns", requireAuth, async (_re
   }
 });
 
-// One-click backfill — runs the tenant→brand resolver across every
-// tenancy / leasing / available row on the property where the FK is
-// still NULL and writes the match. UI surfaces this on the property
-// linkage card so the team can adopt all matchable tenants in one go.
+// One-click backfill — runs the tenant→brand resolver AND the
+// tenancy_unit_id resolver across every tenancy / leasing / available
+// row on the property where the FKs are still NULL. UI surfaces this
+// on the property linkage card so the team can resolve everything in
+// one go.
 router.post("/api/properties/:propertyId/resolve-tenants", requireAuth, async (req, res) => {
   try {
     const { propertyId } = req.params;
-    const result = await backfillPropertyTenants(propertyId);
-    res.json(result);
+    const [tenants, units] = await Promise.all([
+      backfillPropertyTenants(propertyId),
+      backfillPropertyUnitFks(propertyId),
+    ]);
+    res.json({ ...tenants, ...units });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
