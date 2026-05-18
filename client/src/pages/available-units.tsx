@@ -2223,11 +2223,68 @@ function UnitFormDialog({
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
   const [unitPickerOpen, setUnitPickerOpen] = useState(false);
-  const existingUnitsOnProperty = form.propertyId
-    ? propertyUnits.filter(pu => pu.propertyId === form.propertyId)
-    : [];
-  const matchedExistingUnit = existingUnitsOnProperty.find(
-    pu => pu.unitName.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
+
+  // Tenancy schedule is the canonical unit source. When a property
+  // is picked, we fetch its tenancy rows and let the user pick from
+  // there — picking pre-fills sqft/use from the tenancy row, and the
+  // server stamps tenancy_unit_id on the new available_units row.
+  // Falls back to property_units for legacy properties without a
+  // tenancy schedule yet.
+  const { data: tenancyUnits = [] } = useQuery<Array<{
+    id: string | number; unit_number: string; premises: string | null;
+    permitted_use: string | null; nia_sqft: number | null; gia_sqft: number | null;
+    floor_level: string | null; status: string | null; tenant_name: string | null;
+  }>>({
+    queryKey: ["/api/tenancy-schedule/property", form.propertyId],
+    queryFn: async () => {
+      if (!form.propertyId) return [];
+      const r = await fetch(`/api/tenancy-schedule/property/${form.propertyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!form.propertyId && open,
+    staleTime: 60_000,
+  });
+
+  // Merge tenancy + property_units into one canonical list, tenancy
+  // first. De-dupe by lowercased unit name so a property_units row
+  // that already appears in tenancy doesn't double up.
+  const pickerOptions = (() => {
+    const seen = new Set<string>();
+    const out: Array<{ id: string; name: string; floor: string | null; sqft: number | null; useClass: string | null; source: "tenancy" | "property"; vacant?: boolean }> = [];
+    for (const t of tenancyUnits) {
+      const key = (t.unit_number || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const isVacant = (t.status || "").toLowerCase() === "vacant" || (t.tenant_name || "").toLowerCase() === "vacant";
+      out.push({
+        id: String(t.id),
+        name: t.unit_number,
+        floor: t.floor_level || t.premises,
+        sqft: t.nia_sqft || t.gia_sqft,
+        useClass: t.permitted_use,
+        source: "tenancy",
+        vacant: isVacant,
+      });
+    }
+    const legacyUnits = form.propertyId ? propertyUnits.filter(pu => pu.propertyId === form.propertyId) : [];
+    for (const pu of legacyUnits) {
+      const key = (pu.unitName || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: pu.id,
+        name: pu.unitName,
+        floor: pu.floor || null,
+        sqft: pu.sqft ?? null,
+        useClass: pu.useClass || null,
+        source: "property",
+      });
+    }
+    return out;
+  })();
+  const matchedExistingUnit = pickerOptions.find(
+    pu => pu.name.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
   );
 
   return (
@@ -2270,44 +2327,51 @@ function UnitFormDialog({
                   <Input
                     value={form.unitName}
                     onChange={e => upd("unitName", e.target.value)}
-                    onFocus={() => existingUnitsOnProperty.length > 0 && setUnitPickerOpen(true)}
-                    placeholder={form.propertyId ? "Pick or type a new unit name" : "Select a property first"}
+                    onFocus={() => pickerOptions.length > 0 && setUnitPickerOpen(true)}
+                    placeholder={form.propertyId ? "Pick from tenancy schedule or type a new name" : "Select a property first"}
                     disabled={!form.propertyId}
                     data-testid="input-unit-name"
                   />
-                  {form.unitName && !matchedExistingUnit && existingUnitsOnProperty.length > 0 && (
-                    <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created on this property</p>
+                  {form.unitName && !matchedExistingUnit && pickerOptions.length > 0 && (
+                    <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created. Add to the tenancy schedule next so it lives on the spine.</p>
                   )}
-                  {matchedExistingUnit && (
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Existing unit on this property — will be linked</p>
+                  {matchedExistingUnit?.source === "tenancy" && (
+                    <p className="text-[10px] text-purple-700 mt-0.5">Tenancy schedule unit — canonical link will be stamped.</p>
+                  )}
+                  {matchedExistingUnit?.source === "property" && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Legacy property_units row — add to the tenancy schedule to make it canonical.</p>
                   )}
                 </div>
               </PopoverTrigger>
-              {existingUnitsOnProperty.length > 0 && (
+              {pickerOptions.length > 0 && (
                 <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
                   <Command>
-                    <CommandInput placeholder="Search existing units..." />
+                    <CommandInput placeholder="Search units..." />
                     <CommandList>
                       <CommandEmpty>No matches. Keep typing to create a new unit.</CommandEmpty>
-                      <CommandGroup heading={`Units on this property (${existingUnitsOnProperty.length})`}>
-                        {existingUnitsOnProperty.map(pu => (
+                      <CommandGroup heading={`Tenancy schedule (${pickerOptions.filter(o => o.source === "tenancy").length}) · Legacy (${pickerOptions.filter(o => o.source === "property").length})`}>
+                        {pickerOptions.map(pu => (
                           <CommandItem
-                            key={pu.id}
-                            value={pu.unitName}
+                            key={`${pu.source}-${pu.id}`}
+                            value={pu.name}
                             onSelect={() => {
                               setForm({
                                 ...form,
-                                unitName: pu.unitName,
+                                unitName: pu.name,
                                 floor: pu.floor || form.floor,
                                 sqft: pu.sqft != null ? String(pu.sqft) : form.sqft,
                                 useClass: pu.useClass || form.useClass,
-                                condition: pu.condition || form.condition,
-                                epcRating: pu.epcRating || form.epcRating,
                               });
                               setUnitPickerOpen(false);
                             }}
                           >
-                            <span className="text-sm">{pu.unitName}</span>
+                            <span className="text-sm">{pu.name}</span>
+                            {pu.source === "tenancy" && (
+                              <Badge variant="outline" className="ml-1.5 text-[9px] border-purple-300 text-purple-700">tenancy</Badge>
+                            )}
+                            {pu.vacant && (
+                              <Badge variant="outline" className="ml-1 text-[9px] border-amber-300 text-amber-700">vacant</Badge>
+                            )}
                             {pu.floor && <span className="text-xs text-muted-foreground ml-2">{pu.floor}</span>}
                             {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sqft</span>}
                           </CommandItem>
