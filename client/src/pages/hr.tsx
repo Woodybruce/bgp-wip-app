@@ -818,28 +818,11 @@ function CommissionTab({ userId }: { userId: string }) {
         </CardContent>
       </Card>
 
-      {/* ── Top deals YTD ─────────────────────────────────────────────── */}
-      {data.topDeals.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Top deals this scheme year</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1.5">
-              {data.topDeals.map(d => (
-                <div key={d.id} className="flex items-center gap-3 p-2 rounded-md border text-sm">
-                  <span className={`w-1.5 h-6 rounded-full shrink-0 ${stageColor(d.status)}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{d.name}</div>
-                    <div className="text-[11px] text-muted-foreground">{stageLabel(d.status)}{d.date ? ` · ${d.date}` : ""}</div>
-                  </div>
-                  <span className="font-semibold text-sm shrink-0">{fmtSalary(d.fee)}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* ── Top deals YTD — REMOVED Nov 2025: was double-counting with
+           the 'Working on right now' card above (same active deals,
+           same fee share). Billings by year (below) is the right
+           historical view. Keep the server-side topDeals payload for
+           any other consumer; just don't render it here. */}
 
       {/* ── Billings by year (history) ───────────────────────────────── */}
       {data.billingsByYear.length > 0 && (
