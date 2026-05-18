@@ -559,17 +559,26 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
-            <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
-              <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
-                <PropertyIntelligencePanel property={property} />
-              </CollapsibleCard>
-            </ErrorBoundary>
+            {/* Property Intelligence + Leasing Pitch are pre-instruction
+                 tools (catchment / Land Registry research; brand pitch
+                 to landlords we don't yet act for). Once it's a BGP
+                 Instruction we're past pitching, into delivery — hide
+                 both so the page focuses on the operational view. */}
+            {!(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction" || property.status === "Sales Instruction") && (
+              <>
+                <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
+                  <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
+                    <PropertyIntelligencePanel property={property} />
+                  </CollapsibleCard>
+                </ErrorBoundary>
 
-            <ErrorBoundary compact name="Leasing pitch">
-              <CollapsibleCard open={mainSections.pitch} onToggle={() => toggleMain("pitch")} icon={Sparkles} title="Leasing Pitch" testId="toggle-pitch">
-                <LeasingPitchPanel propertyId={property.id} />
-              </CollapsibleCard>
-            </ErrorBoundary>
+                <ErrorBoundary compact name="Leasing pitch">
+                  <CollapsibleCard open={mainSections.pitch} onToggle={() => toggleMain("pitch")} icon={Sparkles} title="Leasing Pitch" testId="toggle-pitch">
+                    <LeasingPitchPanel propertyId={property.id} />
+                  </CollapsibleCard>
+                </ErrorBoundary>
+              </>
+            )}
 
             <ErrorBoundary compact name="Brand gap">
               <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
