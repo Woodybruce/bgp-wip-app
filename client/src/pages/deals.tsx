@@ -1371,7 +1371,7 @@ interface FeeAllocationRow {
 
 export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId: string; dealFee: number | null | undefined; users: { id: string; name: string }[]; colorMap?: Record<string, string> }) {
   const { toast } = useToast();
-  const { data: allocations, isLoading } = useQuery<DealFeeAllocation[]>({
+  const { data: allocations = [], isLoading } = useQuery<DealFeeAllocation[]>({
     queryKey: ["/api/crm/deals", dealId, "fee-allocations"],
     queryFn: async () => {
       const res = await fetch(`/api/crm/deals/${dealId}/fee-allocations`, { credentials: "include", headers: { Authorization: `Bearer ${localStorage.getItem("bgp_auth_token")}` } });
@@ -1680,7 +1680,7 @@ function HotsChecklistDialog({
     error?: string;
   } | null>(null);
 
-  const { data: existingAllocations } = useQuery<DealFeeAllocation[]>({
+  const { data: existingAllocations = [] } = useQuery<DealFeeAllocation[]>({
     queryKey: ["/api/crm/deals", deal?.id, "fee-allocations"],
     enabled: !!deal?.id && open,
   });
@@ -3982,7 +3982,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   });
   const userColorMap2 = useMemo(() => buildUserColorMap(users as any), [users]);
 
-  const { data: allFeeAllocations } = useQuery<Record<string, DealFeeAllocation[]>>({
+  const { data: allFeeAllocations = {} } = useQuery<Record<string, DealFeeAllocation[]>>({
     queryKey: ["/api/crm/fee-allocations"],
   });
 

@@ -1419,17 +1419,37 @@ router.post("/api/properties/:propertyId/merge-tenancy-units", requireAuth, asyn
   try {
     const pool = await getPool();
     const { propertyId } = req.params;
-    const { primaryId, secondaryId } = req.body as { primaryId: string; secondaryId: string };
+    const { primaryId, secondaryId, force } = req.body as { primaryId: string; secondaryId: string; force?: boolean };
     if (!primaryId || !secondaryId) return res.status(400).json({ error: "primaryId and secondaryId required" });
     if (primaryId === secondaryId) return res.status(400).json({ error: "primary and secondary must differ" });
 
     const check = await pool.query(
-      `SELECT id, property_id FROM tenancy_schedule_units WHERE id IN ($1, $2)`,
+      `SELECT id, property_id, tenant_company_id, tenant_name, trading_name
+         FROM tenancy_schedule_units WHERE id IN ($1, $2)`,
       [primaryId, secondaryId]
     );
     if (check.rows.length !== 2) return res.status(404).json({ error: "one or both rows not found" });
     for (const row of check.rows) {
       if (row.property_id !== propertyId) return res.status(400).json({ error: "rows must be on the same property" });
+    }
+
+    // Warn on brand mismatch — if primary and secondary point at
+    // different resolved brands, merging silently overwrites the
+    // secondary's brand with the primary's. The team should confirm
+    // they actually mean to do that; require force=true to proceed.
+    const primary = check.rows.find((r: any) => r.id === primaryId);
+    const secondary = check.rows.find((r: any) => r.id === secondaryId);
+    if (
+      primary?.tenant_company_id && secondary?.tenant_company_id &&
+      primary.tenant_company_id !== secondary.tenant_company_id &&
+      !force
+    ) {
+      return res.status(409).json({
+        error: "brand_mismatch",
+        message: `Primary (${primary.tenant_name || primary.trading_name || "?"}) and secondary (${secondary.tenant_name || secondary.trading_name || "?"}) resolve to different brands. Send force=true to merge anyway — the secondary's brand will be replaced with the primary's.`,
+        primary: { id: primary.id, tenant_company_id: primary.tenant_company_id, tenant_name: primary.tenant_name },
+        secondary: { id: secondary.id, tenant_company_id: secondary.tenant_company_id, tenant_name: secondary.tenant_name },
+      });
     }
 
     // Move FKs. Best-effort per table.

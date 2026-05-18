@@ -688,15 +688,29 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
   });
   const [busy, setBusy] = useState<string | null>(null);
 
-  const merge = async (primaryId: string, secondaryId: string) => {
+  const merge = async (primaryId: string, secondaryId: string, force = false) => {
     setBusy(secondaryId);
     try {
       const r = await fetch(`/api/properties/${propertyId}/merge-tenancy-units`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ primaryId, secondaryId }),
+        body: JSON.stringify({ primaryId, secondaryId, force }),
       });
+      // 409 brand_mismatch — primary and secondary resolve to
+      // different brands. Confirm with the team before forcing.
+      if (r.status === 409) {
+        const body = await r.json().catch(() => ({}));
+        if (body?.error === "brand_mismatch") {
+          const confirmed = window.confirm(
+            `${body.message}\n\nClick OK to merge anyway (secondary's brand link will be replaced).`
+          );
+          if (confirmed) {
+            await merge(primaryId, secondaryId, true);
+          }
+          return;
+        }
+      }
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${r.status}`);

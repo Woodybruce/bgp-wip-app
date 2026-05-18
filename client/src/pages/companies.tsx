@@ -222,7 +222,7 @@ function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentN
           Sub-entities ({subs.length})
         </h3>
         <div className="space-y-1">
-          {subs.map((sub: any) => (
+          {subs.filter((sub: any) => sub?.id).map((sub: any) => (
             <Link key={sub.id} href={`/companies/${sub.id}`}>
               <div className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-muted/60 cursor-pointer transition-colors">
                 <div className="flex items-center gap-2 min-w-0">
