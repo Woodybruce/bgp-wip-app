@@ -275,6 +275,46 @@ router.get("/api/instagram/health", requireAuth, async (_req: Request, res: Resp
   });
 });
 
+// Diagnostic — runs three Meta calls in sequence and returns each raw
+// response so we can pinpoint exactly where the lookup is failing:
+//   1. Can the token read /me ?                (token validity + identity)
+//   2. Can the token read the configured Business Account ID ? (perms on it)
+//   3. Can it do Business Discovery on @<handle> ?              (BD itself)
+router.get("/api/instagram/probe", requireAuth, async (req: Request, res: Response) => {
+  const token = process.env.META_ACCESS_TOKEN || "";
+  const igBusinessId = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || "";
+  const handle = String(req.query.handle || "andotherstories").replace(/^@/, "");
+  if (!token || !igBusinessId) {
+    return res.json({ ok: false, error: "Missing META_ACCESS_TOKEN or INSTAGRAM_BUSINESS_ACCOUNT_ID" });
+  }
+  const callMeta = async (url: string) => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      const body = await r.text();
+      let parsed: any = null;
+      try { parsed = JSON.parse(body); } catch {}
+      return { status: r.status, ok: r.ok, body: parsed || body.slice(0, 500) };
+    } catch (e: any) {
+      return { status: 0, ok: false, body: `fetch error: ${e?.message}` };
+    }
+  };
+  const GRAPH = "https://graph.facebook.com/v18.0";
+  // Step 1 — token identity
+  const me = await callMeta(`${GRAPH}/me?fields=id,name&access_token=${encodeURIComponent(token)}`);
+  // Step 2 — can the token see the configured Business IG account
+  const accountSelf = await callMeta(`${GRAPH}/${encodeURIComponent(igBusinessId)}?fields=id,username,name&access_token=${encodeURIComponent(token)}`);
+  // Step 3 — Business Discovery on the test handle
+  const fields = `business_discovery.username(${handle}){username,name,followers_count}`;
+  const businessDiscovery = await callMeta(`${GRAPH}/${encodeURIComponent(igBusinessId)}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(token)}`);
+  res.json({
+    configured: { igBusinessId, tokenLength: token.length },
+    step1_token_identity: me,
+    step2_business_account: accountSelf,
+    step3_business_discovery_handle: businessDiscovery,
+    handleTested: handle,
+  });
+});
+
 router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, res: Response) => {
   try {
     const force = req.query.force === "true" || req.query.force === "1";
