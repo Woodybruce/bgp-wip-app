@@ -327,6 +327,11 @@ interface StageResults {
     modelRunName?: string;
     modelVersionLabel?: string;
     workbookUrl?: string;
+    // SharePoint URL — written by Stage 7 after the workbook is
+    // uploaded to BGP share drive/Investment/<Property>/Models/. The
+    // canonical shareable location; workbookUrl above is the local
+    // BGP-auth-only download path.
+    workbookSharepointUrl?: string;
     agreed?: boolean;
     agreedAt?: string;
     agreedBy?: string;
@@ -4389,6 +4394,52 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
         patch.modelRunName = seed.modelRunName;
         patch.modelVersionLabel = seed.modelVersionLabel;
         patch.workbookUrl = seed.workbookUrl;
+
+        // Push the generated workbook to SharePoint so the user can
+        // open it from the Pathway UI / share with the team — the
+        // local `/api/models/runs/:id/download` URL is BGP-only and
+        // requires auth, but a SharePoint URL is the canonical
+        // shareable location. Best-effort: failures don't block the
+        // model seed; the local URL still works.
+        try {
+          const { storage } = await import("./storage");
+          const { default: fs } = await import("fs");
+          const { default: path } = await import("path");
+          const { uploadFileToSharePoint } = await import("./microsoft");
+          const modelRun = await storage.getExcelModelRun(seed.modelRunId);
+          if (modelRun?.generatedFilePath) {
+            // Resolve through the same path-rebuilding logic the
+            // download endpoint uses, so a stale container path still
+            // finds the file.
+            const RUNS_DIR = path.join(process.cwd(), "uploads", "model-runs");
+            const resolved = path.resolve(path.join(RUNS_DIR, path.basename(modelRun.generatedFilePath)));
+            let buf: Buffer | null = null;
+            if (fs.existsSync(resolved)) {
+              buf = fs.readFileSync(resolved);
+            } else if (fs.existsSync(modelRun.generatedFilePath)) {
+              buf = fs.readFileSync(modelRun.generatedFilePath);
+            }
+            if (buf) {
+              const safeAddress = (run.address || "Property").replace(/[\/\\:*?"<>|]/g, "-");
+              const folderPath = run.sharepointFolderPath
+                ? `${run.sharepointFolderPath}/Models`
+                : `BGP share drive/Investment/${safeAddress}/Models`;
+              const fileName = `${seed.modelRunName.replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
+              const upload = await uploadFileToSharePoint(
+                buf,
+                fileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                folderPath,
+              );
+              patch.workbookSharepointUrl = upload.webUrl;
+              console.log(`[pathway stage7] uploaded workbook to SharePoint: ${upload.webUrl}`);
+            } else {
+              console.warn("[pathway stage7] workbook file not found on disk, skipping SharePoint upload");
+            }
+          }
+        } catch (err: any) {
+          console.warn("[pathway stage7] SharePoint upload skipped:", err?.message);
+        }
       }
     } catch (err: any) {
       console.warn("[pathway stage7] model seed skipped:", err?.message);

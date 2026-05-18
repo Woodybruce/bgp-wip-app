@@ -56,10 +56,14 @@ export async function gammaGenerate(args: GammaGenerateArgs): Promise<{ generati
     inputText: args.inputText,
     format: args.format || "document",
     exportAs: args.exportAs || "pdf",
+    // Gamma's REST API now requires textMode (Apr 2025 change). Older
+    // versions inferred it from the request. Default to "generate"
+    // (Gamma rewrites the content into deck-friendly slides) — same as
+    // their UI's default. Callers can override per-request.
+    textMode: args.textMode || "generate",
   };
   if (args.numCards) body.numCards = args.numCards;
   if (args.themeName) body.themeName = args.themeName;
-  if (args.textMode) body.textMode = args.textMode;
   if (args.additionalInstructions) body.additionalInstructions = args.additionalInstructions;
   if (args.imageOptions) {
     // Gamma's Generate API rejects `imageModel` inside imageOptions ("property

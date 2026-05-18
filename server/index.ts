@@ -1873,6 +1873,41 @@ import { pool } from "./db";
     // Refreshed on demand via Perplexity from the brand profile UI.
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS menu_intel JSONB`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS menu_intel_at TIMESTAMP`,
+
+    // ── Migration 0025 — property_imagery_assets (Pathway Stage 8 +
+    // Why Buy memo source images). Mirrors shared/schema.ts; the
+    // SQL-file migration (migrations/0007_property_imagery_assets.sql)
+    // never gets executed in this deployment because we apply schema
+    // via this auto-migrate path, not Drizzle's CLI. Without this
+    // table, Stage 9 Claude-design crashes with "relation does not
+    // exist" and falls back to the legacy pdfkit renderer.
+    `CREATE TABLE IF NOT EXISTS property_imagery_assets (
+      id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id     VARCHAR NOT NULL,
+      kind            TEXT NOT NULL,
+      source          TEXT NOT NULL,
+      image_studio_id VARCHAR,
+      source_url      TEXT,
+      generated_from  JSONB,
+      score           REAL,
+      width           INTEGER,
+      height          INTEGER,
+      caption         TEXT,
+      pinned          BOOLEAN DEFAULT false,
+      hidden          BOOLEAN DEFAULT false,
+      generated_at    TIMESTAMP DEFAULT now(),
+      generated_by    VARCHAR,
+      pathway_run_id  VARCHAR,
+      matter_id       VARCHAR
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_pia_property_kind
+       ON property_imagery_assets (property_id, kind) WHERE hidden = false`,
+    `CREATE INDEX IF NOT EXISTS idx_pia_image_studio
+       ON property_imagery_assets (image_studio_id) WHERE image_studio_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_pia_pinned
+       ON property_imagery_assets (property_id, kind) WHERE pinned = true`,
+    `CREATE INDEX IF NOT EXISTS idx_pia_pathway
+       ON property_imagery_assets (pathway_run_id) WHERE pathway_run_id IS NOT NULL`,
   ];
 
   let ok = 0, skipped = 0;
