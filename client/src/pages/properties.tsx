@@ -4085,17 +4085,44 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
         ) : (
           <ScrollArea className="max-h-[400px]">
             <div className="divide-y">
-              {articles.map(article => (
+              {articles.map(article => {
+                // Derive a source domain for the favicon fallback. Web
+                // results (DuckDuckGo) don't carry an imageUrl, so we
+                // render the source's favicon via Google's free API
+                // rather than show a naked text row.
+                let faviconDomain: string | null = null;
+                try {
+                  faviconDomain = article.sourceName || new URL(article.url).hostname.replace(/^www\./, "");
+                } catch { /* leave null */ }
+                return (
                 <a key={article.id} href={article.url} target="_blank" rel="noopener noreferrer" className="block" data-testid={`news-article-${article.id}`}>
                   <div className="flex gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer">
-                    {article.imageUrl && (
+                    {article.imageUrl ? (
                       <img
                         src={article.imageUrl}
                         alt=""
                         className="w-16 h-16 rounded object-cover shrink-0"
+                        onError={(e) => {
+                          // Image broken — fall back to favicon if we
+                          // have a domain, else hide the slot.
+                          const img = e.target as HTMLImageElement;
+                          if (faviconDomain) {
+                            img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(faviconDomain)}&sz=128`;
+                            img.className = "w-10 h-10 rounded border bg-muted p-1 shrink-0 self-start";
+                            img.onerror = null;
+                          } else {
+                            img.style.display = "none";
+                          }
+                        }}
+                      />
+                    ) : faviconDomain ? (
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(faviconDomain)}&sz=128`}
+                        alt=""
+                        className="w-10 h-10 rounded border bg-muted p-1 shrink-0 self-start"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
-                    )}
+                    ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-snug line-clamp-2">{article.title}</p>
                       {article.summary && (
@@ -4119,7 +4146,8 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                     </div>
                   </div>
                 </a>
-              ))}
+                );
+              })}
             </div>
           </ScrollArea>
         )}

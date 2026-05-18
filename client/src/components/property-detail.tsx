@@ -609,11 +609,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
-            <ErrorBoundary compact name="Property news">
-              <CollapsibleCard open={mainSections.news} onToggle={() => toggleMain("news")} icon={Newspaper} title="Property News" testId="toggle-news">
-                <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
-              </CollapsibleCard>
-            </ErrorBoundary>
+            {/* Property News card moved into the top-strip half-width
+                slot (see above). Lower full-width card removed to
+                avoid rendering the feed twice on the same page. */}
 
             <ErrorBoundary compact name="Linked contacts">
               <CollapsibleCard open={mainSections.contacts} onToggle={() => toggleMain("contacts")} icon={UserCheck} title="Linked Contacts" testId="toggle-contacts">
