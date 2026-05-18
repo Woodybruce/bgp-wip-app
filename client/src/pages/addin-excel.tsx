@@ -1080,6 +1080,19 @@ interface ExcelAction {
   value?: string | number;
 }
 
+// Whitelist of action types the add-in actually implements. The AI sometimes
+// hallucinates richer actions (highlightCell, mergeCells, applyFormat, etc) —
+// those silently produce no effect after the user clicks Apply, which is
+// confusing. We filter them out at the parser so they don't even render as
+// buttons. Update this list when adding new Office.js action handlers below.
+const SUPPORTED_EXCEL_ACTIONS = new Set(["writeValue", "writeFormula"]);
+
+// How many columns of the active sheet to package up and send to the model.
+// Was 30 — bumped after the Landsec tenancy export (43 cols) couldn't see
+// past column AD. Trade-off is payload size on chat-with-files calls; 100
+// covers virtually every real-world export without breaking the cache.
+const EXCEL_MAX_COLS = 100;
+
 function parseExcelActions(content: string): ExcelAction[] {
   const actions: ExcelAction[] = [];
   // Parse JSON action blocks
@@ -1088,9 +1101,9 @@ function parseExcelActions(content: string): ExcelAction[] {
   while ((match = jsonBlockRegex.exec(content)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (parsed.action && parsed.sheet && parsed.cell) {
-        actions.push(parsed);
-      }
+      if (!parsed.action || !parsed.sheet || !parsed.cell) continue;
+      if (!SUPPORTED_EXCEL_ACTIONS.has(parsed.action)) continue;
+      actions.push(parsed);
     } catch {}
   }
   // Parse excel code blocks for formulas
@@ -1212,7 +1225,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
 
       for (const info of rangeInfos) {
         if (!info.usedRange.isNullObject && info.usedRange.columnCount > 0) {
-          const colCount = Math.min(info.usedRange.columnCount, 30);
+          const colCount = Math.min(info.usedRange.columnCount, EXCEL_MAX_COLS);
           info.headerRange = info.sheet.getRangeByIndexes(0, 0, 1, colCount);
           info.headerRange.load("values");
         }
@@ -1253,7 +1266,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
         activeUsedRange.load(["values", "rowCount", "columnCount", "address"]);
         await context.sync();
         if (!activeUsedRange.isNullObject && activeUsedRange.values) {
-          activeSheetData = valuesToCsv(activeUsedRange.values, 200, 30);
+          activeSheetData = valuesToCsv(activeUsedRange.values, 200, EXCEL_MAX_COLS);
         }
       } catch {}
 
@@ -1300,7 +1313,7 @@ async function readExcelSelection(): Promise<string> {
       if (!rows || rows.length === 0 || (rows.length === 1 && rows[0].length === 1 && !rows[0][0])) return "";
 
       let csv = `\n=== CURRENT SELECTION: ${range.address} (${range.rowCount} rows x ${range.columnCount} cols) ===\n`;
-      csv += valuesToCsv(rows, 100, 30);
+      csv += valuesToCsv(rows, 100, EXCEL_MAX_COLS);
       return csv;
     });
   } catch (err) {

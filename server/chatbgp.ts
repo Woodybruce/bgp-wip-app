@@ -12227,6 +12227,13 @@ Whenever the user asks you to "build", "amend", "fill in", "add", "update", "put
 
 For a full model, emit dozens of action blocks in order (headers → assumptions → formulas → totals). The user can click "Apply" on each, or "Apply All" to write the entire model at once.
 
+### ⚠️ ONLY these two action types exist
+The add-in implements EXACTLY these two action verbs and nothing else:
+- \`writeValue\`  — write a literal value (string/number) into one cell
+- \`writeFormula\` — write a formula (must start with =) into one cell
+
+DO NOT emit \`highlightCell\`, \`setFormat\`, \`mergeCells\`, \`applyColour\`, \`addBorder\`, \`autoFit\`, \`createSheet\`, or any other invented verb. The add-in silently drops unrecognised actions, which leaves the user staring at Apply buttons that do nothing. If you need to draw the user's attention to columns or rows, write a label into an adjacent cell using \`writeValue\` (e.g. write "SKIP" / "→ unit_name" into Row 2 below each header).
+
 ### When to emit a downloadable file instead (export_to_excel)
 Only use the \`export_to_excel\` tool when the user explicitly asks for a **separate file** they can download — phrases like "send me an Excel file", "export this as xlsx", "give me a downloadable spreadsheet". Never use \`export_to_excel\` when the user wants changes in the workbook that's already open.
 
