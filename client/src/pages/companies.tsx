@@ -1123,31 +1123,38 @@ function CompanyDetail({ id }: { id: string }) {
     queryKey: ["/api/crm/companies", id],
   });
 
-  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
+  // Defensive array defaults — these endpoints occasionally return
+  // non-arrays under error / partial-failure paths. Without the
+  // default, downstream .map / .filter / forEach crash the whole page.
+  const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
   });
+  const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
   const userOptions = useMemo(() => {
-    if (!allUsers) return [];
     return allUsers.map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label));
   }, [allUsers]);
 
-  const { data: allDeals } = useQuery<CrmDeal[]>({
+  const { data: allDealsRaw } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
+  const allDeals = Array.isArray(allDealsRaw) ? allDealsRaw : [];
 
-  const { data: allProperties } = useQuery<CrmProperty[]>({
+  const { data: allPropertiesRaw } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
+  const allProperties = Array.isArray(allPropertiesRaw) ? allPropertiesRaw : [];
 
-  const { data: companyPropertyLinks } = useQuery<{ companyId: string; propertyId: string }[]>({
+  const { data: companyPropertyLinksRaw } = useQuery<{ companyId: string; propertyId: string }[]>({
     queryKey: ["/api/crm/company-property-links"],
   });
+  const companyPropertyLinks = Array.isArray(companyPropertyLinksRaw) ? companyPropertyLinksRaw : [];
 
-  const { data: companyDealLinksForDetail } = useQuery<{ companyId: string; dealId: string }[]>({
+  const { data: companyDealLinksForDetailRaw } = useQuery<{ companyId: string; dealId: string }[]>({
     queryKey: ["/api/crm/company-deal-links"],
   });
+  const companyDealLinksForDetail = Array.isArray(companyDealLinksForDetailRaw) ? companyDealLinksForDetailRaw : [];
 
   const { data: propertyAgentLinks = [] } = useQuery<{ propertyId: string; userId: string }[]>({
     queryKey: ["/api/crm/property-agents"],
@@ -2211,41 +2218,48 @@ function CompanyList() {
     queryKey: ["/api/crm/companies"],
   });
 
-  const { data: allContacts } = useQuery<CrmContact[]>({
+  // Same defensive array wrappers as CompanyDetail (above) — these
+  // queries occasionally return non-arrays and downstream .map crashes
+  // an otherwise-functional list page.
+  const { data: allContactsRaw } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
   });
+  const allContacts = Array.isArray(allContactsRaw) ? allContactsRaw : [];
 
-  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
+  const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
   });
+  const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
   const userNames = useMemo(() => {
-    if (!allUsers) return [];
     return allUsers.map(u => u.name).sort();
   }, [allUsers]);
 
   const userOptions = useMemo(() => {
-    if (!allUsers) return [];
     return allUsers.map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label));
   }, [allUsers]);
 
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
 
-  const { data: allProperties } = useQuery<CrmProperty[]>({
+  const { data: allPropertiesRaw } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
+  const allProperties = Array.isArray(allPropertiesRaw) ? allPropertiesRaw : [];
 
-  const { data: allDeals } = useQuery<CrmDeal[]>({
+  const { data: allDealsRaw } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
+  const allDeals = Array.isArray(allDealsRaw) ? allDealsRaw : [];
 
-  const { data: companyPropertyLinks } = useQuery<{ companyId: string; propertyId: string }[]>({
+  const { data: companyPropertyLinksRaw } = useQuery<{ companyId: string; propertyId: string }[]>({
     queryKey: ["/api/crm/company-property-links"],
   });
+  const companyPropertyLinks = Array.isArray(companyPropertyLinksRaw) ? companyPropertyLinksRaw : [];
 
-  const { data: companyDealLinks } = useQuery<{ companyId: string; dealId: string }[]>({
+  const { data: companyDealLinksRaw } = useQuery<{ companyId: string; dealId: string }[]>({
     queryKey: ["/api/crm/company-deal-links"],
   });
+  const companyDealLinks = Array.isArray(companyDealLinksRaw) ? companyDealLinksRaw : [];
 
   const propertyIdsByCompany = useMemo(() => {
     if (!companyPropertyLinks) return {};

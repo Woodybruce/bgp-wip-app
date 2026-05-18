@@ -11,7 +11,7 @@
 // One view for both audiences — no BGP-only tab. The only thing
 // scrubbed for clients is email body content (the activity feed
 // returns sanitised summaries, not message bodies).
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -100,7 +100,7 @@ function useAssetBrief(propertyId: string) {
 // Last activity, packed into a tight single row. Replaces the
 // earlier roomy 3-column header that had too much vertical space.
 export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
-  const { data, isLoading } = useAssetBrief(propertyId);
+  const { data, isLoading, isError } = useAssetBrief(propertyId);
   // Pull the linkage audit in parallel so we can show a Spine health
   // chip inline. Doesn't block the strip — if it 404s we just hide
   // the chip.
@@ -113,6 +113,13 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
     },
   });
 
+  if (isError) {
+    return (
+      <div className="flex items-center gap-2 h-8 text-xs text-rose-600 italic">
+        Couldn't load property header.
+      </div>
+    );
+  }
   if (isLoading || !data) {
     return (
       <div className="flex items-center gap-2 h-8">
@@ -201,7 +208,10 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
 // asset lead a single 'how's the building doing' tile without
 // scrolling into the lower brief.
 export function PipelinePerformanceBoard({ propertyId }: { propertyId: string }) {
-  const { data, isLoading } = useAssetBrief(propertyId);
+  const { data, isLoading, isError } = useAssetBrief(propertyId);
+  if (isError) {
+    return <Card><CardContent className="p-3"><p className="text-xs text-rose-600 italic">Couldn't load — refresh to retry.</p></CardContent></Card>;
+  }
   if (isLoading || !data) {
     return <Card><CardContent className="p-3"><Skeleton className="h-24 w-full" /></CardContent></Card>;
   }
@@ -280,8 +290,11 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
 }
 
 export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) {
-  const { data, isLoading } = useAssetBrief(propertyId);
+  const { data, isLoading, isError } = useAssetBrief(propertyId);
 
+  if (isError) {
+    return <Card><CardContent className="p-3"><p className="text-xs text-rose-600 italic">Couldn't load asset brief — refresh to retry.</p></CardContent></Card>;
+  }
   if (isLoading || !data) {
     return (
       <Card>
@@ -324,7 +337,10 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
 // panel via useAssetBrief (react-query dedupes). Renders compactly
 // for the top-strip 2-col row beside Weekly Focus.
 export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
-  const { data, isLoading } = useAssetBrief(propertyId);
+  const { data, isLoading, isError } = useAssetBrief(propertyId);
+  if (isError) {
+    return <Card><CardContent className="p-3"><p className="text-xs text-rose-600 italic">Couldn't load — refresh.</p></CardContent></Card>;
+  }
   if (isLoading || !data) {
     return <Card><CardContent className="p-3"><Skeleton className="h-16 w-full" /></CardContent></Card>;
   }
@@ -441,6 +457,9 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
     }
   };
 
+  if (isError) {
+    return <p className="text-xs text-rose-600 italic">Couldn't load asset brief — refresh to retry.</p>;
+  }
   if (isLoading || !data) {
     return <Skeleton className="h-24 w-full" />;
   }
@@ -678,11 +697,15 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
         credentials: "include",
         body: JSON.stringify({ primaryId, secondaryId }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
       const j = await r.json();
+      const m = j.moved || { deals: 0, leasing: 0, available: 0 };
       toast({
         title: "Merged",
-        description: `${j.moved.deals} deal · ${j.moved.leasing} leasing · ${j.moved.available} vacant links moved to primary.`,
+        description: `${m.deals || 0} deal · ${m.leasing || 0} leasing · ${m.available || 0} vacant links moved to primary.`,
       });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "duplicate-units"] });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
@@ -849,16 +872,26 @@ function OrphanDealsList({ propertyId }: { propertyId: string }) {
 function UnresolvedTenantRow({
   propertyId, tenantName, units, onAssigned,
 }: { propertyId: string; tenantName: string; units: number; onAssigned: () => void }) {
+  const { toast } = useToast();
   const [query, setQuery] = useState(tenantName);
+  // Debounced version of `query` — typing fires the on-change every
+  // keystroke but the search only re-runs 300ms after the user stops,
+  // so we don't hammer the API while someone types "Sainsbury's".
+  const [debouncedQuery, setDebouncedQuery] = useState(tenantName);
   const [showResults, setShowResults] = useState(false);
   const [saveAsAlias, setSaveAsAlias] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
   const { data: results = [] } = useQuery<Array<{ id: string; name: string; domain: string | null }>>({
-    queryKey: ["/api/crm/companies/search", query],
+    queryKey: ["/api/crm/companies/search", debouncedQuery],
     queryFn: async () => {
-      if (!query || query.length < 2) return [];
-      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(query)}&limit=8`, { credentials: "include" });
+      if (!debouncedQuery || debouncedQuery.length < 2) return [];
+      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debouncedQuery)}&limit=8`, { credentials: "include" });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);
@@ -877,10 +910,13 @@ function UnresolvedTenantRow({
         credentials: "include",
         body: JSON.stringify({ tenantName, brandCompanyId, addAsTradingEntity: saveAsAlias }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
       onAssigned();
     } catch (e: any) {
-      // Bubble up via parent toast — onAssigned does nothing on error.
+      toast({ title: "Assign failed", description: e.message, variant: "destructive" });
     } finally {
       setSaving(false);
       setShowResults(false);
@@ -933,7 +969,10 @@ function UnresolvedTenantRow({
 // only, no email body content (per the access rules for client
 // users like Mark at Landsec).
 export function PropertyRecentActivityCard({ propertyId }: { propertyId: string }) {
-  const { data, isLoading } = useAssetBrief(propertyId);
+  const { data, isLoading, isError } = useAssetBrief(propertyId);
+  if (isError) {
+    return <p className="text-xs text-rose-600 italic">Couldn't load asset brief — refresh to retry.</p>;
+  }
   if (isLoading || !data) {
     return <Skeleton className="h-24 w-full" />;
   }

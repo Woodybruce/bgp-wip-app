@@ -117,7 +117,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         ORDER BY d.updated_at DESC NULLS LAST
         LIMIT 60`,
       [propertyId]
-    ).catch(() => ({ rows: [] as any[] }));
+    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const activeDeals = dealsQ.rows.map(d => ({
       id: d.id,
       name: d.name,
@@ -168,7 +168,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         ORDER BY i.interaction_date DESC
         LIMIT 30`,
       [propertyId]
-    ).catch(() => ({ rows: [] as any[] }));
+    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const activity = activityQ.rows.map(a => ({
       id: a.id,
       kind: a.type,                                  // email / call / meeting / note
@@ -203,10 +203,27 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
                    AND pu2.unit_name = u.unit_name
               ) AS has_live_deal
          FROM leasing_schedule_units u
-         LEFT JOIN crm_companies c ON LOWER(TRIM(c.name)) = LOWER(TRIM(u.tenant_name))
+         -- Prefer the canonical FK; fall back to a normalised name
+         -- match that strips legal-entity suffixes (Ltd/Plc/Group/UK
+         -- etc.) so legacy rows without an FK still resolve.
+         LEFT JOIN crm_companies c
+           ON c.merged_into_id IS NULL
+          AND (
+            c.id = u.tenant_company_id
+            OR (u.tenant_company_id IS NULL AND
+                regexp_replace(
+                  regexp_replace(lower(trim(c.name)),
+                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$', '', 'g'),
+                  '[^a-z0-9]+', ' ', 'g')
+                =
+                regexp_replace(
+                  regexp_replace(lower(trim(coalesce(u.tenant_name, ''))),
+                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$', '', 'g'),
+                  '[^a-z0-9]+', ' ', 'g'))
+          )
         WHERE u.property_id = $1`,
       [propertyId]
-    ).catch(() => ({ rows: [] as any[] }));
+    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const horizonMs = 18 * 30 * 24 * 60 * 60 * 1000;
     const now = Date.now();
     for (const u of lsuQ.rows) {
@@ -236,7 +253,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          AVG(EXTRACT(EPOCH FROM (lease_expiry - NOW())) / 31557600.0) FILTER (WHERE lease_expiry > NOW()) AS wault_years
          FROM leasing_schedule_units WHERE property_id = $1`,
       [propertyId]
-    ).catch(() => ({ rows: [] as any[] }));
+    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const perfRow = perfQ.rows[0] || {};
     const topPsqftQ = await pool.query<any>(
       `SELECT unit_name, tenant_name, mat_psqft, lfl_percent
@@ -244,14 +261,14 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         WHERE property_id = $1 AND mat_psqft IS NOT NULL
         ORDER BY mat_psqft DESC NULLS LAST LIMIT 5`,
       [propertyId]
-    ).catch(() => ({ rows: [] as any[] }));
+    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const bottomPsqftQ = await pool.query<any>(
       `SELECT unit_name, tenant_name, mat_psqft, lfl_percent
          FROM leasing_schedule_units
         WHERE property_id = $1 AND mat_psqft IS NOT NULL
         ORDER BY mat_psqft ASC NULLS LAST LIMIT 5`,
       [propertyId]
-    ).catch(() => ({ rows: [] as any[] }));
+    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const performance = {
       total_units: Number(perfRow.total_units || 0),
       occupied_units: Number(perfRow.occupied_units || 0),
@@ -779,29 +796,61 @@ router.get("/api/properties/:id/orphan-deals", requireAuth, async (req: Request,
 // (if the deal's tenant resolves to a tenancy_schedule row on this
 // property) the matching tenancy_unit_id + unit_id. One click → fully
 // linked on the canonical spine.
+//
+// Only adopts deals that are genuinely orphaned (no property_id) and
+// share the property's landlord — otherwise a malicious caller could
+// move any deal between properties. The dealId is bounded against
+// the property's landlord_id so the action stays scoped to the
+// orphan-deals list rendered on the property page.
 router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, res: Response) => {
   try {
     const propertyId = req.params.id;
     const { dealId } = req.body as { dealId: string };
     if (!dealId) return res.status(400).json({ error: "dealId required" });
 
-    // Resolve the canonical tenancy row first — match by tenant brand
-    // FK (cleanest), then by tenant name string. From there we can
-    // also resolve a property_units id by unit_number match.
+    // Confirm the property exists and grab its landlord_id so we can
+    // only adopt deals that already belong to that landlord (the
+    // orphan deals the linkage card surfaces).
+    const propRes = await pool.query<{ landlord_id: string | null }>(
+      `SELECT landlord_id FROM crm_properties WHERE id = $1`, [propertyId]
+    );
+    if (propRes.rows.length === 0) return res.status(404).json({ error: "Property not found" });
+    const landlordId = propRes.rows[0].landlord_id;
+    if (!landlordId) return res.status(400).json({ error: "Property has no landlord — can't adopt orphan deals" });
+
+    // Confirm the deal is genuinely an orphan of this landlord.
+    const dealRes = await pool.query<{ id: string; tenant_id: string | null }>(
+      `SELECT id, tenant_id FROM crm_deals
+        WHERE id = $1
+          AND landlord_id = $2
+          AND property_id IS NULL
+          AND unit_id IS NULL
+          AND COALESCE(status, '') NOT IN ('WIT', 'COM', 'INV')`,
+      [dealId, landlordId]
+    );
+    if (dealRes.rows.length === 0) {
+      return res.status(400).json({ error: "Deal is not an adoptable orphan on this property's landlord" });
+    }
+    const tenantId = dealRes.rows[0].tenant_id;
+
+    // Resolve a tenancy row + property_units row (both bounded to
+    // this property). The tenancy match prefers the tenant brand FK,
+    // falls back to lowercased tenant name string.
     const match = await pool.query<{ tenancy_unit_id: string | null; unit_id: string | null }>(
       `SELECT t.id AS tenancy_unit_id, pu.id AS unit_id
-         FROM crm_deals d
-         LEFT JOIN tenancy_schedule_units t
-           ON t.property_id = $1
-          AND (t.tenant_company_id = d.tenant_id
-               OR lower(trim(coalesce(t.trading_name, t.tenant_name, ''))) =
-                  lower(trim(coalesce((SELECT name FROM crm_companies WHERE id = d.tenant_id), ''))))
+         FROM tenancy_schedule_units t
          LEFT JOIN property_units pu
            ON pu.property_id = $1
           AND lower(trim(pu.unit_name)) = lower(trim(t.unit_number))
-        WHERE d.id = $2
+        WHERE t.property_id = $1
+          AND (
+            ($2::varchar IS NOT NULL AND t.tenant_company_id = $2)
+            OR ($2::varchar IS NOT NULL AND
+                lower(trim(coalesce(t.trading_name, t.tenant_name, ''))) =
+                lower(trim(coalesce((SELECT name FROM crm_companies WHERE id = $2), ''))))
+          )
         LIMIT 1`,
-      [propertyId, dealId]
+      [propertyId, tenantId]
     );
     const tenancyUnitId = match.rows[0]?.tenancy_unit_id || null;
     const unitId = match.rows[0]?.unit_id || null;

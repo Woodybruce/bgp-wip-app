@@ -261,32 +261,45 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
     // Auto-knit: any existing leasing / available / deal rows on the
     // same property with a matching unit_number should attach to the
     // new spine row. Drops the "Promote orphans" pressure since the
-    // attachment now happens at insert time.
+    // attachment now happens at insert time. Each table is updated
+    // independently so a failure on one doesn't block the others;
+    // each failure is logged with the table name so we can spot
+    // patterns in production logs.
     if (newId) {
       const newRow = result.rows[0];
       const unitNum = (newRow?.unit_number || "").trim().toLowerCase();
       if (unitNum) {
+        const knit = async (label: string, sql: string, params: any[]) => {
+          try { await pool.query(sql, params); }
+          catch (e: any) { console.warn(`[tenancy] auto-knit ${label} failed:`, e?.message); }
+        };
         await Promise.all([
-          pool.query(
+          knit(
+            "leasing",
             `UPDATE leasing_schedule_units SET tenancy_unit_id = $1
               WHERE property_id = $2 AND tenancy_unit_id IS NULL
                 AND lower(trim(coalesce(unit_name, ''))) = $3`,
             [newId, d.property_id, unitNum]
           ),
-          pool.query(
+          knit(
+            "available",
             `UPDATE available_units SET tenancy_unit_id = $1
               WHERE property_id = $2 AND tenancy_unit_id IS NULL
                 AND lower(trim(coalesce(unit_name, ''))) = $3`,
             [newId, d.property_id, unitNum]
           ),
-          pool.query(
+          // property_units lookup is scoped to the same property as
+          // the deal — a different property_units row that happens
+          // to share an id (e.g. legacy duplicate) cannot match here.
+          knit(
+            "deals",
             `UPDATE crm_deals d SET tenancy_unit_id = $1
               WHERE d.property_id = $2 AND d.tenancy_unit_id IS NULL
                 AND lower(trim(coalesce(
-                  (SELECT unit_name FROM property_units WHERE id = d.unit_id), ''))) = $3`,
+                  (SELECT unit_name FROM property_units pu WHERE pu.id = d.unit_id AND pu.property_id = $2), ''))) = $3`,
             [newId, d.property_id, unitNum]
           ),
-        ]).catch((e: any) => console.warn("[tenancy] auto-knit downstream failed:", e?.message));
+        ]);
       }
     }
 
@@ -383,20 +396,24 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
 });
 
 router.delete("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
+  const pool = await getPool();
+  // Atomic cascade: clear downstream FKs and delete the spine row in
+  // a single transaction so we can never end up with FKs cleared and
+  // the row still present (or vice versa).
+  const client = await pool.connect();
   try {
-    const pool = await getPool();
-    // NULL out downstream FKs first so the projection rows aren't
-    // left pointing at a dead spine id. The rows themselves stay —
-    // they're now just orphaned until the team re-attaches or
-    // promotes them. Cheaper than ON DELETE SET NULL on a real FK
-    // because tenancy_unit_id is a soft FK (varchar, no constraint).
-    await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
-    await pool.query(`UPDATE available_units       SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
-    await pool.query(`UPDATE crm_deals             SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
-    await pool.query("DELETE FROM tenancy_schedule_units WHERE id = $1", [req.params.id]);
+    await client.query("BEGIN");
+    await client.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
+    await client.query(`UPDATE available_units       SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
+    await client.query(`UPDATE crm_deals             SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
+    await client.query("DELETE FROM tenancy_schedule_units WHERE id = $1", [req.params.id]);
+    await client.query("COMMIT");
     res.json({ ok: true });
   } catch (e: any) {
+    await client.query("ROLLBACK").catch(() => { /* best-effort */ });
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -1198,7 +1215,10 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
 
     // Leasing rows without a matching tenancy unit on the same
     // property. Create one tenancy row per distinct unit_name, then
-    // stamp the FK back on the leasing rows that match.
+    // stamp the FK back on the leasing rows that match. When more
+    // than one leasing row shares the same unit_name we pick the
+    // most-recently-updated row's data (deterministic + most current
+    // tenant / rent / expiry survives).
     const leasingPromoted = await pool.query(
       `WITH orphans AS (
          SELECT DISTINCT ON (lower(trim(u.unit_name)))
@@ -1214,6 +1234,7 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
                WHERE ts.property_id = $1
                  AND lower(trim(ts.unit_number)) = lower(trim(u.unit_name))
             )
+          ORDER BY lower(trim(u.unit_name)), u.updated_at DESC NULLS LAST, u.id
        )
        INSERT INTO tenancy_schedule_units (
          property_id, unit_number, premises, tenant_name, permitted_use,
@@ -1230,7 +1251,10 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
     );
 
     // Same for available_units — vacant rows on the tracker that
-    // aren't on the tenancy spine.
+    // aren't on the tenancy spine. NOT EXISTS also excludes rows
+    // whose unit_name already got promoted in the leasing pass above
+    // (the leasing INSERT committed within this transaction is
+    // visible to subsequent queries on the same connection).
     const availablePromoted = await pool.query(
       `WITH orphans AS (
          SELECT DISTINCT ON (lower(trim(au.unit_name)))
@@ -1244,6 +1268,7 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
                WHERE ts.property_id = $1
                  AND lower(trim(ts.unit_number)) = lower(trim(au.unit_name))
             )
+          ORDER BY lower(trim(au.unit_name)), au.updated_at DESC NULLS LAST, au.id
        )
        INSERT INTO tenancy_schedule_units (
          property_id, unit_number, floor_level, permitted_use,
@@ -1275,26 +1300,39 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
 // Re-point tenant FKs after a brand merge. When a brand is merged
 // into another (crm_companies.merged_into_id set), every tenancy /
 // leasing / available row that still points at the merged-away
-// brand needs to follow the chain to the surviving brand. Walks
-// the chain in case of multi-step merges (A → B → C).
+// brand needs to follow the chain to the surviving (non-merged)
+// brand. Walks the full chain in case of multi-step merges
+// (A → B → C → D, where D is the ultimate survivor).
+//
+// SURVIVORS_CTE builds a (old_id → new_id) map where new_id is the
+// deepest reachable brand starting from each merged row. We track
+// depth and use DISTINCT ON (root) ORDER BY depth DESC to keep only
+// the deepest hop, which is the survivor.
+const SURVIVORS_CTE = `
+  WITH RECURSIVE walk AS (
+    -- Base: every directly-merged brand. step is what it points at.
+    SELECT id AS root, merged_into_id AS step, 1 AS depth
+      FROM crm_companies WHERE merged_into_id IS NOT NULL
+    UNION ALL
+    -- Recursive: if step is itself a merged brand, walk one more hop.
+    SELECT w.root, c.merged_into_id, w.depth + 1
+      FROM walk w
+      JOIN crm_companies c ON c.id = w.step
+     WHERE c.merged_into_id IS NOT NULL
+       AND w.depth < 20  -- guardrail against cycles
+  ),
+  survivors AS (
+    SELECT DISTINCT ON (root) root AS old_id, step AS new_id
+      FROM walk
+     ORDER BY root, depth DESC
+  )`;
 router.post("/api/properties/:propertyId/repoint-merged-brands", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
     const { propertyId } = req.params;
     const moved = {
       tenancy: (await pool.query(
-        `WITH RECURSIVE chain AS (
-           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
-           UNION ALL
-           SELECT c.id, ch.merged_into_id FROM crm_companies c
-             JOIN chain ch ON c.id = ch.merged_into_id
-             WHERE c.merged_into_id IS NOT NULL
-         ),
-         survivors AS (
-           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
-             FROM chain
-            ORDER BY id, new_id
-         )
+        `${SURVIVORS_CTE}
          UPDATE tenancy_schedule_units t
             SET tenant_company_id = s.new_id
            FROM survivors s
@@ -1302,17 +1340,7 @@ router.post("/api/properties/:propertyId/repoint-merged-brands", requireAuth, as
         [propertyId]
       )).rowCount || 0,
       leasing: (await pool.query(
-        `WITH RECURSIVE chain AS (
-           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
-           UNION ALL
-           SELECT c.id, ch.merged_into_id FROM crm_companies c
-             JOIN chain ch ON c.id = ch.merged_into_id
-             WHERE c.merged_into_id IS NOT NULL
-         ),
-         survivors AS (
-           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
-             FROM chain ORDER BY id, new_id
-         )
+        `${SURVIVORS_CTE}
          UPDATE leasing_schedule_units u
             SET tenant_company_id = s.new_id
            FROM survivors s
@@ -1320,17 +1348,7 @@ router.post("/api/properties/:propertyId/repoint-merged-brands", requireAuth, as
         [propertyId]
       )).rowCount || 0,
       available: (await pool.query(
-        `WITH RECURSIVE chain AS (
-           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
-           UNION ALL
-           SELECT c.id, ch.merged_into_id FROM crm_companies c
-             JOIN chain ch ON c.id = ch.merged_into_id
-             WHERE c.merged_into_id IS NOT NULL
-         ),
-         survivors AS (
-           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
-             FROM chain ORDER BY id, new_id
-         )
+        `${SURVIVORS_CTE}
          UPDATE available_units au
             SET tenant_company_id = s.new_id
            FROM survivors s
@@ -1338,17 +1356,7 @@ router.post("/api/properties/:propertyId/repoint-merged-brands", requireAuth, as
         [propertyId]
       )).rowCount || 0,
       deals: (await pool.query(
-        `WITH RECURSIVE chain AS (
-           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
-           UNION ALL
-           SELECT c.id, ch.merged_into_id FROM crm_companies c
-             JOIN chain ch ON c.id = ch.merged_into_id
-             WHERE c.merged_into_id IS NOT NULL
-         ),
-         survivors AS (
-           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
-             FROM chain ORDER BY id, new_id
-         )
+        `${SURVIVORS_CTE}
          UPDATE crm_deals d
             SET tenant_id = s.new_id
            FROM survivors s
