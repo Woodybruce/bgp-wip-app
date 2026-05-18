@@ -246,6 +246,130 @@ function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentN
   );
 }
 
+// Trading entities — the legal-entity aliases that appear on leases
+// for a brand. Pret A Manger (brand) → "Pret A Manger UK Ltd", "Pret
+// A Manger Europe Limited" etc. Each entity is a KYC subject in its
+// own right; some brands have one, some have many. Stored as a JSONB
+// array on crm_companies. The tenancy-schedule resolver matches a
+// row's tenant_name against these as well as the brand's own name,
+// then writes the FK back at write-time.
+function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
+  const { toast } = useToast();
+  type Entity = { name: string; companies_house_number?: string; kyc_status?: string; notes?: string };
+  const entities: Entity[] = Array.isArray((company as any).tradingEntities) ? (company as any).tradingEntities : [];
+
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCh, setNewCh] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async (next: Entity[]) => {
+    setSaving(true);
+    try {
+      await apiRequest("PUT", `/api/crm/companies/${company.id}`, { tradingEntities: next });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", company.id] });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addEntity = async () => {
+    if (!newName.trim()) return;
+    const dupe = entities.some(e => e.name.trim().toLowerCase() === newName.trim().toLowerCase());
+    if (dupe) {
+      toast({ title: "Already on file", description: `"${newName}" is already a trading entity for this brand.` });
+      return;
+    }
+    await save([...entities, { name: newName.trim(), companies_house_number: newCh.trim() || undefined }]);
+    setNewName(""); setNewCh(""); setAdding(false);
+  };
+
+  const removeEntity = async (idx: number) => {
+    await save(entities.filter((_, i) => i !== idx));
+  };
+
+  const setStatus = async (idx: number, status: string) => {
+    const next = entities.map((e, i) => i === idx ? { ...e, kyc_status: status } : e);
+    await save(next);
+  };
+
+  return (
+    <div className="border rounded-md p-2 space-y-1.5 bg-slate-50/40 dark:bg-slate-900/20">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-semibold flex items-center gap-1">
+          <Building2 className="w-3 h-3" />
+          Trading entities
+          <Badge variant="secondary" className="text-[9px]">{entities.length}</Badge>
+        </div>
+        <Button size="sm" variant="ghost" className="h-5 text-[10px] gap-0.5 px-1.5" onClick={() => setAdding(v => !v)}>
+          <Plus className="w-3 h-3" />Add
+        </Button>
+      </div>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Legal entities that appear on this brand's leases. Each row is a separate KYC subject. The tenancy schedule auto-resolves any of these names to this brand.
+      </p>
+      {entities.length === 0 && !adding && (
+        <p className="text-[10px] text-muted-foreground italic">No trading entities yet. Add the legal entity from a lease (e.g. "Pret A Manger UK Ltd").</p>
+      )}
+      {entities.map((e, i) => (
+        <div key={`${e.name}-${i}`} className="flex items-center gap-1.5 text-[11px] bg-white dark:bg-slate-800 border rounded px-2 py-1">
+          <span className="font-medium flex-1 truncate">{e.name}</span>
+          {e.companies_house_number && (
+            <Badge variant="outline" className="text-[9px] font-mono">CH {e.companies_house_number}</Badge>
+          )}
+          <select
+            value={e.kyc_status || ""}
+            onChange={(ev) => setStatus(i, ev.target.value)}
+            disabled={saving}
+            className="text-[10px] h-5 rounded border px-1 bg-white dark:bg-slate-800"
+            title="KYC status for this entity"
+          >
+            <option value="">KYC: —</option>
+            <option value="pending">Pending</option>
+            <option value="in_review">In review</option>
+            <option value="pass">Passed</option>
+            <option value="fail">Failed</option>
+            <option value="expired">Expired</option>
+          </select>
+          <button
+            onClick={() => removeEntity(i)}
+            disabled={saving}
+            className="text-rose-400 hover:text-rose-600"
+            title="Remove this entity"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+      {adding && (
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Legal entity name on the lease"
+            className="h-6 text-[11px] flex-1"
+            autoFocus
+          />
+          <Input
+            value={newCh}
+            onChange={(e) => setNewCh(e.target.value)}
+            placeholder="CH no. (optional)"
+            className="h-6 text-[11px] w-28 font-mono"
+          />
+          <Button size="sm" variant="default" className="h-6 text-[10px] px-2" onClick={addEntity} disabled={saving || !newName.trim()}>
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+          </Button>
+          <button onClick={() => { setAdding(false); setNewName(""); setNewCh(""); }} className="text-muted-foreground">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompaniesHouseCard({ company }: { company: CrmCompany }) {
   const { toast } = useToast();
   const chData = company.companiesHouseData as any;
@@ -530,6 +654,10 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
             {kycStatus === "fail" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0">Failed</Badge>}
           </div>
         </button>
+
+        {expanded && (
+          <TradingEntitiesPanel company={company} />
+        )}
 
         {!expanded ? null : !displayNumber ? (
           <div className="space-y-2">

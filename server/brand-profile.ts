@@ -365,6 +365,27 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Live locations — every property where this brand is the
+    // resolved tenant on at least one tenancy schedule row. The
+    // canonical FK (tenant_company_id) is the source of truth; the
+    // name match fallback is intentionally NOT used here, so this
+    // count is honest about resolved coverage.
+    const liveLocationsQ = pool.query(
+      `SELECT p.id, p.name, p.address, p.postcode,
+              NULLIF(p.latitude, '')::float8 AS lat,
+              NULLIF(p.longitude, '')::float8 AS lng,
+              COUNT(t.id) AS units,
+              SUM(COALESCE(t.passing_rent_pa, 0)) AS total_rent_pa,
+              MIN(t.lease_expiry) AS next_expiry
+         FROM tenancy_schedule_units t
+         JOIN crm_properties p ON p.id = t.property_id
+        WHERE t.tenant_company_id = $1
+          AND (t.status IS NULL OR t.status NOT IN ('Vacant', 'Void'))
+        GROUP BY p.id
+        ORDER BY units DESC, p.name`,
+      [companyId]
+    );
+
     // Latest landlord-website scrape findings (logo, share ticker, IR
     // contact, board, asset list, annual report URL). Only populated
     // after the user has hit "Sync from website" on the landlord profile.
@@ -578,6 +599,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
       rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings, contactInteractionStats,
+      liveLocations,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
@@ -585,6 +607,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
       safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ), safe(contactInteractionStatsQ),
+      safe(liveLocationsQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -811,6 +834,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       news: news.rows,
       requirements: requirements.rows,
       pitchedTo: pitchedTo.rows,
+      liveLocations: liveLocations.rows,
       contacts: (() => {
         // Decorate each contact with interaction counts so the
         // key-contacts panel can show BGP-relationship strength.

@@ -3114,6 +3114,11 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("crm_companies", "brand_analysis_at", "timestamp");
           await addColIfMissing("crm_companies", "concept_status", "text");
           await addColIfMissing("crm_companies", "trading_entities", "jsonb");
+          // Canonical brand FK on the tenancy + available-units rows.
+          // Populated at write-time by the tenant resolver; the read
+          // path joins on this in preference to the soft name match.
+          await addColIfMissing("tenancy_schedule_units", "tenant_company_id", "varchar");
+          await addColIfMissing("available_units", "tenant_company_id", "varchar");
 
           // Auto-track all tenant companies as brands (idempotent).
           await db.execute(sql.raw(`

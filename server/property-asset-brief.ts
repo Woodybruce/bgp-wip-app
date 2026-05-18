@@ -580,6 +580,24 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
       [propertyId]
     ).then(r => r.rows[0]?.n || 0);
 
+    // Canonical resolution status on the tenancy schedule (the spine).
+    // The tenancy schedule is meant to be the source of truth — every
+    // row should resolve to a brand via tenant_company_id. Count what's
+    // resolved vs still NULL so the linkage card can show "X / Y
+    // tenants resolved" and offer a one-click backfill.
+    const tenancyResolution = await pool.query<{ total: number; resolved: number; unresolved: number }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '') <> ''
+                            AND lower(coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '')) NOT IN ('vacant', 'void', '—', '-'))::int AS total,
+         COUNT(*) FILTER (WHERE tenant_company_id IS NOT NULL)::int AS resolved,
+         COUNT(*) FILTER (WHERE tenant_company_id IS NULL
+                            AND coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '') <> ''
+                            AND lower(coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '')) NOT IN ('vacant', 'void', '—', '-'))::int AS unresolved
+         FROM tenancy_schedule_units
+        WHERE property_id = $1`,
+      [propertyId]
+    ).then(r => r.rows[0] || { total: 0, resolved: 0, unresolved: 0 });
+
     // Contacts surfaced via deals on this property.
     const contactsViaDeals = await pool.query<{ n: number }>(
       `SELECT COUNT(DISTINCT contact_id)::int AS n FROM (
@@ -616,6 +634,7 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
         schedule_units_missing_from_property_units: scheduleUnitsMissingFromPropertyUnits,
       },
       tenants_unlinked_to_crm_company: tenantsInScheduleUnlinked,
+      tenancy_resolution: tenancyResolution,
     });
   } catch (err: any) {
     console.error("[linkage-audit]", err?.message, err?.stack);

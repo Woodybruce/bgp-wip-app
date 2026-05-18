@@ -25,7 +25,9 @@ import {
   Target, Handshake, Activity, AlertTriangle, BarChart3, Building2,
   Pencil, Plus, Trash2, ChevronRight, Mail, Phone, Users,
   Calendar as CalendarIcon, TrendingUp, TrendingDown, Sparkles,
+  Wand2, Search, X, Check, Loader2,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 interface AssetBrief {
   property: { id: string; name: string; postcode: string | null; last_updated_at: string };
@@ -309,6 +311,11 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
 // units across the three tables, and tenants on the schedule that
 // aren't tied to a crm_companies row. Each red number is a fix-it.
 export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [resolving, setResolving] = useState(false);
+  const [showUnresolved, setShowUnresolved] = useState(false);
+
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/properties", propertyId, "linkage-audit"],
     queryFn: async () => {
@@ -317,6 +324,26 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
       return res.json();
     },
   });
+
+  const runResolve = async () => {
+    setResolving(true);
+    try {
+      const res = await fetch(`/api/properties/${propertyId}/resolve-tenants`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      toast({ title: "Tenants resolved", description: `${j.resolved} resolved · ${j.unresolved} still need a brand.` });
+      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
+      qc.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      qc.invalidateQueries({ queryKey: ["/api/leasing-schedule/units", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Resolve failed", description: e.message, variant: "destructive" });
+    } finally {
+      setResolving(false);
+    }
+  };
+
   if (isLoading || !data) {
     return <Skeleton className="h-24 w-full" />;
   }
@@ -326,8 +353,43 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
       <span className={`font-mono font-medium ${warn && Number(value) > 0 ? "text-rose-600" : "text-foreground"}`}>{value}</span>
     </div>
   );
+  const tr = data.tenancy_resolution || { total: 0, resolved: 0, unresolved: 0 };
   return (
     <div className="space-y-2.5">
+      <div className="rounded-md border border-purple-200 bg-purple-50/60 p-2">
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-[10px] uppercase tracking-wide text-purple-700 font-medium flex items-center gap-1">
+            <Sparkles className="w-3 h-3" /> Tenancy schedule (spine)
+          </div>
+          <Badge variant="outline" className="text-[10px] bg-white">
+            {tr.resolved}/{tr.total} linked to brand
+          </Badge>
+        </div>
+        <p className="text-[10px] text-muted-foreground leading-snug mb-1.5">
+          Every tenant row should resolve to a CRM brand. Linked tenants click straight to the brand board; unlinked ones won't surface deals, KYC, or news.
+        </p>
+        <div className="flex gap-1.5">
+          <Button
+            size="sm" variant="default" className="h-6 text-[11px] gap-1 bg-purple-600 hover:bg-purple-700"
+            onClick={runResolve} disabled={resolving}
+            data-testid="btn-resolve-tenants"
+          >
+            {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+            Resolve unmatched tenants
+          </Button>
+          {tr.unresolved > 0 && (
+            <Button
+              size="sm" variant="outline" className="h-6 text-[11px] gap-1"
+              onClick={() => setShowUnresolved(true)}
+              data-testid="btn-show-unresolved"
+            >
+              <Search className="w-3 h-3" />
+              {tr.unresolved} unresolved
+            </Button>
+          )}
+        </div>
+      </div>
+
       <div>
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Deals</div>
         <Row label="Active, correctly linked" value={data.deals.active_correctly_linked} />
@@ -356,15 +418,154 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
         <Row label="available_units" value={data.units.available_units} />
         <Row label="Schedule units not yet in master" value={data.units.schedule_units_missing_from_property_units} warn />
       </div>
-      <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Tenants on schedule</div>
-        <Row label="Unlinked to a CRM company" value={data.tenants_unlinked_to_crm_company} warn />
-      </div>
-      {(data.deals.landlord_orphans > 0 || data.units.schedule_units_missing_from_property_units > 0 || data.tenants_unlinked_to_crm_company > 0) && (
+      {(data.deals.landlord_orphans > 0 || data.units.schedule_units_missing_from_property_units > 0 || tr.unresolved > 0) && (
         <p className="text-[10px] text-muted-foreground italic pt-1 border-t leading-snug">
-          Red numbers = something the dashboard can't see yet. Tag deals with property_id, promote schedule units into property_units, or link tenant names to CRM companies to bring it in scope.
+          Red numbers = something the dashboard can't see yet. Resolve unmatched tenants above, tag deals with property_id, or promote schedule units into the master.
         </p>
       )}
+
+      {showUnresolved && (
+        <UnresolvedTenantsDialog propertyId={propertyId} onClose={() => setShowUnresolved(false)} />
+      )}
+    </div>
+  );
+}
+
+// Dialog showing every tenant string on the schedule that didn't
+// resolve to a brand. For each, the user can search the CRM for the
+// brand, pick it, and (optionally) save the tenant name as a
+// trading-entity alias on the brand so the next import auto-resolves.
+function UnresolvedTenantsDialog({ propertyId, onClose }: { propertyId: string; onClose: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data: unresolved = [], isLoading } = useQuery<Array<{ name: string; units: number }>>({
+    queryKey: ["/api/properties", propertyId, "unresolved-tenants"],
+    queryFn: async () => {
+      const res = await fetch(`/api/properties/${propertyId}/unresolved-tenants`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2">
+            <Search className="w-4 h-4 text-purple-600" />
+            Unresolved tenants on this property
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            These tenant strings didn't match a brand or trading entity. Pick a brand for each and we'll add the string as a trading-entity alias so it auto-resolves next time.
+          </DialogDescription>
+        </DialogHeader>
+        {isLoading ? (
+          <Skeleton className="h-32 w-full" />
+        ) : unresolved.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic py-8 text-center">
+            Everything resolved. Nothing to fix.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {unresolved.map(u => (
+              <UnresolvedTenantRow
+                key={u.name}
+                propertyId={propertyId}
+                tenantName={u.name}
+                units={u.units}
+                onAssigned={() => {
+                  qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "unresolved-tenants"] });
+                  qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
+                  qc.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+                  toast({ title: "Tenant linked", description: `"${u.name}" now resolves to the brand.` });
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UnresolvedTenantRow({
+  propertyId, tenantName, units, onAssigned,
+}: { propertyId: string; tenantName: string; units: number; onAssigned: () => void }) {
+  const [query, setQuery] = useState(tenantName);
+  const [showResults, setShowResults] = useState(false);
+  const [saveAsAlias, setSaveAsAlias] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const { data: results = [] } = useQuery<Array<{ id: string; name: string; domain: string | null }>>({
+    queryKey: ["/api/crm/companies/search", query],
+    queryFn: async () => {
+      if (!query || query.length < 2) return [];
+      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(query)}&limit=8`, { credentials: "include" });
+      if (!r.ok) return [];
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d.companies || []);
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name, domain: c.domain || c.domainUrl || null }));
+    },
+    staleTime: 30_000,
+    enabled: showResults,
+  });
+
+  const assign = async (brandCompanyId: string) => {
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/properties/${propertyId}/assign-tenant-brand`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ tenantName, brandCompanyId, addAsTradingEntity: saveAsAlias }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      onAssigned();
+    } catch (e: any) {
+      // Bubble up via parent toast — onAssigned does nothing on error.
+    } finally {
+      setSaving(false);
+      setShowResults(false);
+    }
+  };
+
+  return (
+    <div className="border rounded-md p-2 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">{tenantName}</div>
+        <Badge variant="outline" className="text-[10px]">{units} {units === 1 ? "unit" : "units"}</Badge>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <div className="relative flex-1">
+          <Input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setShowResults(true); }}
+            onFocus={() => setShowResults(true)}
+            placeholder="Search CRM for brand…"
+            className="h-7 text-xs"
+          />
+          {showResults && results.length > 0 && (
+            <div className="absolute z-20 top-7 left-0 right-0 bg-white border rounded-md shadow-md max-h-48 overflow-y-auto">
+              {results.map(r => (
+                <button
+                  key={r.id}
+                  onClick={() => assign(r.id)}
+                  disabled={saving}
+                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted border-b last:border-b-0"
+                >
+                  <div className="font-medium">{r.name}</div>
+                  {r.domain && <div className="text-[10px] text-muted-foreground">{r.domain}</div>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer">
+          <input type="checkbox" checked={saveAsAlias} onChange={e => setSaveAsAlias(e.target.checked)} className="w-3 h-3" />
+          Save as alias
+        </label>
+        {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+      </div>
     </div>
   );
 }

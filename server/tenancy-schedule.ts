@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import multer from "multer";
+import { backfillPropertyTenants, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -30,54 +31,23 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     // crm_companies on a lowercased trimmed tenant_name to resolve
     // a clickable company link for the Tenant / Trading As cells
     // (mirrors the pattern used in the leasing schedule GET).
-    // Resolution chain: tenant_name → brand_keys → brand company.
-    // brand_keys collects both the brand's crm_companies.name AND any
-    // trading_entities[].name (so "Pret A Manger Trading Ltd" resolves
-    // to the "Pret A Manger" board). Names normalised the same way on
-    // both sides: lowercase, strip Ltd/Plc/Group/UK etc., punctuation
-    // and multiple spaces collapsed.
+    // FK-first read: tenant_company_id is the canonical link, written
+    // at import time / by the resolve-tenants backfill. The soft name
+    // matcher in tenant-brand-resolver is a fading safety net for rows
+    // that haven't been backfilled yet — once the team clicks Resolve
+    // on the linkage card, this fallback is rarely hit.
     const occupied = await pool.query(
-      `WITH brand_keys AS (
-         SELECT id AS brand_id, lower(trim(name)) AS raw FROM crm_companies WHERE merged_into_id IS NULL
-         UNION ALL
-         SELECT c.id, lower(trim(entity->>'name'))
-           FROM crm_companies c,
-                jsonb_array_elements(coalesce(c.trading_entities, '[]'::jsonb)) AS entity
-          WHERE c.merged_into_id IS NULL
-            AND entity->>'name' IS NOT NULL
-            AND length(trim(entity->>'name')) > 0
-       ),
-       brand_keys_norm AS (
-         SELECT brand_id,
-                trim(regexp_replace(
-                  regexp_replace(raw,
-                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
-                    '', 'g'),
-                  '[^a-z0-9]+', ' ', 'g')) AS norm_key
-           FROM brand_keys
-       ),
-       tenancy_norm AS (
-         SELECT t.id,
-                trim(regexp_replace(
-                  regexp_replace(lower(trim(coalesce(t.trading_name, t.tenant_name, ''))),
-                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$',
-                    '', 'g'),
-                  '[^a-z0-9]+', ' ', 'g')) AS norm_tenant
-           FROM tenancy_schedule_units t
-          WHERE t.property_id = $1
-       ),
-       matched AS (
-         SELECT DISTINCT ON (tn.id) tn.id, bkn.brand_id
-           FROM tenancy_norm tn
-           LEFT JOIN brand_keys_norm bkn ON bkn.norm_key = tn.norm_tenant AND bkn.norm_key <> ''
-          ORDER BY tn.id, bkn.brand_id NULLS LAST
-       )
-       SELECT t.*,
-              tc.id   AS resolved_tenant_company_id,
-              tc.name AS resolved_tenant_company_name
+      `SELECT t.*,
+              COALESCE(tc_fk.id, tc_soft.id) AS resolved_tenant_company_id,
+              COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name
          FROM tenancy_schedule_units t
-         LEFT JOIN matched m ON m.id = t.id
-         LEFT JOIN crm_companies tc ON tc.id = m.brand_id
+         LEFT JOIN crm_companies tc_fk ON tc_fk.id = t.tenant_company_id AND tc_fk.merged_into_id IS NULL
+         LEFT JOIN LATERAL (
+           SELECT c.id, c.name FROM crm_companies c
+            WHERE t.tenant_company_id IS NULL
+              AND c.id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
+            LIMIT 1
+         ) tc_soft ON TRUE
         WHERE t.property_id = $1
         ORDER BY t.premises, t.sort_order, t.id`,
       [propertyId]
@@ -276,6 +246,18 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
       `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`,
       values
     );
+
+    // Stamp brand FK from the new row's tenant name. Best-effort.
+    const newId = result.rows[0]?.id;
+    if (newId && (d.tenant_name || d.trading_name)) {
+      await pool.query(
+        `UPDATE tenancy_schedule_units
+            SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(trading_name, tenant_name, '')")}
+          WHERE id = $1 AND tenant_company_id IS NULL`,
+        [newId]
+      ).catch((e: any) => console.warn("[tenancy] auto-resolve on insert failed:", e?.message));
+    }
+
     res.json(result.rows[0]);
   } catch (e: any) {
     console.error("[tenancy] create unit failed:", e?.message);
@@ -307,6 +289,19 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
       `UPDATE tenancy_schedule_units SET ${fields.join(", ")} WHERE id = $${idx} RETURNING *`,
       values
     );
+
+    // If the edit touched the tenant name or trading name, re-resolve
+    // the brand FK so the row immediately points at the right brand
+    // board (or NULL if no match). Cheap single-row update.
+    if ("tenant_name" in d || "trading_name" in d) {
+      await pool.query(
+        `UPDATE tenancy_schedule_units
+            SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(trading_name, tenant_name, '')")}
+          WHERE id = $1`,
+        [id]
+      ).catch((e: any) => console.warn("[tenancy] re-resolve failed:", e?.message));
+    }
+
     res.json(result.rows[0]);
   } catch (e: any) {
     console.error("[tenancy] update unit failed:", e?.message);
@@ -600,11 +595,23 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       }
     }
 
+    // Auto-resolve tenant → brand FKs across the freshly imported rows
+    // so the property page lights up without a manual click. Failures
+    // here are non-fatal: the import is already committed and the user
+    // can still hit "Resolve unmatched tenants" later.
+    let resolution: { total: number; resolved: number; unresolved: number } | null = null;
+    try {
+      resolution = await backfillPropertyTenants(propertyId);
+    } catch (e: any) {
+      console.warn("[tenancy-import] resolver pass failed:", e?.message);
+    }
+
     res.json({
       imported,
       headerRow: bestHeaderIdx + 1,
       mappedColumns: Object.values(colToField),
-      message: `${imported} units imported`,
+      resolution,
+      message: `${imported} units imported${resolution ? ` · ${resolution.resolved}/${resolution.total} tenants resolved` : ""}`,
     });
   } catch (e: any) {
     console.error("[tenancy-import] failed:", e);
@@ -985,6 +992,106 @@ router.get("/api/tenancy-schedule/audit-legacy-columns", requireAuth, async (_re
     res.json({ totalRows: total.rows[0]?.n ?? 0, existingColumns, columns: out });
   } catch (e: any) {
     res.status(500).json({ error: e.message, stack: e.stack?.split("\n").slice(0, 3) });
+  }
+});
+
+// One-click backfill — runs the tenant→brand resolver across every
+// tenancy / leasing / available row on the property where the FK is
+// still NULL and writes the match. UI surfaces this on the property
+// linkage card so the team can adopt all matchable tenants in one go.
+router.post("/api/properties/:propertyId/resolve-tenants", requireAuth, async (req, res) => {
+  try {
+    const { propertyId } = req.params;
+    const result = await backfillPropertyTenants(propertyId);
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// List of tenants on this property that the resolver couldn't match
+// — surfaces the exact strings the team needs to either (a) create a
+// CRM brand for, or (b) add as a trading-entity alias on an existing
+// brand. Counts the same row once even if it appears in multiple
+// schedules — the lease counterparty is what matters.
+router.get("/api/properties/:propertyId/unresolved-tenants", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId } = req.params;
+    const { rows } = await pool.query(
+      `SELECT DISTINCT
+              coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name)) AS name,
+              COUNT(*) AS units
+         FROM tenancy_schedule_units
+        WHERE property_id = $1
+          AND tenant_company_id IS NULL
+          AND coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '') <> ''
+          AND lower(coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '')) NOT IN ('vacant', 'void', '—', '-')
+        GROUP BY 1
+        ORDER BY 2 DESC, 1`,
+      [propertyId]
+    );
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Manual assignment — when a tenancy row's tenant name doesn't match
+// any brand, the team picks a brand from the CRM and we stamp the FK
+// onto every row on this property sharing that exact tenant name.
+// Also, optionally, adds the tenant name as a trading-entity alias on
+// the chosen brand so future imports auto-resolve.
+router.post("/api/properties/:propertyId/assign-tenant-brand", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId } = req.params;
+    const { tenantName, brandCompanyId, addAsTradingEntity } = req.body as {
+      tenantName: string; brandCompanyId: string; addAsTradingEntity?: boolean;
+    };
+    if (!tenantName || !brandCompanyId) {
+      return res.status(400).json({ error: "tenantName and brandCompanyId are required" });
+    }
+
+    const updated = await pool.query(
+      `UPDATE tenancy_schedule_units
+          SET tenant_company_id = $1
+        WHERE property_id = $2
+          AND tenant_company_id IS NULL
+          AND lower(trim(coalesce(NULLIF(trim(trading_name), ''), tenant_name, ''))) = lower(trim($3))`,
+      [brandCompanyId, propertyId, tenantName]
+    );
+
+    // Mirror onto the leasing schedule + available_units on the same
+    // tenant string so the team's one click resolves the whole row
+    // family.
+    await pool.query(
+      `UPDATE leasing_schedule_units
+          SET tenant_company_id = $1
+        WHERE property_id = $2
+          AND tenant_company_id IS NULL
+          AND lower(trim(coalesce(tenant_name, ''))) = lower(trim($3))`,
+      [brandCompanyId, propertyId, tenantName]
+    );
+
+    if (addAsTradingEntity) {
+      // Append to crm_companies.trading_entities — dedupe by lowered name.
+      await pool.query(
+        `UPDATE crm_companies
+            SET trading_entities = COALESCE(trading_entities, '[]'::jsonb) ||
+              jsonb_build_array(jsonb_build_object('name', trim($2), 'added_at', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SSZ')))
+          WHERE id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(COALESCE(trading_entities, '[]'::jsonb)) AS e
+               WHERE lower(trim(coalesce(e->>'name', ''))) = lower(trim($2))
+            )`,
+        [brandCompanyId, tenantName]
+      );
+    }
+
+    res.json({ updated: updated.rowCount || 0 });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 
