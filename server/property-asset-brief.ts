@@ -94,8 +94,8 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //    the unit's name + tenant company for logos + the BGP owner.
     const dealsQ = await pool.query<any>(
       `SELECT d.id, d.name, d.status, d.deal_type, d.updated_at,
-              d.unit_id, d.tenant_id,
-              pu.unit_name,
+              d.unit_id, d.tenant_id, d.tenancy_unit_id,
+              COALESCE(ts.unit_number, pu.unit_name) AS unit_name,
               tc.name AS tenant_name, tc.domain AS tenant_domain,
               da.user_ids AS bgp_user_ids,
               df.amount_pence AS fee_pence
@@ -126,6 +126,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       stage_label: stageLabel(d.status),
       stage_bucket: stageBucket(d.status),
       unit_id: d.unit_id,
+      tenancy_unit_id: d.tenancy_unit_id,
       unit_name: d.unit_name,
       tenant_id: d.tenant_id,
       tenant_name: d.tenant_name,

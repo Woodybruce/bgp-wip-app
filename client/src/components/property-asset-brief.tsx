@@ -36,7 +36,7 @@ interface AssetBrief {
   weekly_focus: Array<{ id: string; text: string; owner_user_id?: string | null; deal_id?: string | null }>;
   active_deals: Array<{
     id: string; name: string; status: string; stage_label: string; stage_bucket: string;
-    unit_id: string | null; unit_name: string | null;
+    unit_id: string | null; tenancy_unit_id: string | null; unit_name: string | null;
     tenant_id: string | null; tenant_name: string | null; tenant_logo_url: string | null;
     fee_pence: number | null; bgp_user_ids: string[]; last_touch_at: string | null;
   }>;
