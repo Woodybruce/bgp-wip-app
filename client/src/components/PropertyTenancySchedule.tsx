@@ -12,8 +12,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
   Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon,
-  Eye
+  Eye, Filter
 } from "lucide-react";
+
+// Compact retail-tuned set of use labels we want the team to land on across
+// the tenancy schedules — chosen over the full UK planning class list
+// because the Landsec sheets and team comments overwhelmingly use these
+// short labels. Free-text legacy values still display verbatim; picking a
+// value from the dropdown writes the canonical label back.
+const USE_CLASSES = ["Shop", "F&B", "Leisure", "Office", "Storage", "Other"] as const;
 
 interface TenancyUnit {
   id: number | string;
@@ -231,6 +238,61 @@ const COLUMNS: Col[] = [
   { field: "underwriting_comments", label: "Underwriting Comments", band: "Comments", width: 200, align: "left" },
 ];
 
+// Per-column filter pill — small Filter icon next to each header label.
+// Click opens a popover with a checkbox per distinct value from the data,
+// matching the app-wide shadcn DropdownMenu / Popover pattern.
+function HeaderFilter({ field, label, distinctValues, active, onChange }: {
+  field: string;
+  label: string;
+  distinctValues: string[];
+  active: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  if (distinctValues.length === 0) return null;
+  const isActive = active.size > 0;
+  const toggle = (v: string) => {
+    const next = new Set(active);
+    if (next.has(v)) next.delete(v); else next.add(v);
+    onChange(next);
+  };
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`inline-flex items-center justify-center w-4 h-4 rounded ml-1 ${isActive ? "text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30" : "text-gray-400 hover:text-gray-600"}`}
+          title={`Filter ${label}`}
+          data-testid={`tenancy-filter-trigger-${field}`}
+        >
+          <Filter className="w-3 h-3" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-56 max-h-[50vh] overflow-y-auto p-2">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-semibold">{label}</span>
+          {isActive && (
+            <button
+              className="text-[10px] text-indigo-500 hover:underline"
+              onClick={() => onChange(new Set())}
+              data-testid={`tenancy-filter-clear-${field}`}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <div className="space-y-1">
+          {distinctValues.map(v => (
+            <label key={v} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded px-1 py-0.5">
+              <Checkbox checked={active.has(v)} onCheckedChange={() => toggle(v)} />
+              <span className="truncate">{v || "(empty)"}</span>
+            </label>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Small inline T / L / M chip that sits next to the break date — cycles
 // through Tenant / Landlord / Mutual via a native select. Tinted so the
 // party-to-break is readable at a glance.
@@ -362,6 +424,20 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   };
   const visibleColumns = COLUMNS.filter(c => !hiddenFields.has(c.field as string));
 
+  // Per-column multi-select filters. Map keyed by field; value is the set of
+  // accepted values. A row passes if, for every active filter, its cell
+  // value (stringified) is in the set. Distinct value lists are computed
+  // from the full units list so options stay stable when filters narrow it.
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
+  const setColFilter = (field: string, values: Set<string>) => {
+    setColFilters(prev => {
+      const next = { ...prev };
+      if (values.size === 0) delete next[field]; else next[field] = values;
+      return next;
+    });
+  };
+  const clearAllFilters = () => setColFilters({});
+
   const { data: units = [], isLoading, error: unitsError } = useQuery<TenancyUnit[]>({
     queryKey: ["/api/tenancy-schedule/property", propertyId],
     queryFn: async () => {
@@ -482,7 +558,13 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
     if (statusFilter && u.status !== statusFilter) return false;
     if (search) {
       const s = search.toLowerCase();
-      return [u.unit_number, u.tenant_name, u.trading_name, u.premises, u.permitted_use].some(f => f?.toLowerCase().includes(s));
+      const matchesSearch = [u.unit_number, u.tenant_name, u.trading_name, u.premises, u.permitted_use].some(f => f?.toLowerCase().includes(s));
+      if (!matchesSearch) return false;
+    }
+    for (const [field, values] of Object.entries(colFilters)) {
+      const raw = (u as any)[field];
+      const v = raw == null ? "" : String(raw);
+      if (!values.has(v)) return false;
     }
     return true;
   });
@@ -541,7 +623,19 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   return (
     <div className="space-y-3" data-testid="property-tenancy-schedule">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
+          {Object.keys(colFilters).length > 0 && (
+            <Badge
+              variant="outline"
+              className="text-[10px] cursor-pointer border-indigo-400 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+              onClick={clearAllFilters}
+              data-testid="tenancy-clear-filters"
+            >
+              {filtered.length} filtered · clear
+            </Badge>
+          )}
+        </div>
         <div className="flex gap-2 flex-wrap">
           <div className="relative">
             <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -670,13 +764,41 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
               })()}
               <th colSpan={3} className="bg-slate-800 text-white p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center">Actions</th>
             </tr>
-            {/* Column labels */}
+            {/* Column labels — text-style columns get an inline filter pill
+                so the team can narrow by Use, Zone, Tenant, etc without
+                leaving the table. Numeric / currency columns skip the
+                filter (range-filtering them adds noise for little win). */}
             <tr className="bg-gray-100 dark:bg-gray-800 border-b">
-              {visibleColumns.map((c) => (
-                <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}`} style={{ minWidth: c.width }}>
-                  {c.label}
-                </th>
-              ))}
+              {visibleColumns.map((c) => {
+                const filterable = !c.type || c.type === "text";
+                let distinct: string[] = [];
+                if (filterable) {
+                  const seen = new Set<string>();
+                  for (const u of units) {
+                    const raw = (u as any)[c.field];
+                    if (raw == null) continue;
+                    const s = String(raw).trim();
+                    if (s) seen.add(s);
+                  }
+                  distinct = [...seen].sort((a, b) => a.localeCompare(b));
+                }
+                return (
+                  <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}`} style={{ minWidth: c.width }}>
+                    <span className="inline-flex items-center">
+                      {c.label}
+                      {filterable && (
+                        <HeaderFilter
+                          field={c.field as string}
+                          label={c.label}
+                          distinctValues={distinct}
+                          active={colFilters[c.field as string] || new Set()}
+                          onChange={(next) => setColFilter(c.field as string, next)}
+                        />
+                      )}
+                    </span>
+                  </th>
+                );
+              })}
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Status</th>
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
               <th className="text-center p-2 font-medium w-10"></th>
@@ -825,6 +947,20 @@ function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
                 onSave={onUpdate}
                 type="select"
                 options={["Y", "N"]}
+              />
+            </td>
+          );
+        }
+        if (c.field === "permitted_use") {
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+              <InlineEdit
+                value={displayVal}
+                field="permitted_use"
+                unitId={unit.id}
+                onSave={onUpdate}
+                type="select"
+                options={[...USE_CLASSES]}
               />
             </td>
           );
