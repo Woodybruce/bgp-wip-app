@@ -64,14 +64,19 @@ interface PickableUnit {
   lease_status: string | null;
 }
 
+// Status colour palette. Fills kept low (10-20% alpha) so overlapping
+// polygons don't stack into a dark blob — auto-detect bboxes around
+// neighbouring units routinely overlap by a few pixels. Unlinked
+// polygons render OUTLINE-ONLY (no fill) so the underlying plan stays
+// fully legible until they're wired to a unit.
 const STATUS_COLOURS: Record<string, { fill: string; stroke: string; label: string }> = {
-  occupied:          { fill: "rgba(16,185,129,0.25)",  stroke: "#10b981", label: "Occupied" },
-  lease_event:       { fill: "rgba(250,204,21,0.30)",  stroke: "#eab308", label: "Lease event <18m" },
-  under_offer:       { fill: "rgba(249,115,22,0.30)",  stroke: "#f97316", label: "Under offer" },
-  deal_in_progress:  { fill: "rgba(59,130,246,0.30)",  stroke: "#3b82f6", label: "Deal in progress" },
-  vacant:            { fill: "rgba(244,63,94,0.30)",   stroke: "#f43f5e", label: "Vacant" },
-  unlinked:          { fill: "rgba(148,163,184,0.20)", stroke: "#94a3b8", label: "Unlinked" },
-  unknown:           { fill: "rgba(148,163,184,0.20)", stroke: "#94a3b8", label: "Unknown" },
+  occupied:          { fill: "rgba(16,185,129,0.14)",  stroke: "#10b981", label: "Occupied" },
+  lease_event:       { fill: "rgba(250,204,21,0.18)",  stroke: "#eab308", label: "Lease event <18m" },
+  under_offer:       { fill: "rgba(249,115,22,0.18)",  stroke: "#f97316", label: "Under offer" },
+  deal_in_progress:  { fill: "rgba(59,130,246,0.18)",  stroke: "#3b82f6", label: "Deal in progress" },
+  vacant:            { fill: "rgba(244,63,94,0.18)",   stroke: "#f43f5e", label: "Vacant" },
+  unlinked:          { fill: "transparent",            stroke: "#94a3b8", label: "Unlinked" },
+  unknown:           { fill: "transparent",            stroke: "#94a3b8", label: "Unknown" },
 };
 
 function formatMoney(n: number | null | undefined): string {
@@ -263,6 +268,52 @@ function PlanCanvas({
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [hoverUnit, setHoverUnit] = useState<PlanUnit | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  // Pan + zoom state. Scale 1 = fit, max 6×. Pan in container pixels.
+  // Wheel zooms toward the cursor (kid-glove UX). In draw mode we
+  // suppress pan-drag so polygon clicks land cleanly.
+  const [viewScale, setViewScale] = useState(1);
+  const [viewTx, setViewTx] = useState(0);
+  const [viewTy, setViewTy] = useState(0);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startX: number; startY: number; tx0: number; ty0: number } | null>(null);
+
+  function resetView() { setViewScale(1); setViewTx(0); setViewTy(0); }
+  function zoomBy(delta: number, cx?: number, cy?: number) {
+    const next = Math.max(1, Math.min(6, viewScale * delta));
+    if (next === viewScale) return;
+    if (cx != null && cy != null && innerRef.current) {
+      // Zoom toward cursor: anchor the cursor's image-relative point.
+      const rect = innerRef.current.getBoundingClientRect();
+      const px = cx - rect.left;
+      const py = cy - rect.top;
+      const ratio = next / viewScale;
+      setViewTx(viewTx - (px - rect.width / 2) * (ratio - 1));
+      setViewTy(viewTy - (py - rect.height / 2) * (ratio - 1));
+    }
+    setViewScale(next);
+  }
+  function handleWheel(e: React.WheelEvent) {
+    if (e.deltaY === 0) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY);
+  }
+  function handlePointerDown(e: React.PointerEvent) {
+    if (drawMode) return;
+    // Don't initiate a pan on a polygon click — let the path's
+    // onClick handle the drawer pop. We only start drag on the
+    // image background.
+    if ((e.target as HTMLElement).tagName?.toLowerCase() === "path") return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, tx0: viewTx, ty0: viewTy };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function handlePointerMove(e: React.PointerEvent) {
+    if (!dragRef.current) return;
+    setViewTx(dragRef.current.tx0 + (e.clientX - dragRef.current.startX));
+    setViewTy(dragRef.current.ty0 + (e.clientY - dragRef.current.startY));
+  }
+  function handlePointerUp() {
+    dragRef.current = null;
+  }
 
   const unitsQ = useQuery<{ units: PlanUnit[] }>({
     queryKey: ["/api/plans", plan.id, "units"],
@@ -320,30 +371,47 @@ function PlanCanvas({
   return (
     <div
       className="relative w-full overflow-hidden rounded border bg-muted/30"
-      style={{ aspectRatio: naturalSize ? `${naturalSize.w} / ${naturalSize.h}` : "16 / 9" }}
-      onClick={handleClickOverlay}
-      onDoubleClick={handleDoubleClickOverlay}
+      style={{ aspectRatio: naturalSize ? `${naturalSize.w} / ${naturalSize.h}` : "16 / 9", touchAction: "none" }}
       data-testid="plan-canvas"
+      onWheel={handleWheel}
     >
-      <img
-        ref={imgRef}
-        src={`/api/plans/${plan.id}/image`}
-        alt={`${plan.floor} plan`}
-        className="block w-full h-full object-contain pointer-events-none select-none"
-        draggable={false}
-        onLoad={(e) => {
-          const im = e.currentTarget;
-          if (im.naturalWidth > 0) setNaturalSize({ w: im.naturalWidth, h: im.naturalHeight });
+      {/* Zoom + pan transform wrapper. Click + drag + wheel all bind
+          here so getBoundingClientRect reflects the transformed bounds —
+          keeps draw-mode coords accurate at any zoom level. */}
+      <div
+        ref={innerRef}
+        className="absolute inset-0"
+        style={{
+          transform: `translate(${viewTx}px, ${viewTy}px) scale(${viewScale})`,
+          transformOrigin: "center center",
+          cursor: drawMode ? "crosshair" : (dragRef.current ? "grabbing" : "grab"),
         }}
-      />
-
-      {/* SVG overlay — viewBox 0..1 lets us draw with normalised coords. */}
-      <svg
-        viewBox="0 0 1 1"
-        preserveAspectRatio="none"
-        className="absolute inset-0 w-full h-full"
-        style={{ pointerEvents: "none" }}
+        onClick={handleClickOverlay}
+        onDoubleClick={handleDoubleClickOverlay}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
+        <img
+          ref={imgRef}
+          src={`/api/plans/${plan.id}/image`}
+          alt={`${plan.floor} plan`}
+          className="block w-full h-full object-contain pointer-events-none select-none"
+          draggable={false}
+          onLoad={(e) => {
+            const im = e.currentTarget;
+            if (im.naturalWidth > 0) setNaturalSize({ w: im.naturalWidth, h: im.naturalHeight });
+          }}
+        />
+
+        {/* SVG overlay — viewBox 0..1 lets us draw with normalised coords. */}
+        <svg
+          viewBox="0 0 1 1"
+          preserveAspectRatio="none"
+          className="absolute inset-0 w-full h-full"
+          style={{ pointerEvents: "none" }}
+        >
         {units.map(u => {
           const c = STATUS_COLOURS[u.status] || STATUS_COLOURS.unknown;
           const pts = u.polygon?.points || [];
@@ -388,9 +456,12 @@ function PlanCanvas({
             ))}
           </>
         )}
-      </svg>
+        </svg>
+      </div>
 
-      {/* Hover tooltip */}
+      {/* Hover tooltip — outside the transformed wrapper so it doesn't
+          scale with the zoom. Position still works because tooltipPos
+          is computed against the inner's bounding rect. */}
       {hoverUnit && tooltipPos && (
         <div
           className="absolute pointer-events-none bg-popover border rounded shadow-md px-2 py-1.5 text-[11px] z-10"
@@ -412,16 +483,39 @@ function PlanCanvas({
       )}
 
       {drawMode && (
-        <div className="absolute top-2 left-2 bg-card border rounded px-2 py-1 text-[10px] shadow-sm">
+        <div className="absolute top-2 left-2 bg-card border rounded px-2 py-1 text-[10px] shadow-sm z-10">
           Click to add point · double-click to close ({pendingPoints.length} points)
         </div>
       )}
 
       {crossFloorHint && (
-        <div className="absolute top-2 left-2 right-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200 flex items-center gap-2">
+        <div className="absolute top-2 left-2 right-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200 flex items-center gap-2 z-10">
           <span className="font-medium">"{highlightedLabel}"</span> isn't on this floor — switch floors to find it, or add it via "Add unit".
         </div>
       )}
+
+      {/* Zoom + pan controls. Sit bottom-right so they don't overlap
+          with the cross-floor banner. */}
+      <div className="absolute bottom-2 right-2 flex flex-col gap-1 z-10">
+        <button
+          onClick={() => zoomBy(1.25)}
+          className="w-7 h-7 rounded border bg-card hover:bg-muted text-xs font-semibold shadow-sm"
+          title="Zoom in (scroll wheel up)"
+        >+</button>
+        <button
+          onClick={() => zoomBy(1 / 1.25)}
+          className="w-7 h-7 rounded border bg-card hover:bg-muted text-xs font-semibold shadow-sm"
+          title="Zoom out (scroll wheel down)"
+        >−</button>
+        <button
+          onClick={resetView}
+          className="w-7 h-7 rounded border bg-card hover:bg-muted text-[9px] font-semibold shadow-sm"
+          title="Reset zoom + pan"
+        >⤧</button>
+      </div>
+      <div className="absolute bottom-2 left-2 text-[10px] text-muted-foreground bg-card/80 border rounded px-1.5 py-0.5 z-10 pointer-events-none">
+        {Math.round(viewScale * 100)}% · drag to pan · wheel to zoom
+      </div>
     </div>
   );
 }
