@@ -396,6 +396,9 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
         <Row label="Tagged with property_id" value={data.deals.by_property_id} />
         <Row label="Linked via unit only" value={data.deals.by_unit_id_only} />
         <Row label="Landlord orphans (need tagging)" value={data.deals.landlord_orphans} warn />
+        {data.deals.landlord_orphans > 0 && (
+          <OrphanDealsList propertyId={propertyId} />
+        )}
       </div>
       <div>
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Tasks</div>
@@ -485,6 +488,70 @@ function UnresolvedTenantsDialog({ propertyId, onClose }: { propertyId: string; 
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Inline list of active landlord-orphan deals (no property_id set,
+// tagged on the landlord only). Each row has a one-click "Adopt"
+// button that stamps property_id (and unit_id if the tenant resolves
+// to a unit on the tenancy schedule).
+function OrphanDealsList({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data = [] } = useQuery<Array<{ id: string; name: string; status: string; tenant_name: string | null; deal_ref: string | null; rent_pa: number | null }>>({
+    queryKey: ["/api/properties", propertyId, "orphan-deals"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${propertyId}/orphan-deals`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const adopt = async (dealId: string) => {
+    setBusyId(dealId);
+    try {
+      const r = await fetch(`/api/properties/${propertyId}/adopt-deal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ dealId }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      toast({ title: "Deal adopted", description: j.unitId ? "Linked to property and unit." : "Linked to property." });
+      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Adopt failed", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!data.length) return null;
+  return (
+    <div className="mt-1 space-y-1 pl-1 border-l-2 border-rose-200">
+      {data.slice(0, 5).map(d => (
+        <div key={d.id} className="flex items-center gap-1.5 text-[11px] py-0.5">
+          <span className="font-medium truncate flex-1">
+            {d.tenant_name || d.name || "Untitled deal"}
+            {d.deal_ref && <span className="ml-1 text-muted-foreground">#{d.deal_ref}</span>}
+          </span>
+          <Badge variant="outline" className="text-[9px]">{d.status}</Badge>
+          <Button
+            size="sm" variant="ghost" className="h-5 text-[10px] gap-0.5 px-1.5 text-emerald-700 hover:bg-emerald-50"
+            onClick={() => adopt(d.id)} disabled={busyId === d.id}
+            data-testid={`btn-adopt-deal-${d.id}`}
+          >
+            {busyId === d.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            Adopt
+          </Button>
+        </div>
+      ))}
+      {data.length > 5 && (
+        <p className="text-[10px] text-muted-foreground italic">+{data.length - 5} more orphan deals</p>
+      )}
+    </div>
   );
 }
 

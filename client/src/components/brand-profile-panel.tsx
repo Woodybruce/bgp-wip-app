@@ -986,6 +986,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
   })();
   const pitchedTo = data.pitchedTo || [];
+  const liveLocations = (data as any).liveLocations || [];
   const requirements = data.requirements || [];
   const completedDeals = data.completedDeals || [];
   const activeDeals = data.activeDeals || [];
@@ -2028,6 +2029,35 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             )}
 
             {/* Active requirements moved into the unified Expansion intelligence zone below. */}
+
+            {/* Live tenancies — every property on the platform where
+                this brand resolves as a tenant via the canonical FK.
+                The reciprocal of the tenancy schedule's brand link. */}
+            {liveLocations.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                  <Building2 className="w-3 h-3" /> Live tenancies ({liveLocations.length})
+                </div>
+                <div className="space-y-0.5">
+                  {liveLocations.slice(0, 8).map((p: any) => (
+                    <Link key={p.id} href={`/properties/${p.id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
+                      <span className="truncate flex-1 font-medium">{p.name}</span>
+                      <Badge variant="outline" className="text-[10px] shrink-0">
+                        {p.units} {Number(p.units) === 1 ? "unit" : "units"}
+                      </Badge>
+                      {Number(p.total_rent_pa) > 0 && (
+                        <span className="text-[10px] text-muted-foreground shrink-0 font-mono">
+                          £{Math.round(Number(p.total_rent_pa) / 1000)}k pa
+                        </span>
+                      )}
+                    </Link>
+                  ))}
+                  {liveLocations.length > 8 && (
+                    <p className="text-[10px] text-muted-foreground pl-1">+{liveLocations.length - 8} more</p>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Pitched-to history */}
             {pitchedTo.length > 0 && (

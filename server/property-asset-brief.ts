@@ -674,4 +674,76 @@ router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: R
   }
 });
 
+// Landlord-orphan deals — active deals where landlord_id matches this
+// property's landlord but property_id is NULL. These deals belong to
+// the property but were tagged with the parent landlord only, which
+// is why the property page doesn't see them. Surface so the team can
+// adopt them.
+router.get("/api/properties/:id/orphan-deals", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = req.params.id;
+    const prop = await pool.query<{ landlord_id: string | null }>(
+      `SELECT landlord_id FROM crm_properties WHERE id = $1`, [propertyId]
+    );
+    const landlordId = prop.rows[0]?.landlord_id;
+    if (!landlordId) return res.json([]);
+    const { rows } = await pool.query(
+      `SELECT d.id, d.name, d.status, d.tenant_id, c.name AS tenant_name, c.domain_url AS tenant_domain,
+              d.deal_ref, d.rent_pa, d.updated_at
+         FROM crm_deals d
+         LEFT JOIN crm_companies c ON c.id = d.tenant_id
+        WHERE d.landlord_id = $1
+          AND d.property_id IS NULL
+          AND d.unit_id IS NULL
+          AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')
+        ORDER BY d.updated_at DESC NULLS LAST
+        LIMIT 30`,
+      [landlordId]
+    );
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// Adopt an orphan deal onto this property — writes property_id and
+// (if the deal's tenant resolves to a tenancy_schedule row on this
+// property) the matching unit_id. One click → linked.
+router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = req.params.id;
+    const { dealId } = req.body as { dealId: string };
+    if (!dealId) return res.status(400).json({ error: "dealId required" });
+
+    // Try to find a matching unit on this property — by tenant brand
+    // first (most reliable), then by tenant name string.
+    const unit = await pool.query<{ unit_id: string | null }>(
+      `SELECT pu.id AS unit_id
+         FROM crm_deals d
+         LEFT JOIN tenancy_schedule_units t
+           ON t.property_id = $1
+          AND (t.tenant_company_id = d.tenant_id
+               OR lower(trim(coalesce(t.trading_name, t.tenant_name, ''))) =
+                  lower(trim(coalesce((SELECT name FROM crm_companies WHERE id = d.tenant_id), ''))))
+         LEFT JOIN property_units pu
+           ON pu.property_id = $1
+          AND lower(trim(pu.unit_name)) = lower(trim(t.unit_number))
+        WHERE d.id = $2
+        LIMIT 1`,
+      [propertyId, dealId]
+    );
+    const unitId = unit.rows[0]?.unit_id || null;
+
+    await pool.query(
+      `UPDATE crm_deals
+          SET property_id = $1${unitId ? ", unit_id = $3" : ""}
+        WHERE id = $2`,
+      unitId ? [propertyId, dealId, unitId] : [propertyId, dealId]
+    );
+    res.json({ ok: true, unitId });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
 export default router;
