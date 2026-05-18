@@ -101,6 +101,18 @@ function useAssetBrief(propertyId: string) {
 // earlier roomy 3-column header that had too much vertical space.
 export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
   const { data, isLoading } = useAssetBrief(propertyId);
+  // Pull the linkage audit in parallel so we can show a Spine health
+  // chip inline. Doesn't block the strip — if it 404s we just hide
+  // the chip.
+  const { data: audit } = useQuery<any>({
+    queryKey: ["/api/properties", propertyId, "linkage-audit"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${propertyId}/linkage-audit`, { credentials: "include" });
+      if (!r.ok) return null;
+      return r.json();
+    },
+  });
+
   if (isLoading || !data) {
     return (
       <div className="flex items-center gap-2 h-8">
@@ -109,6 +121,30 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
       </div>
     );
   }
+
+  // Spine health = % of tenancy rows resolved to brand. Amber if any
+  // integrity gaps; red if many. Clicking the chip is just a visual
+  // hint — the actionable buttons sit in the linkage card below.
+  const tr = audit?.tenancy_resolution || { total: 0, resolved: 0, unresolved: 0 };
+  const integrity = audit?.integrity || {};
+  const gapTotal =
+    (Number(integrity.duplicate_unit_numbers) || 0) +
+    (Number(integrity.tenants_pointing_at_merged_brand) || 0) +
+    (Number(integrity.deals_with_property_unit_mismatch) || 0) +
+    (Number(integrity.available_units_deal_on_other_property) || 0) +
+    (Number(integrity.active_deals_no_unit_fk) || 0) +
+    (Number(integrity.available_units_no_unit_fk) || 0) +
+    (Number(integrity.leasing_units_no_unit_fk) || 0);
+  const pct = tr.total > 0 ? Math.round((tr.resolved / tr.total) * 100) : null;
+  const spineTone =
+    pct === null ? "border-muted text-muted-foreground bg-muted/30"
+    : gapTotal === 0 && pct >= 95 ? "border-emerald-300 text-emerald-700 bg-emerald-50"
+    : pct >= 60 ? "border-amber-300 text-amber-700 bg-amber-50"
+    : "border-rose-300 text-rose-700 bg-rose-50";
+  const spineTitle =
+    pct === null ? "No tenancy schedule rows yet"
+    : `${tr.resolved}/${tr.total} tenants linked to brand${gapTotal > 0 ? ` · ${gapTotal} integrity gap${gapTotal === 1 ? "" : "s"}` : ""}`;
+
   return (
     <div className="flex items-center gap-3 text-xs">
       {data.owner ? (
@@ -137,6 +173,19 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
               Lead <span className="text-foreground font-medium">{data.asset_lead.name.split(" ")[0]}</span>
             </span>
           </div>
+        </>
+      )}
+      {pct !== null && (
+        <>
+          <span className="text-muted-foreground/40">·</span>
+          <span
+            className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${spineTone}`}
+            title={spineTitle}
+            data-testid="chip-spine-health"
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${gapTotal === 0 && pct >= 95 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500"}`} />
+            Spine {pct}%{gapTotal > 0 ? ` · ${gapTotal}` : ""}
+          </span>
         </>
       )}
       <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
