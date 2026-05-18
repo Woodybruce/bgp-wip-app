@@ -40,7 +40,13 @@ import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { ComplianceBoard } from "@/components/brand-profile-panel";
-import { PropertyAssetBriefPanel } from "@/components/property-asset-brief";
+import {
+  PropertyAssetBriefPanel,
+  PropertyCoveringStrip,
+  PipelinePerformanceBoard,
+  WeeklyFocusCard,
+  RiskRegisterCard,
+} from "@/components/property-asset-brief";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -475,6 +481,11 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <Card>
                 <CardContent className="p-3 space-y-3">
+                  {/* Property covering strip — Asset Owner logo +
+                      Asset Lead + Last activity. Top of the card so
+                      the client identity reads first. */}
+                  <PropertyCoveringStrip propertyId={property.id} />
+
                   {/* Top strip — 4 cells. Tenure removed. Website
                       pairs under Team, Competitor Agent pairs under
                       Sq Ft (same cell, stacked) so the related fields
@@ -547,24 +558,6 @@ export function PropertyDetail({ id }: { id: string }) {
                   </div>
                 </div>
 
-                {/* Tenants + comp-instructed date — the remaining bits
-                    after Billing Entity moved to Compliance, and Website
-                    + Competitor Agent moved up into the main strip. */}
-                <div className="border-t pt-3 grid grid-cols-2 gap-x-4 gap-y-2">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Tenants</p>
-                    <InlineTenants propertyId={id} tenantLinks={tenantLinks} allCompanies={allCompanies} />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Comp. Instructed</p>
-                    <InlineText
-                      value={property.competitorAgentInstructedAt ? String(property.competitorAgentInstructedAt).slice(0, 10) : ""}
-                      onSave={(val) => inlineUpdate("competitorAgentInstructedAt", val || null)}
-                      placeholder="YYYY-MM-DD"
-                      className="text-sm"
-                    />
-                  </div>
-                </div>
                 </CardContent>
               </Card>
 
@@ -584,6 +577,26 @@ export function PropertyDetail({ id }: { id: string }) {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Focus + Risk — two compact cards side-by-side under
+                the news strip. The week's tasks vs the auto-flagged
+                risks, both feed from the same asset-brief query. */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <ErrorBoundary compact name="Weekly focus">
+                <WeeklyFocusCard propertyId={property.id} />
+              </ErrorBoundary>
+              <ErrorBoundary compact name="Risk register">
+                <RiskRegisterCard propertyId={property.id} />
+              </ErrorBoundary>
+            </div>
+
+            {/* Pipeline + Performance combined — single 'how's the
+                building doing' tile that sits above Plans, giving
+                the asset lead a snapshot before they scroll into
+                the schedules. */}
+            <ErrorBoundary compact name="Pipeline & performance">
+              <PipelinePerformanceBoard propertyId={property.id} />
+            </ErrorBoundary>
 
             {/* Compliance & KYC now lives in the right sidebar as a
                 dropdown section (see below) — closer to where the asset

@@ -78,8 +78,11 @@ const STAGE_BUCKETS: { key: string; label: string; colour: string }[] = [
   { key: "signed",    label: "Signed",    colour: "bg-emerald-600 text-white border-emerald-600" },
 ];
 
-export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) {
-  const { data, isLoading } = useQuery<AssetBrief>({
+// Shared query key + fetch so every sub-card (PropertyCoveringStrip,
+// PipelinePerformanceBoard, PropertyAssetBriefPanel) shares one
+// react-query cache hit.
+function useAssetBrief(propertyId: string) {
+  return useQuery<AssetBrief>({
     queryKey: ["/api/properties", propertyId, "asset-brief"],
     queryFn: async () => {
       const res = await fetch(`/api/properties/${propertyId}/asset-brief`, { credentials: "include" });
@@ -87,6 +90,148 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
       return res.json();
     },
   });
+}
+
+// Compact covering strip — Asset Owner logo + Asset Lead avatar +
+// Last activity. Sits in the property's top board, replacing the
+// old Tenants + Comp. Instructed row. Same data as the brief
+// panel; react-query dedupes the network call.
+export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useAssetBrief(propertyId);
+  if (isLoading || !data) {
+    return (
+      <div className="flex items-center gap-3">
+        <Skeleton className="w-10 h-10 rounded" />
+        <Skeleton className="w-32 h-8" />
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      {data.owner ? (
+        <div className="flex items-center gap-2">
+          <img
+            src={data.owner.logo_url}
+            alt={data.owner.name}
+            className="w-10 h-10 rounded border bg-white object-contain p-1 shrink-0"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+          <div className="min-w-0">
+            <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">Asset owner</div>
+            <Link href={`/companies/${data.owner.id}`}>
+              <div className="text-sm font-semibold hover:underline truncate">{data.owner.name}</div>
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <div className="text-[11px] text-muted-foreground italic">Set freeholder / landlord above to show owner.</div>
+      )}
+      {data.asset_lead && (
+        <div className="flex items-center gap-2 border-l pl-3 ml-1">
+          <div className="w-8 h-8 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[10px] font-semibold shrink-0">
+            {data.asset_lead.avatar_url
+              ? <img src={data.asset_lead.avatar_url} alt="" className="w-full h-full object-cover" />
+              : data.asset_lead.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">Asset lead</div>
+            <div className="text-sm font-semibold truncate">{data.asset_lead.name}</div>
+          </div>
+        </div>
+      )}
+      <div className="ml-auto text-right">
+        <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">Last activity</div>
+        <div className="text-xs font-medium">{timeAgo(data.property.last_updated_at)}</div>
+      </div>
+    </div>
+  );
+}
+
+// Pipeline + Performance combined into one card. Sits above the
+// Plans block in the property page (per Woody's spec) — gives the
+// asset lead a single 'how's the building doing' tile without
+// scrolling into the lower brief.
+export function PipelinePerformanceBoard({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useAssetBrief(propertyId);
+  if (isLoading || !data) {
+    return <Card><CardContent className="p-3"><Skeleton className="h-24 w-full" /></CardContent></Card>;
+  }
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <BarChart3 className="w-3.5 h-3.5" /> Pipeline &amp; performance
+          <Badge variant="secondary" className="text-[10px]">{data.active_deals.length} active</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-3">
+        {/* Pipeline funnel */}
+        <div className="grid grid-cols-6 gap-1.5">
+          {STAGE_BUCKETS.map(b => (
+            <div key={b.key} className={`rounded border ${b.colour} px-1.5 py-1 text-center`}>
+              <div className="text-lg font-bold leading-none">{data.pipeline[b.key] || 0}</div>
+              <div className="text-[9px] uppercase tracking-wider mt-0.5">{b.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Performance scorecard */}
+        <div className="grid grid-cols-3 gap-2 pt-1 border-t">
+          <div className="rounded border p-2">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Vacancy</div>
+            <div className="text-base font-bold">{(data.performance.vacancy_rate * 100).toFixed(1)}%</div>
+            <div className="text-[10px] text-muted-foreground">{data.performance.total_units - data.performance.occupied_units} of {data.performance.total_units} units</div>
+          </div>
+          <div className="rounded border p-2">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">WAULT</div>
+            <div className="text-base font-bold">{data.performance.wault_years != null ? `${data.performance.wault_years.toFixed(1)} yrs` : "—"}</div>
+            <div className="text-[10px] text-muted-foreground">average unexpired</div>
+          </div>
+          <div className="rounded border p-2">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Active deals</div>
+            <div className="text-base font-bold">{data.active_deals.length}</div>
+            <div className="text-[10px] text-muted-foreground">in pipeline</div>
+          </div>
+        </div>
+
+        {/* Top + bottom MAT psqft side-by-side — handy at a glance */}
+        {(data.performance.top_psqft.length > 0 || data.performance.bottom_psqft.length > 0) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 border-t">
+            {data.performance.top_psqft.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1"><TrendingUp className="w-3 h-3 text-emerald-600" />Top MAT psqft</div>
+                <div className="space-y-0.5 text-[11px]">
+                  {data.performance.top_psqft.map(u => (
+                    <div key={u.unit_name} className="flex items-center justify-between">
+                      <span className="truncate"><span className="font-medium">{u.tenant_name || u.unit_name}</span></span>
+                      <span className="font-mono text-emerald-700 shrink-0">{u.mat_psqft ? `£${Number(u.mat_psqft).toLocaleString()}` : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {data.performance.bottom_psqft.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1"><TrendingDown className="w-3 h-3 text-rose-600" />Bottom MAT psqft</div>
+                <div className="space-y-0.5 text-[11px]">
+                  {data.performance.bottom_psqft.map(u => (
+                    <div key={u.unit_name} className="flex items-center justify-between">
+                      <span className="truncate"><span className="font-medium">{u.tenant_name || u.unit_name}</span></span>
+                      <span className="font-mono text-rose-700 shrink-0">{u.mat_psqft ? `£${Number(u.mat_psqft).toLocaleString()}` : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useAssetBrief(propertyId);
 
   if (isLoading || !data) {
     return (
@@ -101,69 +246,24 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
 
   return (
     <div className="space-y-3">
-      {/* Header — client logo + asset lead + last updated */}
-      <Card>
-        <CardContent className="p-3">
-          <div className="flex items-center gap-3 flex-wrap">
-            {data.owner && (
-              <div className="flex items-center gap-2">
-                <img
-                  src={data.owner.logo_url}
-                  alt={data.owner.name}
-                  className="w-10 h-10 rounded border bg-white object-contain p-1"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Asset owner</div>
-                  <Link href={`/companies/${data.owner.id}`}>
-                    <div className="text-sm font-semibold hover:underline">{data.owner.name}</div>
-                  </Link>
-                </div>
-              </div>
-            )}
-            {data.asset_lead && (
-              <div className="flex items-center gap-2 border-l pl-3 ml-1">
-                <div className="w-8 h-8 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[10px] font-semibold">
-                  {data.asset_lead.avatar_url
-                    ? <img src={data.asset_lead.avatar_url} alt="" className="w-full h-full object-cover" />
-                    : data.asset_lead.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Asset lead</div>
-                  <div className="text-sm font-semibold">{data.asset_lead.name}</div>
-                </div>
-              </div>
-            )}
-            <div className="ml-auto text-right">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Last activity</div>
-              <div className="text-sm font-medium">{timeAgo(data.property.last_updated_at)}</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Header strip lives in the property top board now via
+          PropertyCoveringStrip. Pipeline + Performance live above
+          Plans via PipelinePerformanceBoard. The brief stack here is
+          the operational view: focus → active deals → activity →
+          risks → commentary. */}
 
-      {/* This week's focus */}
-      <WeeklyFocusCard propertyId={propertyId} focus={data.weekly_focus} />
+      {/* Weekly focus + risk register now live in the top-strip
+          2-col row above this panel (next to the news feed). */}
 
-      {/* Pipeline funnel + Active deals grid */}
+      {/* Active deals grid */}
       <Card>
         <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <Handshake className="w-3.5 h-3.5" /> Pipeline &amp; active deals
+            <Handshake className="w-3.5 h-3.5" /> Active deals
             <Badge variant="secondary" className="text-[10px]">{data.active_deals.length}</Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-3 pt-0 space-y-2.5">
-          {/* Funnel */}
-          <div className="grid grid-cols-6 gap-1.5">
-            {STAGE_BUCKETS.map(b => (
-              <div key={b.key} className={`rounded border ${b.colour} px-1.5 py-1 text-center`}>
-                <div className="text-lg font-bold leading-none">{data.pipeline[b.key] || 0}</div>
-                <div className="text-[9px] uppercase tracking-wider mt-0.5">{b.label}</div>
-              </div>
-            ))}
-          </div>
-          {/* Active deals grid */}
+        <CardContent className="p-3 pt-0">
           {data.active_deals.length === 0 ? (
             <p className="text-[11px] text-muted-foreground italic">No active deals on this property.</p>
           ) : (
@@ -241,97 +341,60 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
         </CardContent>
       </Card>
 
-      {/* Risk register */}
-      <Card>
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <AlertTriangle className="w-3.5 h-3.5" /> Risk register
-            <Badge variant="secondary" className="text-[10px]">{data.risks.length}</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0">
-          {data.risks.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground italic">No flagged risks. All long-expiry tenants have live deals.</p>
-          ) : (
-            <div className="space-y-0.5 max-h-[200px] overflow-y-auto pr-1">
-              {data.risks.map((r, i) => (
-                <div key={i} className="flex items-start gap-2 text-[11px] px-1.5 py-1 rounded">
-                  <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${r.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
-                  <div className="flex-1 min-w-0">
-                    <div>{r.message}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Risk register now lives in the top-strip 2-col row beside
+          Weekly Focus, via the standalone RiskRegisterCard export. */}
 
-      {/* Performance scorecard */}
-      <Card>
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <BarChart3 className="w-3.5 h-3.5" /> Performance
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0 space-y-2">
-          <div className="grid grid-cols-3 gap-2">
-            <div className="rounded border p-2">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Vacancy</div>
-              <div className="text-base font-bold">{(data.performance.vacancy_rate * 100).toFixed(1)}%</div>
-              <div className="text-[10px] text-muted-foreground">{data.performance.total_units - data.performance.occupied_units} of {data.performance.total_units} units</div>
-            </div>
-            <div className="rounded border p-2">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">WAULT</div>
-              <div className="text-base font-bold">{data.performance.wault_years != null ? `${data.performance.wault_years.toFixed(1)} yrs` : "—"}</div>
-              <div className="text-[10px] text-muted-foreground">average unexpired</div>
-            </div>
-            <div className="rounded border p-2">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Active deals</div>
-              <div className="text-base font-bold">{data.active_deals.length}</div>
-              <div className="text-[10px] text-muted-foreground">in pipeline</div>
-            </div>
-          </div>
-          {(data.performance.top_psqft.length > 0 || data.performance.bottom_psqft.length > 0) && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-              {data.performance.top_psqft.length > 0 && (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1"><TrendingUp className="w-3 h-3 text-emerald-600" />Top MAT psqft</div>
-                  <div className="space-y-0.5 text-[11px]">
-                    {data.performance.top_psqft.map(u => (
-                      <div key={u.unit_name} className="flex items-center justify-between">
-                        <span className="truncate"><span className="font-medium">{u.tenant_name || u.unit_name}</span></span>
-                        <span className="font-mono text-emerald-700 shrink-0">{u.mat_psqft ? `£${Number(u.mat_psqft).toLocaleString()}` : "—"}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {data.performance.bottom_psqft.length > 0 && (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1"><TrendingDown className="w-3 h-3 text-rose-600" />Bottom MAT psqft</div>
-                  <div className="space-y-0.5 text-[11px]">
-                    {data.performance.bottom_psqft.map(u => (
-                      <div key={u.unit_name} className="flex items-center justify-between">
-                        <span className="truncate"><span className="font-medium">{u.tenant_name || u.unit_name}</span></span>
-                        <span className="font-mono text-rose-700 shrink-0">{u.mat_psqft ? `£${Number(u.mat_psqft).toLocaleString()}` : "—"}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
+  );
+}
+
+// Standalone Risk Register card. Same source data as the brief
+// panel via useAssetBrief (react-query dedupes). Renders compactly
+// for the top-strip 2-col row beside Weekly Focus.
+export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useAssetBrief(propertyId);
+  if (isLoading || !data) {
+    return <Card><CardContent className="p-3"><Skeleton className="h-16 w-full" /></CardContent></Card>;
+  }
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <AlertTriangle className="w-3.5 h-3.5" /> Risk register
+          <Badge variant="secondary" className="text-[10px]">{data.risks.length}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0">
+        {data.risks.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground italic">No flagged risks. All long-expiry tenants have live deals.</p>
+        ) : (
+          <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
+            {data.risks.map((r, i) => (
+              <div key={i} className="flex items-start gap-2 text-[11px] px-1.5 py-1 rounded">
+                <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${r.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
+                <div className="flex-1 min-w-0">{r.message}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
 // Weekly focus — small editor inline. PATCH the whole list back on
 // each add / remove / edit. Tight CRUD, no undo, but the list is
-// 3-5 items so this is fine.
-function WeeklyFocusCard({ propertyId, focus }: { propertyId: string; focus: AssetBrief["weekly_focus"] }) {
+// 3-5 items so this is fine. Exported so it can render in the
+// property's top-strip 2-col row beside the Risk Register.
+export function WeeklyFocusCard({ propertyId, focus: focusProp }: { propertyId: string; focus?: AssetBrief["weekly_focus"] }) {
+  // If parent didn't pass focus down, fetch it ourselves so the
+  // card stays usable standalone (the property top-strip use case).
+  const { data } = useAssetBrief(propertyId);
+  const focus = focusProp ?? (data?.weekly_focus || []);
+  return <WeeklyFocusCardInner propertyId={propertyId} focus={focus} />;
+}
+
+function WeeklyFocusCardInner({ propertyId, focus }: { propertyId: string; focus: AssetBrief["weekly_focus"] }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
