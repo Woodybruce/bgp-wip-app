@@ -4587,35 +4587,15 @@ async function runStage9(runId: string, req: Request): Promise<void> {
   await setStageStatus(runId, "stage9", "running");
 
   try {
-    // Preferred path: Claude designs the deck per the house style
-    // (preferencesPromptFor("why_buy")) + BGP brand cues. Falls back
-    // to the legacy pdfkit renderer if Claude / puppeteer fail —
-    // Stage 9 must always produce something.
-    let result: { documentUrl?: string; sharepointUrl?: string; pdfPath: string; designVersionId?: string } | null = null;
-    let usedRenderer: "claude-design" | "legacy-pdfkit" = "claude-design";
-    let claudeErr: string | undefined;
-
-    try {
-      const designMod = await import("./why-buy-design");
-      result = await designMod.renderClaudeWhyBuy({ runId });
-    } catch (e: any) {
-      claudeErr = e?.message || String(e);
-      console.warn("[pathway stage9] Claude design renderer failed, falling back to legacy:", claudeErr);
-    }
-
-    if (!result) {
-      usedRenderer = "legacy-pdfkit";
-      let wbModErr: string | undefined;
-      const wbMod = await import("./why-buy-renderer").catch((e: any) => { wbModErr = e?.message; return null as any; });
-      if (!wbMod?.renderWhyBuy) {
-        console.error("[pathway stage9] both renderers failed:", { claude: claudeErr, legacy: wbModErr });
-        await setStageStatus(runId, "stage9", "failed", {
-          stage9: { reason: `Claude: ${claudeErr || "n/a"} · Legacy: ${wbModErr || "renderer missing"}` } as any,
-        });
-        return;
-      }
-      result = await wbMod.renderWhyBuy({ runId, req });
-    }
+    // Claude designs the deck per the house style
+    // (preferencesPromptFor("why_buy")) + BGP brand cues. There is no
+    // longer a fallback — the legacy pdfkit renderer was deleted so
+    // the output is binary: a properly designed Claude deck, or
+    // Stage 9 fails loudly. If Claude / puppeteer / SharePoint break,
+    // the error surfaces on the stage card and the team fixes the
+    // root cause rather than shipping the old template.
+    const designMod = await import("./why-buy-design");
+    const result = await designMod.renderClaudeWhyBuy({ runId });
 
     await setStageStatus(runId, "stage9", "completed", {
       stage9: {
@@ -4623,9 +4603,7 @@ async function runStage9(runId: string, req: Request): Promise<void> {
         sharepointUrl: result.sharepointUrl,
         pdfPath: result.pdfPath,
         designVersionId: result.designVersionId,
-        renderer: usedRenderer,
-        claudeError: claudeErr,
-      } as any,
+      },
     });
     await updateRun(runId, { whyBuyDocumentUrl: result.sharepointUrl || result.documentUrl, completedAt: new Date() });
   } catch (err: any) {

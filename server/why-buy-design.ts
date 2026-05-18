@@ -265,12 +265,12 @@ export function setupWhyBuyDesignRoutes(app: Express) {
 // ─────────────────────────────────────────────────────────────────────────
 // Pathway Stage 9 entry point — Claude-designed Why Buy → PDF → SharePoint.
 //
-// Replaces the legacy template-based renderWhyBuy: builds the brief,
-// runs Claude with the house-style preferences, saves the HTML to
-// why_buy_designs (so the in-app preview shows the same artefact),
-// renders headless-Chrome PDF, and uploads to SharePoint. Falls back
-// to the legacy pdfkit renderer if Claude or puppeteer fail (Stage 9
-// must always produce SOMETHING).
+// Sole Why Buy renderer (the legacy pdfkit template was deleted Nov
+// 2025 so the output is binary: a properly designed Claude deck, or
+// Stage 9 fails loudly). Builds the brief, runs Claude with the
+// house-style preferences, saves the HTML to why_buy_designs (so the
+// in-app preview shows the same artefact), renders headless-Chrome
+// PDF, and uploads to SharePoint.
 // ─────────────────────────────────────────────────────────────────────────
 export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ documentUrl?: string; sharepointUrl?: string; pdfPath: string; designVersionId?: string }> {
   const runId = args.runId;

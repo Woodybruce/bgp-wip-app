@@ -256,11 +256,8 @@ export async function buildBrief(runId: string): Promise<{ brief: string; title:
   return { brief, title, address };
 }
 
-// ─── DEPRECATED: renderWhyBuyGamma removed (May 2026) ────────────────────────
-// The Gamma export path was removed when Claude design proved a better
-// renderer. The route + UI buttons are gone; this file now only exports
-// buildBrief (still used by server/why-buy-design.ts).
-//
-// Future migration: replace why-buy-design.ts's buildBrief call with
-// document-briefs.runBrief("why-buy-memo") so Stage 9 fully consumes the
-// brief framework. Then this file can be deleted.
+// File kept for import-path stability — `buildBrief` above is the sole
+// export, and is consumed by server/why-buy-design.ts (the Claude
+// renderer). Both the Gamma export path and the pdfkit template
+// renderer have been deleted; the brief now flows only to the
+// Claude design pipeline.
