@@ -39,6 +39,7 @@ import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
+import { ComplianceBoard } from "@/components/brand-profile-panel";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -91,6 +92,58 @@ import {
 
 // Compact collapsible card used by the heavy mid-page panels (leasing schedule,
 // tenancy, KYC, etc). Header is always rendered; body only mounts when open.
+// Property Compliance & KYC wrapper — fetches the brand-profile
+// payload for whichever company owns this property (freeholder >
+// long leaseholder > landlord, first one set wins) and renders the
+// existing ComplianceBoard inline. Falls back to a quiet empty
+// state when no owner is set so the panel doesn't shout at the user.
+function PropertyComplianceBoardWrapper({ property }: { property: CrmProperty }) {
+  const ownerId: string | null =
+    (property as any).freeholderId
+    || (property as any).longLeaseholderId
+    || (property as any).landlordId
+    || null;
+
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/brand", ownerId, "profile"],
+    queryFn: async () => {
+      const res = await fetch(`/api/brand/${ownerId}/profile`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!ownerId,
+  });
+
+  if (!ownerId) {
+    return (
+      <Card>
+        <CardContent className="p-3">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-1.5">
+            <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
+          </div>
+          <p className="text-[11px] text-muted-foreground italic">
+            Add a freeholder, long leaseholder, or landlord above to enable Companies House lookups, accounts download, and AML checks.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isLoading || !data?.company) {
+    return (
+      <Card>
+        <CardContent className="p-3 space-y-1.5">
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="h-6 w-full" />
+          <Skeleton className="h-3 w-3/4" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return <ComplianceBoard companyId={ownerId} company={data.company} />;
+}
+
 function CollapsibleCard({
   open,
   onToggle,
@@ -507,6 +560,16 @@ export function PropertyDetail({ id }: { id: string }) {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Compliance & KYC — re-uses the ComplianceBoard from the
+                brand profile, scoped to whichever company owns this
+                property (freeholder if set, otherwise landlord). Gives
+                the property page the same UK-entity / CH-accounts /
+                annual-report / officers+PSCs stack the brand profile
+                has, without duplicating 200 lines of UI. */}
+            <ErrorBoundary compact name="Property compliance & KYC">
+              <PropertyComplianceBoardWrapper property={property} />
+            </ErrorBoundary>
 
             <Card>
               <CardContent className="p-3 space-y-1">

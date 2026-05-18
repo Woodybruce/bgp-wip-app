@@ -3663,7 +3663,7 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
 // the user can overwrite the value at any time. The "Find on Companies
 // House" link opens a CH search prefilled with whatever's currently in
 // the input so the user can hand-pick the right registered name.
-function ComplianceBoard({
+export function ComplianceBoard({
   companyId,
   company,
 }: {
