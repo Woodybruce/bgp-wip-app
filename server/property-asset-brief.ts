@@ -365,4 +365,36 @@ function buildActivitySummary(a: any): string {
   return `${by}${verb} ${who}${dealRef}`.trim();
 }
 
+// Tasks scoped to this property — covers every BGP user's tasks
+// linked to the property directly OR to a deal whose unit lives
+// here. Drives the Weekly Focus card on the property page.
+router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = req.params.id;
+    const status = (req.query.status as string) || "active";
+    const statusFilter = status === "all" ? "" : "AND t.status <> 'done'";
+    const { rows } = await pool.query(
+      `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.is_pinned,
+              t.linked_deal_id, t.linked_property_id, t.linked_contact_id, t.created_at, t.updated_at,
+              t.user_id, COALESCE(u.name, u.username, u.email) AS owner_name, u.profile_pic_url,
+              d.name AS deal_name
+         FROM user_tasks t
+         LEFT JOIN users u ON u.id = t.user_id
+         LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+        WHERE (t.linked_property_id = $1 OR d.property_id = $1 OR pu.property_id = $1)
+          ${statusFilter}
+        ORDER BY COALESCE(t.is_pinned, false) DESC,
+                 CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+                 t.due_date ASC NULLS LAST,
+                 t.created_at DESC
+        LIMIT 50`,
+      [propertyId]
+    );
+    res.json({ tasks: rows });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "tasks fetch failed" });
+  }
+});
+
 export default router;

@@ -382,75 +382,156 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
   );
 }
 
-// Weekly focus — small editor inline. PATCH the whole list back on
-// each add / remove / edit. Tight CRUD, no undo, but the list is
-// 3-5 items so this is fine. Exported so it can render in the
-// property's top-strip 2-col row beside the Risk Register.
-export function WeeklyFocusCard({ propertyId, focus: focusProp }: { propertyId: string; focus?: AssetBrief["weekly_focus"] }) {
-  // If parent didn't pass focus down, fetch it ourselves so the
-  // card stays usable standalone (the property top-strip use case).
-  const { data } = useAssetBrief(propertyId);
-  const focus = focusProp ?? (data?.weekly_focus || []);
-  return <WeeklyFocusCardInner propertyId={propertyId} focus={focus} />;
+// Weekly focus — pulled live from the existing my-tasks system,
+// filtered to tasks linked to this property OR a deal whose unit
+// belongs here. Shows what every BGP user is actively pushing on
+// the building, with the same priority / due-date / status rules
+// the My Tasks page uses. Inline 'add task' creates a row tied to
+// this property without leaving the page.
+interface PropertyTask {
+  id: string;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  priority: "urgent" | "high" | "medium" | "low" | null;
+  status: string;
+  is_pinned: boolean;
+  linked_deal_id: string | null;
+  linked_property_id: string | null;
+  user_id: string;
+  owner_name: string | null;
+  profile_pic_url: string | null;
+  deal_name: string | null;
 }
 
-function WeeklyFocusCardInner({ propertyId, focus }: { propertyId: string; focus: AssetBrief["weekly_focus"] }) {
+const PRIORITY_DOT: Record<string, string> = {
+  urgent: "bg-rose-500",
+  high: "bg-amber-500",
+  medium: "bg-sky-500",
+  low: "bg-slate-300",
+};
+
+function dueLabel(iso: string | null): { label: string; tone: "overdue" | "soon" | "later" | null } {
+  if (!iso) return { label: "", tone: null };
+  const days = Math.floor((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: "overdue" };
+  if (days === 0) return { label: "today", tone: "soon" };
+  if (days === 1) return { label: "tomorrow", tone: "soon" };
+  if (days < 7) return { label: `${days}d`, tone: "soon" };
+  return { label: new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), tone: "later" };
+}
+
+export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: AssetBrief["weekly_focus"] }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
-  const save = useMutation({
-    mutationFn: async (next: AssetBrief["weekly_focus"]) => {
-      const res = await apiRequest("PATCH", `/api/properties/${propertyId}/weekly-focus`, { focus: next });
+
+  const { data: tasksRes } = useQuery<{ tasks: PropertyTask[] }>({
+    queryKey: ["/api/properties", propertyId, "tasks"],
+    queryFn: async () => {
+      const res = await fetch(`/api/properties/${propertyId}/tasks?status=active`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] }),
-    onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
+  });
+  const tasks = tasksRes?.tasks || [];
+
+  const addTask = useMutation({
+    mutationFn: async (title: string) => {
+      const res = await apiRequest("POST", "/api/tasks", { title, linkedPropertyId: propertyId, priority: "medium" });
+      return res.json();
+    },
+    onSuccess: () => {
+      setDraft("");
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "tasks"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add task", description: e?.message, variant: "destructive" }),
   });
 
-  function addItem() {
-    const text = draft.trim();
-    if (!text) return;
-    save.mutate([...focus, { id: `f-${Date.now()}`, text }]);
-    setDraft("");
-  }
-  function removeItem(id: string) {
-    save.mutate(focus.filter(f => f.id !== id));
-  }
+  const completeTask = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/tasks/${id}`, { status: "done" });
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "tasks"] }),
+    onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
+  });
 
   return (
     <Card>
-      <CardHeader className="p-3 pb-2">
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Target className="w-3.5 h-3.5" /> This week's focus
-          <Badge variant="secondary" className="text-[10px]">{focus.length}</Badge>
+          <Badge variant="secondary" className="text-[10px]">{tasks.length}</Badge>
         </CardTitle>
+        <Link href="/my-tasks">
+          <Button size="sm" variant="ghost" className="h-6 text-[10px]">
+            All tasks →
+          </Button>
+        </Link>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-1.5">
-        {focus.length === 0 && (
-          <p className="text-[11px] text-muted-foreground italic">Nothing on the focus list yet. Add the 3-5 things being pushed this week so the client sees what's in motion.</p>
+        {tasks.length === 0 && (
+          <p className="text-[11px] text-muted-foreground italic">No open tasks on this property. Add the things being pushed this week below — they'll appear on My Tasks too.</p>
         )}
-        {focus.map(f => (
-          <div key={f.id} className="flex items-start gap-2 text-sm px-1.5 py-1 rounded hover:bg-muted/40 group">
-            <span className="text-emerald-600 mt-1">▸</span>
-            <span className="flex-1 leading-snug">{f.text}</span>
-            <button
-              onClick={() => removeItem(f.id)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-rose-500 hover:text-rose-700"
-              title="Remove from focus list"
-            >
-              <Trash2 className="w-3 h-3" />
-            </button>
-          </div>
-        ))}
-        <div className="flex items-center gap-1.5 pt-1">
+        <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
+          {tasks.slice(0, 10).map(t => {
+            const due = dueLabel(t.due_date);
+            return (
+              <div key={t.id} className="flex items-start gap-2 text-[12px] px-1.5 py-1 rounded hover:bg-muted/40 group">
+                <button
+                  onClick={() => completeTask.mutate(t.id)}
+                  disabled={completeTask.isPending}
+                  className="w-3.5 h-3.5 rounded border border-muted-foreground/40 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950 mt-0.5 shrink-0 flex items-center justify-center transition-colors"
+                  title="Mark task done"
+                  data-testid={`task-complete-${t.id}`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-transparent group-hover:bg-emerald-500" />
+                </button>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${PRIORITY_DOT[t.priority || "medium"]}`} title={`Priority: ${t.priority || "medium"}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="leading-snug truncate">{t.title}</div>
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
+                    {t.owner_name && <span>{t.owner_name.split(" ")[0]}</span>}
+                    {t.deal_name && (
+                      <>
+                        <span>·</span>
+                        <Link href={`/deals/${t.linked_deal_id}`}>
+                          <span className="hover:underline truncate">{t.deal_name}</span>
+                        </Link>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {due.label && (
+                  <span className={`text-[10px] shrink-0 mt-0.5 font-medium ${
+                    due.tone === "overdue" ? "text-rose-600" : due.tone === "soon" ? "text-amber-600" : "text-muted-foreground"
+                  }`}>{due.label}</span>
+                )}
+              </div>
+            );
+          })}
+          {tasks.length > 10 && (
+            <div className="text-[10px] italic text-muted-foreground pt-1 px-1.5">
+              + {tasks.length - 10} more — see them all on My Tasks.
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 pt-1 border-t mt-1.5">
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") addItem(); }}
-            placeholder="e.g. Pizza Express HOTs to legals by Friday"
-            className="text-sm h-8"
+            onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) addTask.mutate(draft.trim()); }}
+            placeholder="Add a task — e.g. Pizza Express HOTs to legals by Friday"
+            className="text-xs h-7"
           />
-          <Button size="sm" variant="outline" className="h-8" onClick={addItem} disabled={!draft.trim() || save.isPending}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[10px]"
+            onClick={() => draft.trim() && addTask.mutate(draft.trim())}
+            disabled={!draft.trim() || addTask.isPending}
+          >
             <Plus className="w-3 h-3 mr-1" /> Add
           </Button>
         </div>
