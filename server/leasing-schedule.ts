@@ -231,6 +231,25 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
       values
     );
 
+    // Re-knit on rename: when unit_name or tenant_name change, pull
+    // the row back into alignment with the canonical spine.
+    const body = req.body || {};
+    if ("unit_name" in body || "tenant_name" in body) {
+      await pool.query(
+        `UPDATE leasing_schedule_units u
+            SET tenancy_unit_id = (
+                  SELECT ts.id FROM tenancy_schedule_units ts
+                   WHERE ts.property_id = u.property_id
+                     AND lower(trim(ts.unit_number)) = lower(trim(coalesce(u.unit_name, '')))
+                     AND coalesce(trim(ts.unit_number), '') <> ''
+                   LIMIT 1
+                ),
+                tenant_company_id = ${resolveBrandIdSubquery("coalesce(u.tenant_name, '')")}
+          WHERE u.id = $1`,
+        [req.params.id]
+      ).catch((e: any) => console.warn("[leasing] re-knit on rename failed:", e?.message));
+    }
+
     res.json(result.rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -279,6 +298,29 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
       fieldName: "unit_name",
       newValue: unit_name,
     });
+
+    // Auto-knit to the canonical spine: stamp tenancy_unit_id +
+    // tenant_company_id from the brand resolver. Cheap single-row
+    // pass; mirrors the auto-knit on tenancy inserts. Best-effort.
+    const newId = result.rows[0]?.id;
+    if (newId) {
+      await pool.query(
+        `UPDATE leasing_schedule_units u
+            SET tenancy_unit_id = (
+                  SELECT ts.id FROM tenancy_schedule_units ts
+                   WHERE ts.property_id = u.property_id
+                     AND lower(trim(ts.unit_number)) = lower(trim(coalesce(u.unit_name, '')))
+                     AND coalesce(trim(ts.unit_number), '') <> ''
+                   LIMIT 1
+                ),
+                tenant_company_id = COALESCE(
+                  u.tenant_company_id,
+                  ${resolveBrandIdSubquery("coalesce(u.tenant_name, '')")}
+                )
+          WHERE u.id = $1`,
+        [newId]
+      ).catch((e: any) => console.warn("[leasing] auto-knit on insert failed:", e?.message));
+    }
 
     res.json(result.rows[0]);
   } catch (e: any) {

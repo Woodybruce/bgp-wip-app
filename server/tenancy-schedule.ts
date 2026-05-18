@@ -385,6 +385,14 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
 router.delete("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    // NULL out downstream FKs first so the projection rows aren't
+    // left pointing at a dead spine id. The rows themselves stay —
+    // they're now just orphaned until the team re-attaches or
+    // promotes them. Cheaper than ON DELETE SET NULL on a real FK
+    // because tenancy_unit_id is a soft FK (varchar, no constraint).
+    await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
+    await pool.query(`UPDATE available_units       SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
+    await pool.query(`UPDATE crm_deals             SET tenancy_unit_id = NULL WHERE tenancy_unit_id = $1`, [req.params.id]);
     await pool.query("DELETE FROM tenancy_schedule_units WHERE id = $1", [req.params.id]);
     res.json({ ok: true });
   } catch (e: any) {
@@ -1260,6 +1268,81 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
     });
   } catch (e: any) {
     console.error("[promote-orphans]", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Duplicate unit_numbers on the tenancy schedule for this property.
+// Returns clusters of rows that share a normalised unit_number, so
+// the team can spot typos / "Unit 8 vs Unit 8a" cases and merge or
+// rename them.
+router.get("/api/properties/:propertyId/duplicate-units", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId } = req.params;
+    const { rows } = await pool.query(
+      `WITH dups AS (
+         SELECT lower(trim(unit_number)) AS key
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND coalesce(trim(unit_number), '') <> ''
+          GROUP BY 1 HAVING COUNT(*) > 1
+       )
+       SELECT t.id, t.unit_number, t.premises, t.tenant_name, t.trading_name,
+              t.tenant_company_id, t.status, t.nia_sqft, t.gia_sqft,
+              t.passing_rent_pa, t.lease_expiry,
+              lower(trim(t.unit_number)) AS key
+         FROM tenancy_schedule_units t
+         JOIN dups d ON d.key = lower(trim(t.unit_number))
+        WHERE t.property_id = $1
+        ORDER BY lower(trim(t.unit_number)), t.id`,
+      [propertyId]
+    );
+    // Bucket into clusters keyed by normalised name
+    const clusters: Record<string, any[]> = {};
+    for (const r of rows) {
+      const key = r.key;
+      if (!clusters[key]) clusters[key] = [];
+      clusters[key].push(r);
+    }
+    res.json({ clusters });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Merge a duplicate tenancy row INTO a primary row. Moves all
+// downstream FKs (leasing/available/deals) from `secondaryId` →
+// `primaryId`, then deletes the secondary. Both must be on the same
+// property as a safety guard. Use case: "Unit 8" and "Unit 8 (Pret)"
+// resolve to the same physical shop → pick one as canonical, merge
+// the other in.
+router.post("/api/properties/:propertyId/merge-tenancy-units", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId } = req.params;
+    const { primaryId, secondaryId } = req.body as { primaryId: string; secondaryId: string };
+    if (!primaryId || !secondaryId) return res.status(400).json({ error: "primaryId and secondaryId required" });
+    if (primaryId === secondaryId) return res.status(400).json({ error: "primary and secondary must differ" });
+
+    const check = await pool.query(
+      `SELECT id, property_id FROM tenancy_schedule_units WHERE id IN ($1, $2)`,
+      [primaryId, secondaryId]
+    );
+    if (check.rows.length !== 2) return res.status(404).json({ error: "one or both rows not found" });
+    for (const row of check.rows) {
+      if (row.property_id !== propertyId) return res.status(400).json({ error: "rows must be on the same property" });
+    }
+
+    // Move FKs. Best-effort per table.
+    const moved = {
+      leasing: (await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = $1 WHERE tenancy_unit_id = $2`, [primaryId, secondaryId])).rowCount || 0,
+      available: (await pool.query(`UPDATE available_units SET tenancy_unit_id = $1 WHERE tenancy_unit_id = $2`, [primaryId, secondaryId])).rowCount || 0,
+      deals: (await pool.query(`UPDATE crm_deals SET tenancy_unit_id = $1 WHERE tenancy_unit_id = $2`, [primaryId, secondaryId])).rowCount || 0,
+    };
+
+    await pool.query(`DELETE FROM tenancy_schedule_units WHERE id = $1`, [secondaryId]);
+    res.json({ ok: true, moved });
+  } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
 });
