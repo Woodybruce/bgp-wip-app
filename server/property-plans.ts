@@ -392,6 +392,10 @@ router.post("/api/plans/:planId/auto-detect", requireAuth, async (req: Request, 
       detections = dedupeDetections(detections);
     }
 
+    // Make sure tenancy-schedule units exist in property_units so the
+    // label matcher can find them. Idempotent; no-op once seeded.
+    await ensurePropertyUnitsFromSchedule(property_id);
+
     // Pull all property_units once so we can match labels in-memory.
     const pickable = await pool.query<{ id: string; unit_name: string }>(
       `SELECT id, unit_name FROM property_units WHERE property_id = $1`,
@@ -454,12 +458,43 @@ router.post("/api/plans/:planId/auto-detect", requireAuth, async (req: Request, 
   }
 });
 
+// Ensure every leasing_schedule_unit has a corresponding property_units
+// row. Polygons FK to property_units, but leasing schedules are often
+// loaded WITHOUT pre-seeding property_units — so when the user wants
+// to link a polygon to "LU14" that exists in the tenancy schedule
+// but not in property_units, the pick would silently fail. This
+// closes that gap by promoting every schedule row into property_units
+// (idempotent — uses NOT EXISTS, so re-running is free).
+async function ensurePropertyUnitsFromSchedule(propertyId: string): Promise<number> {
+  const { rowCount } = await pool.query(
+    `INSERT INTO property_units (property_id, unit_name, sqft)
+     SELECT lsu.property_id, lsu.unit_name, lsu.sqft
+       FROM leasing_schedule_units lsu
+      WHERE lsu.property_id = $1
+        AND lsu.unit_name IS NOT NULL
+        AND lsu.unit_name <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM property_units pu
+           WHERE pu.property_id = lsu.property_id
+             AND LOWER(TRIM(pu.unit_name)) = LOWER(TRIM(lsu.unit_name))
+        )`,
+    [propertyId]
+  );
+  return rowCount ?? 0;
+}
+
 // Property units list — used by the polygon-edit dropdown to pick
 // which physical unit a polygon represents. Falls back to leasing
 // schedule unit names so the picker covers centres where the master
 // property_units table isn't fully seeded.
 router.get("/api/properties/:propertyId/plan-pickable-units", requireAuth, async (req: Request, res: Response) => {
   try {
+    // Auto-promote every tenancy-schedule unit into property_units
+    // before listing. Bluewater + most other shopping centres have
+    // their schedule loaded but property_units empty/sparse — without
+    // this the polygon picker would return nothing useful.
+    await ensurePropertyUnitsFromSchedule(req.params.propertyId);
+
     const { rows } = await pool.query(
       `SELECT pu.id, pu.unit_name, pu.floor, pu.sqft, lsu.tenant_name, lsu.status AS lease_status
          FROM property_units pu
