@@ -426,6 +426,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
       toast({ title: "Viewing removed" });
     },
+    onError: (e: any) => toast({ title: "Couldn't remove viewing", description: e.message, variant: "destructive" }),
   });
 
   const addOfferMutation = useMutation({
@@ -449,6 +450,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
       toast({ title: "Offer removed" });
     },
+    onError: (e: any) => toast({ title: "Couldn't remove offer", description: e.message, variant: "destructive" }),
   });
 
   const { data: filesForUnit = [] } = useQuery<UnitMarketingFile[]>({

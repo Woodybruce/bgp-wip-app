@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { toDateInputValue } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -1602,7 +1603,7 @@ export default function WipReport() {
                               {!isActual && e.dealId ? (
                                 <input
                                   type="date"
-                                  defaultValue={e.targetDate ? new Date(e.targetDate).toISOString().slice(0, 10) : ""}
+                                  defaultValue={toDateInputValue(e.targetDate)}
                                   className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
                                   onBlur={async (ev) => {
                                     const val = ev.target.value;

@@ -2416,6 +2416,11 @@ app.use((req, res, next) => {
     timeoutMs = 300000;
   } else if (req.path.startsWith('/api/chat') || req.path.startsWith('/api/ai/') || req.path.includes('/visual-auto-design') || req.path.includes('/visual-design-chat') || req.path.startsWith('/api/models/') || req.path.includes('/kyc-clouseau/investigate')) {
     timeoutMs = 120000;
+  } else if (req.path.includes('/import-excel') || req.path.includes('/import-multi') || req.path.includes('/leasing-schedule/import') || req.path.includes('/resolve-tenants') || req.path.includes('/promote-orphans-to-tenancy')) {
+    // Excel imports of 200+ row schedules and the spine backfill /
+    // promote sweeps both run many UPDATEs in series — the default
+    // 45s timeout cuts them off mid-pass, leaving partial state.
+    timeoutMs = 180000;
   }
   const timeout = setTimeout(() => {
     if (!res.headersSent) {

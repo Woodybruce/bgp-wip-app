@@ -69,7 +69,7 @@ async function loadUkSlice(companyId: string) {
     `SELECT period, turnover, source FROM turnover_data
       WHERE company_id = $1 ORDER BY period DESC NULLS LAST LIMIT 3`,
     [companyId]
-  ).catch(() => ({ rows: [] }));
+  ).catch((err: any) => { console.error("[brand-ai-take] turnover query failed:", err?.message); return { rows: [] }; });
   return {
     name: r.name,
     uk_entity: r.uk_entity_name,

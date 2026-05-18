@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { toDateInputValue } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -282,11 +283,11 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
               </div>
               <div>
                 <label className="text-xs font-medium mb-1 block">Event date <span className="text-destructive">*</span></label>
-                <Input type="date" required value={editing.eventDate ? new Date(editing.eventDate).toISOString().slice(0, 10) : ""} onChange={e => setEditing(x => ({ ...x!, eventDate: e.target.value || null }))} className={!editing.eventDate ? "border-destructive" : ""} />
+                <Input type="date" required value={toDateInputValue(editing.eventDate)} onChange={e => setEditing(x => ({ ...x!, eventDate: e.target.value || null }))} className={!editing.eventDate ? "border-destructive" : ""} />
               </div>
               <div>
                 <label className="text-xs font-medium mb-1 block">Notice date</label>
-                <Input type="date" value={editing.noticeDate ? new Date(editing.noticeDate).toISOString().slice(0, 10) : ""} onChange={e => setEditing(x => ({ ...x!, noticeDate: e.target.value || null }))} />
+                <Input type="date" value={toDateInputValue(editing.noticeDate)} onChange={e => setEditing(x => ({ ...x!, noticeDate: e.target.value || null }))} />
               </div>
               <div>
                 <label className="text-xs font-medium mb-1 block">Current rent (£pa)</label>

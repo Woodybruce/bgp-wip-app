@@ -107,6 +107,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSe
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
+import { toDateInputValue } from "@/lib/format";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
@@ -496,11 +497,14 @@ function dealToForm(deal: CrmDeal): DealFormData {
     rentFree: deal.rentFree != null ? String(deal.rentFree) : "",
     leaseLength: deal.leaseLength != null ? String(deal.leaseLength) : "",
     breakOption: deal.breakOption != null ? String(deal.breakOption) : "",
-    instructedAt: deal.instructedAt ? new Date(deal.instructedAt).toISOString().slice(0, 10) : "",
-    targetDate: deal.targetDate ? new Date(deal.targetDate).toISOString().slice(0, 10) : "",
-    exchangedAt: deal.exchangedAt ? new Date(deal.exchangedAt).toISOString().slice(0, 10) : "",
-    completedAt: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : "",
-    invoicedAt: deal.invoicedAt ? new Date(deal.invoicedAt).toISOString().slice(0, 10) : "",
+    // Date-input values use local-component formatting (not UTC),
+    // so a 23:00 UK timestamp stays on its UK date when round-tripped
+    // through the form. See toDateInputValue.
+    instructedAt: toDateInputValue(deal.instructedAt),
+    targetDate: toDateInputValue(deal.targetDate),
+    exchangedAt: toDateInputValue(deal.exchangedAt),
+    completedAt: toDateInputValue(deal.completedAt),
+    invoicedAt: toDateInputValue(deal.invoicedAt),
     amlCheckCompleted: deal.amlCheckCompleted || "",
     comments: deal.comments || "",
     lastInteraction: deal.lastInteraction || "",
@@ -1719,7 +1723,7 @@ function HotsChecklistDialog({
         amlCheckCompleted: deal.amlCheckCompleted || "",
         invoicingNotes: deal.invoicingNotes || "",
         poNumber: deal.poNumber || "",
-        targetDate: deal.targetDate ? new Date(deal.targetDate).toISOString().slice(0, 10) : "",
+        targetDate: toDateInputValue(deal.targetDate),
         invoicingEmail: deal.invoicingEmail || "",
       }));
     }
@@ -5081,7 +5085,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <input
                             type="date"
                             className="text-xs bg-transparent border-0 outline-none cursor-pointer hover:bg-muted rounded px-1 w-[110px]"
-                            value={deal.targetDate ? new Date(deal.targetDate).toISOString().slice(0, 10) : ""}
+                            value={toDateInputValue(deal.targetDate)}
                             onChange={(e) => handleInlineSave(deal.id, "targetDate", e.target.value || null)}
                           />
                         </TableCell>
