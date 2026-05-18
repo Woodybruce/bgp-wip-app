@@ -292,6 +292,13 @@ import { pool } from "./db";
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS employee_acknowledgement TEXT`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '[]'::jsonb`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS source_file_url TEXT`,
+    // Outcome-letter tracking — once admin clicks 'Draft letter', the
+    // BGP-branded DOCX is cached in file_storage and the storage_key
+    // is stamped here. letter_issued goes true when admin marks it
+    // sent (no further edits allowed).
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS letter_storage_key TEXT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS letter_generated_at TIMESTAMP`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS letter_issued BOOLEAN DEFAULT false`,
     `CREATE TABLE IF NOT EXISTS staff_review_goals (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       review_id VARCHAR,

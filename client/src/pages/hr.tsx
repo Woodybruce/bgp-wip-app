@@ -2738,10 +2738,118 @@ interface ReviewGoal {
   task_title: string | null;
 }
 
+// Dialog wrapping the 'Draft review letter' flow. Admin types
+// optional salary / bonus / effective-date overrides + manager notes;
+// the server pulls every other field from the review row itself
+// (achievements / dev areas / goals / WIP figures) so we don't make
+// the admin retype anything. AI drafts the prose, DOCX rendered
+// server-side with BGP letterhead, cached in file_storage, surfaced
+// as 'Download letter' next to Mark complete.
+function ReviewLetterDialog({
+  review, open, onClose, onGenerated,
+}: {
+  review: StaffReview & { user_id: string; letter_storage_key?: string | null };
+  open: boolean;
+  onClose: () => void;
+  onGenerated: () => void;
+}) {
+  const { toast } = useToast();
+  const [newSalary, setNewSalary] = useState("");           // £ figure as typed
+  const [bonus, setBonus] = useState("");                    // £ figure as typed
+  const [effectiveDate, setEffectiveDate] = useState(() => {
+    // Default to the start of the next calendar quarter — typical
+    // BGP cycle for salary uplifts. User can override.
+    const d = new Date();
+    const m = d.getMonth();
+    const q = Math.floor(m / 3) + 1;
+    const eff = new Date(d.getFullYear(), q * 3, 1);
+    return eff.toISOString().slice(0, 10);
+  });
+  const [managerNotes, setManagerNotes] = useState("");
+  const [generating, setGenerating] = useState(false);
+
+  async function submit() {
+    setGenerating(true);
+    try {
+      const body: any = { managerNotes, effectiveDate };
+      if (newSalary.trim()) body.newSalaryPence = Math.round(Number(newSalary.replace(/[£,\s]/g, "")) * 100);
+      if (bonus.trim()) body.bonusPence = Math.round(Number(bonus.replace(/[£,\s]/g, "")) * 100);
+      const r = await fetch(`/api/hr/reviews/${review.id}/generate-letter`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      const out = await r.json();
+      toast({ title: "Review letter drafted", description: "Download from the toolbar — review before sending." });
+      // Open download in new tab so user can review immediately.
+      window.open(out.downloadUrl, "_blank");
+      onGenerated();
+    } catch (e: any) {
+      toast({ title: "Couldn't draft letter", description: e?.message, variant: "destructive" });
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Draft review letter — {review.period}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-xs text-muted-foreground">
+            Claude drafts the prose from the review form + your additions below.
+            Salary / bonus / effective-date overrides are optional — leave blank
+            for "no change" wording.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>New salary (£/yr)</Label>
+              <Input value={newSalary} onChange={(e) => setNewSalary(e.target.value)} placeholder="e.g. 75000" />
+            </div>
+            <div className="space-y-1">
+              <Label>Bonus (£)</Label>
+              <Input value={bonus} onChange={(e) => setBonus(e.target.value)} placeholder="e.g. 8000" />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label>Effective date</Label>
+            <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>Manager notes (will be woven into the letter)</Label>
+            <Textarea
+              rows={4}
+              value={managerNotes}
+              onChange={(e) => setManagerNotes(e.target.value)}
+              placeholder="Anything from the in-person meeting that should land in the letter — promotion path, focus areas, partner-track signals, etc."
+            />
+          </div>
+          {review.letter_storage_key && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              ⚠️ A letter already exists for this review. Generating a new one will replace it (the old version stays in hr_documents history).
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={generating}>
+            {generating ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Drafting…</> : "Draft letter"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmin: boolean; isOwn: boolean; person: StaffMember }) {
   const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newGoal, setNewGoal] = useState("");
+  const [letterDialogOpen, setLetterDialogOpen] = useState(false);
   const { data: reviews = [], isLoading } = useQuery<StaffReview[]>({ queryKey: [`/api/hr/reviews/${userId}`] });
   const { data: goals = [] } = useQuery<ReviewGoal[]>({ queryKey: [`/api/hr/goals/${userId}`] });
 
@@ -3328,10 +3436,43 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                     ↩︎ Reopen as draft
                   </Button>
                 )}
+                {editing.status === "completed" && isAdmin && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={() => setLetterDialogOpen(true)}
+                    title="Draft a BGP-branded review-outcome letter with salary / bonus + manager notes"
+                  >
+                    ✉️ {(editing as any).letter_storage_key ? "Re-draft letter" : "Draft review letter"}
+                  </Button>
+                )}
+                {editing.status === "completed" && (editing as any).letter_storage_key && (
+                  <a
+                    href={`/api/hr/reviews/${editing.id}/letter.docx`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline inline-flex items-center gap-1 self-center"
+                  >
+                    📄 Download letter
+                  </a>
+                )}
               </div>
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {editing && (
+        <ReviewLetterDialog
+          review={editing as any}
+          open={letterDialogOpen}
+          onClose={() => setLetterDialogOpen(false)}
+          onGenerated={() => {
+            setLetterDialogOpen(false);
+            queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${editing.user_id}`] });
+          }}
+        />
       )}
 
       {/* Import existing review dialog */}

@@ -3153,6 +3153,217 @@ Return ONLY JSON.`,
     }
   });
 
+  // ── Draft a BGP-branded review-outcome letter ──────────────────────
+  //
+  // Pulls every meaningful field from the review + staff profile, asks
+  // Claude to write a formal-but-warm letter, renders it as a BGP-
+  // branded DOCX, saves it under hr-review-letters/{userId}/{id}.docx
+  // and records it on hr_documents so it shows up on the staff
+  // member's documents tab. Admin only.
+  //
+  // Body (all optional — caller can pass to override what's already on
+  // the review):
+  //   newSalaryPence    — confirmed new salary (pence)
+  //   bonusPence        — bonus being awarded (pence)
+  //   effectiveDate     — when increases take effect (YYYY-MM-DD)
+  //   managerNotes      — freeform paragraphs to weave into the letter
+  //   issued            — true → also stamp the letter as 'issued' so
+  //                       it's read-only after this call.
+  app.post("/api/hr/reviews/:id/generate-letter", requireAdmin, async (req: any, res) => {
+    try {
+      const reviewQ = await pool.query(
+        `SELECT r.*, u.name AS user_name, u.email AS user_email,
+                sp.title AS user_title, sp.salary_current
+           FROM staff_reviews r
+           JOIN users u ON u.id = r.user_id
+           LEFT JOIN staff_profiles sp ON sp.user_id = r.user_id
+          WHERE r.id = $1`,
+        [req.params.id]
+      );
+      const review = reviewQ.rows[0];
+      if (!review) return res.status(404).json({ error: "Review not found" });
+
+      const actorQ = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [req.session?.userId || (req as any).tokenUserId]);
+      const managerName = actorQ.rows[0]?.name || "BGP Equity";
+
+      const { newSalaryPence, bonusPence, effectiveDate, managerNotes, issued } = req.body || {};
+      const newSalary = Number.isFinite(Number(newSalaryPence)) && Number(newSalaryPence) > 0 ? Math.round(Number(newSalaryPence)) : null;
+      const bonus = Number.isFinite(Number(bonusPence)) && Number(bonusPence) > 0 ? Math.round(Number(bonusPence)) : null;
+      const effDate = effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)
+        ? effectiveDate
+        : new Date().toISOString().slice(0, 10);
+
+      // Ask Claude to draft the letter body. We give it the review
+      // bullets + the financial outcome + manager notes and ask for
+      // section-structured output we then drop into the DOCX template.
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+      const formatPence = (p: number | null | undefined) => p == null ? "—" : `£${Math.round(p / 100).toLocaleString()}`;
+
+      const prompt = `You are drafting a formal-but-warm annual review outcome letter from Bruce Gillingham Pollard (BGP), a London commercial property firm, to ${review.user_name}${review.user_title ? `, ${review.user_title}` : ""}.
+
+Review period: ${review.period}
+Review type: ${review.kind}
+
+Review content (the employee's own words / their manager's notes):
+- Achievements: ${review.achievements || "—"}
+- Development areas: ${review.development_areas || "—"}
+- Goals for next year: ${review.goals || "—"}
+- Referrals + cross-team work: ${review.referrals || "—"}
+- Marketing / PR contribution: ${review.marketing_pr || "—"}
+- Employee feedback to BGP: ${review.feedback || "—"}
+- What BGP can do to help: ${review.bgp_can_help || "—"}
+- Manager comments on file: ${review.manager_comments || "—"}
+
+Financial picture:
+- Current salary: ${formatPence(review.current_salary_pence || review.salary_current)}
+- Fees target / achieved: ${formatPence(review.fees_target_pence)} / ${formatPence(review.fees_achieved_pence)}
+- Pipeline (under offer / negotiating): ${formatPence(review.pipeline_under_offer_pence)} / ${formatPence(review.pipeline_negotiating_pence)}
+
+This letter's outcome:
+- New salary from ${effDate}: ${newSalary ? formatPence(newSalary) : "no change"}
+- Bonus awarded: ${bonus ? formatPence(bonus) : "—"}
+
+Additional notes from ${managerName}:
+${managerNotes || "(none)"}
+
+Write the letter body as a JSON object with this exact shape:
+{
+  "opening": "1-2 sentence opener thanking them for their year",
+  "performance": "2-3 sentence paragraph summarising what they did well, drawing on the achievements + fee numbers",
+  "development": "1-2 sentence paragraph on the development areas + goals, framed constructively",
+  "outcome": "Paragraph stating the salary outcome AND bonus outcome explicitly with the numbers, plus the effective date",
+  "closing": "1-2 sentence warm close pointing to the year ahead"
+}
+
+Rules: British English, no exclamation marks, no "I'm pleased to" / "delighted" clichés. Direct, professional, partner-tone. Reference specifics from the bullets above. JSON only, no prose, no markdown.`;
+
+      const msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return res.status(502).json({ error: "AI returned no JSON", raw: text.slice(0, 400) });
+      const letter = JSON.parse(jsonMatch[0]) as { opening: string; performance: string; development: string; outcome: string; closing: string };
+
+      // Render the DOCX with BGP branding — same letterhead style as
+      // generate_word in chatbgp.ts (bold name, ruled bottom line,
+      // Calibri body) so it matches the firm's other generated docs.
+      const docx = await import("docx");
+      const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+      const children: any[] = [
+        new docx.Paragraph({
+          children: [new docx.TextRun({ text: "BRUCE GILLINGHAM POLLARD", bold: true, size: 22, font: "Calibri", color: "232323" })],
+          spacing: { after: 80 },
+        }),
+        new docx.Paragraph({
+          border: { bottom: { style: docx.BorderStyle.SINGLE, size: 8, color: "232323" } },
+          spacing: { after: 320 },
+        }),
+        new docx.Paragraph({
+          children: [new docx.TextRun({ text: today, size: 22, font: "Calibri" })],
+          spacing: { after: 280 },
+        }),
+        new docx.Paragraph({
+          children: [new docx.TextRun({ text: review.user_name, size: 22, font: "Calibri" })],
+          spacing: { after: 40 },
+        }),
+        new docx.Paragraph({
+          children: [new docx.TextRun({ text: review.user_title || "", size: 22, font: "Calibri" })],
+          spacing: { after: 280 },
+        }),
+        new docx.Paragraph({
+          children: [new docx.TextRun({ text: `Dear ${review.user_name.split(" ")[0]},`, size: 22, font: "Calibri" })],
+          spacing: { after: 220 },
+        }),
+        new docx.Paragraph({
+          children: [new docx.TextRun({ text: `Performance review — ${review.period}`, bold: true, size: 24, font: "Calibri" })],
+          spacing: { after: 200 },
+        }),
+      ];
+      const para = (text: string) => new docx.Paragraph({
+        children: [new docx.TextRun({ text, size: 22, font: "Calibri" })],
+        spacing: { after: 200 },
+      });
+      children.push(para(letter.opening));
+      children.push(para(letter.performance));
+      children.push(para(letter.development));
+      children.push(para(letter.outcome));
+      children.push(para(letter.closing));
+      children.push(new docx.Paragraph({ spacing: { after: 240 } }));
+      children.push(new docx.Paragraph({ children: [new docx.TextRun({ text: "Yours sincerely,", size: 22, font: "Calibri" })], spacing: { after: 600 } }));
+      children.push(new docx.Paragraph({ children: [new docx.TextRun({ text: managerName, bold: true, size: 22, font: "Calibri" })], spacing: { after: 40 } }));
+      children.push(new docx.Paragraph({ children: [new docx.TextRun({ text: "Bruce Gillingham Pollard", size: 20, font: "Calibri", color: "555555" })] }));
+
+      const doc = new docx.Document({
+        sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }, children }],
+        styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
+      });
+      const buffer = await docx.Packer.toBuffer(doc);
+
+      const { saveFile } = await import("./file-storage");
+      const filenameSafe = review.user_name.replace(/[^A-Za-z0-9_-]/g, "_");
+      const storageKey = `hr-review-letters/${review.user_id}/${review.id}-${Date.now()}.docx`;
+      await saveFile(storageKey, Buffer.from(buffer), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", `${filenameSafe}-review-${review.period}.docx`);
+
+      const downloadUrl = `/api/hr/reviews/${review.id}/letter.docx`;
+
+      // Record on hr_documents so it appears in the staff member's
+      // documents tab. We point sharepoint_url at our internal stream
+      // route — the SharePoint upload can happen separately when the
+      // letter is signed off and emailed.
+      await pool.query(
+        `INSERT INTO hr_documents (user_id, doc_type, name, sharepoint_url, review_year)
+         VALUES ($1, 'review_letter', $2, $3, $4)`,
+        [review.user_id, `Review letter — ${review.period}`, downloadUrl, new Date().getFullYear()]
+      );
+
+      // Stash the latest letter's storage_key on the review row so the
+      // panel can show 'Letter drafted ✓ (re-draft / download)'.
+      await pool.query(
+        `UPDATE staff_reviews SET letter_storage_key = $1, letter_generated_at = NOW(), letter_issued = $2 WHERE id = $3`,
+        [storageKey, !!issued, review.id]
+      );
+
+      res.json({
+        ok: true,
+        storageKey,
+        downloadUrl,
+        filename: `${filenameSafe}-review-${review.period}.docx`,
+      });
+    } catch (e: any) {
+      console.error("[hr] generate-letter error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message || "letter generation failed" });
+    }
+  });
+
+  // Stream the latest cached review letter. Same access rules as the
+  // review itself (admin or self).
+  app.get("/api/hr/reviews/:id/letter.docx", requireAuth, async (req: any, res) => {
+    try {
+      const actor = await getActor(req);
+      const { rows } = await pool.query(
+        `SELECT user_id, letter_storage_key FROM staff_reviews WHERE id = $1`,
+        [req.params.id]
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Review not found" });
+      if (!actor.isAdmin && actor.userId !== row.user_id) return res.status(403).json({ error: "Forbidden" });
+      if (!row.letter_storage_key) return res.status(404).json({ error: "No letter generated yet" });
+      const { getFile } = await import("./file-storage");
+      const file = await getFile(row.letter_storage_key);
+      if (!file) return res.status(404).json({ error: "Stored file missing" });
+      res.setHeader("Content-Type", file.contentType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", `inline; filename="${file.originalName || "review-letter.docx"}"`);
+      res.end(file.data);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "stream failed" });
+    }
+  });
+
   // Auto-link review-form numbers from the WIP report.
   //   target            = current_salary_pence * 3
   //   achieved          = sum of fee allocations on INV-status deals
