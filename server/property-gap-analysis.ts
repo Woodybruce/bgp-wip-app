@@ -31,50 +31,66 @@ type LocResolveResult =
   | { ok: false; reason: "no_property" | "no_coords_no_postcode" | "geocode_failed" | "no_google_key"; name?: string; postcode?: string | null };
 
 async function resolvePropertyLocation(propertyId: string): Promise<LocResolveResult> {
+  // Resolve postcode from BOTH the top-level column AND the address
+  // JSONB — historically populated inconsistently across properties.
+  // Same fallback for lat/lng if anyone's storing them inside the
+  // address blob.
   const { rows } = await pool.query(
-    `SELECT latitude, longitude, postcode, name, address FROM crm_properties WHERE id = $1`,
+    `SELECT latitude, longitude, postcode,
+            address->>'postcode' AS address_postcode,
+            address->>'lat'      AS address_lat,
+            address->>'lng'      AS address_lng,
+            name
+       FROM crm_properties WHERE id = $1`,
     [propertyId]
   );
   if (!rows[0]) return { ok: false, reason: "no_property" };
   const row = rows[0];
+  const postcode = (row.postcode || row.address_postcode || "").trim() || null;
 
-  // Stored coordinates win — fast path.
-  const lat = parseFloat(row.latitude);
-  const lng = parseFloat(row.longitude);
+  // Stored coordinates win — fast path. Accept either top-level or
+  // address-blob lat/lng.
+  const lat = parseFloat(row.latitude || row.address_lat);
+  const lng = parseFloat(row.longitude || row.address_lng);
   if (!isNaN(lat) && !isNaN(lng)) {
-    return { ok: true, lat, lng, postcode: row.postcode, name: row.name };
+    return { ok: true, lat, lng, postcode, name: row.name };
   }
 
   // No coords, no postcode → user needs to fill one in.
-  if (!row.postcode || !row.postcode.trim()) {
-    return { ok: false, reason: "no_coords_no_postcode", name: row.name, postcode: row.postcode };
+  if (!postcode) {
+    return { ok: false, reason: "no_coords_no_postcode", name: row.name, postcode: null };
   }
 
   // Postcode present but no Google key configured → can't geocode.
   if (!process.env.GOOGLE_API_KEY) {
-    return { ok: false, reason: "no_google_key", name: row.name, postcode: row.postcode };
+    return { ok: false, reason: "no_google_key", name: row.name, postcode };
   }
 
   // Geocode via Google + persist the resolved lat/lng back so we don't
-  // re-hit the API every render.
+  // re-hit the API every render. Also backfill the top-level postcode
+  // column if it was missing (it was likely only on address.postcode).
   try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(row.postcode)}&region=uk&components=country:GB&key=${process.env.GOOGLE_API_KEY}`;
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(postcode)}&region=uk&components=country:GB&key=${process.env.GOOGLE_API_KEY}`;
     const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (r.ok) {
       const j: any = await r.json();
       const loc = j.results?.[0]?.geometry?.location;
       if (loc?.lat && loc?.lng) {
         await pool.query(
-          `UPDATE crm_properties SET latitude = $1, longitude = $2 WHERE id = $3 AND (latitude IS NULL OR latitude = '' OR longitude IS NULL OR longitude = '')`,
-          [String(loc.lat), String(loc.lng), propertyId]
+          `UPDATE crm_properties
+              SET latitude = COALESCE(NULLIF(latitude, ''), $1),
+                  longitude = COALESCE(NULLIF(longitude, ''), $2),
+                  postcode = COALESCE(NULLIF(postcode, ''), $3)
+            WHERE id = $4`,
+          [String(loc.lat), String(loc.lng), postcode, propertyId]
         ).catch(() => { /* best-effort persist; ignore lock contention */ });
-        return { ok: true, lat: loc.lat, lng: loc.lng, postcode: row.postcode, name: row.name };
+        return { ok: true, lat: loc.lat, lng: loc.lng, postcode, name: row.name };
       }
     }
   } catch {
     /* swallow — fall through to geocode_failed below */
   }
-  return { ok: false, reason: "geocode_failed", name: row.name, postcode: row.postcode };
+  return { ok: false, reason: "geocode_failed", name: row.name, postcode };
 }
 
 // GET /api/property/:propertyId/brand-gaps
