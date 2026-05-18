@@ -43,9 +43,17 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
   const { data, isLoading, error } = useQuery<BrandGapResult>({
     queryKey: ["/api/property", propertyId, "brand-gaps"],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/property/${propertyId}/brand-gaps`, {});
+      // Hit the endpoint directly so we can read the server's specific
+      // 400 body (no-postcode / no-key / geocode-failed) instead of
+      // throwing on the apiRequest layer and losing the reason.
+      const res = await fetch(`/api/property/${propertyId}/brand-gaps`, { credentials: "include" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
       return res.json();
     },
+    retry: false,
   });
 
   if (isLoading) return null;
@@ -61,8 +69,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground italic">
-            Needs property geocoding or brand_stores data.
-            Use the "Find stores" button on brands to populate store locations via Google Places.
+            {error?.message || "Needs property geocoding or brand_stores data. Use the \"Find stores\" button on brands to populate store locations via Google Places."}
           </p>
         </CardContent>
       </Card>
