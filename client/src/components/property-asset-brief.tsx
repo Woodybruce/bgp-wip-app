@@ -255,54 +255,10 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
       {/* Weekly focus + risk register now live in the top-strip
           2-col row above this panel (next to the news feed). */}
 
-      {/* Active deals grid */}
-      <Card>
-        <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <Handshake className="w-3.5 h-3.5" /> Active deals
-            <Badge variant="secondary" className="text-[10px]">{data.active_deals.length}</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0">
-          {data.active_deals.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground italic">No active deals on this property.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {data.active_deals.slice(0, 12).map(d => (
-                <Link key={d.id} href={`/deals/${d.id}`}>
-                  <div className="flex items-start gap-2 p-2 rounded border bg-card hover:bg-muted/50 transition-colors cursor-pointer">
-                    {d.tenant_logo_url && (
-                      <img
-                        src={d.tenant_logo_url}
-                        alt=""
-                        className="w-8 h-8 rounded border bg-white object-contain p-0.5 shrink-0"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                      />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold truncate">{d.tenant_name || d.name}</span>
-                        <Badge variant="outline" className="text-[9px] shrink-0">{d.stage_label}</Badge>
-                      </div>
-                      <div className="text-[10px] text-muted-foreground truncate">
-                        {d.unit_name && <span>{d.unit_name}</span>}
-                        {d.fee_pence != null && <span> · {formatMoney(d.fee_pence)} fee</span>}
-                        {d.last_touch_at && <span> · {timeAgo(d.last_touch_at)}</span>}
-                      </div>
-                    </div>
-                    <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0 mt-1" />
-                  </div>
-                </Link>
-              ))}
-              {data.active_deals.length > 12 && (
-                <div className="text-[10px] text-muted-foreground italic col-span-full">
-                  + {data.active_deals.length - 12} more — view all via the Deals tab
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Active deals grid removed — the right sidebar's 'Linked
+          deals' panel already surfaces the same list. Active deal
+          counts still feed the Pipeline & Performance card above
+          Plans. */}
 
       {/* Activity feed (sanitised summaries — no email body content) */}
       <Card>
