@@ -2830,7 +2830,7 @@ function ReviewLetterDialog({
           </div>
           {review.letter_storage_key && (
             <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              ⚠️ A letter already exists for this review. Generating a new one will replace it (the old version stays in hr_documents history).
+              ⚠️ A letter already exists for this review. Generating a new one overwrites it (one document per review).
             </p>
           )}
         </div>

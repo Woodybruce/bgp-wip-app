@@ -3306,15 +3306,22 @@ Rules: British English, no exclamation marks, no "I'm pleased to" / "delighted" 
 
       const { saveFile } = await import("./file-storage");
       const filenameSafe = review.user_name.replace(/[^A-Za-z0-9_-]/g, "_");
-      const storageKey = `hr-review-letters/${review.user_id}/${review.id}-${Date.now()}.docx`;
+      // Stable storage key — one DOCX per review, re-drafts overwrite
+      // in place. saveFile() uses ON CONFLICT DO UPDATE so we don't
+      // accumulate per-draft copies in file_storage. If you ever want
+      // versioning, snapshot to a dated key before this overwrite.
+      const storageKey = `hr-review-letters/${review.user_id}/${review.id}.docx`;
       await saveFile(storageKey, Buffer.from(buffer), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", `${filenameSafe}-review-${review.period}.docx`);
 
       const downloadUrl = `/api/hr/reviews/${review.id}/letter.docx`;
 
-      // Record on hr_documents so it appears in the staff member's
-      // documents tab. We point sharepoint_url at our internal stream
-      // route — the SharePoint upload can happen separately when the
-      // letter is signed off and emailed.
+      // Single hr_documents row per review — delete any prior entry
+      // for this user + period before re-inserting so the staff
+      // documents tab doesn't grow a row per re-draft.
+      await pool.query(
+        `DELETE FROM hr_documents WHERE user_id = $1 AND doc_type = 'review_letter' AND name = $2`,
+        [review.user_id, `Review letter — ${review.period}`]
+      );
       await pool.query(
         `INSERT INTO hr_documents (user_id, doc_type, name, sharepoint_url, review_year)
          VALUES ($1, 'review_letter', $2, $3, $4)`,
