@@ -1362,6 +1362,11 @@ import { pool } from "./db";
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_sharepoint_url TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS board_member BOOLEAN DEFAULT false`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS management_team BOOLEAN DEFAULT false`,
+    // APC grad date tracking — intent-to-submit + actual submission
+    // sit alongside the existing apc_submission_deadline (target) and
+    // apc_assessment_date (final interview).
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_intent_to_submit_date TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_submission_date TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS rics_number TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_planned_sitting TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS apc_submission_deadline TEXT`,

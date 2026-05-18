@@ -2702,9 +2702,11 @@ export const staffProfiles = pgTable("staff_profiles", {
   ricsPathway: text("rics_pathway"),
   ricsNumber: text("rics_number"),    // RICS member number (e.g. 1234567)
   apcStatus: text("apc_status"),      // not_started | in_progress | completed
-  apcAssessmentDate: text("apc_assessment_date"),       // confirmed exam date
+  apcAssessmentDate: text("apc_assessment_date"),       // confirmed exam / interview date
   apcPlannedSitting: text("apc_planned_sitting"),       // intent — "Spring 2026", etc.
   apcSubmissionDeadline: text("apc_submission_deadline"),
+  apcIntentToSubmitDate: text("apc_intent_to_submit_date"),  // grad's declared intent-to-submit date
+  apcSubmissionDate: text("apc_submission_date"),            // actual submission date
   apcCounsellorName: text("apc_counsellor_name"),       // external counsellor (e.g. Mark Hoffman)
   apcCounsellorEmail: text("apc_counsellor_email"),
   cvSummary: text("cv_summary"),

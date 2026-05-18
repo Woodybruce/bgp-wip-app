@@ -58,6 +58,8 @@ interface StaffMember {
   apc_assessment_date: string | null;
   apc_planned_sitting?: string | null;
   apc_submission_deadline?: string | null;
+  apc_intent_to_submit_date?: string | null;
+  apc_submission_date?: string | null;
   apc_counsellor_name?: string | null;
   apc_counsellor_email?: string | null;
   cv_summary?: string | null;
@@ -1711,6 +1713,8 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
     apcAssessmentDate: person.apc_assessment_date || "",
     apcPlannedSitting: person.apc_planned_sitting || "",
     apcSubmissionDeadline: person.apc_submission_deadline || "",
+    apcIntentToSubmitDate: person.apc_intent_to_submit_date || "",
+    apcSubmissionDate: person.apc_submission_date || "",
     apcCounsellorName: person.apc_counsellor_name || "",
     apcCounsellorEmail: person.apc_counsellor_email || "",
     cvSummary: person.cv_summary || "",
@@ -1754,6 +1758,8 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         apcAssessmentDate: form.apcAssessmentDate || undefined,
         apcPlannedSitting: form.apcPlannedSitting || undefined,
         apcSubmissionDeadline: form.apcSubmissionDeadline || undefined,
+        apcIntentToSubmitDate: form.apcIntentToSubmitDate || undefined,
+        apcSubmissionDate: form.apcSubmissionDate || undefined,
         apcCounsellorName: form.apcCounsellorName || undefined,
         apcCounsellorEmail: form.apcCounsellorEmail || undefined,
         cvSummary: form.cvSummary || undefined,
@@ -1858,7 +1864,11 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
                 <>
                   <div className="space-y-1.5"><Label>Planned sitting</Label><Input value={form.apcPlannedSitting} onChange={f("apcPlannedSitting")} placeholder="e.g. Spring 2026" /></div>
                   <div className="space-y-1.5"><Label>Submission deadline</Label><Input type="date" value={form.apcSubmissionDeadline} onChange={f("apcSubmissionDeadline")} /></div>
-                  <div className="space-y-1.5"><Label>Assessment date</Label><Input type="date" value={form.apcAssessmentDate} onChange={f("apcAssessmentDate")} /></div>
+                  {/* The three grad-tracked dates. Intent → submitted →
+                      interviewed is the natural APC progression. */}
+                  <div className="space-y-1.5"><Label>Intent to submit</Label><Input type="date" value={form.apcIntentToSubmitDate} onChange={f("apcIntentToSubmitDate")} /></div>
+                  <div className="space-y-1.5"><Label>Submission date</Label><Input type="date" value={form.apcSubmissionDate} onChange={f("apcSubmissionDate")} /></div>
+                  <div className="space-y-1.5 col-span-2"><Label>Expected interview date</Label><Input type="date" value={form.apcAssessmentDate} onChange={f("apcAssessmentDate")} /></div>
                   <div className="space-y-1.5"><Label>Counsellor name</Label><Input value={form.apcCounsellorName} onChange={f("apcCounsellorName")} placeholder="e.g. Mark Hoffman" /></div>
                   <div className="space-y-1.5 col-span-2"><Label>Counsellor email</Label><Input value={form.apcCounsellorEmail} onChange={f("apcCounsellorEmail")} placeholder="mark@apc-training.co.uk" /></div>
                 </>
@@ -2123,7 +2133,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
               {person.apc_planned_sitting && <div><span className="font-medium text-foreground">Planning to sit:</span> {person.apc_planned_sitting}</div>}
               {person.apc_submission_deadline && <div><span className="font-medium text-foreground">Submit by:</span> {new Date(person.apc_submission_deadline).toLocaleDateString("en-GB")}</div>}
-              {person.apc_assessment_date && <div><span className="font-medium text-foreground">Sitting:</span> {new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</div>}
+              {person.apc_intent_to_submit_date && <div><span className="font-medium text-foreground">Intent to submit:</span> {new Date(person.apc_intent_to_submit_date).toLocaleDateString("en-GB")}</div>}
+              {person.apc_submission_date && <div><span className="font-medium text-foreground">Submitted:</span> {new Date(person.apc_submission_date).toLocaleDateString("en-GB")}</div>}
+              {person.apc_assessment_date && <div><span className="font-medium text-foreground">Interview:</span> {new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</div>}
             </div>
             {person.apc_counsellor_name && (
               <div className="text-xs text-muted-foreground">

@@ -214,6 +214,7 @@ export function setupHrRoutes(app: Express) {
           sp.salary_current, sp.manager_id, sp.department AS hr_department,
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.apc_planned_sitting, sp.apc_submission_deadline,
+          sp.apc_intent_to_submit_date, sp.apc_submission_date,
           sp.apc_counsellor_name, sp.apc_counsellor_email,
           sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history,
           sp.education, sp.bio,
@@ -259,6 +260,7 @@ export function setupHrRoutes(app: Express) {
           sp.salary_current, sp.manager_id, sp.department AS hr_department,
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.apc_planned_sitting, sp.apc_submission_deadline,
+          sp.apc_intent_to_submit_date, sp.apc_submission_date,
           sp.apc_counsellor_name, sp.apc_counsellor_email,
           sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history,
           sp.education, sp.bio,
@@ -291,7 +293,9 @@ export function setupHrRoutes(app: Express) {
     const {
       title, startDate, endDate, status, salaryCurrent, managerId,
       department, ricsPathway, ricsNumber, apcStatus, apcAssessmentDate,
-      apcPlannedSitting, apcSubmissionDeadline, apcCounsellorName, apcCounsellorEmail,
+      apcPlannedSitting, apcSubmissionDeadline,
+      apcIntentToSubmitDate, apcSubmissionDate,
+      apcCounsellorName, apcCounsellorEmail,
       cvSummary, cvSpecialisms, cvNotableClients, cvCareerHistory,
       education, bio, emergencyContactName, emergencyContactPhone,
       emergencyContactRelation, holidayEntitlement, pensionOptIn, pensionRate,
@@ -318,9 +322,10 @@ export function setupHrRoutes(app: Express) {
           dob, address, wfh_days, employment_type, cv_sharepoint_url, board_member, management_team,
           rics_number,
           apc_planned_sitting, apc_submission_deadline, apc_counsellor_name, apc_counsellor_email,
+          apc_intent_to_submit_date, apc_submission_date,
           cv_summary, cv_specialisms, cv_notable_clients, cv_career_history
         ) VALUES ($1,$2,$3,$4,COALESCE($5, 'active'),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-                  $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
+                  $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41)
         ON CONFLICT (user_id) DO UPDATE SET
           title = COALESCE(EXCLUDED.title, staff_profiles.title),
           start_date = COALESCE(EXCLUDED.start_date, staff_profiles.start_date),
@@ -356,6 +361,8 @@ export function setupHrRoutes(app: Express) {
           apc_submission_deadline = COALESCE(EXCLUDED.apc_submission_deadline, staff_profiles.apc_submission_deadline),
           apc_counsellor_name = COALESCE(EXCLUDED.apc_counsellor_name, staff_profiles.apc_counsellor_name),
           apc_counsellor_email = COALESCE(EXCLUDED.apc_counsellor_email, staff_profiles.apc_counsellor_email),
+          apc_intent_to_submit_date = COALESCE(EXCLUDED.apc_intent_to_submit_date, staff_profiles.apc_intent_to_submit_date),
+          apc_submission_date = COALESCE(EXCLUDED.apc_submission_date, staff_profiles.apc_submission_date),
           cv_summary = COALESCE(EXCLUDED.cv_summary, staff_profiles.cv_summary),
           cv_specialisms = COALESCE(EXCLUDED.cv_specialisms, staff_profiles.cv_specialisms),
           cv_notable_clients = COALESCE(EXCLUDED.cv_notable_clients, staff_profiles.cv_notable_clients),
@@ -370,6 +377,7 @@ export function setupHrRoutes(app: Express) {
         dob, address, wfhDays, employmentType, cvSharepointUrl, boardMember, managementTeam,
         ricsNumber,
         apcPlannedSitting, apcSubmissionDeadline, apcCounsellorName, apcCounsellorEmail,
+        apcIntentToSubmitDate, apcSubmissionDate,
         cvSummary, cvSpecialisms, cvNotableClients,
         cvCareerHistory != null ? JSON.stringify(cvCareerHistory) : null,
       ]);
