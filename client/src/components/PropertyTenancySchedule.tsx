@@ -830,43 +830,6 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   );
 }
 
-function ZoneGroup({ zone, units, isExpanded, onToggleZone, onInlineUpdate, onDelete, matchDeal, matchLetting }: {
-  zone: string; units: TenancyUnit[]; isExpanded: boolean;
-  onToggleZone: () => void;
-  onInlineUpdate: (id: string | number, field: string, val: string) => void;
-  onDelete: (id: string | number) => void;
-  matchDeal: (u: TenancyUnit) => DealLink | undefined;
-  matchLetting: (u: TenancyUnit) => LettingLink | undefined;
-}) {
-  if (units.length === 0) return null;
-  const zoneRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
-  // Functional cols (chevron + status + links + delete) plus all data COLUMNS.
-  const totalCols = 1 + COLUMNS.length + 3;
-
-  return (
-    <>
-      <tr className="bg-gray-100 dark:bg-gray-700/50 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700" onClick={onToggleZone}>
-        <td colSpan={totalCols} className="p-2 font-semibold text-xs">
-          {isExpanded ? <ChevronDown className="w-3 h-3 inline mr-1" /> : <ChevronRight className="w-3 h-3 inline mr-1" />}
-          {zone}
-          <Badge variant="secondary" className="ml-2 text-[10px]">{units.length}</Badge>
-          <span className="ml-3 text-muted-foreground font-normal">{fmtCurrency(zoneRent)} total rent</span>
-        </td>
-      </tr>
-      {isExpanded && units.map(unit => (
-        <UnitRow
-          key={unit.id}
-          unit={unit}
-          onUpdate={onInlineUpdate}
-          onDelete={() => onDelete(unit.id)}
-          deal={matchDeal(unit)}
-          letting={matchLetting(unit)}
-        />
-      ))}
-    </>
-  );
-}
-
 function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
   unit: TenancyUnit;
   columns: Col[];
@@ -1057,7 +1020,6 @@ function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
               unitId={unit.id}
               onSave={onUpdate}
               type={editType}
-              className={c.field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}
             />
           </td>
         );

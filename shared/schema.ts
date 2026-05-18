@@ -1204,6 +1204,25 @@ export const crmPropertyAgents = pgTable("crm_property_agents", {
   role: text("role"),
 });
 
+// BGP team assigned to a client (landlord / investor / etc). One row per
+// (client_company × user) pairing. Reporting lines are loose — reports_to
+// can point at any user, not just one already on this client's team. The
+// org-chart on the company page reads from here; HR (staff_profiles) is
+// the source of truth for headshot + CV summary.
+export const crmClientTeamMembers = pgTable("crm_client_team_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientCompanyId: varchar("client_company_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  // Free-typed grouping per client (e.g. "Investment", "Lease Advisory").
+  teamGroup: text("team_group"),
+  // Per-client role label rendered on the org chart card.
+  role: text("role"),
+  // Loose reporting line — null when this person sits at the top.
+  reportsToUserId: varchar("reports_to_user_id"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const crmPropertyTenants = pgTable("crm_property_tenants", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),

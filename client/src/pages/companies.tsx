@@ -1,6 +1,7 @@
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -1308,6 +1309,20 @@ function CompanyDetail({ id }: { id: string }) {
           })()}
 
           <CompanyLeasingScheduleSection companyId={id} />
+
+          {/* BGP Team org chart — reports_to lines, headshots, CV side
+              sheet. Single source for who's on the client account. */}
+          {id && (
+            <Card>
+              <CardContent className="p-3 space-y-2">
+                <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-indigo-500" />
+                  BGP Team
+                </h3>
+                <ClientTeamOrgChart clientCompanyId={id} />
+              </CardContent>
+            </Card>
+          )}
 
         </div>
 

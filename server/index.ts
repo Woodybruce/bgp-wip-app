@@ -2073,6 +2073,7 @@ import propertyPlansRouter from "./property-plans";
 import propertyAssetBriefRouter from "./property-asset-brief";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
+import clientTeamsRouter from "./client-teams";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
@@ -2537,6 +2538,7 @@ app.use("/api/branding/assets", express.static(
   registerMapLayerRoutes(app);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
+  app.use(clientTeamsRouter);
   app.use(turnoverRouter);
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
@@ -2994,6 +2996,59 @@ app.use("/api/branding/assets", express.static(
           // Per-property BGP staff role (Lead / Investment / Leasing /
           // Letting Surveyor) so the contacts pills don't all look the same.
           await addColIfMissing("crm_property_agents", "role", "text");
+
+          // BGP team org chart per client — see shared/schema.ts
+          // crmClientTeamMembers. Loose reporting lines, free-typed team
+          // groups; the org chart on the company page reads from here.
+          await db.execute(sql.raw(`
+            CREATE TABLE IF NOT EXISTS crm_client_team_members (
+              id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+              client_company_id varchar NOT NULL,
+              user_id varchar NOT NULL,
+              team_group text,
+              role text,
+              reports_to_user_id varchar,
+              sort_order integer DEFAULT 0,
+              created_at timestamp DEFAULT now(),
+              UNIQUE(client_company_id, user_id)
+            )
+          `));
+          await db.execute(sql.raw(`
+            CREATE INDEX IF NOT EXISTS idx_crm_client_team_client
+              ON crm_client_team_members(client_company_id)
+          `));
+          // One-time seed from legacy data — unnest bgp_contact_user_ids
+          // on every company, plus every (property landlord_id × agent
+          // user_id) pairing from crm_property_agents. Runs only when the
+          // table is empty so it doesn't clobber team edits on restarts.
+          const seedCheck = await db.execute(sql.raw(
+            "SELECT COUNT(*)::int AS n FROM crm_client_team_members"
+          ));
+          const seedRowCount = Number((seedCheck as any).rows?.[0]?.n ?? 0);
+          if (seedRowCount === 0) {
+            await db.execute(sql.raw(`
+              INSERT INTO crm_client_team_members
+                (client_company_id, user_id, team_group)
+              SELECT id AS client_company_id,
+                     UNNEST(bgp_contact_user_ids) AS user_id,
+                     'Unassigned' AS team_group
+              FROM crm_companies
+              WHERE bgp_contact_user_ids IS NOT NULL
+                AND array_length(bgp_contact_user_ids, 1) > 0
+              ON CONFLICT (client_company_id, user_id) DO NOTHING
+            `));
+            await db.execute(sql.raw(`
+              INSERT INTO crm_client_team_members
+                (client_company_id, user_id, team_group)
+              SELECT DISTINCT p.landlord_id AS client_company_id,
+                     pa.user_id,
+                     'Unassigned' AS team_group
+              FROM crm_property_agents pa
+              JOIN crm_properties p ON p.id = pa.property_id
+              WHERE p.landlord_id IS NOT NULL
+              ON CONFLICT (client_company_id, user_id) DO NOTHING
+            `));
+          }
           // Floor-level distinct from Zone — Landsec sheets give the floor
           // code (Floor 100 / 101) as a separate column; the Zone label
           // (Wintergarden / Plaza) is the higher-level grouping.
