@@ -352,6 +352,25 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
   };
 
   const [promoting, setPromoting] = useState(false);
+  const [repointing, setRepointing] = useState(false);
+  const runRepointMerged = async () => {
+    setRepointing(true);
+    try {
+      const res = await fetch(`/api/properties/${propertyId}/repoint-merged-brands`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      const total = (j.moved?.tenancy || 0) + (j.moved?.leasing || 0) + (j.moved?.available || 0) + (j.moved?.deals || 0);
+      toast({ title: "Repointed", description: `${total} rows moved to surviving brands.` });
+      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
+      qc.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Repoint failed", description: e.message, variant: "destructive" });
+    } finally {
+      setRepointing(false);
+    }
+  };
   const runPromote = async () => {
     setPromoting(true);
     try {
@@ -481,7 +500,23 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
               )}
             </div>
           </div>
-          <Row label="Tenants linked to a merged brand" value={data.integrity.tenants_pointing_at_merged_brand} warn />
+          <div className="flex items-center justify-between text-[11px] px-1 py-0.5">
+            <span className="text-muted-foreground">Tenants linked to a merged brand</span>
+            <div className="flex items-center gap-1.5">
+              <span className={`font-mono font-medium ${data.integrity.tenants_pointing_at_merged_brand > 0 ? "text-rose-600" : "text-foreground"}`}>
+                {data.integrity.tenants_pointing_at_merged_brand}
+              </span>
+              {data.integrity.tenants_pointing_at_merged_brand > 0 && (
+                <Button
+                  size="sm" variant="ghost" className="h-4 px-1 text-[9px] text-rose-600 hover:bg-rose-50"
+                  onClick={runRepointMerged} disabled={repointing}
+                  data-testid="btn-repoint-merged"
+                >
+                  {repointing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : "Repoint"}
+                </Button>
+              )}
+            </div>
+          </div>
           <Row label="Deals with property/unit mismatch" value={data.integrity.deals_with_property_unit_mismatch} warn />
           <Row label="Available units' deal on other property" value={data.integrity.available_units_deal_on_other_property} warn />
           <Row label="Active deals not yet on tenancy unit" value={data.integrity.active_deals_no_unit_fk} warn />

@@ -1272,6 +1272,97 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
   }
 });
 
+// Re-point tenant FKs after a brand merge. When a brand is merged
+// into another (crm_companies.merged_into_id set), every tenancy /
+// leasing / available row that still points at the merged-away
+// brand needs to follow the chain to the surviving brand. Walks
+// the chain in case of multi-step merges (A → B → C).
+router.post("/api/properties/:propertyId/repoint-merged-brands", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId } = req.params;
+    const moved = {
+      tenancy: (await pool.query(
+        `WITH RECURSIVE chain AS (
+           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
+           UNION ALL
+           SELECT c.id, ch.merged_into_id FROM crm_companies c
+             JOIN chain ch ON c.id = ch.merged_into_id
+             WHERE c.merged_into_id IS NOT NULL
+         ),
+         survivors AS (
+           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
+             FROM chain
+            ORDER BY id, new_id
+         )
+         UPDATE tenancy_schedule_units t
+            SET tenant_company_id = s.new_id
+           FROM survivors s
+          WHERE t.property_id = $1 AND t.tenant_company_id = s.old_id`,
+        [propertyId]
+      )).rowCount || 0,
+      leasing: (await pool.query(
+        `WITH RECURSIVE chain AS (
+           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
+           UNION ALL
+           SELECT c.id, ch.merged_into_id FROM crm_companies c
+             JOIN chain ch ON c.id = ch.merged_into_id
+             WHERE c.merged_into_id IS NOT NULL
+         ),
+         survivors AS (
+           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
+             FROM chain ORDER BY id, new_id
+         )
+         UPDATE leasing_schedule_units u
+            SET tenant_company_id = s.new_id
+           FROM survivors s
+          WHERE u.property_id = $1 AND u.tenant_company_id = s.old_id`,
+        [propertyId]
+      )).rowCount || 0,
+      available: (await pool.query(
+        `WITH RECURSIVE chain AS (
+           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
+           UNION ALL
+           SELECT c.id, ch.merged_into_id FROM crm_companies c
+             JOIN chain ch ON c.id = ch.merged_into_id
+             WHERE c.merged_into_id IS NOT NULL
+         ),
+         survivors AS (
+           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
+             FROM chain ORDER BY id, new_id
+         )
+         UPDATE available_units au
+            SET tenant_company_id = s.new_id
+           FROM survivors s
+          WHERE au.property_id = $1 AND au.tenant_company_id = s.old_id`,
+        [propertyId]
+      )).rowCount || 0,
+      deals: (await pool.query(
+        `WITH RECURSIVE chain AS (
+           SELECT id, merged_into_id FROM crm_companies WHERE merged_into_id IS NOT NULL
+           UNION ALL
+           SELECT c.id, ch.merged_into_id FROM crm_companies c
+             JOIN chain ch ON c.id = ch.merged_into_id
+             WHERE c.merged_into_id IS NOT NULL
+         ),
+         survivors AS (
+           SELECT DISTINCT ON (id) id AS old_id, merged_into_id AS new_id
+             FROM chain ORDER BY id, new_id
+         )
+         UPDATE crm_deals d
+            SET tenant_id = s.new_id
+           FROM survivors s
+          WHERE (d.property_id = $1 OR EXISTS (SELECT 1 FROM property_units pu WHERE pu.id = d.unit_id AND pu.property_id = $1))
+            AND d.tenant_id = s.old_id`,
+        [propertyId]
+      )).rowCount || 0,
+    };
+    res.json({ ok: true, moved });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Duplicate unit_numbers on the tenancy schedule for this property.
 // Returns clusters of rows that share a normalised unit_number, so
 // the team can spot typos / "Unit 8 vs Unit 8a" cases and merge or
