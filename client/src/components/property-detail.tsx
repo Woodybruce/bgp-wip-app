@@ -758,7 +758,7 @@ export function PropertyDetail({ id }: { id: string }) {
               <Card>
                 <CardContent className="p-4 space-y-1">
                   <p className="text-xs text-muted-foreground">BGP Contacts</p>
-                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} />
+                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
                 </CardContent>
               </Card>
               <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
@@ -927,7 +927,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </button>
               {sidebarSections.team && (
                 <div className="px-4 pb-3">
-                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} />
+                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
                 </div>
               )}
             </div>

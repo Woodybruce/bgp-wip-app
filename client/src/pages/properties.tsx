@@ -461,11 +461,16 @@ export function InlineAgents({
   agentLinks,
   allUsers,
   colorMap,
+  landlordId,
 }: {
   propertyId: string;
   agentLinks: Array<{ propertyId: string; userId: string; role?: string | null }>;
   allUsers: User[];
   colorMap?: Record<string, string>;
+  // When set, the picker biases the unassigned list toward people already
+  // on the landlord's client team (see crm_client_team_members). Falls
+  // back to the full BGP staff list when omitted.
+  landlordId?: string | null;
 }) {
   const { toast } = useToast();
   const assignedLinks = agentLinks.filter(l => l.propertyId === propertyId);
@@ -475,6 +480,22 @@ export function InlineAgents({
     .filter(u => assignedUserIds.includes(String(u.id)))
     .sort((a, b) => rolePriority(linksByUser.get(String(a.id))?.role) - rolePriority(linksByUser.get(String(b.id))?.role));
   const unassignedUsers = allUsers.filter(u => !assignedUserIds.includes(String(u.id)));
+
+  // Pull the landlord's client team so we can surface those names first in
+  // the picker. Skips the network call when there's no landlord set.
+  const { data: clientTeam = [] } = useQuery<Array<{ user_id: string }>>({
+    queryKey: ["/api/client-teams", landlordId, "for-picker"],
+    queryFn: async () => {
+      const r = await fetch(`/api/client-teams/${landlordId}`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!landlordId,
+    staleTime: 60_000,
+  });
+  const clientTeamUserIds = new Set(clientTeam.map(m => String(m.user_id)));
+  const onTeam = unassignedUsers.filter(u => clientTeamUserIds.has(String(u.id)));
+  const offTeam = unassignedUsers.filter(u => !clientTeamUserIds.has(String(u.id)));
 
   const addMutation = useMutation({
     mutationFn: async (vars: { userId: string; role?: string | null }) => {
@@ -593,22 +614,49 @@ export function InlineAgents({
             <Plus className="w-3 h-3 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="max-h-60 overflow-y-auto">
+        <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
           {unassignedUsers.length === 0 ? (
             <DropdownMenuItem disabled>All team members assigned</DropdownMenuItem>
           ) : (
-            unassignedUsers.map(user => (
-              <DropdownMenuItem
-                key={user.id}
-                onClick={() => addMutation.mutate({ userId: String(user.id) })}
-                data-testid={`assign-agent-${user.id}`}
-              >
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
-                  {getInitials(user.name)}
-                </div>
-                {user.name}
-              </DropdownMenuItem>
-            ))
+            <>
+              {onTeam.length > 0 && (
+                <>
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">On this client</div>
+                  {onTeam.map(user => (
+                    <DropdownMenuItem
+                      key={user.id}
+                      onClick={() => addMutation.mutate({ userId: String(user.id) })}
+                      data-testid={`assign-agent-${user.id}`}
+                    >
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
+                        {getInitials(user.name)}
+                      </div>
+                      {user.name}
+                    </DropdownMenuItem>
+                  ))}
+                  {offTeam.length > 0 && <div className="border-t my-1" />}
+                </>
+              )}
+              {offTeam.length > 0 && (
+                <>
+                  {onTeam.length > 0 && (
+                    <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">Other BGP staff</div>
+                  )}
+                  {offTeam.map(user => (
+                    <DropdownMenuItem
+                      key={user.id}
+                      onClick={() => addMutation.mutate({ userId: String(user.id) })}
+                      data-testid={`assign-agent-${user.id}`}
+                    >
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
+                        {getInitials(user.name)}
+                      </div>
+                      {user.name}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+            </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -5298,6 +5346,7 @@ function PropertiesList({
                             agentLinks={agentLinks}
                             allUsers={allUsers}
                             colorMap={userColorMap}
+                            landlordId={item.landlordId}
                           />
                         </TableCell>
                       )}
