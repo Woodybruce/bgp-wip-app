@@ -988,6 +988,12 @@ import { pool } from "./db";
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS long_leaseholder_id VARCHAR`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS senior_lender_id VARCHAR`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS junior_lender_id VARCHAR`,
+    // Asset Brief — structured fields that replace the Notes blob.
+    // weekly_focus is an array of { id, text, owner_user_id, deal_id }
+    // — the 3-5 items the asset lead types in. Everything else on the
+    // brief (active deals, activity feed, risks, performance) is
+    // derived live from other tables.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS weekly_focus JSONB DEFAULT '[]'::jsonb`,
     // Backfill: existing landlord_id → freeholder_id (best default; user can correct)
     `UPDATE crm_properties SET freeholder_id = landlord_id WHERE freeholder_id IS NULL AND landlord_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_crm_properties_freeholder ON crm_properties(freeholder_id) WHERE freeholder_id IS NOT NULL`,
@@ -2053,6 +2059,7 @@ import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
+import propertyAssetBriefRouter from "./property-asset-brief";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import turnoverRouter from "./turnover";
@@ -2631,6 +2638,7 @@ app.use("/api/branding/assets", express.static(
   app.use(leasingPitchRouter);
   app.use(cadRouter);
   app.use(propertyPlansRouter);
+  app.use(propertyAssetBriefRouter);
 
   await registerRoutes(httpServer, app);
   setupWebSocket(httpServer);

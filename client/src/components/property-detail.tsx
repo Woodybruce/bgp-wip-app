@@ -40,6 +40,7 @@ import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { ComplianceBoard } from "@/components/brand-profile-panel";
+import { PropertyAssetBriefPanel } from "@/components/property-asset-brief";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -589,10 +590,25 @@ export function PropertyDetail({ id }: { id: string }) {
                 lead toggles other reference cards (Files, BGP Contacts,
                 Available Units etc.). */}
 
+            {/* Asset Brief — structured client-facing dashboard.
+                Replaces the old free-text Notes blob with a live
+                working board (header / focus / pipeline / deals /
+                activity / risks / performance). Notes still exists
+                as a free-form 'Asset Lead commentary' bucket inside
+                the brief but isn't rendered here as its own card. */}
+            <ErrorBoundary compact name="Property asset brief">
+              <PropertyAssetBriefPanel propertyId={property.id} />
+            </ErrorBoundary>
+
+            {/* Asset Lead commentary — the existing notes field
+                rendered at the bottom of the brief stack for
+                running colour. Kept editable inline so MW can drop
+                "cinema deal expected Q3" type lines without a
+                dedicated CRUD. */}
             <Card>
               <CardContent className="p-3 space-y-1">
-                <p className="text-[10px] text-muted-foreground">Notes</p>
-                <InlineText value={property.notes || ""} onSave={(val) => inlineUpdate("notes", val)} placeholder="Add notes..." className="text-sm" multiline />
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Asset lead commentary</p>
+                <InlineText value={property.notes || ""} onSave={(val) => inlineUpdate("notes", val)} placeholder="What MW thinks is happening — colour, rumours, plans not yet on the deals board…" className="text-sm" multiline />
               </CardContent>
             </Card>
 
