@@ -454,6 +454,175 @@ Rules: British English, partner-tone, no hype, no "I'm pleased to". Reference th
   }
 });
 
+// Linkage audit — diagnostic counts so the user can see what's
+// connected to a property and what isn't. Lots of CRM tables hang
+// off the property in different ways (deals by property_id /
+// unit_id / landlord_id; tasks by linked_property_id; interactions
+// via deal participants; leasing schedule rows; available units;
+// tenants in the schedule that should match crm_companies). This
+// endpoint walks each path and returns honest counts so you can
+// spot 'Bluewater has 47 schedule rows but 0 deals' and fix the
+// data (usually means deals weren't tagged with property_id).
+router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = req.params.id;
+    // Property header — name + landlord for the report.
+    const propQ = await pool.query<{ name: string; landlord_id: string | null }>(
+      `SELECT name, landlord_id FROM crm_properties WHERE id = $1`,
+      [propertyId]
+    );
+    if (propQ.rows.length === 0) return res.status(404).json({ error: "Property not found" });
+    const { name: propertyName, landlord_id: landlordId } = propQ.rows[0];
+
+    // Deals — three paths into a property.
+    const dealsByPropertyId = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM crm_deals WHERE property_id = $1`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+    const dealsByUnitId = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM crm_deals d
+         JOIN property_units pu ON pu.id = d.unit_id
+        WHERE pu.property_id = $1 AND (d.property_id IS NULL OR d.property_id <> $1)`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+    // Deals on this landlord that don't yet have a property_id /
+    // unit_id at all — most likely on this property but never tagged.
+    const dealsLandlordOrphans = landlordId
+      ? await pool.query<{ n: number }>(
+          `SELECT COUNT(*)::int AS n FROM crm_deals
+            WHERE landlord_id = $1
+              AND property_id IS NULL
+              AND unit_id IS NULL`,
+          [landlordId]
+        ).then(r => r.rows[0]?.n || 0)
+      : 0;
+    const activeDealsLinked = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM crm_deals d
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1)
+          AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+
+    // Tasks — direct property link vs via a deal that's linked here.
+    const tasksDirect = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM user_tasks WHERE linked_property_id = $1 AND status <> 'done'`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+    const tasksViaDeal = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM user_tasks t
+         JOIN crm_deals d ON d.id = t.linked_deal_id
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1)
+          AND (t.linked_property_id IS NULL OR t.linked_property_id <> $1)
+          AND t.status <> 'done'`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+
+    // Interactions in the last 30 / 90d on this property's deals.
+    const interactions30 = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM crm_interactions i
+         JOIN crm_deals d ON d.id = i.deal_id
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1)
+          AND i.interaction_date > NOW() - INTERVAL '30 days'`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+    const interactions90 = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM crm_interactions i
+         JOIN crm_deals d ON d.id = i.deal_id
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1)
+          AND i.interaction_date > NOW() - INTERVAL '90 days'`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+
+    // Units across the three sources we maintain.
+    const propertyUnits = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM property_units WHERE property_id = $1`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+    const leasingScheduleUnits = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM leasing_schedule_units WHERE property_id = $1`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+    const availableUnits = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM available_units WHERE property_id = $1`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+    // Schedule rows that aren't yet in property_units — usually
+    // means deals on those units won't auto-link via unit_id.
+    const scheduleUnitsMissingFromPropertyUnits = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM leasing_schedule_units lsu
+        WHERE lsu.property_id = $1
+          AND lsu.unit_name IS NOT NULL AND lsu.unit_name <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM property_units pu
+             WHERE pu.property_id = lsu.property_id
+               AND LOWER(TRIM(pu.unit_name)) = LOWER(TRIM(lsu.unit_name))
+          )`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+
+    // Tenants that appear in the leasing schedule but aren't tied
+    // to a crm_companies row — usually mean the deal/KYC links
+    // won't fire on those tenants.
+    const tenantsInScheduleUnlinked = await pool.query<{ n: number }>(
+      `SELECT COUNT(DISTINCT lsu.tenant_name)::int AS n
+         FROM leasing_schedule_units lsu
+        WHERE lsu.property_id = $1
+          AND lsu.tenant_name IS NOT NULL AND lsu.tenant_name <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM crm_companies c
+             WHERE c.merged_into_id IS NULL
+               AND LOWER(TRIM(c.name)) = LOWER(TRIM(lsu.tenant_name))
+          )`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+
+    // Contacts surfaced via deals on this property.
+    const contactsViaDeals = await pool.query<{ n: number }>(
+      `SELECT COUNT(DISTINCT contact_id)::int AS n FROM (
+         SELECT d.tenant_contact_id AS contact_id FROM crm_deals d
+            LEFT JOIN property_units pu ON pu.id = d.unit_id
+           WHERE (d.property_id = $1 OR pu.property_id = $1) AND d.tenant_contact_id IS NOT NULL
+         UNION
+         SELECT d.client_contact_id FROM crm_deals d
+            LEFT JOIN property_units pu ON pu.id = d.unit_id
+           WHERE (d.property_id = $1 OR pu.property_id = $1) AND d.client_contact_id IS NOT NULL
+         UNION
+         SELECT d.landlord_contact_id FROM crm_deals d
+            LEFT JOIN property_units pu ON pu.id = d.unit_id
+           WHERE (d.property_id = $1 OR pu.property_id = $1) AND d.landlord_contact_id IS NOT NULL
+       ) c`,
+      [propertyId]
+    ).then(r => r.rows[0]?.n || 0);
+
+    res.json({
+      property: { id: propertyId, name: propertyName, landlord_id: landlordId },
+      deals: {
+        active_correctly_linked: activeDealsLinked,
+        by_property_id: dealsByPropertyId,
+        by_unit_id_only: dealsByUnitId,
+        landlord_orphans: dealsLandlordOrphans,
+      },
+      tasks: { linked_direct: tasksDirect, linked_via_deal: tasksViaDeal },
+      interactions: { last_30d: interactions30, last_90d: interactions90 },
+      contacts: { via_deals: contactsViaDeals },
+      units: {
+        property_units: propertyUnits,
+        leasing_schedule_units: leasingScheduleUnits,
+        available_units: availableUnits,
+        schedule_units_missing_from_property_units: scheduleUnitsMissingFromPropertyUnits,
+      },
+      tenants_unlinked_to_crm_company: tenantsInScheduleUnlinked,
+    });
+  } catch (err: any) {
+    console.error("[linkage-audit]", err?.message, err?.stack);
+    res.status(500).json({ error: err?.message || "audit failed" });
+  }
+});
+
 // Tasks scoped to this property — covers every BGP user's tasks
 // linked to the property directly OR to a deal whose unit lives
 // here. Drives the Weekly Focus card on the property page.

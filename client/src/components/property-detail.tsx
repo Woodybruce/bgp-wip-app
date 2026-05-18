@@ -48,6 +48,7 @@ import {
   RiskRegisterCard,
   PropertyRecentActivityCard,
   BgpCommentaryCard,
+  PropertyLinkageCard,
 } from "@/components/property-asset-brief";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
@@ -295,6 +296,7 @@ export function PropertyDetail({ id }: { id: string }) {
     images: true,
     compliance: false,
     activity: false,
+    linkage: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -891,6 +893,29 @@ export function PropertyDetail({ id }: { id: string }) {
                 <div className="px-4 pb-3">
                   <ErrorBoundary compact name="Property recent activity">
                     <PropertyRecentActivityCard propertyId={property.id} />
+                  </ErrorBoundary>
+                </div>
+              )}
+            </div>
+
+            {/* Linkage audit — diagnostic of what's actually hooked
+                up. Surfaces 'landlord orphans' (deals tagged to the
+                landlord but not the property), schedule units
+                missing from property_units, tenants on the schedule
+                not yet matched to a CRM company. Red numbers =
+                data needing fixing. */}
+            <div className="border-b">
+              <button onClick={() => toggleSection("linkage")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-linkage-section">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Data linkage</span>
+                </div>
+                {sidebarSections.linkage ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </button>
+              {sidebarSections.linkage && (
+                <div className="px-4 pb-3">
+                  <ErrorBoundary compact name="Property linkage audit">
+                    <PropertyLinkageCard propertyId={property.id} />
                   </ErrorBoundary>
                 </div>
               )}

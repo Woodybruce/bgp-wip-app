@@ -303,6 +303,72 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
   );
 }
 
+// Linkage audit — visible diagnostic of what's hooked up to this
+// property. Counts deals (by property_id / via unit_id /
+// landlord-orphans), tasks (direct + via deal), interactions,
+// units across the three tables, and tenants on the schedule that
+// aren't tied to a crm_companies row. Each red number is a fix-it.
+export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/properties", propertyId, "linkage-audit"],
+    queryFn: async () => {
+      const res = await fetch(`/api/properties/${propertyId}/linkage-audit`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+  if (isLoading || !data) {
+    return <Skeleton className="h-24 w-full" />;
+  }
+  const Row = ({ label, value, warn = false }: { label: string; value: number | string; warn?: boolean }) => (
+    <div className="flex items-center justify-between text-[11px] px-1 py-0.5">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`font-mono font-medium ${warn && Number(value) > 0 ? "text-rose-600" : "text-foreground"}`}>{value}</span>
+    </div>
+  );
+  return (
+    <div className="space-y-2.5">
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Deals</div>
+        <Row label="Active, correctly linked" value={data.deals.active_correctly_linked} />
+        <Row label="Tagged with property_id" value={data.deals.by_property_id} />
+        <Row label="Linked via unit only" value={data.deals.by_unit_id_only} />
+        <Row label="Landlord orphans (need tagging)" value={data.deals.landlord_orphans} warn />
+      </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Tasks</div>
+        <Row label="Linked direct to property" value={data.tasks.linked_direct} />
+        <Row label="Via a linked deal" value={data.tasks.linked_via_deal} />
+      </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Interactions on deals</div>
+        <Row label="Last 30 days" value={data.interactions.last_30d} />
+        <Row label="Last 90 days" value={data.interactions.last_90d} />
+      </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Contacts via deals</div>
+        <Row label="Distinct contacts" value={data.contacts.via_deals} />
+      </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Units</div>
+        <Row label="property_units (master)" value={data.units.property_units} />
+        <Row label="leasing_schedule_units" value={data.units.leasing_schedule_units} />
+        <Row label="available_units" value={data.units.available_units} />
+        <Row label="Schedule units not yet in master" value={data.units.schedule_units_missing_from_property_units} warn />
+      </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Tenants on schedule</div>
+        <Row label="Unlinked to a CRM company" value={data.tenants_unlinked_to_crm_company} warn />
+      </div>
+      {(data.deals.landlord_orphans > 0 || data.units.schedule_units_missing_from_property_units > 0 || data.tenants_unlinked_to_crm_company > 0) && (
+        <p className="text-[10px] text-muted-foreground italic pt-1 border-t leading-snug">
+          Red numbers = something the dashboard can't see yet. Tag deals with property_id, promote schedule units into property_units, or link tenant names to CRM companies to bring it in scope.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // Recent activity (last 14 days) — extracted for use in the right
 // sidebar dropdown rather than the main column. Sanitised summaries
 // only, no email body content (per the access rules for client
