@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef } from "react";
-import { Link } from "wouter";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -7,9 +7,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
-  Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon
+  Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon,
+  Eye
 } from "lucide-react";
 
 interface TenancyUnit {
@@ -31,9 +34,15 @@ interface TenancyUnit {
   tenant_name: string;
   trading_name: string;
   tenant_mix: string | null;
+  // crm_companies join — populated by the server when tenant_name or
+  // trading_name matches a row in crm_companies (lowercased trim).
+  resolved_tenant_company_id?: string | null;
+  resolved_tenant_company_name?: string | null;
   // Lease Details
   lease_start: string;
   break_date: string;
+  // T / L / M — Tenant / Landlord / Mutual break.
+  break_type?: string | null;
   break_details: string | null;
   break_notice: string | null;
   lease_expiry: string;
@@ -150,9 +159,11 @@ const BAND_COLOURS: Record<string, string> = {
   "Unit Details": "bg-slate-700 text-white",
   "Tenant Details": "bg-slate-700 text-white",
   "Lease Details": "bg-slate-700 text-white",
+  // GIA / NIA share the slate family but at different tints so the eye can
+  // separate gross vs net area at a glance.
   "Areas — GIA": "bg-slate-600 text-white",
-  "Areas — NIA": "bg-slate-600 text-white",
-  "Areas — Totals": "bg-slate-600 text-white",
+  "Areas — NIA": "bg-stone-600 text-white",
+  "Areas — Totals": "bg-slate-700 text-white",
   "Rental Income": "bg-emerald-800 text-white",
   "MLA": "bg-emerald-800 text-white",
   "Occupational Costs": "bg-amber-800 text-white",
@@ -171,18 +182,17 @@ const COLUMNS: Col[] = [
   { field: "am_initiative",    label: "AM Initiative?", band: "Unit Details", width: 130, align: "left" },
   { field: "tenant_name",      label: "Tenant",         band: "Tenant Details", width: 160, align: "left" },
   { field: "trading_name",     label: "Trading As",     band: "Tenant Details", width: 140, align: "left" },
-  { field: "tenant_mix",       label: "Tenant Mix",     band: "Tenant Details", width: 110, align: "left" },
   { field: "lease_start",      label: "Start",          band: "Lease Details", width: 100, align: "center", type: "date" },
-  { field: "break_date",       label: "Break Date",     band: "Lease Details", width: 100, align: "center", type: "date" },
-  { field: "break_details",    label: "Break Details",  band: "Lease Details", width: 140, align: "left" },
-  { field: "break_notice",     label: "Notice/Note",    band: "Lease Details", width: 120, align: "left" },
+  // Break Date cell renders a T/L/M chip alongside the date (see UnitRow).
+  { field: "break_date",       label: "Break Date",     band: "Lease Details", width: 140, align: "center", type: "date" },
+  // Break Notice is now the date by which break notice has to be served.
+  { field: "break_notice",     label: "Break Notice",   band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "lease_expiry",     label: "Expiry",         band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "term_years",       label: "Term",           band: "Lease Details", width: 70,  align: "right", type: "num" },
   { field: "unexpired_term_break", label: "Unexp (Break)", band: "Lease Details", width: 90, align: "right", type: "num" },
   { field: "unexpired_term",   label: "Unexp (Expiry)", band: "Lease Details", width: 90,  align: "right", type: "num" },
   { field: "next_review_date", label: "Next Review",    band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "outside_lt_act",   label: "L&T Act",        band: "Lease Details", width: 100, align: "left" },
-  { field: "measurement_type", label: "Measurement",    band: "Lease Details", width: 110, align: "left" },
   { field: "area_basement_gia", label: "Basement",      band: "Areas — GIA", width: 90,  align: "right", type: "num" },
   { field: "area_ground_gia",   label: "Ground",        band: "Areas — GIA", width: 90,  align: "right", type: "num" },
   { field: "area_first_gia",    label: "First",         band: "Areas — GIA", width: 90,  align: "right", type: "num" },
@@ -196,7 +206,6 @@ const COLUMNS: Col[] = [
   { field: "gia_sqft",          label: "GIA",           band: "Areas — Totals", width: 90, align: "right", type: "num" },
   { field: "nia_sqft",          label: "NIA",           band: "Areas — Totals", width: 90, align: "right", type: "num" },
   { field: "itza_sqft",         label: "ITZA",          band: "Areas — Totals", width: 90, align: "right", type: "num" },
-  { field: "units_applied",     label: "Units Applied", band: "Areas — Totals", width: 100, align: "right", type: "num" },
   { field: "passing_rent_pa",   label: "Rent (pa)",     band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "marketing_rent_pa", label: "Marketing Rent", band: "Rental Income", width: 120, align: "right", type: "currency" },
   { field: "turnover_rent_payable", label: "T/O Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
@@ -222,19 +231,46 @@ const COLUMNS: Col[] = [
   { field: "underwriting_comments", label: "Underwriting Comments", band: "Comments", width: 200, align: "left" },
 ];
 
-function InlineEdit({ value, field, unitId, onSave, type = "text", className = "" }: {
+// Small inline T / L / M chip that sits next to the break date — cycles
+// through Tenant / Landlord / Mutual via a native select. Tinted so the
+// party-to-break is readable at a glance.
+function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const tint =
+    value === "T" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" :
+    value === "L" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" :
+    value === "M" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" :
+    "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
+  return (
+    <select
+      value={value || ""}
+      onChange={(e) => onChange(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      className={`text-[10px] rounded border-0 px-1 py-0 font-semibold cursor-pointer ${tint}`}
+      title="Break party: Tenant / Landlord / Mutual"
+    >
+      <option value="">—</option>
+      <option value="T">T</option>
+      <option value="L">L</option>
+      <option value="M">M</option>
+    </select>
+  );
+}
+
+function InlineEdit({ value, field, unitId, onSave, type = "text", options, className = "" }: {
   value: string; field: string; unitId: string | number; onSave: (id: string | number, field: string, val: string) => void;
-  type?: string; className?: string;
+  type?: string; options?: string[]; className?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value || "");
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectRef = useRef<HTMLSelectElement>(null);
 
   // Date fields use the caller-passed type="date" rather than relying on
   // field-name pattern matching — covers lease_expiry / break_date /
   // landlord_break_date / next_review_date / lease_start in one go.
   const isDate = type === "date";
   const isNumber = type === "number";
+  const isSelect = type === "select" && options && options.length > 0;
 
   if (!editing) {
     let display: string;
@@ -252,11 +288,28 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", className = "
     return (
       <span
         className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-xs ${className}`}
-        onClick={() => { setVal(value || ""); setEditing(true); setTimeout(() => inputRef.current?.focus(), 50); }}
+        onClick={() => { setVal(value || ""); setEditing(true); setTimeout(() => (isSelect ? selectRef.current?.focus() : inputRef.current?.focus()), 50); }}
         data-testid={`tenancy-cell-${field}-${unitId}`}
       >
         {display}
       </span>
+    );
+  }
+
+  if (isSelect) {
+    return (
+      <select
+        ref={selectRef}
+        value={val}
+        onChange={(e) => { setVal(e.target.value); setEditing(false); if (e.target.value !== (value || "")) onSave(unitId, field, e.target.value); }}
+        onBlur={() => setEditing(false)}
+        onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }}
+        className="h-6 text-xs px-1 py-0 w-full border rounded bg-white dark:bg-gray-700"
+        data-testid={`tenancy-input-${field}-${unitId}`}
+      >
+        <option value="">—</option>
+        {options!.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
     );
   }
 
@@ -277,12 +330,37 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", className = "
 export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [location] = useLocation();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // When already on the dedicated full-board route the "Full Board" link is
+  // redundant — hide it. The route is /tenancy-schedule/:propertyId.
+  const onFullBoard = location === `/tenancy-schedule/${propertyId}`;
+
+  // Column visibility — Set of hidden field names, persisted per property.
+  const hiddenStorageKey = `tenancy-hidden-cols:${propertyId}`;
+  const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(hiddenStorageKey);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(hiddenStorageKey, JSON.stringify([...hiddenFields])); } catch {}
+  }, [hiddenStorageKey, hiddenFields]);
+  const toggleColumn = (field: string) => {
+    setHiddenFields(prev => {
+      const next = new Set(prev);
+      if (next.has(field)) next.delete(field); else next.add(field);
+      return next;
+    });
+  };
+  const visibleColumns = COLUMNS.filter(c => !hiddenFields.has(c.field as string));
 
   const { data: units = [], isLoading, error: unitsError } = useQuery<TenancyUnit[]>({
     queryKey: ["/api/tenancy-schedule/property", propertyId],
@@ -442,11 +520,13 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
               <Plus className="w-3 h-3 mr-1" />Add Unit
             </Button>
-            <Link href={`/tenancy-schedule/${propertyId}`}>
-              <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
-                <ExternalLink className="w-3 h-3" />Full Board
-              </span>
-            </Link>
+            {!onFullBoard && (
+              <Link href={`/tenancy-schedule/${propertyId}`}>
+                <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
+                  <ExternalLink className="w-3 h-3" />Full Board
+                </span>
+              </Link>
+            )}
           </div>
         </div>
         <div className="text-center py-8 text-gray-400 border rounded-lg border-dashed">
@@ -477,11 +557,64 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
-          <Link href={`/tenancy-schedule/${propertyId}`}>
-            <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
-              <ExternalLink className="w-3 h-3" />Full Board
-            </span>
-          </Link>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="btn-tenancy-columns">
+                <Eye className="w-3 h-3 mr-1" />Columns
+                {hiddenFields.size > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[9px]">{hiddenFields.size} hidden</Badge>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 max-h-[60vh] overflow-y-auto p-2">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold">Show / hide columns</span>
+                {hiddenFields.size > 0 && (
+                  <button
+                    className="text-[10px] text-indigo-500 hover:underline"
+                    onClick={() => setHiddenFields(new Set())}
+                    data-testid="btn-tenancy-columns-reset"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              {(() => {
+                const byBand = new Map<string, Col[]>();
+                for (const c of COLUMNS) {
+                  if (!byBand.has(c.band)) byBand.set(c.band, []);
+                  byBand.get(c.band)!.push(c);
+                }
+                return [...byBand.entries()].map(([band, cols]) => (
+                  <div key={band} className="mb-2">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{band}</div>
+                    <div className="space-y-1 pl-1">
+                      {cols.map(c => (
+                        <label
+                          key={c.field as string}
+                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded px-1 py-0.5"
+                          data-testid={`tenancy-col-toggle-${c.field as string}`}
+                        >
+                          <Checkbox
+                            checked={!hiddenFields.has(c.field as string)}
+                            onCheckedChange={() => toggleColumn(c.field as string)}
+                          />
+                          <span>{c.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </PopoverContent>
+          </Popover>
+          {!onFullBoard && (
+            <Link href={`/tenancy-schedule/${propertyId}`}>
+              <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
+                <ExternalLink className="w-3 h-3" />Full Board
+              </span>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -517,14 +650,14 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
       )}
 
       <div className="overflow-x-auto border rounded-lg">
-        <table className="text-xs" style={{ minWidth: 100 + COLUMNS.reduce((s, c) => s + c.width, 0) + 200 }}>
+        <table className="text-xs" style={{ minWidth: 100 + visibleColumns.reduce((s, c) => s + c.width, 0) + 200 }}>
           <thead>
             {/* Category-band row — one cell per contiguous band, merged via
                 colSpan so the bands mirror the Landsec sheet layout. */}
             <tr>
               {(() => {
                 const bands: Array<{ name: string; span: number }> = [];
-                for (const c of COLUMNS) {
+                for (const c of visibleColumns) {
                   const last = bands[bands.length - 1];
                   if (last && last.name === c.band) last.span++;
                   else bands.push({ name: c.band, span: 1 });
@@ -539,7 +672,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
             </tr>
             {/* Column labels */}
             <tr className="bg-gray-100 dark:bg-gray-800 border-b">
-              {COLUMNS.map((c) => (
+              {visibleColumns.map((c) => (
                 <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}`} style={{ minWidth: c.width }}>
                   {c.label}
                 </th>
@@ -560,6 +693,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
                 <UnitRow
                   key={unit.id}
                   unit={unit}
+                  columns={visibleColumns}
                   onUpdate={inlineUpdate}
                   onDelete={() => deleteMutation.mutate(unit.id)}
                   deal={matchDeal(unit)}
@@ -611,24 +745,25 @@ function ZoneGroup({ zone, units, isExpanded, onToggleZone, onInlineUpdate, onDe
   );
 }
 
-function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
   unit: TenancyUnit;
+  columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
   onDelete: () => void;
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
-  const totalCols = COLUMNS.length + 3;
+  const totalCols = columns.length + 3;
 
   if (unit.is_vacant) {
     return (
       <tr className="border-b hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-row-${unit.id}`}>
-        <td className="p-1 font-medium text-amber-700 dark:text-amber-400" colSpan={Math.min(COLUMNS.length, 6)}>
+        <td className="p-1 font-medium text-amber-700 dark:text-amber-400" colSpan={Math.min(columns.length, 6)}>
           VACANT — {unit.unit_number || unit.premises || "—"}
           {unit.nia_sqft ? ` · ${unit.nia_sqft.toLocaleString()} sqft` : ""}
           {unit.erv_pa ? ` · £${unit.erv_pa.toLocaleString()} pa asking` : ""}
         </td>
-        <td className="p-1 text-muted-foreground text-center" colSpan={Math.max(0, COLUMNS.length - 6)}>—</td>
+        <td className="p-1 text-muted-foreground text-center" colSpan={Math.max(0, columns.length - 6)}>—</td>
         <td className="p-1 text-center">
           <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 dark:text-amber-400">
             {unit.status || "AVA"}
@@ -658,7 +793,7 @@ function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
 
   return (
     <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
-      {COLUMNS.map((c) => {
+      {columns.map((c) => {
         const raw = (unit as any)[c.field];
         // Date fields arrive as ISO strings from the API (or as timestamptz
         // strings with the T00:00 suffix). Format for display, hand the
@@ -674,6 +809,77 @@ function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
         const editType = c.type === "num" || c.type === "currency" || c.type === "currency_psf"
           ? "number"
           : isDateField ? "date" : "text";
+
+        // Specialised renderers — keep the InlineEdit-only default for the
+        // bulk of columns and override only where the cell needs extra UI:
+        //  - AM Initiative: Y/N select instead of free text.
+        //  - Break Date: date input + T/L/M (Tenant / Landlord / Mutual) chip.
+        //  - Tenant / Trading As: link icon to /companies/<id> when resolved.
+        if (c.field === "am_initiative") {
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+              <InlineEdit
+                value={displayVal}
+                field="am_initiative"
+                unitId={unit.id}
+                onSave={onUpdate}
+                type="select"
+                options={["Y", "N"]}
+              />
+            </td>
+          );
+        }
+        if (c.field === "break_date") {
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+              <div className="flex items-center gap-1 justify-center">
+                <InlineEdit
+                  value={displayVal}
+                  field="break_date"
+                  unitId={unit.id}
+                  onSave={onUpdate}
+                  type="date"
+                />
+                <BreakTypeChip
+                  value={unit.break_type || ""}
+                  onChange={(v) => onUpdate(unit.id, "break_type", v)}
+                />
+              </div>
+            </td>
+          );
+        }
+        if (c.field === "tenant_name" || c.field === "trading_name") {
+          const linkedId = unit.resolved_tenant_company_id || null;
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+              <div className="flex items-center gap-1">
+                <InlineEdit
+                  value={displayVal}
+                  field={c.field as string}
+                  unitId={unit.id}
+                  onSave={onUpdate}
+                  type={editType}
+                  className={c.field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}
+                />
+                {displayVal && (
+                  <Link
+                    href={linkedId ? `/companies/${linkedId}` : `/companies?q=${encodeURIComponent(displayVal)}`}
+                    title={linkedId ? "Open KYC brand board" : "Search for this tenant in CRM"}
+                    onClick={(e: any) => e.stopPropagation()}
+                  >
+                    <span
+                      className="inline-flex items-center text-indigo-500 hover:text-indigo-700 cursor-pointer"
+                      data-testid={`tenancy-tenant-link-${c.field}-${unit.id}`}
+                    >
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </span>
+                  </Link>
+                )}
+              </div>
+            </td>
+          );
+        }
+
         return (
           <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
             <InlineEdit
@@ -710,10 +916,12 @@ function UnitRow({ unit, onUpdate, onDelete, deal, letting }: {
           <button
             type="button"
             onClick={() => {
-              const label = encodeURIComponent(unit.unit_number || unit.unit_name || "");
+              const label = unit.unit_number || unit.premises || "";
               if (!label) return;
-              window.location.hash = `plan-unit-${label}`;
-              document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+              window.location.hash = `plan-unit-${encodeURIComponent(label)}`;
+              const target = document.querySelector('[data-testid="toggle-plans"]')
+                || document.querySelector('[data-testid="property-plans-panel"]');
+              target?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
             className="inline-flex items-center"
             title="Highlight this unit on the property plan"

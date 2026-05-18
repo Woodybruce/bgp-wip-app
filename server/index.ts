@@ -2989,6 +2989,13 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("tenancy_schedule_units", "am_initiative", "text");
           await addColIfMissing("tenancy_schedule_units", "tenant_mix", "text");
           await addColIfMissing("tenancy_schedule_units", "break_details", "text");
+          // T/L/M chip alongside the break date — Tenant / Landlord / Mutual.
+          await addColIfMissing("tenancy_schedule_units", "break_type", "text");
+          // break_notice was originally a free-text "notice/note" but is now
+          // used as the date by which the break notice has to be served.
+          // We leave the existing text values in place (PG accepts text in a
+          // date column only if reparseable, so we don't alter type here —
+          // the API normalises to date on write).
           await addColIfMissing("tenancy_schedule_units", "break_notice", "text");
           await addColIfMissing("tenancy_schedule_units", "unexpired_term_break", "real");
           await addColIfMissing("tenancy_schedule_units", "next_review_date", "date");

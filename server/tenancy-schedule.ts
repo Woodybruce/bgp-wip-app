@@ -26,9 +26,20 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     const pool = await getPool();
     const { propertyId } = req.params;
 
-    // Real tenancies — passing rent, leases, reviews.
+    // Real tenancies — passing rent, leases, reviews. LEFT JOIN
+    // crm_companies on a lowercased trimmed tenant_name to resolve
+    // a clickable company link for the Tenant / Trading As cells
+    // (mirrors the pattern used in the leasing schedule GET).
     const occupied = await pool.query(
-      "SELECT * FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY premises, sort_order, id",
+      `SELECT t.*,
+              tc.id   AS resolved_tenant_company_id,
+              tc.name AS resolved_tenant_company_name
+       FROM tenancy_schedule_units t
+       LEFT JOIN crm_companies tc
+         ON lower(trim(tc.name)) = lower(trim(coalesce(t.trading_name, t.tenant_name, '')))
+         OR lower(trim(tc.name)) = lower(trim(coalesce(t.tenant_name, '')))
+       WHERE t.property_id = $1
+       ORDER BY t.premises, t.sort_order, t.id`,
       [propertyId]
     );
 
@@ -95,10 +106,23 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       }
       return min === null ? null : new Date(min);
     };
+    // term_years computed from lease_start → lease_expiry when missing.
+    // 365.25 days per year keeps leap-year drift out of the fixed term.
+    const yearsBetween = (start: string | Date | null | undefined, end: string | Date | null | undefined): number | null => {
+      if (!start || !end) return null;
+      const a = new Date(start).getTime();
+      const b = new Date(end).getTime();
+      if (!a || !b || isNaN(a) || isNaN(b) || b < a) return null;
+      return Math.round(((b - a) / (1000 * 60 * 60 * 24 * 365.25)) * 10) / 10;
+    };
     const withComputed = occupied.rows.map((r: any) => ({
       ...r,
       unexpired_term: r.unexpired_term ?? monthsBetween(r.lease_expiry),
-      unexpired_term_before_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
+      // Client expects `unexpired_term_break` — months to the earliest of
+      // expiry / tenant break / landlord break. Always recomputed so today's
+      // value is current.
+      unexpired_term_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
+      term_years: (r.term_years && Number(r.term_years) > 0) ? r.term_years : yearsBetween(r.lease_start, r.lease_expiry),
     }));
 
     res.json([...withComputed, ...derivedVacant]);
@@ -116,7 +140,7 @@ const TENANCY_FIELDS = [
   // Tenant Details
   "tenant_name", "trading_name", "tenant_mix",
   // Lease Details
-  "lease_start", "break_date", "break_details", "break_notice", "lease_expiry",
+  "lease_start", "break_date", "break_type", "break_details", "break_notice", "lease_expiry",
   "term_years", "unexpired_term_break", "unexpired_term", "next_review_date",
   "outside_lt_act", "measurement_type",
   // Areas — GIA
@@ -161,6 +185,7 @@ const NUMERIC_FIELDS = new Set([
 
 const DATE_FIELDS = new Set([
   "lease_start", "break_date", "lease_expiry", "next_review_date", "landlord_break_date",
+  "break_notice",
 ]);
 
 function normaliseFieldValue(field: string, raw: any): any {
