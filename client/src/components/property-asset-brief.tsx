@@ -333,7 +333,13 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
-      toast({ title: "Tenants resolved", description: `${j.resolved} resolved · ${j.unresolved} still need a brand.` });
+      const bits: string[] = [];
+      bits.push(`${j.resolved} tenants → brand`);
+      if (j.unresolved > 0) bits.push(`${j.unresolved} still need a brand`);
+      if (j.deals_linked > 0) bits.push(`${j.deals_linked} deals linked to tenancy unit`);
+      if (j.available_linked > 0) bits.push(`${j.available_linked} vacant units linked`);
+      if (j.leasing_linked > 0) bits.push(`${j.leasing_linked} leasing rows linked`);
+      toast({ title: "Resolution complete", description: bits.join(" · ") });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
       qc.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
       qc.invalidateQueries({ queryKey: ["/api/leasing-schedule/units", propertyId] });

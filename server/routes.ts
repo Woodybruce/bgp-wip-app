@@ -2638,6 +2638,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
+      // Canonical unit FK: stamp tenancy_unit_id when the new vacant
+      // unit's name matches a tenancy_schedule row on the property.
+      try {
+        await pool.query(
+          `UPDATE available_units au
+              SET tenancy_unit_id = (
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = au.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              )
+            WHERE au.id = $1 AND au.tenancy_unit_id IS NULL`,
+          [unit.id]
+        );
+      } catch (e: any) { console.warn("[available-units] tenancy_unit_id stamp failed:", e?.message); }
+
       res.json(unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
@@ -2685,6 +2702,24 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
 
       const unit = await storage.updateAvailableUnit(req.params.id, partial);
+
+      // Re-stamp tenancy_unit_id when the unit name changes — keeps
+      // the canonical unit FK aligned with the new label.
+      if ("unitName" in partial) {
+        await pool.query(
+          `UPDATE available_units au
+              SET tenancy_unit_id = (
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = au.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              )
+            WHERE au.id = $1`,
+          [req.params.id]
+        ).catch((e: any) => console.warn("[available-units] tenancy_unit_id re-stamp failed:", e?.message));
+      }
+
       res.json(unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });

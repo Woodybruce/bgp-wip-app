@@ -303,13 +303,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
-    // Pitched-to history — leasing schedule units where this brand appears in target_brands or target_company_ids
+    // Pitched-to history — leasing schedule units where this brand
+    // is on the target list (target_company_ids), in target_brands
+    // free text, OR already linked via the canonical tenant_company_id
+    // FK (deals already in motion). One unified pitched list.
     const pitchedToQ = pool.query(
       `SELECT u.id, u.unit_name, u.target_brands, u.status, u.priority, u.updated_at,
               p.id AS property_id, p.name AS property_name, p.address AS property_address
          FROM leasing_schedule_units u
          JOIN crm_properties p ON p.id = u.property_id
         WHERE u.target_company_ids @> ARRAY[$1]::text[]
+           OR u.tenant_company_id = $1
            OR u.target_brands ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%'
         ORDER BY u.updated_at DESC NULLS LAST
         LIMIT 20`,
