@@ -416,23 +416,24 @@ export function PropertyDetail({ id }: { id: string }) {
                   <p className="text-[10px] text-muted-foreground leading-tight mb-2 flex items-center gap-1">
                     <Landmark className="w-3 h-3" /> Ownership
                   </p>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
-                    <div>
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Freeholder</p>
-                      <InlineOwnerLink propertyId={id} companyId={(property as any).freeholderId} fieldName="freeholderId" label="Freeholder" allCompanies={allCompanies} />
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Long Leaseholder</p>
-                      <InlineOwnerLink propertyId={id} companyId={(property as any).longLeaseholderId} fieldName="longLeaseholderId" label="Long Leaseholder" allCompanies={allCompanies} />
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Senior Lender</p>
-                      <InlineOwnerLink propertyId={id} companyId={(property as any).seniorLenderId} fieldName="seniorLenderId" label="Senior Lender" allCompanies={allCompanies} />
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Junior Lender</p>
-                      <InlineOwnerLink propertyId={id} companyId={(property as any).juniorLenderId} fieldName="juniorLenderId" label="Junior Lender" allCompanies={allCompanies} />
-                    </div>
+                  {/* Compact label-left / input-right stack — 4 rows
+                      down the left side of the half-width card. Far
+                      more compact than the previous 4-column grid that
+                      wrapped wide. */}
+                  <div className="space-y-1.5 text-[11px]">
+                    {[
+                      { label: "Freeholder",       field: "freeholderId",      id: (property as any).freeholderId },
+                      { label: "Long Leaseholder", field: "longLeaseholderId", id: (property as any).longLeaseholderId },
+                      { label: "Senior Lender",    field: "seniorLenderId",    id: (property as any).seniorLenderId },
+                      { label: "Junior Lender",    field: "juniorLenderId",    id: (property as any).juniorLenderId },
+                    ].map(row => (
+                      <div key={row.field} className="grid grid-cols-[120px,1fr] items-center gap-2">
+                        <span className="text-muted-foreground leading-tight">{row.label}</span>
+                        <div className="min-w-0">
+                          <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 

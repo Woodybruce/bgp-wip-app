@@ -799,8 +799,8 @@ export function InlineOwnerLink({
     return (
       <div className="flex items-center gap-1">
         <Link href={`/companies/${company.id}`}>
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted">
-            <Building2 className="w-2.5 h-2.5 mr-0.5 text-muted-foreground" />
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted">
+            <Building2 className="w-3 h-3 mr-1 text-muted-foreground" />
             {company.name}
           </Badge>
         </Link>
@@ -817,7 +817,7 @@ export function InlineOwnerLink({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+        <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
           <Plus className="w-3 h-3" />
           {label}
         </button>
