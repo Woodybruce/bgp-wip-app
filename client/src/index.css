@@ -974,7 +974,8 @@ a:not([class]):hover {
 .chatbgp-markdown tbody td { padding: 0.3rem 0.625rem; border-bottom: 1px solid hsl(var(--border)); }
 .chatbgp-markdown tbody tr:last-child td { border-bottom: none; }
 .chatbgp-markdown blockquote { border-left: 3px solid hsl(var(--primary)); padding-left: 0.75rem; margin: 0.5rem 0; color: hsl(var(--muted-foreground)); font-style: italic; }
-.chatbgp-markdown code:not(pre code) { background: hsl(var(--muted)); padding: 0.125rem 0.3rem; border-radius: 0.25rem; font-size: 0.8125rem; font-family: var(--font-mono); }
+.chatbgp-markdown code:not(pre code) { background: hsl(var(--muted)); padding: 0.125rem 0.3rem; border-radius: 0.25rem; font-size: 0.8125rem; font-family: var(--font-mono); overflow-wrap: anywhere; word-break: break-word; }
+.chatbgp-markdown { overflow-wrap: anywhere; word-break: break-word; }
 
 /* ChatBGP streaming cursor blink */
 @keyframes cursor-blink {

@@ -2125,7 +2125,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 relative" onScroll={(e) => {
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative" onScroll={(e) => {
         const el = e.currentTarget;
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         setShowScrollBottom(distFromBottom > 200);
