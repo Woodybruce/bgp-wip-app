@@ -639,32 +639,32 @@ export function PropertyDetail({ id }: { id: string }) {
               </ErrorBoundary>
               </div>
 
-              {/* Right column = News only. Brochures moved to a
-                  full-width row below so it gets proper breathing
-                  room. News stretches to fill the column height,
-                  balancing the Asset Owner + Weekly Focus stack on
-                  the left. */}
-              <Card className="flex flex-col">
-                <CardContent className="p-3 flex-1 flex flex-col">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-xs font-semibold">Property News</span>
-                  </div>
-                  <ErrorBoundary compact name="Property news (top-strip preview)">
-                    <div className="flex-1">
-                      <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+              {/* Right column stack: News + Brochures. Both half-
+                  width of the right column; Brochures sits under News
+                  with drag-drop upload. */}
+              <div className="flex flex-col gap-3">
+                <Card>
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-semibold">Property News</span>
                     </div>
-                  </ErrorBoundary>
-                </CardContent>
-              </Card>
+                    <ErrorBoundary compact name="Property news (top-strip preview)">
+                      <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+                    </ErrorBoundary>
+                  </CardContent>
+                </Card>
+                <ErrorBoundary compact name="Property brochures">
+                  {/* Brochures stretches to fill any remaining height
+                      in the right column — keeps the bottom edge flush
+                      with the Asset Owner + Weekly Focus stack on the
+                      left so the board feels balanced. */}
+                  <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col [&>div>div]:flex-1">
+                    <PropertyBrochuresPanel propertyId={property.id} />
+                  </div>
+                </ErrorBoundary>
+              </div>
             </div>
-
-            {/* Brochures — full width below the top strip so the
-                leasing / investment grid has room to breathe. Drag-
-                drop a PDF anywhere on the card to upload. */}
-            <ErrorBoundary compact name="Property brochures">
-              <PropertyBrochuresPanel propertyId={property.id} />
-            </ErrorBoundary>
 
             {/* Risk + Brand Gap — two compact cards side-by-side
                 under the top strip. Weekly Focus moved into the left
