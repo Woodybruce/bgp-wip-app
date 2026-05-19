@@ -118,12 +118,30 @@ export function EntityCombobox({
 
       {open && (
         <div
-          className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border bg-popover text-popover-foreground shadow-md min-w-[280px]"
+          className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border bg-popover text-popover-foreground shadow-md min-w-[280px] overflow-hidden"
           // Stop pointerdown from bubbling so the doc-level handler doesn't
           // close the panel mid-interaction with the input or scrollbar.
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <Command shouldFilter={true}>
+          <Command
+            // Custom filter — cmdk's default fuzzy match was scoring
+            // unrelated items (typing "brent" into a property picker
+            // returned "Glasgow", "Brushfield Street" etc. because of
+            // letter-distance scoring across the keywords + label
+            // string). Substring match on label + keywords is what
+            // the team actually expect, with prefix matches ranked
+            // first so "brent" → "Brent Cross" lands at the top.
+            filter={(value, search) => {
+              if (!search) return 1;
+              const v = value.toLowerCase();
+              const s = search.toLowerCase().trim();
+              if (!s) return 1;
+              if (v.startsWith(s)) return 2;
+              if (v.includes(` ${s}`)) return 1.5;  // word-start match
+              if (v.includes(s)) return 1;
+              return 0;
+            }}
+          >
             <CommandInput placeholder={searchPlaceholder} autoFocus />
             <CommandList>
               <CommandEmpty>{loading ? "Loading…" : emptyText}</CommandEmpty>
