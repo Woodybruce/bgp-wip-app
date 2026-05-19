@@ -140,6 +140,7 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop }
 
 export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: string }) {
   const queryClient = useQueryClient();
+  const { toast } = useTryToast();
   const [selected, setSelected] = useState<TeamMember | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
@@ -284,6 +285,9 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
     },
+    onError: (e: any) => {
+      toast({ title: "Rename failed", description: e?.message || "Unknown error", variant: "destructive" });
+    },
   });
   const deleteColumn = useMutation({
     mutationFn: (name: string) =>
@@ -291,6 +295,9 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Delete failed", description: e?.message || "Unknown error", variant: "destructive" });
     },
   });
   const addColumn = useMutation({
@@ -300,6 +307,10 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
       setShowAddCol(false);
       setAddColName("");
+      toast({ title: "Column added" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Add column failed", description: e?.message || "Unknown error", variant: "destructive" });
     },
   });
 
