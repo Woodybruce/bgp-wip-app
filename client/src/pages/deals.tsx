@@ -641,41 +641,36 @@ function DealUnitPicker({
   })();
 
   return (
-    <>
-      <Select
-        value={value || undefined}
-        onValueChange={(v) => onChange(v === "__clear__" ? "" : v)}
-        disabled={!propertyId}
-      >
-        <SelectTrigger data-testid="select-deal-unit">
-          <SelectValue placeholder={propertyId ? "Select unit" : "Pick a property first"} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__clear__">None</SelectItem>
-          {options.map(o => (
-            <SelectItem key={o.id} value={o.id} disabled={o.orphan}>
-              <span className="inline-flex items-center gap-1.5">
-                <span>{o.name}</span>
-                {o.source === "tenancy" && !o.orphan && (
-                  <span className="text-[9px] px-1 py-0 rounded bg-purple-100 text-purple-700">tenancy</span>
-                )}
-                {o.orphan && (
-                  <span className="text-[9px] px-1 py-0 rounded bg-amber-100 text-amber-700">needs promote</span>
-                )}
-                {o.tenant && (
-                  <span className="text-[10px] text-muted-foreground">· {o.tenant}</span>
-                )}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {options.some(o => o.orphan) && propertyId && (
-        <p className="text-[10px] text-amber-700 mt-0.5">
-          Some tenancy units don't have a property_units row yet — open the property page and click "Promote orphans to tenancy" to make them pickable here.
-        </p>
-      )}
-    </>
+    <Select
+      value={value || undefined}
+      onValueChange={(v) => onChange(v === "__clear__" ? "" : v)}
+      disabled={!propertyId}
+    >
+      <SelectTrigger data-testid="select-deal-unit">
+        <SelectValue placeholder={propertyId ? "Select unit" : "Pick a property first"} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__clear__">None</SelectItem>
+        {options.map(o => (
+          // Tenancy-only rows used to be disabled here (the "needs
+          // promote" path). They're now selectable — the server
+          // resolves the "__tenancy__<id>" token on deal save by
+          // upserting a property_units shadow with the matching
+          // unit name. No manual promote step.
+          <SelectItem key={o.id} value={o.id}>
+            <span className="inline-flex items-center gap-1.5">
+              <span>{o.name}</span>
+              {o.source === "tenancy" && (
+                <span className="text-[9px] px-1 py-0 rounded bg-purple-100 text-purple-700">tenancy</span>
+              )}
+              {o.tenant && (
+                <span className="text-[10px] text-muted-foreground">· {o.tenant}</span>
+              )}
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

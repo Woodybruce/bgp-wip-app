@@ -2375,6 +2375,15 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/deals", async (req, res) => {
     try {
+      // Resolve a "__tenancy__<id>" unitId picked from the tenancy
+      // schedule directly. Finds (or creates) a matching property_units
+      // row on the same property, then swaps the token for the real
+      // unit id so the rest of the pipeline (audit, rent_analysis,
+      // tenancy_unit_id stamp) keeps working unchanged.
+      if (req.body?.unitId && typeof req.body.unitId === "string" && req.body.unitId.startsWith("__tenancy__")) {
+        const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, req.body.propertyId);
+        if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
+      }
       const parsed = insertCrmDealSchema.parse(req.body);
       const deal = await storage.createCrmDeal(parsed);
 
@@ -2417,6 +2426,43 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
+  // Turn a "__tenancy__<id>" token into a real property_units.id by
+  // matching unit_name on the same property. Creates the property_units
+  // row if no match exists — this is what removes the "needs promote"
+  // friction in DealUnitPicker. Returns null if the token can't be
+  // resolved (tenancy row gone, no property_id, blank unit_number),
+  // letting callers decide whether to drop the field or error.
+  async function resolveTenancyTokenToUnitId(token: string, propertyId: string | null | undefined): Promise<string | null> {
+    if (!token || !token.startsWith("__tenancy__") || !propertyId) return null;
+    const tenancyId = token.slice("__tenancy__".length);
+    if (!tenancyId) return null;
+    try {
+      const t = await pool.query(
+        "SELECT unit_number, nia_sqft FROM tenancy_schedule_units WHERE id = $1 LIMIT 1",
+        [tenancyId]
+      );
+      const unitName: string | null = t.rows[0]?.unit_number?.toString().trim() || null;
+      if (!unitName) return null;
+      // Case-insensitive name match against the existing shadow rows.
+      const existing = await pool.query(
+        "SELECT id FROM property_units WHERE property_id = $1 AND lower(trim(unit_name)) = lower($2) LIMIT 1",
+        [propertyId, unitName]
+      );
+      if (existing.rows[0]?.id) return existing.rows[0].id as string;
+      const nia: number | null = t.rows[0]?.nia_sqft ?? null;
+      const ins = await pool.query(
+        `INSERT INTO property_units (property_id, unit_name, sqft)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [propertyId, unitName, nia]
+      );
+      return ins.rows[0]?.id as string ?? null;
+    } catch (e: any) {
+      console.warn("[deals] resolveTenancyTokenToUnitId failed:", e?.message);
+      return null;
+    }
+  }
+
   function calculateRentAnalysis(deal: { rentPa?: number | null; rentFree?: number | null; leaseLength?: number | null; capitalContribution?: number | null; totalAreaSqft?: number | null }): number | null {
     const rentPa = deal.rentPa;
     const leaseYears = deal.leaseLength;
@@ -2451,6 +2497,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
+
+      // Same tenancy-token resolve as POST — picker can hand us a
+      // "__tenancy__<id>" for rows that didn't have a property_units
+      // shadow yet. Find or create one before the audit loop runs so
+      // it sees the canonical id, not the token.
+      if (req.body?.unitId && typeof req.body.unitId === "string" && req.body.unitId.startsWith("__tenancy__")) {
+        const propertyId = req.body.propertyId || oldDeal?.propertyId;
+        const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, propertyId);
+        if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
+      }
 
       // --- Resolve current user for audit + approval ---
       const userId = (req as any).session?.userId || (req as any).tokenUserId;
