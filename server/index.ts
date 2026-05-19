@@ -3060,6 +3060,14 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("crm_companies", "last_enriched_at", "timestamp");
           await addColIfMissing("crm_companies", "enrichment_source", "text");
           await addColIfMissing("users", "additional_teams", "text[]");
+          // Drizzle defines users.profile_pic_url but production users
+          // table was created before that column existed — any query
+          // joining on `u.profile_pic_url` (e.g. property tasks, my-
+          // tasks owner display) 500s on prod until this lands.
+          await addColIfMissing("users", "profile_pic_url", "text");
+          await addColIfMissing("users", "name", "text");
+          await addColIfMissing("users", "email", "text");
+          await addColIfMissing("users", "team", "text");
 
           // Ensure leasing_schedule_units has all columns added after initial deploy.
           await addColIfMissing("leasing_schedule_units", "rent_pa", "real");
