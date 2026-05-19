@@ -11986,6 +11986,11 @@ export function setupChatBGPRoutes(app: Express) {
                 // Audio/video transcription: download (100s of MB) → ffmpeg
                 // strip → segment → Whisper. 30-min recording = ~3-5 min.
                 tcName === "transcribe_audio" ? 300000 :
+                // Claude designs HTML (~30-60s) → puppeteer renders PDF
+                // (~10-30s) → SharePoint upload. Real-world meaty Why
+                // Buy briefs land at 90-120s — 60s was clipping them
+                // and the user got nothing back.
+                tcName === "generate_claude_designed_pdf" || tcName === "compile_brochure_from_pdfs" ? 180000 :
                 tcName.includes("sharepoint") || tcName.includes("file") ? 60000 :
                 60000;
               const toolResult = await withTimeout(
@@ -12314,6 +12319,11 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
                 // Audio/video transcription: download (100s of MB) → ffmpeg
                 // strip → segment → Whisper. 30-min recording = ~3-5 min.
                 tcName === "transcribe_audio" ? 300000 :
+                // Claude designs HTML (~30-60s) → puppeteer renders PDF
+                // (~10-30s) → SharePoint upload. Real-world meaty Why
+                // Buy briefs land at 90-120s — 60s was clipping them
+                // and the user got nothing back.
+                tcName === "generate_claude_designed_pdf" || tcName === "compile_brochure_from_pdfs" ? 180000 :
                 tcName.includes("sharepoint") || tcName.includes("file") ? 60000 :
                 60000;
               const toolResult = await withTimeout(
