@@ -140,10 +140,17 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     if (isLoading) return <Skeleton className="h-40 w-full" />;
     if (isError) return <p className="text-xs text-rose-600 italic">Couldn't load brochures — refresh to retry.</p>;
     if (!data?.configured) {
+      // Without a SharePoint folder there's nowhere to upload to. Keep
+      // the empty state tight (the card sits in a half-height slot)
+      // and point the user at the Set Up Folders flow in the property
+      // toolbar that wires sharepoint_folder_url.
       return (
-        <p className="text-xs text-muted-foreground italic">
-          {data?.message || "No SharePoint folder linked to this property — set one to surface brochures here."}
-        </p>
+        <div className="text-xs text-muted-foreground py-3 space-y-1.5">
+          <p>No SharePoint folder linked yet.</p>
+          <p className="text-[11px]">
+            Click <span className="font-medium text-foreground">Set Up Folders</span> at the top of the property, or paste the SharePoint URL into <span className="font-medium text-foreground">Link SharePoint Folder</span> in the right sidebar.
+          </p>
+        </div>
       );
     }
 

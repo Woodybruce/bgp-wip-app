@@ -779,7 +779,12 @@ export function PropertyDetail({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="w-[420px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+        {/* Right sidebar = property metadata pane. Hidden under xl
+            (1280px) because at smaller widths the ChatBGP dock (340px)
+            + this sidebar (320px) leaves the main board crushed.
+            Everything in here is also reachable via the collapsible
+            cards inside the main column, so hiding it loses nothing. */}
+        <div className="w-[320px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden xl:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">
