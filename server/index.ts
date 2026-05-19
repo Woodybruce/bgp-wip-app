@@ -9,12 +9,23 @@ if (typeof dns.setDefaultResultOrder === "function") {
   dns.setDefaultResultOrder("ipv4first");
 }
 
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("[FATAL] Unhandled promise rejection:", reason);
+// Process-level error logging. Crashes during SSE streams (chatbgp,
+// pathway, etc.) often escape the per-route try/catch because the
+// failure happens in a tool's async pipeline or a downstream library
+// throws synchronously. Without these handlers the client just sees
+// "Sorry, I couldn't respond" with no server context.
+process.on("unhandledRejection", (reason: any) => {
+  const stack = reason?.stack || (reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason));
+  const status = reason?.status || reason?.statusCode;
+  const url = reason?.url || reason?.config?.url;
+  console.error(
+    `[FATAL] Unhandled promise rejection${status ? ` (status ${status})` : ""}${url ? ` for ${url}` : ""}:`,
+    stack,
+  );
 });
 
-process.on("uncaughtException", (err) => {
-  console.error("[FATAL] Uncaught exception — shutting down:", err);
+process.on("uncaughtException", (err: any) => {
+  console.error("[FATAL] Uncaught exception — shutting down:", err?.stack || err);
   setTimeout(() => process.exit(1), 1000);
 });
 import { registerRoutes } from "./routes";

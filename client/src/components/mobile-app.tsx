@@ -1340,13 +1340,26 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 await new Promise(r => setTimeout(r, 2000 * attempt));
                 return attemptChat(attempt + 1);
               }
-              throw new Error("Request failed");
+              // Surface the server's actual error body when present
+              // (e.g. {message: "AI API key not configured"} on 503,
+              // validation errors on 400). Avoids the generic "Sorry"
+              // when the server explicitly told us what's wrong.
+              let serverMsg = "";
+              try {
+                const body = await res.json();
+                serverMsg = body?.message || body?.error || "";
+              } catch {}
+              const err: any = new Error(serverMsg || `HTTP ${res.status}`);
+              err.status = res.status;
+              err.serverMessage = serverMsg;
+              throw err;
             }
             const reader = res.body?.getReader();
             if (!reader) throw new Error("No response stream");
             const decoder = new TextDecoder();
             let buffer = "";
             let lastData = "";
+            let sawProgress = false;
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
@@ -1358,7 +1371,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                   try {
                     const parsed = JSON.parse(line.slice(6));
                     if (parsed.reply) lastData = line.slice(6);
-                    if (parsed.progress) setStreamingProgress(parsed.progress);
+                    if (parsed.progress) { setStreamingProgress(parsed.progress); sawProgress = true; }
                   } catch {}
                 }
               }
@@ -1382,7 +1395,18 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                   }
                 }
               }
-              throw new Error("No response received");
+              // We got SSE progress events but the stream closed
+              // before a final `reply` event — server most likely
+              // crashed mid-tool-call. Server logs (Railway) will
+              // have the stack from the process-level
+              // unhandledRejection handler in server/index.ts.
+              const err: any = new Error(
+                sawProgress
+                  ? "Server crashed mid-response — check Railway logs for the stack trace."
+                  : "Server closed the stream before sending a reply.",
+              );
+              err.midStream = true;
+              throw err;
             }
             return { ...JSON.parse(lastData), threadId: currentThreadId };
           } catch (err: any) {
@@ -1438,7 +1462,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                     try { recovered.action = JSON.parse(lastMsg.actionData); } catch {}
                   }
                   setMessages(prev => {
-                    const filtered = prev.filter(m => m.content !== "Sorry, I couldn't respond right now. Please try again." && m.content !== "Sorry, the request timed out. Please try again.");
+                    // Any "Sorry, ..." placeholder from a transient
+                    // failure gets replaced once the server-saved
+                    // assistant reply arrives via the thread fetch.
+                    const filtered = prev.filter(m => m.role !== "assistant" || !m.content.startsWith("Sorry,"));
                     return [...filtered, recovered];
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
@@ -1450,9 +1477,24 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           } catch {}
         }
       }
-      const msg = err?.message === "The operation was aborted" || err?.name === "AbortError"
-        ? "Sorry, the request timed out. Please try again."
-        : "Sorry, I couldn't respond right now. Please try again.";
+      // Log to console for diagnosis — the underlying error often has
+      // a stack / status that wasn't surfaced.
+      console.error("[chatbgp] mutation failed:", err);
+      const isAbort = err?.message === "The operation was aborted" || err?.name === "AbortError";
+      let msg: string;
+      if (isAbort) {
+        msg = "Sorry, the request timed out. Please try again.";
+      } else if (err?.serverMessage) {
+        // Server explicitly told us what's wrong (e.g. validation,
+        // missing API key) — show it instead of the generic Sorry.
+        msg = `Sorry, the server rejected this: ${err.serverMessage}`;
+      } else if (err?.midStream) {
+        msg = `Sorry, ${err.message}`;
+      } else if (err?.status) {
+        msg = `Sorry, the server returned ${err.status}${err.message && err.message !== `HTTP ${err.status}` ? ` — ${err.message}` : ""}.`;
+      } else {
+        msg = "Sorry, I couldn't respond right now. Please try again.";
+      }
       setMessages(prev => [...prev, { role: "assistant", content: msg }]);
     },
   });
