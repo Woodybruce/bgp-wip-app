@@ -625,6 +625,16 @@ export function PropertyDetail({ id }: { id: string }) {
               </ErrorBoundary>
             </div>
 
+            {/* Brand Gap — peer brand presence + gap analysis.
+                Sits above Pipeline so leasing context (who's around
+                / who's missing) is the first thing the asset lead
+                sees before drilling into the deal funnel. */}
+            <ErrorBoundary compact name="Brand gap">
+              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
+                <BrandGapPanel propertyId={property.id} />
+              </CollapsibleCard>
+            </ErrorBoundary>
+
             {/* Pipeline + Performance combined — single 'how's the
                 building doing' tile that sits above Plans, giving
                 the asset lead a snapshot before they scroll into
@@ -712,11 +722,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
-            <ErrorBoundary compact name="KYC panel">
-              <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-kyc">
-                <PropertyKycPanel property={property} />
-              </CollapsibleCard>
-            </ErrorBoundary>
+            {/* KYC panel removed from the main column — it lives in
+                the right sidebar's Compliance & KYC dropdown so the
+                board isn't duplicated. */}
 
             {/* Property Intelligence + Leasing Pitch are pre-instruction
                  tools (catchment / Land Registry research; brand pitch
@@ -741,11 +749,8 @@ export function PropertyDetail({ id }: { id: string }) {
               </>
             )}
 
-            <ErrorBoundary compact name="Brand gap">
-              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
-                <BrandGapPanel propertyId={property.id} />
-              </CollapsibleCard>
-            </ErrorBoundary>
+            {/* Brand Gap moved to the top of the main column (above
+                Pipeline & Performance) — leasing context leads. */}
 
             {/* Property News card moved into the top-strip half-width
                 slot (see above). Lower full-width card removed to
@@ -779,7 +784,12 @@ export function PropertyDetail({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="w-[420px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+        {/* Right sidebar = property metadata pane. Hidden under xl
+            (1280px) because at smaller widths the ChatBGP dock (340px)
+            + this sidebar (320px) leaves the main board crushed.
+            Everything in here is also reachable via the collapsible
+            cards inside the main column, so hiding it loses nothing. */}
+        <div className="w-[320px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden xl:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">
