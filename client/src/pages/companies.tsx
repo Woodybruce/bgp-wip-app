@@ -1384,6 +1384,22 @@ function CompanyDetail({ id }: { id: string }) {
 
           <SubCompaniesPanel parentId={id} parentName={company.name} />
 
+          {/* BGP Team org chart — reports_to lines, headshots, CV side
+              sheet. Single source for who's on the client account. Sits
+              above the brand-expansion narrative so the account team is
+              the first thing the room sees on the client profile. */}
+          {id && (
+            <Card>
+              <CardContent className="p-3 space-y-2">
+                <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-indigo-500" />
+                  BGP Team
+                </h3>
+                <ClientTeamOrgChart clientCompanyId={id} />
+              </CardContent>
+            </Card>
+          )}
+
           {(() => {
             const t = (company.companyType || "").toLowerCase();
             const isLender = t.includes("lender") || t.includes("clearing bank") || t.includes("investment bank")
@@ -1444,20 +1460,6 @@ function CompanyDetail({ id }: { id: string }) {
           })()}
 
           <CompanyLeasingScheduleSection companyId={id} />
-
-          {/* BGP Team org chart — reports_to lines, headshots, CV side
-              sheet. Single source for who's on the client account. */}
-          {id && (
-            <Card>
-              <CardContent className="p-3 space-y-2">
-                <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-indigo-500" />
-                  BGP Team
-                </h3>
-                <ClientTeamOrgChart clientCompanyId={id} />
-              </CardContent>
-            </Card>
-          )}
 
         </div>
 
