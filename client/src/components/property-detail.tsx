@@ -241,9 +241,26 @@ function CollapsibleCard({
 }
 
 // Alias used for the folded-from-sidebar reference grid. Same component
-// under the hood — separate name kept so the JSX reads as "this is the
-// old sidebar section" at the call site.
-const ReferenceSection = CollapsibleCard;
+// under the hood — but wraps the body in a fixed-height scrollable
+// container so every reference board on the right column has the same
+// outward size and only the body scrolls when content is taller.
+function ReferenceSection(props: {
+  open: boolean;
+  onToggle: () => void;
+  icon: any;
+  title: string;
+  badge?: string;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <CollapsibleCard {...props}>
+      <div className="max-h-[260px] overflow-y-auto -mx-3 px-3">
+        {props.children}
+      </div>
+    </CollapsibleCard>
+  );
+}
 
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
@@ -403,17 +420,14 @@ export function PropertyDetail({ id }: { id: string }) {
           ]}
         />
       </div>
-      <div className="flex-1 flex min-h-0 min-w-0">
-        {/* min-w-0 lets this flex child shrink past its content's
-            intrinsic width — without it, a wide row (the tenancy
-            schedule, a long unbreakable file name) pushes the whole
-            main column past the viewport and the right sidebar gets
-            shoved off-screen. overflow-x-auto means wide children
-            (tenancy table) can scroll inside the main column instead
-            of being clipped — overflow-x-hidden cut off the right
-            edge of the leasing table. */}
-        <div className="flex-1 min-w-0 overflow-y-auto overflow-x-auto">
-          <div className="p-4 sm:p-6 space-y-3">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+        {/* Single page-level scroll. A 2-col grid splits content from
+            the reference stack: main content on the left, fixed-width
+            sticky reference column on the right. Each reference board
+            has its own max-height + internal overflow-y so the boards
+            stay the same outward size and only their bodies scroll. */}
+        <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 lg:gap-6 items-start">
+          <div className="min-w-0 space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
                 <ArrowLeft className="w-3.5 h-3.5" />
@@ -819,14 +833,15 @@ export function PropertyDetail({ id }: { id: string }) {
                 <LinkedContactsPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
+          </div>
 
-            {/* Property reference grid — was the separate right sidebar.
-                Folded into the main column as a 2 / 3 col grid of small
-                collapsible cards so it scrolls with the rest of the page
-                and never bleeds into ChatBGP regardless of viewport
-                width. Each section keeps its own open/closed state via
-                sidebarSections so muscle memory carries over. */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {/* Right column = reference stack. Single-column on the right
+              side of the 2-col page grid. Each ReferenceSection has a
+              fixed max-height + internal overflow so the boards stay
+              the same outward size and only their contents scroll. The
+              column itself is sticky so it stays visible as you scroll
+              through the (longer) left column. */}
+          <aside className="space-y-3 lg:sticky lg:top-4 self-start">
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -924,8 +939,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <LinkedLandRegistryPanel propertyId={property.id} />
               </ReferenceSection>
-            </div>
-          </div>
+          </aside>
         </div>
 
       </div>
