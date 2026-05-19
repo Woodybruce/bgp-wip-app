@@ -3127,6 +3127,25 @@ app.use("/api/branding/assets", express.static(
             CREATE INDEX IF NOT EXISTS idx_crm_client_team_client
               ON crm_client_team_members(client_company_id)
           `));
+          // Manual "account lead" pin — the kanban board's apex chip
+          // defaults to whoever has the highest property_count, but the
+          // team can pin a specific person here so the chip doesn't
+          // jump around as property allocations change.
+          await addColIfMissing("crm_client_team_members", "is_lead", "boolean DEFAULT false");
+          // Editable column list per client. Members keep their team_group
+          // as a free string; this table just holds the visible column
+          // ordering and any user-renamed labels so the kanban can render
+          // empty columns and remember add/delete actions.
+          await db.execute(sql.raw(`
+            CREATE TABLE IF NOT EXISTS crm_client_team_columns (
+              client_company_id varchar NOT NULL,
+              name text NOT NULL,
+              sort_order integer NOT NULL DEFAULT 0,
+              color_key text,
+              created_at timestamp DEFAULT now(),
+              PRIMARY KEY (client_company_id, name)
+            )
+          `));
           // One-time seed from legacy data — unnest bgp_contact_user_ids
           // on every company, plus every (property landlord_id × agent
           // user_id) pairing from crm_property_agents. Runs only when the

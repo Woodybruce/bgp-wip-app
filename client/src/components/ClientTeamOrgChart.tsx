@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Plus, Building2, Mail, GripVertical } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Loader2, Plus, Building2, Mail, GripVertical, MoreHorizontal, Star, Pencil, Trash2, Check } from "lucide-react";
 
 interface TeamMember {
   id: string;
@@ -18,6 +19,7 @@ interface TeamMember {
   role: string | null;
   reports_to_user_id: string | null;
   sort_order: number;
+  is_lead: boolean;
   username: string | null;
   full_name: string | null;
   email: string | null;
@@ -43,42 +45,46 @@ interface PropertyAssignment {
   assigned: boolean;
 }
 
-// Kanban columns — same 7 teams as the /team org chart, with Unassigned
-// pinned to the end so freshly added members are visible until someone
-// drops them into a real team.
-const COLUMNS = [
-  "Office / Corporate",
-  "Investment",
-  "Lease Advisory",
-  "National Leasing",
-  "Development",
-  "Tenant Rep",
-  "London Leasing",
-  "Unassigned",
-];
-
-const COLUMN_STYLES: Record<string, { bg: string; border: string; chip: string }> = {
-  "Office / Corporate": { bg: "bg-purple-50/50 dark:bg-purple-950/20", border: "border-purple-200 dark:border-purple-800", chip: "bg-purple-500" },
-  "Investment":          { bg: "bg-emerald-50/50 dark:bg-emerald-950/20", border: "border-emerald-200 dark:border-emerald-800", chip: "bg-emerald-500" },
-  "Lease Advisory":      { bg: "bg-amber-50/50 dark:bg-amber-950/20", border: "border-amber-200 dark:border-amber-800", chip: "bg-amber-500" },
-  "National Leasing":    { bg: "bg-orange-50/50 dark:bg-orange-950/20", border: "border-orange-200 dark:border-orange-800", chip: "bg-orange-500" },
-  "Development":         { bg: "bg-pink-50/50 dark:bg-pink-950/20", border: "border-pink-200 dark:border-pink-800", chip: "bg-pink-500" },
-  "Tenant Rep":          { bg: "bg-sky-50/50 dark:bg-sky-950/20", border: "border-sky-200 dark:border-sky-800", chip: "bg-sky-500" },
-  "London Leasing":      { bg: "bg-yellow-50/50 dark:bg-yellow-950/20", border: "border-yellow-200 dark:border-yellow-800", chip: "bg-yellow-500" },
-  "Unassigned":          { bg: "bg-muted/40", border: "border-border", chip: "bg-gray-400" },
-};
-
-function normaliseGroup(g: string | null | undefined): string {
-  if (!g) return "Unassigned";
-  // If the stored group matches a column exactly, use it; otherwise drop
-  // to Unassigned so the card is at least visible.
-  return COLUMNS.includes(g) ? g : "Unassigned";
+interface ColumnDef {
+  name: string;
+  sort_order: number;
+  color_key: string | null;
 }
 
-function MemberCard({ member, onClick, onDragStart }: {
+const COLOR_PALETTE: Record<string, { bg: string; border: string; chip: string }> = {
+  purple:  { bg: "bg-purple-50/50 dark:bg-purple-950/20", border: "border-purple-200 dark:border-purple-800", chip: "bg-purple-500" },
+  emerald: { bg: "bg-emerald-50/50 dark:bg-emerald-950/20", border: "border-emerald-200 dark:border-emerald-800", chip: "bg-emerald-500" },
+  amber:   { bg: "bg-amber-50/50 dark:bg-amber-950/20", border: "border-amber-200 dark:border-amber-800", chip: "bg-amber-500" },
+  orange:  { bg: "bg-orange-50/50 dark:bg-orange-950/20", border: "border-orange-200 dark:border-orange-800", chip: "bg-orange-500" },
+  pink:    { bg: "bg-pink-50/50 dark:bg-pink-950/20", border: "border-pink-200 dark:border-pink-800", chip: "bg-pink-500" },
+  sky:     { bg: "bg-sky-50/50 dark:bg-sky-950/20", border: "border-sky-200 dark:border-sky-800", chip: "bg-sky-500" },
+  yellow:  { bg: "bg-yellow-50/50 dark:bg-yellow-950/20", border: "border-yellow-200 dark:border-yellow-800", chip: "bg-yellow-500" },
+  slate:   { bg: "bg-muted/40", border: "border-border", chip: "bg-gray-400" },
+};
+// Fallback colour for the 7 default column names — keeps the look
+// consistent across clients that haven't customised yet.
+const DEFAULT_COLOUR_BY_NAME: Record<string, string> = {
+  "Office / Corporate": "purple",
+  "Investment": "emerald",
+  "Lease Advisory": "amber",
+  "National Leasing": "orange",
+  "Development": "pink",
+  "Tenant Rep": "sky",
+  "London Leasing": "yellow",
+};
+
+function styleForColumn(col: ColumnDef) {
+  const key = col.color_key || DEFAULT_COLOUR_BY_NAME[col.name] || "slate";
+  return COLOR_PALETTE[key] || COLOR_PALETTE.slate;
+}
+
+function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop }: {
   member: TeamMember;
   onClick: () => void;
   onDragStart: (e: React.DragEvent) => void;
+  isLead: boolean;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: () => void;
 }) {
   const photoUrl = `/api/hr/photo/${member.user_id}`;
   const displayName = member.full_name || member.username || "Unknown";
@@ -87,10 +93,17 @@ function MemberCard({ member, onClick, onDragStart }: {
       type="button"
       draggable
       onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       onClick={onClick}
-      className="group relative w-full text-left bg-card border rounded-lg shadow-sm hover:shadow-md hover:border-primary/40 transition-all px-2.5 py-2"
+      className={`group relative w-full text-left bg-card border rounded-lg shadow-sm hover:shadow-md hover:border-primary/40 transition-all px-2.5 py-2 ${isLead ? "ring-2 ring-amber-400/70 border-amber-300" : ""}`}
       data-testid={`team-member-card-${member.id}`}
     >
+      {isLead && (
+        <div className="absolute -top-1.5 -left-1.5 bg-amber-400 text-white rounded-full w-5 h-5 flex items-center justify-center shadow" title="Account lead">
+          <Star className="w-3 h-3" fill="currentColor" />
+        </div>
+      )}
       {member.property_count > 0 && (
         <div className="absolute -top-1.5 -right-1.5 bg-indigo-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow">
           {member.property_count}
@@ -120,8 +133,12 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<TeamMember | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   const draggingId = useRef<string | null>(null);
+  const [renamingCol, setRenamingCol] = useState<string | null>(null);
+  const [newColName, setNewColName] = useState("");
+  const [showAddCol, setShowAddCol] = useState(false);
+  const [addColName, setAddColName] = useState("");
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -133,30 +150,52 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     enabled: !!clientCompanyId,
   });
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: any }) => apiRequest("PATCH", `/api/client-teams/member/${id}`, patch),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] }),
+  const { data: columns = [] } = useQuery<ColumnDef[]>({
+    queryKey: ["/api/client-teams", clientCompanyId, "columns"],
+    queryFn: async () => {
+      const r = await fetch(`/api/client-teams/${clientCompanyId}/columns`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!clientCompanyId,
   });
 
-  // Bucket members into columns; track the account-lead (highest property
-  // count, ties broken by name) so it can sit as an apex card above.
+  // Columns list always includes Unassigned at the end as a catch-all so
+  // a freshly added member or a deleted-column orphan is never invisible.
+  const columnList = useMemo<ColumnDef[]>(() => {
+    const base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
+    if (!base.find(c => c.name === "Unassigned")) {
+      base.push({ name: "Unassigned", sort_order: 999, color_key: "slate" });
+    }
+    return base;
+  }, [columns]);
+
+  // Bucket members by column name. Anything whose team_group doesn't
+  // match a real column falls into Unassigned so the card stays visible.
   const byColumn = useMemo(() => {
+    const valid = new Set(columnList.map(c => c.name));
     const map: Record<string, TeamMember[]> = {};
-    for (const c of COLUMNS) map[c] = [];
-    for (const m of members) map[normaliseGroup(m.team_group)].push(m);
-    for (const c of COLUMNS) {
-      map[c].sort((a, b) => (a.sort_order - b.sort_order) || (a.full_name || "").localeCompare(b.full_name || ""));
+    for (const c of columnList) map[c.name] = [];
+    for (const m of members) {
+      const key = m.team_group && valid.has(m.team_group) ? m.team_group : "Unassigned";
+      map[key].push(m);
+    }
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => (a.sort_order - b.sort_order) || (a.full_name || "").localeCompare(b.full_name || ""));
     }
     return map;
-  }, [members]);
+  }, [members, columnList]);
 
-  const apex = useMemo<TeamMember | null>(() => {
+  // Pinned lead wins; otherwise fall back to highest property_count as a
+  // hint until the user nominates someone explicitly.
+  const lead = useMemo<TeamMember | null>(() => {
+    const pinned = members.find(m => m.is_lead);
+    if (pinned) return pinned;
     if (members.length === 0) return null;
-    // Whoever has the most properties on this client is the account lead.
-    // Falls back to first by name if everyone's on zero.
-    return [...members].sort((a, b) =>
+    const sorted = [...members].sort((a, b) =>
       (b.property_count - a.property_count) || (a.full_name || "").localeCompare(b.full_name || "")
-    )[0];
+    );
+    return sorted[0].property_count > 0 ? sorted[0] : null;
   }, [members]);
 
   useEffect(() => {
@@ -166,23 +205,94 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     }
   }, [members]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleDrop = (column: string) => {
-    setDragOver(null);
+  const reorderMutation = useMutation({
+    mutationFn: (items: Array<{ id: string; team_group: string | null; sort_order: number }>) =>
+      apiRequest("POST", `/api/client-teams/${clientCompanyId}/reorder`, { items }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] }),
+  });
+
+  // Compute the new in-column stack after a drag, then ship a single
+  // bulk-reorder so sort_order is consistent across the whole column.
+  const handleDropOnCard = (targetMember: TeamMember) => {
     const id = draggingId.current;
     draggingId.current = null;
-    if (!id) return;
-    const m = members.find(x => x.id === id);
-    if (!m) return;
-    const currentColumn = normaliseGroup(m.team_group);
-    if (currentColumn === column) return;
-    // Persist the move via PATCH. Optimistic update keeps the card in
-    // the new column while the request is in flight.
+    setDragOverCol(null);
+    if (!id || id === targetMember.id) return;
+    const dragged = members.find(m => m.id === id);
+    if (!dragged) return;
+    const targetCol = targetMember.team_group || "Unassigned";
+    // Build the new ordered list for the target column with the dragged
+    // member inserted directly *above* the target card.
+    const existing = byColumn[targetCol].filter(m => m.id !== dragged.id);
+    const idx = existing.findIndex(m => m.id === targetMember.id);
+    const before = existing.slice(0, idx);
+    const after = existing.slice(idx);
+    const newOrder = [...before, { ...dragged, team_group: targetCol === "Unassigned" ? null : targetCol }, ...after];
+    const items = newOrder.map((m, i) => ({ id: m.id, team_group: m.team_group ?? "Unassigned", sort_order: i }));
+    // Optimistic — update the cache so the card visibly lands in place.
     queryClient.setQueryData<TeamMember[]>(["/api/client-teams", clientCompanyId], (prev) => {
       if (!prev) return prev;
-      return prev.map(x => x.id === id ? { ...x, team_group: column === "Unassigned" ? null : column } : x);
+      const next = prev.map(m => {
+        const it = items.find(x => x.id === m.id);
+        if (!it) return m;
+        return { ...m, team_group: it.team_group === "Unassigned" ? null : it.team_group, sort_order: it.sort_order };
+      });
+      return next;
     });
-    updateMutation.mutate({ id, patch: { team_group: column === "Unassigned" ? null : column } });
+    reorderMutation.mutate(items);
   };
+
+  const handleDropOnColumn = (column: string) => {
+    const id = draggingId.current;
+    draggingId.current = null;
+    setDragOverCol(null);
+    if (!id) return;
+    const dragged = members.find(m => m.id === id);
+    if (!dragged) return;
+    if ((dragged.team_group || "Unassigned") === column) return;
+    // Append to the bottom of the destination column.
+    const dest = (byColumn[column] || []).filter(m => m.id !== dragged.id);
+    const items = [
+      ...dest.map((m, i) => ({ id: m.id, team_group: column, sort_order: i })),
+      { id: dragged.id, team_group: column, sort_order: dest.length },
+    ];
+    queryClient.setQueryData<TeamMember[]>(["/api/client-teams", clientCompanyId], (prev) => {
+      if (!prev) return prev;
+      return prev.map(m => {
+        if (m.id === dragged.id) return { ...m, team_group: column === "Unassigned" ? null : column, sort_order: dest.length };
+        return m;
+      });
+    });
+    reorderMutation.mutate(items);
+  };
+
+  // --- Column management ---
+
+  const renameColumn = useMutation({
+    mutationFn: ({ oldName, name }: { oldName: string; name: string }) =>
+      apiRequest("PATCH", `/api/client-teams/${clientCompanyId}/columns/${encodeURIComponent(oldName)}`, { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
+    },
+  });
+  const deleteColumn = useMutation({
+    mutationFn: (name: string) =>
+      apiRequest("DELETE", `/api/client-teams/${clientCompanyId}/columns/${encodeURIComponent(name)}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
+    },
+  });
+  const addColumn = useMutation({
+    mutationFn: (name: string) =>
+      apiRequest("POST", `/api/client-teams/${clientCompanyId}/columns`, { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
+      setShowAddCol(false);
+      setAddColName("");
+    },
+  });
 
   if (isLoading) {
     return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading team...</div>;
@@ -190,17 +300,51 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
 
   return (
     <div className="space-y-3" data-testid="client-team-orgchart">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <Badge variant="secondary" className="text-xs">{members.length} team member{members.length === 1 ? "" : "s"}</Badge>
-          {apex && (
-            <span className="text-[11px] text-muted-foreground">Lead: <span className="font-medium text-foreground">{apex.full_name || apex.username}</span></span>
+          {lead ? (
+            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+              <Star className="w-3 h-3 text-amber-500" fill="currentColor" />
+              Lead: <span className="font-medium text-foreground">{lead.full_name || lead.username}</span>
+              {!lead.is_lead && <span className="text-[10px] text-muted-foreground/70">(auto)</span>}
+            </span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground italic">No lead pinned</span>
           )}
         </div>
-        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">
-          <Plus className="w-3 h-3 mr-1" />Add to team
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddCol(true)} data-testid="btn-add-column">
+            <Plus className="w-3 h-3 mr-1" />Add column
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">
+            <Plus className="w-3 h-3 mr-1" />Add to team
+          </Button>
+        </div>
       </div>
+
+      {showAddCol && (
+        <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-md">
+          <Input
+            autoFocus
+            value={addColName}
+            onChange={(e) => setAddColName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && addColName.trim()) addColumn.mutate(addColName.trim());
+              if (e.key === "Escape") { setShowAddCol(false); setAddColName(""); }
+            }}
+            placeholder="New column name (e.g. Asset Management)"
+            className="h-7 text-sm"
+            data-testid="input-new-column-name"
+          />
+          <Button size="sm" className="h-7 text-xs" onClick={() => addColName.trim() && addColumn.mutate(addColName.trim())} disabled={addColumn.isPending}>
+            Add
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setShowAddCol(false); setAddColName(""); }}>
+            Cancel
+          </Button>
+        </div>
+      )}
 
       {members.length === 0 ? (
         <div className="border rounded-lg py-12 flex flex-col items-center justify-center text-muted-foreground text-sm">
@@ -211,25 +355,81 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
       ) : (
         <div className="overflow-x-auto pb-2">
           <div className="flex gap-2 min-w-max">
-            {COLUMNS.map(col => {
-              const style = COLUMN_STYLES[col];
-              const peeps = byColumn[col] || [];
-              const isOver = dragOver === col;
+            {columnList.map(col => {
+              const style = styleForColumn(col);
+              const peeps = byColumn[col.name] || [];
+              const isOver = dragOverCol === col.name;
+              const isDefault = col.name in DEFAULT_COLOUR_BY_NAME;
+              const isUnassigned = col.name === "Unassigned";
               return (
                 <div
-                  key={col}
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(col); }}
-                  onDragLeave={() => setDragOver(prev => prev === col ? null : prev)}
-                  onDrop={() => handleDrop(col)}
+                  key={col.name}
+                  onDragOver={(e) => { e.preventDefault(); setDragOverCol(col.name); }}
+                  onDragLeave={() => setDragOverCol(prev => prev === col.name ? null : prev)}
+                  onDrop={() => handleDropOnColumn(col.name)}
                   className={`w-[220px] shrink-0 rounded-lg border ${style.border} ${isOver ? "ring-2 ring-primary/60 ring-offset-1" : ""} ${style.bg} p-2 flex flex-col gap-2`}
-                  data-testid={`team-column-${col.replace(/\s+/g, "-").toLowerCase()}`}
+                  data-testid={`team-column-${col.name.replace(/\s+/g, "-").toLowerCase()}`}
                 >
-                  <div className="flex items-center justify-between px-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${style.chip}`} />
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{col}</span>
+                  <div className="flex items-center justify-between px-1 group">
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <span className={`w-2 h-2 rounded-full ${style.chip} shrink-0`} />
+                      {renamingCol === col.name ? (
+                        <Input
+                          autoFocus
+                          value={newColName}
+                          onChange={(e) => setNewColName(e.target.value)}
+                          onBlur={() => {
+                            if (newColName.trim() && newColName.trim() !== col.name) {
+                              renameColumn.mutate({ oldName: col.name, name: newColName.trim() });
+                            }
+                            setRenamingCol(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                            if (e.key === "Escape") setRenamingCol(null);
+                          }}
+                          className="h-6 text-[10px] uppercase tracking-wider font-semibold flex-1 min-w-0"
+                          data-testid={`input-rename-column-${col.name}`}
+                        />
+                      ) : (
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{col.name}</span>
+                      )}
                     </div>
-                    <span className="text-[10px] text-muted-foreground/70">{peeps.length}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground/70">{peeps.length}</span>
+                      {!isUnassigned && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-accent"
+                              data-testid={`btn-column-menu-${col.name}`}
+                            >
+                              <MoreHorizontal className="w-3 h-3 text-muted-foreground" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="text-xs">
+                            <DropdownMenuItem
+                              onClick={() => { setRenamingCol(col.name); setNewColName(col.name); }}
+                              data-testid={`menu-rename-${col.name}`}
+                            >
+                              <Pencil className="w-3 h-3 mr-1.5" /> Rename
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => {
+                                if (peeps.length > 0 && !confirm(`Delete "${col.name}"? Its ${peeps.length} member${peeps.length === 1 ? "" : "s"} will fall back to Unassigned.`)) return;
+                                deleteColumn.mutate(col.name);
+                              }}
+                              className="text-destructive focus:text-destructive"
+                              data-testid={`menu-delete-${col.name}`}
+                            >
+                              <Trash2 className="w-3 h-3 mr-1.5" /> Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
                   </div>
                   {peeps.length === 0 ? (
                     <div className="flex-1 min-h-[60px] flex items-center justify-center text-[11px] text-muted-foreground/50 italic">
@@ -240,11 +440,18 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                       <MemberCard
                         key={m.id}
                         member={m}
+                        isLead={!!m.is_lead}
                         onClick={() => setSelected(m)}
                         onDragStart={(e) => {
                           draggingId.current = m.id;
                           e.dataTransfer.effectAllowed = "move";
+                          // Stop the column-level drop handler from firing
+                          // when we land on a card — it'd otherwise treat
+                          // the drop as a column-end append.
+                          e.stopPropagation();
                         }}
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverCol(col.name); }}
+                        onDrop={() => handleDropOnCard(m)}
                       />
                     ))
                   )}
@@ -260,6 +467,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
           member={selected}
           allMembers={members}
           clientCompanyId={clientCompanyId}
+          columnNames={columnList.map(c => c.name)}
           onClose={() => setSelected(null)}
           onChange={() => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] })}
         />
@@ -279,10 +487,11 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   );
 }
 
-function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }: {
+function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose, onChange }: {
   member: TeamMember;
   allMembers: TeamMember[];
   clientCompanyId: string;
+  columnNames: string[];
   onClose: () => void;
   onChange: () => void;
 }) {
@@ -323,9 +532,13 @@ function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }:
     },
   });
 
+  const assignedCount = useMemo(
+    () => (propertiesQuery.data || []).filter(p => p.assigned).length,
+    [propertiesQuery.data]
+  );
+
   const toggleProperty = async (propertyId: string, assigned: boolean) => {
     setPropBusy(true);
-    // Optimistic flip.
     queryClient.setQueryData<PropertyAssignment[]>(
       ["/api/client-teams", clientCompanyId, "member", member.user_id, "properties"],
       (prev) => prev?.map(p => p.id === propertyId ? { ...p, assigned: !assigned } : p)
@@ -333,10 +546,8 @@ function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }:
     try {
       const body = assigned ? { remove: [propertyId] } : { add: [propertyId] };
       await apiRequest("POST", `/api/client-teams/${clientCompanyId}/member/${member.user_id}/properties`, body);
-      // Refresh property_count badge on the card by re-querying the team.
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
     } catch (e: any) {
-      // Roll back optimistic flip.
       queryClient.setQueryData<PropertyAssignment[]>(
         ["/api/client-teams", clientCompanyId, "member", member.user_id, "properties"],
         (prev) => prev?.map(p => p.id === propertyId ? { ...p, assigned } : p)
@@ -351,9 +562,12 @@ function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }:
 
   return (
     <Sheet open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-[440px] sm:max-w-[440px] overflow-y-auto">
+      <SheetContent side="right" className="w-[460px] sm:max-w-[460px] overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>{displayName}</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">
+            {displayName}
+            {member.is_lead && <Star className="w-4 h-4 text-amber-500" fill="currentColor" />}
+          </SheetTitle>
         </SheetHeader>
         <div className="space-y-4 mt-3">
           <div className="flex items-start gap-3">
@@ -375,6 +589,20 @@ function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }:
             </div>
           </div>
 
+          <div className="border-t pt-3">
+            <Button
+              size="sm"
+              variant={member.is_lead ? "default" : "outline"}
+              className="h-8 text-xs"
+              onClick={() => updateMutation.mutate({ is_lead: !member.is_lead })}
+              disabled={updateMutation.isPending}
+              data-testid="btn-toggle-lead"
+            >
+              {member.is_lead ? <><Check className="w-3 h-3 mr-1.5" />Account lead</> : <><Star className="w-3 h-3 mr-1.5" />Set as account lead</>}
+            </Button>
+            {member.is_lead && <span className="text-[10px] text-muted-foreground ml-2">Pinned for this client</span>}
+          </div>
+
           <div className="space-y-2 border-t pt-3">
             <div>
               <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Team group</label>
@@ -389,7 +617,7 @@ function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }:
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {COLUMNS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {columnNames.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -421,13 +649,16 @@ function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }:
           </div>
 
           <div className="border-t pt-3">
-            <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Properties on this client</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Properties on this client</label>
+              <span className="text-[10px] text-muted-foreground">{assignedCount} assigned</span>
+            </div>
             {propertiesQuery.isLoading ? (
               <div className="text-xs text-muted-foreground flex items-center gap-2 mt-2"><Loader2 className="w-3 h-3 animate-spin" />Loading properties…</div>
             ) : (propertiesQuery.data || []).length === 0 ? (
               <div className="text-xs text-muted-foreground mt-2 italic">This client has no properties yet.</div>
             ) : (
-              <div className="mt-2 max-h-[260px] overflow-y-auto border rounded-md divide-y">
+              <div className="mt-1 max-h-[260px] overflow-y-auto border rounded-md divide-y">
                 {(propertiesQuery.data || []).map(p => (
                   <label key={p.id} className="flex items-start gap-2 px-2 py-1.5 hover:bg-accent/40 cursor-pointer text-xs">
                     <Checkbox

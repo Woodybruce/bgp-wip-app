@@ -32,6 +32,7 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
              m.role,
              m.reports_to_user_id,
              m.sort_order,
+             COALESCE(m.is_lead, false) AS is_lead,
              u.username,
              u.name AS full_name,
              u.email,
@@ -85,7 +86,7 @@ router.post("/api/client-teams/:clientCompanyId/member", requireAuth, async (req
 router.patch("/api/client-teams/member/:id", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const allowed = ["team_group", "role", "reports_to_user_id", "sort_order"];
+    const allowed = ["team_group", "role", "reports_to_user_id", "sort_order", "is_lead"];
     const sets: string[] = [];
     const vals: any[] = [];
     let i = 1;
@@ -97,12 +98,54 @@ router.patch("/api/client-teams/member/:id", requireAuth, async (req, res) => {
     }
     if (sets.length === 0) return res.status(400).json({ error: "no fields to update" });
     vals.push(req.params.id);
+    // If is_lead is being set true, clear it on every other member of the
+    // same client so there's only ever one pinned lead at a time. Done in
+    // a single statement to avoid races between concurrent toggles.
+    if (req.body && req.body.is_lead === true) {
+      await pool.query(`
+        UPDATE crm_client_team_members SET is_lead = false
+         WHERE id <> $1 AND client_company_id = (
+           SELECT client_company_id FROM crm_client_team_members WHERE id = $1
+         )
+      `, [req.params.id]);
+    }
     const r = await pool.query(
       `UPDATE crm_client_team_members SET ${sets.join(", ")} WHERE id = $${i} RETURNING *`,
       vals
     );
     if (!r.rows[0]) return res.status(404).json({ error: "not found" });
     res.json(r.rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk reorder — accepts an array of {id, team_group, sort_order}. The
+// kanban board ships one of these after a drag-and-drop so the in-column
+// stack order persists in a single round trip.
+router.post("/api/client-teams/:clientCompanyId/reorder", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const items: Array<{ id: string; team_group?: string | null; sort_order: number }> =
+      req.body?.items || [];
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "items array required" });
+    }
+    for (const it of items) {
+      const tg = it.team_group === "Unassigned" ? null : (it.team_group ?? undefined);
+      if (tg === undefined) {
+        await pool.query(
+          "UPDATE crm_client_team_members SET sort_order = $1 WHERE id = $2 AND client_company_id = $3",
+          [it.sort_order, it.id, req.params.clientCompanyId]
+        );
+      } else {
+        await pool.query(
+          "UPDATE crm_client_team_members SET sort_order = $1, team_group = $2 WHERE id = $3 AND client_company_id = $4",
+          [it.sort_order, tg, it.id, req.params.clientCompanyId]
+        );
+      }
+    }
+    res.json({ ok: true, updated: items.length });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -201,5 +244,142 @@ router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (
     res.status(500).json({ error: e.message });
   }
 });
+
+// Default kanban column list, applied for any client that hasn't yet
+// customised theirs. Mirrors the /team org chart columns.
+const DEFAULT_COLUMNS = [
+  "Office / Corporate",
+  "Investment",
+  "Lease Advisory",
+  "National Leasing",
+  "Development",
+  "Tenant Rep",
+  "London Leasing",
+];
+
+// GET /api/client-teams/:clientCompanyId/columns — returns the column
+// list this client renders. Falls back to DEFAULT_COLUMNS when the row
+// set is empty so brand-new clients get a usable board without seeding.
+router.get("/api/client-teams/:clientCompanyId/columns", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const r = await pool.query(
+      "SELECT name, sort_order, color_key FROM crm_client_team_columns WHERE client_company_id = $1 ORDER BY sort_order, name",
+      [req.params.clientCompanyId]
+    );
+    if (r.rows.length === 0) {
+      return res.json(DEFAULT_COLUMNS.map((name, i) => ({ name, sort_order: i, color_key: null })));
+    }
+    res.json(r.rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/client-teams/:clientCompanyId/columns — add a new column or
+// upsert sort_order/color on an existing one. Body: { name, sort_order?, color_key? }.
+router.post("/api/client-teams/:clientCompanyId/columns", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { name, sort_order, color_key } = req.body || {};
+    if (!name || typeof name !== "string") return res.status(400).json({ error: "name required" });
+    // First time a client edits columns, materialise the defaults so the
+    // new column slots in alongside the standard ones rather than
+    // replacing them entirely.
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    const r = await pool.query(`
+      INSERT INTO crm_client_team_columns (client_company_id, name, sort_order, color_key)
+      VALUES ($1, $2, COALESCE($3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM crm_client_team_columns WHERE client_company_id = $1)), $4)
+      ON CONFLICT (client_company_id, name) DO UPDATE
+        SET sort_order = COALESCE(EXCLUDED.sort_order, crm_client_team_columns.sort_order),
+            color_key  = COALESCE(EXCLUDED.color_key, crm_client_team_columns.color_key)
+      RETURNING *
+    `, [req.params.clientCompanyId, name.trim(), sort_order ?? null, color_key || null]);
+    res.json(r.rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/client-teams/:clientCompanyId/columns/:oldName — rename a
+// column AND rewrite team_group on every member currently in that column,
+// so cards don't disappear into Unassigned when the label changes.
+router.patch("/api/client-teams/:clientCompanyId/columns/:oldName", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { name } = req.body || {};
+    if (!name || typeof name !== "string") return res.status(400).json({ error: "name required" });
+    const oldName = decodeURIComponent(req.params.oldName);
+    const newName = name.trim();
+    if (newName === oldName) return res.json({ ok: true });
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    await pool.query(`
+      UPDATE crm_client_team_columns SET name = $1
+       WHERE client_company_id = $2 AND name = $3
+    `, [newName, req.params.clientCompanyId, oldName]);
+    await pool.query(`
+      UPDATE crm_client_team_members SET team_group = $1
+       WHERE client_company_id = $2 AND team_group = $3
+    `, [newName, req.params.clientCompanyId, oldName]);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE — drops the column and demotes its members to Unassigned
+// (NULL team_group). Doesn't remove any members.
+router.delete("/api/client-teams/:clientCompanyId/columns/:name", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const name = decodeURIComponent(req.params.name);
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    await pool.query(
+      "DELETE FROM crm_client_team_columns WHERE client_company_id = $1 AND name = $2",
+      [req.params.clientCompanyId, name]
+    );
+    await pool.query(
+      "UPDATE crm_client_team_members SET team_group = NULL WHERE client_company_id = $1 AND team_group = $2",
+      [req.params.clientCompanyId, name]
+    );
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/client-teams/:clientCompanyId/columns/reorder — body: { names: string[] }
+// Sets sort_order to the array index for each provided column name.
+router.post("/api/client-teams/:clientCompanyId/columns/reorder", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const names: string[] = req.body?.names || [];
+    if (!Array.isArray(names)) return res.status(400).json({ error: "names array required" });
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    for (let i = 0; i < names.length; i++) {
+      await pool.query(
+        "UPDATE crm_client_team_columns SET sort_order = $1 WHERE client_company_id = $2 AND name = $3",
+        [i, req.params.clientCompanyId, names[i]]
+      );
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+async function materialiseDefaultColumnsIfEmpty(pool: any, clientCompanyId: string) {
+  const check = await pool.query(
+    "SELECT COUNT(*)::int AS n FROM crm_client_team_columns WHERE client_company_id = $1",
+    [clientCompanyId]
+  );
+  if (Number(check.rows[0]?.n ?? 0) > 0) return;
+  for (let i = 0; i < DEFAULT_COLUMNS.length; i++) {
+    await pool.query(
+      "INSERT INTO crm_client_team_columns (client_company_id, name, sort_order) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+      [clientCompanyId, DEFAULT_COLUMNS[i], i]
+    );
+  }
+}
 
 export default router;
