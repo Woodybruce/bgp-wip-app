@@ -2767,6 +2767,44 @@ function ReviewLetterDialog({
   });
   const [managerNotes, setManagerNotes] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [prefilled, setPrefilled] = useState(false);
+
+  // Pre-fill from the salary / bonus already recorded against this
+  // review (via the "Record & notify Wendy" button on the form). The
+  // user's complaint: filling those in earlier and then opening the
+  // letter dialog showed an empty form, so the letter said "no change"
+  // unless they re-typed. Now we look them up via the notes field
+  // (recordCompensation writes "From review {id}").
+  useEffect(() => {
+    if (!open || prefilled) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [sRes, bRes] = await Promise.all([
+          fetch(`/api/hr/staff/${review.user_id}/salary-history`, { credentials: "include", headers: getAuthHeaders() }),
+          fetch(`/api/hr/staff/${review.user_id}/bonus-history`, { credentials: "include", headers: getAuthHeaders() }),
+        ]);
+        if (cancelled) return;
+        if (sRes.ok) {
+          const rows = await sRes.json();
+          const fromThisReview = Array.isArray(rows) ? rows.find((r: any) => (r.notes || "").includes(`review ${review.id}`)) : null;
+          if (fromThisReview?.salary_pence) {
+            setNewSalary(String(Math.round(Number(fromThisReview.salary_pence) / 100)));
+            if (fromThisReview.effective_date) setEffectiveDate(String(fromThisReview.effective_date).slice(0, 10));
+          }
+        }
+        if (bRes.ok) {
+          const rows = await bRes.json();
+          const fromThisReview = Array.isArray(rows) ? rows.find((r: any) => (r.notes || "").includes(`review ${review.id}`)) : null;
+          if (fromThisReview?.amount_pence) {
+            setBonus(String(Math.round(Number(fromThisReview.amount_pence) / 100)));
+          }
+        }
+      } catch { /* leave blank — user can type in */ }
+      finally { if (!cancelled) setPrefilled(true); }
+    })();
+    return () => { cancelled = true; };
+  }, [open, prefilled, review.id, review.user_id]);
 
   async function submit() {
     setGenerating(true);

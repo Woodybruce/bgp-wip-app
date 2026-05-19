@@ -3187,11 +3187,41 @@ Return ONLY JSON.`,
       const managerName = actorQ.rows[0]?.name || "BGP Equity";
 
       const { newSalaryPence, bonusPence, effectiveDate, managerNotes, issued } = req.body || {};
-      const newSalary = Number.isFinite(Number(newSalaryPence)) && Number(newSalaryPence) > 0 ? Math.round(Number(newSalaryPence)) : null;
-      const bonus = Number.isFinite(Number(bonusPence)) && Number(bonusPence) > 0 ? Math.round(Number(bonusPence)) : null;
+      let newSalary = Number.isFinite(Number(newSalaryPence)) && Number(newSalaryPence) > 0 ? Math.round(Number(newSalaryPence)) : null;
+      let bonus = Number.isFinite(Number(bonusPence)) && Number(bonusPence) > 0 ? Math.round(Number(bonusPence)) : null;
+      let effDateFromHistory: string | null = null;
+
+      // If the caller didn't pass salary/bonus, look them up from
+      // the compensation already recorded against this review (via
+      // the "Record & notify Wendy" button — writes notes='From
+      // review {id}'). Prevents the letter from saying "no change"
+      // just because the user filled the form, recorded comp, and
+      // generated the letter without re-typing the numbers.
+      if (newSalary === null) {
+        const hist = await pool.query(
+          `SELECT salary_pence, effective_date FROM salary_history
+            WHERE user_id = $1 AND notes ILIKE $2
+            ORDER BY effective_date DESC LIMIT 1`,
+          [review.user_id, `%review ${review.id}%`],
+        );
+        if (hist.rows[0]?.salary_pence) {
+          newSalary = Math.round(Number(hist.rows[0].salary_pence));
+          if (hist.rows[0].effective_date) effDateFromHistory = String(hist.rows[0].effective_date).slice(0, 10);
+        }
+      }
+      if (bonus === null) {
+        const hist = await pool.query(
+          `SELECT amount_pence FROM bonus_history
+            WHERE user_id = $1 AND notes ILIKE $2
+            ORDER BY effective_date DESC, created_at DESC LIMIT 1`,
+          [review.user_id, `%review ${review.id}%`],
+        );
+        if (hist.rows[0]?.amount_pence) bonus = Math.round(Number(hist.rows[0].amount_pence));
+      }
+
       const effDate = effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)
         ? effectiveDate
-        : new Date().toISOString().slice(0, 10);
+        : effDateFromHistory || new Date().toISOString().slice(0, 10);
 
       // Ask Claude to draft the letter body. We give it the review
       // bullets + the financial outcome + manager notes and ask for
