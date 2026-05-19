@@ -113,8 +113,11 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       return res.status(400).json({ error: reasons[location.reason] || "Couldn't resolve property location", reason: location.reason });
     }
 
-    // Pull all brand stores with geocoded locations
-    const { rows: stores } = await pool.query(
+    // Pull all brand stores with geocoded locations. brand_stores is
+    // created lazily by brand-profile when that module loads — if it
+    // hasn't yet on this prod instance, degrade to "no stores yet"
+    // rather than 500'ing the panel.
+    const stores: any[] = await pool.query(
       `SELECT s.brand_company_id, s.name AS store_name, s.address, s.lat, s.lng, s.status,
               c.name AS brand_name, c.domain, c.rollout_status, c.company_type,
               c.is_tracked_brand, c.store_count, c.brand_group_id
@@ -123,7 +126,15 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         WHERE s.lat IS NOT NULL AND s.lng IS NOT NULL
           AND c.merged_into_id IS NULL
           AND (s.status IS NULL OR s.status = 'open')`
-    );
+    )
+      .then(r => r.rows)
+      .catch((e: any) => {
+        if (e?.code === "42P01" || /relation .* does not exist/i.test(e?.message || "")) {
+          console.warn("[brand-gaps] brand_stores table not yet present; returning empty:", e.message);
+          return [];
+        }
+        throw e;
+      });
 
     // Group by brand — calculate nearest store distance per brand
     const brandMap = new Map<string, {

@@ -824,11 +824,11 @@ export function PropertyDetail({ id }: { id: string }) {
           </div>
         </div>
 
-        {/* Right sidebar = property metadata pane. Sits inside the
-            property page's own flex; mr-2 gives a visible gutter
-            against the global ChatBGP dock so the two right-edge
-            columns don't crowd each other. Hidden under xl. */}
-        <div className="w-[320px] mr-2 border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden xl:flex">
+        {/* Right sidebar = property metadata pane. The gutter
+            against the global ChatBGP dock now comes from the chat
+            panel itself (md:ml-3), so any page that has its own
+            right-edge content benefits — not just this one. */}
+        <div className="w-[320px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden xl:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">

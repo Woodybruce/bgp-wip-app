@@ -736,10 +736,15 @@ router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: R
     const propertyId = req.params.id;
     const status = (req.query.status as string) || "active";
     const statusFilter = status === "all" ? "" : "AND t.status <> 'done'";
-    const { rows } = await pool.query(
-      `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.is_pinned,
+    // profile_pic_url is added by auto-migrate but production may not
+    // have redeployed yet — try the full query first, fall back to a
+    // column-stripped version on undefined_column so the panel keeps
+    // working through the deploy window.
+    const fullSelect = `t.user_id, COALESCE(u.name, u.username, u.email) AS owner_name, u.profile_pic_url`;
+    const safeSelect = `t.user_id, COALESCE(u.name, u.username, u.email) AS owner_name, NULL::text AS profile_pic_url`;
+    const buildSql = (sel: string) => `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.is_pinned,
               t.linked_deal_id, t.linked_property_id, t.linked_contact_id, t.created_at, t.updated_at,
-              t.user_id, COALESCE(u.name, u.username, u.email) AS owner_name, u.profile_pic_url,
+              ${sel},
               d.name AS deal_name
          FROM user_tasks t
          LEFT JOIN users u ON u.id = t.user_id
@@ -751,9 +756,18 @@ router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: R
                  CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
                  t.due_date ASC NULLS LAST,
                  t.created_at DESC
-        LIMIT 50`,
-      [propertyId]
-    );
+        LIMIT 50`;
+    let rows: any[];
+    try {
+      ({ rows } = await pool.query(buildSql(fullSelect), [propertyId]));
+    } catch (e: any) {
+      if (e?.code === "42703" || /column .* does not exist/i.test(e?.message || "")) {
+        console.warn("[tasks] users.profile_pic_url missing on prod; falling back:", e.message);
+        ({ rows } = await pool.query(buildSql(safeSelect), [propertyId]));
+      } else {
+        throw e;
+      }
+    }
     res.json({ tasks: rows });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "tasks fetch failed" });
