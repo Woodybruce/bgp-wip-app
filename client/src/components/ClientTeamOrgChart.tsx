@@ -364,7 +364,13 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
       ) : (
         <div className="overflow-x-auto pb-2">
           <div className="flex gap-2 min-w-max">
-            {columnList.map(col => {
+            {columnList
+              // Hide the auto-added Unassigned column when nothing's
+              // in it — it's a catch-all for orphans, not a column
+              // the user explicitly created. If something gets
+              // dragged into it later it reappears automatically.
+              .filter(col => col.name !== "Unassigned" || (byColumn[col.name] || []).length > 0)
+              .map(col => {
               const style = styleForColumn(col);
               const peeps = byColumn[col.name] || [];
               const isOver = dragOverCol === col.name;
