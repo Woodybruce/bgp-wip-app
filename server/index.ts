@@ -787,6 +787,31 @@ import { pool } from "./db";
        updated_at TIMESTAMPTZ DEFAULT NOW()
      )`,
     `CREATE INDEX IF NOT EXISTS idx_property_plans_property ON property_plans (property_id, display_order)`,
+
+    // Property brochures — leasing / investment / OM PDFs uploaded
+    // directly to a property's brochure board. Same pattern as
+    // property_plans: row carries metadata + storage_key, bytes live
+    // in file_storage. No SharePoint dependency — brochures are
+    // BGP-native. The "type" column drives the leasing/investment
+    // toggle on the property page; "archived" hides old versions
+    // until the team opens the Archive accordion.
+    `CREATE TABLE IF NOT EXISTS property_brochures (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       property_id TEXT NOT NULL,
+       type TEXT NOT NULL CHECK (type IN ('leasing', 'investment')),
+       original_name TEXT NOT NULL,
+       storage_key TEXT NOT NULL,
+       mime_type TEXT DEFAULT 'application/pdf',
+       size_bytes BIGINT,
+       page_count INT,
+       archived BOOLEAN DEFAULT false,
+       notes TEXT,
+       uploaded_by TEXT,
+       created_at TIMESTAMPTZ DEFAULT NOW(),
+       updated_at TIMESTAMPTZ DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_property_brochures_property ON property_brochures (property_id, type, archived)`,
+
     // Polygons drawn on a plan. unit_id (nullable) links to
     // leasing_schedule_units — that's where status / tenant / rent
     // come from at render time, so the plan is automatically a

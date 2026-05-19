@@ -1,13 +1,12 @@
-// Property brochures board — sits alongside the news panel as a
-// half-size board. Toggles between Leasing and Investment brochures,
-// thumbnail grid, click-to-pop-out full-screen preview, download, and
-// a collapsible Archive section for older versions. Source is the
-// property's SharePoint folder.
+// Property brochures board — half-size card on the property page.
+// Drag-and-drop or click Add to upload PDFs. Leasing / Investment
+// toggle picks which bucket the upload lands in. Click any thumbnail
+// to pop out a full-screen preview. Pencil opens the editor for
+// page-delete / logo overlay. Older versions live in the collapsible
+// Archive section.
 //
-// Editing: click the pencil on any brochure → opens the brochure
-// editor dialog where you can delete pages, reorder them, or cover
-// an old agent's logo with our own. Saves a new "(edited <date>).pdf"
-// alongside the original so the source brochure stays intact.
+// Storage: BGP file_storage table via /api/properties/:id/brochures
+// (same pattern as property_plans). No SharePoint dependency.
 
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -19,32 +18,32 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, Download, Maximize2, Pencil, Archive, ChevronDown, ChevronRight,
-  X, Loader2, Trash2, Upload, Plus,
+  Loader2, Trash2, Upload, Plus,
 } from "lucide-react";
 
 interface Brochure {
   id: string;
   name: string;
+  type: "leasing" | "investment";
   size: number;
-  webUrl: string;
-  downloadUrl: string | null;
-  thumbnailUrl: string | null;
-  lastModified: string | null;
-  type: "leasing" | "investment" | "unknown";
+  pageCount: number | null;
+  archived: boolean;
+  notes: string | null;
+  uploadedAt: string;
+  uploadedBy: string | null;
+  fileUrl: string;
+  downloadUrl: string;
 }
 
 interface BrochureResponse {
-  configured: boolean;
-  message?: string;
-  driveId?: string;
   leasing: Brochure[];
   investment: Brochure[];
-  unknown: Brochure[];
-  archived: { leasing: Brochure[]; investment: Brochure[]; unknown: Brochure[] };
-  total?: number;
+  archived: { leasing: Brochure[]; investment: Brochure[] };
+  total: number;
 }
 
 function fmtSize(bytes: number): string {
+  if (!bytes) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -77,18 +76,13 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     },
   });
 
-  // Upload mutation — POSTs a multipart form with the chosen file
-  // and the active tab as the brochure type. Server creates the
-  // Brochures/{Leasing|Investment} subfolder if missing.
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file);
       form.append("type", tab);
       const r = await fetch(`/api/properties/${propertyId}/brochures/upload`, {
-        method: "POST",
-        body: form,
-        credentials: "include",
+        method: "POST", body: form, credentials: "include",
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
@@ -96,25 +90,46 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
       }
       return r.json();
     },
-    onSuccess: (j) => {
-      toast({ title: "Brochure uploaded", description: `${j.name} — added to ${tab} brochures.` });
-      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] }),
     onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => {
+      const r = await fetch(`/api/properties/${propertyId}/brochures/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ archived }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] }),
+    onError: (e: any) => toast({ title: "Archive toggle failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/properties/${propertyId}/brochures/${id}`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] }),
+    onError: (e: any) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
   });
 
   const handleFiles = (files: FileList | File[]) => {
     const arr = Array.from(files).filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
     if (arr.length === 0) {
-      toast({ title: "Only PDFs supported", description: "Drop a PDF brochure or pick one with the file picker.", variant: "destructive" });
+      toast({ title: "PDFs only", description: "Drop a PDF brochure or use the file picker.", variant: "destructive" });
       return;
     }
-    // Upload sequentially so we don't hammer Graph with parallel
-    // uploadSession creates if the user drops 5 at once.
     (async () => {
       for (const f of arr) {
         try { await uploadMutation.mutateAsync(f); } catch { /* error toast already fired */ }
       }
+      toast({ title: `${arr.length} brochure${arr.length === 1 ? "" : "s"} uploaded` });
     })();
   };
 
@@ -137,29 +152,12 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
   };
 
   const renderBody = () => {
-    if (isLoading) return <Skeleton className="h-40 w-full" />;
+    if (isLoading) return <Skeleton className="h-32 w-full" />;
     if (isError) return <p className="text-xs text-rose-600 italic">Couldn't load brochures — refresh to retry.</p>;
-    if (!data?.configured) {
-      // Without a SharePoint folder there's nowhere to upload to. Keep
-      // the empty state tight (the card sits in a half-height slot)
-      // and point the user at the Set Up Folders flow in the property
-      // toolbar that wires sharepoint_folder_url.
-      return (
-        <div className="text-xs text-muted-foreground py-3 space-y-1.5">
-          <p>No SharePoint folder linked yet.</p>
-          <p className="text-[11px]">
-            Click <span className="font-medium text-foreground">Set Up Folders</span> at the top of the property, or paste the SharePoint URL into <span className="font-medium text-foreground">Link SharePoint Folder</span> in the right sidebar.
-          </p>
-        </div>
-      );
-    }
+    if (!data) return null;
 
     const active = tab === "leasing" ? data.leasing : data.investment;
     const archived = tab === "leasing" ? data.archived.leasing : data.archived.investment;
-    // "unknown" brochures (didn't classify clearly) get folded into
-    // whichever tab is active so they're never invisible.
-    const unknown = data.unknown.filter(_ => tab === "leasing");
-    const merged = [...active, ...unknown];
 
     return (
       <>
@@ -182,14 +180,22 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
           </button>
         </div>
 
-        {merged.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic py-4">
-            No {tab} brochures found in this property's SharePoint folder yet.
-          </p>
+        {active.length === 0 ? (
+          <div className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-md">
+            <Upload className="w-5 h-5 mx-auto mb-1 opacity-40" />
+            Drag a PDF here or click <span className="font-medium text-foreground">Add</span> above.
+          </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {merged.map(b => (
-              <BrochureTile key={b.id} brochure={b} onPreview={() => setPreviewing(b)} onEdit={() => setEditing(b)} />
+            {active.map(b => (
+              <BrochureTile
+                key={b.id}
+                brochure={b}
+                onPreview={() => setPreviewing(b)}
+                onEdit={() => setEditing(b)}
+                onArchive={() => archiveMutation.mutate({ id: b.id, archived: true })}
+                onDelete={() => { if (confirm(`Delete "${b.name}"? This cannot be undone.`)) deleteMutation.mutate(b.id); }}
+              />
             ))}
           </div>
         )}
@@ -208,7 +214,15 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
             {showArchive && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 opacity-75">
                 {archived.map(b => (
-                  <BrochureTile key={b.id} brochure={b} onPreview={() => setPreviewing(b)} onEdit={() => setEditing(b)} compact />
+                  <BrochureTile
+                    key={b.id}
+                    brochure={b}
+                    onPreview={() => setPreviewing(b)}
+                    onEdit={() => setEditing(b)}
+                    onArchive={() => archiveMutation.mutate({ id: b.id, archived: false })}
+                    onDelete={() => { if (confirm(`Delete "${b.name}"? This cannot be undone.`)) deleteMutation.mutate(b.id); }}
+                    unarchiveLabel
+                  />
                 ))}
               </div>
             )}
@@ -243,8 +257,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
                 onChange={(e) => { if (e.target.files) { handleFiles(e.target.files); e.target.value = ""; } }}
               />
               <Button
-                size="sm"
-                variant="ghost"
+                size="sm" variant="ghost"
                 className="h-6 text-[11px] gap-1 px-1.5"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploadMutation.isPending}
@@ -258,27 +271,20 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
           {renderBody()}
         </CardContent>
 
-        {/* Full-card drop overlay — only shows while a file is being
-            dragged over the card. Indicates which tab the drop will
-            land in so the user can switch first if needed. */}
         {isDragging && (
           <div className="absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-500 bg-blue-50/90 backdrop-blur-sm flex items-center justify-center pointer-events-none">
             <div className="text-center">
               <Upload className="w-8 h-8 mx-auto mb-1.5 text-blue-600" />
-              <p className="text-sm font-medium text-blue-900">Drop PDF to add as <span className="capitalize">{tab}</span> brochure</p>
-              <p className="text-[10px] text-blue-700 mt-0.5">Lands in this property's SharePoint folder under /Brochures/{tab === "leasing" ? "Leasing" : "Investment"}/</p>
+              <p className="text-sm font-medium text-blue-900">Drop PDF as <span className="capitalize">{tab}</span> brochure</p>
             </div>
           </div>
         )}
       </Card>
 
-      {previewing && (
-        <BrochurePreviewDialog brochure={previewing} onClose={() => setPreviewing(null)} />
-      )}
-      {editing && data?.driveId && (
+      {previewing && <BrochurePreviewDialog brochure={previewing} onClose={() => setPreviewing(null)} />}
+      {editing && (
         <BrochureEditDialog
           brochure={editing}
-          driveId={data.driveId}
           propertyId={propertyId}
           onClose={() => setEditing(null)}
         />
@@ -288,26 +294,29 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
 }
 
 function BrochureTile({
-  brochure, onPreview, onEdit, compact = false,
-}: { brochure: Brochure; onPreview: () => void; onEdit: () => void; compact?: boolean }) {
+  brochure, onPreview, onEdit, onArchive, onDelete, unarchiveLabel,
+}: {
+  brochure: Brochure;
+  onPreview: () => void;
+  onEdit: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  unarchiveLabel?: boolean;
+}) {
   return (
     <div className="group border rounded-md overflow-hidden bg-white hover:border-blue-300 transition-colors" data-testid={`brochure-tile-${brochure.id}`}>
       <button
         onClick={onPreview}
-        className={`block w-full bg-muted/40 ${compact ? "aspect-[3/4]" : "aspect-[3/4]"} relative overflow-hidden`}
+        className="block w-full bg-muted/40 aspect-[3/4] relative overflow-hidden"
       >
-        {brochure.thumbnailUrl ? (
-          <img
-            src={brochure.thumbnailUrl}
-            alt={brochure.name}
-            className="w-full h-full object-cover"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-            <FileText className="w-10 h-10 opacity-30" />
-          </div>
-        )}
+        {/* PDF first-page preview via iframe — works for any inline
+            PDF, no thumbnail generation needed. Browser handles
+            rendering; for PDFs the first page shows. */}
+        <iframe
+          src={`${brochure.fileUrl}#toolbar=0&navpanes=0&view=FitH`}
+          className="w-full h-full border-0 pointer-events-none"
+          title={brochure.name}
+        />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
           <Maximize2 className="w-6 h-6 text-white" />
         </div>
@@ -315,27 +324,40 @@ function BrochureTile({
       <div className="p-1.5">
         <p className="text-[10px] font-medium truncate" title={brochure.name}>{brochure.name}</p>
         <div className="flex items-center justify-between mt-0.5">
-          <span className="text-[9px] text-muted-foreground">{fmtDate(brochure.lastModified)} · {fmtSize(brochure.size)}</span>
+          <span className="text-[9px] text-muted-foreground">
+            {fmtDate(brochure.uploadedAt)} · {fmtSize(brochure.size)}
+            {brochure.pageCount ? ` · ${brochure.pageCount}p` : ""}
+          </span>
           <div className="flex gap-0.5">
             <button
               onClick={onEdit}
               className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
               title="Edit (delete pages, cover logos)"
-              data-testid={`brochure-edit-${brochure.id}`}
             >
               <Pencil className="w-2.5 h-2.5" />
             </button>
-            {brochure.downloadUrl && (
-              <a
-                href={brochure.downloadUrl}
-                download={brochure.name}
-                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                title="Download"
-                data-testid={`brochure-download-${brochure.id}`}
-              >
-                <Download className="w-2.5 h-2.5" />
-              </a>
-            )}
+            <a
+              href={brochure.downloadUrl}
+              download={brochure.name}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+              title="Download"
+            >
+              <Download className="w-2.5 h-2.5" />
+            </a>
+            <button
+              onClick={onArchive}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+              title={unarchiveLabel ? "Restore from archive" : "Archive"}
+            >
+              <Archive className="w-2.5 h-2.5" />
+            </button>
+            <button
+              onClick={onDelete}
+              className="p-1 rounded hover:bg-rose-50 text-rose-400 hover:text-rose-600"
+              title="Delete permanently"
+            >
+              <Trash2 className="w-2.5 h-2.5" />
+            </button>
           </div>
         </div>
       </div>
@@ -346,29 +368,25 @@ function BrochureTile({
 function BrochurePreviewDialog({ brochure, onClose }: { brochure: Brochure; onClose: () => void }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-6xl h-[90vh] p-0">
+      <DialogContent className="max-w-6xl h-[90vh] p-0 flex flex-col">
         <DialogHeader className="px-4 pt-3 pb-2 border-b">
           <DialogTitle className="text-sm flex items-center gap-2">
             <FileText className="w-4 h-4 text-muted-foreground" />
-            {brochure.name}
-            <span className="text-[10px] text-muted-foreground font-normal ml-auto">{fmtSize(brochure.size)} · {fmtDate(brochure.lastModified)}</span>
-            {brochure.downloadUrl && (
-              <a
-                href={brochure.downloadUrl}
-                download={brochure.name}
-                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
-              >
-                <Download className="w-3.5 h-3.5" /> Download
-              </a>
-            )}
+            <span className="truncate">{brochure.name}</span>
+            <span className="text-[10px] text-muted-foreground font-normal ml-auto whitespace-nowrap">
+              {fmtSize(brochure.size)} · {fmtDate(brochure.uploadedAt)}
+            </span>
+            <a
+              href={brochure.downloadUrl}
+              download={brochure.name}
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+            >
+              <Download className="w-3.5 h-3.5" /> Download
+            </a>
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-hidden">
-          <iframe
-            src={brochure.webUrl}
-            className="w-full h-full border-0"
-            title={brochure.name}
-          />
+          <iframe src={brochure.fileUrl} className="w-full h-full border-0" title={brochure.name} />
         </div>
       </DialogContent>
     </Dialog>
@@ -376,8 +394,8 @@ function BrochurePreviewDialog({ brochure, onClose }: { brochure: Brochure; onCl
 }
 
 function BrochureEditDialog({
-  brochure, driveId, propertyId, onClose,
-}: { brochure: Brochure; driveId: string; propertyId: string; onClose: () => void }) {
+  brochure, propertyId, onClose,
+}: { brochure: Brochure; propertyId: string; onClose: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [deletePagesInput, setDeletePagesInput] = useState("");
@@ -391,7 +409,7 @@ function BrochureEditDialog({
         .split(/[,\s]+/)
         .map(s => parseInt(s.trim(), 10))
         .filter(n => Number.isFinite(n) && n > 0);
-      const body: any = { driveId, itemId: brochure.id };
+      const body: any = {};
       if (deletePages.length > 0) body.deletePages = deletePages;
       if (addBgpLogo) {
         const page = parseInt(logoPageInput, 10) || 1;
@@ -404,7 +422,7 @@ function BrochureEditDialog({
       if (!body.deletePages && !body.overlays) {
         throw new Error("Nothing to do — pick at least one action.");
       }
-      const r = await fetch(`/api/properties/${propertyId}/brochures/edit`, {
+      const r = await fetch(`/api/properties/${propertyId}/brochures/${brochure.id}/edit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -436,11 +454,13 @@ function BrochureEditDialog({
             Edit brochure
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Saves a new "(edited &lt;date&gt;).pdf" alongside the original — the source brochure stays intact.
+            Saves a new "(edited &lt;date&gt;).pdf" alongside the original — the source stays intact.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm">
-          <p className="text-xs text-muted-foreground border-b pb-2 truncate" title={brochure.name}>{brochure.name}</p>
+          <p className="text-xs text-muted-foreground border-b pb-2 truncate" title={brochure.name}>
+            {brochure.name}{brochure.pageCount ? ` (${brochure.pageCount} pages)` : ""}
+          </p>
 
           <div className="space-y-1">
             <label className="text-xs font-medium flex items-center gap-1.5">
@@ -452,10 +472,9 @@ function BrochureEditDialog({
               onChange={(e) => setDeletePagesInput(e.target.value)}
               placeholder="e.g. 4, 5, 9-10  (1-indexed)"
               className="w-full px-2 py-1 text-xs border rounded"
-              data-testid="brochure-delete-pages-input"
             />
             <p className="text-[10px] text-muted-foreground">
-              Comma-separated page numbers to remove. Open the brochure in the preview pane to count pages.
+              Comma-separated page numbers to remove. Open the brochure to count pages.
             </p>
           </div>
 
@@ -467,7 +486,7 @@ function BrochureEditDialog({
                 onChange={(e) => setAddBgpLogo(e.target.checked)}
                 className="w-3 h-3"
               />
-              Cover an agent's logo with the BGP wordmark
+              Cover a logo with the BGP wordmark
             </label>
             {addBgpLogo && (
               <div className="space-y-1.5 pl-5 pt-1">
@@ -478,11 +497,11 @@ function BrochureEditDialog({
                   </label>
                   <div></div>
                   <label className="text-[10px] text-muted-foreground">
-                    X (from left, pts)
+                    X (pts from left)
                     <input type="number" value={logoBoxInput.x} onChange={(e) => setLogoBoxInput(b => ({ ...b, x: e.target.value }))} className="w-full px-1.5 py-0.5 text-xs border rounded mt-0.5" />
                   </label>
                   <label className="text-[10px] text-muted-foreground">
-                    Y (from bottom, pts)
+                    Y (pts from bottom)
                     <input type="number" value={logoBoxInput.y} onChange={(e) => setLogoBoxInput(b => ({ ...b, y: e.target.value }))} className="w-full px-1.5 py-0.5 text-xs border rounded mt-0.5" />
                   </label>
                   <label className="text-[10px] text-muted-foreground">
@@ -495,7 +514,7 @@ function BrochureEditDialog({
                   </label>
                 </div>
                 <p className="text-[10px] text-muted-foreground italic">
-                  A 4:3 letter page is ~595×842 points. The box is drawn from the bottom-left of the page. Covers the old logo with white + drops the BGP wordmark on top.
+                  An A4 portrait page is ~595×842 points. Origin is bottom-left. Covers the area with a white box and drops the BGP wordmark centred on top.
                 </p>
               </div>
             )}
