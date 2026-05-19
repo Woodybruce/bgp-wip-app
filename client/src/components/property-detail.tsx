@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
+import { PropertyBrochuresPanel } from "@/components/property-brochures-panel";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -589,21 +590,27 @@ export function PropertyDetail({ id }: { id: string }) {
                 </CardContent>
               </Card>
 
-              {/* Property news preview — newsroom mode of
-                  PropertyNewsPanel sits in the right column. The full
-                  Property News card lower down stays as the detail
-                  view; this slot is for the latest 3-4 headlines. */}
-              <Card>
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-xs font-semibold">Property News</span>
-                  </div>
-                  <ErrorBoundary compact name="Property news (top-strip preview)">
-                    <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
-                  </ErrorBoundary>
-                </CardContent>
-              </Card>
+              {/* Property news + Brochures stacked in the right
+                  column — each half the height of the property info
+                  card on the left. Brochures pulls from the property's
+                  SharePoint folder, leasing/investment toggle, click
+                  to pop out full screen. */}
+              <div className="space-y-3">
+                <Card>
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-semibold">Property News</span>
+                    </div>
+                    <ErrorBoundary compact name="Property news (top-strip preview)">
+                      <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+                    </ErrorBoundary>
+                  </CardContent>
+                </Card>
+                <ErrorBoundary compact name="Property brochures">
+                  <PropertyBrochuresPanel propertyId={property.id} />
+                </ErrorBoundary>
+              </div>
             </div>
 
             {/* Focus + Risk — two compact cards side-by-side under

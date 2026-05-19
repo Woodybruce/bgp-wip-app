@@ -2117,6 +2117,7 @@ import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
 import propertyAssetBriefRouter from "./property-asset-brief";
+import { registerPropertyBrochureRoutes } from "./property-brochures";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import clientTeamsRouter from "./client-teams";
@@ -2546,6 +2547,7 @@ app.use("/api/branding/assets", express.static(
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
   registerPropertyResolverRoutes(app);
+  registerPropertyBrochureRoutes(app);
   registerPlaMattersRoutes(app);
   registerPlaValuationRoutes(app);
   registerComparablesScheduleRoute(app);
