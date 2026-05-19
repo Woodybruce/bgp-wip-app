@@ -166,14 +166,19 @@ export function registerPropertyBrochureRoutes(app: Express) {
       const file = await getFile(r.storage_key);
       if (!file) return res.status(404).json({ error: "Brochure file missing from storage" });
 
-      res.setHeader("Content-Type", r.mime_type || "application/pdf");
+      // getFile() returns { data, contentType, originalName, size } —
+      // the bytes live on `.data`, not `.buffer`. Sending file.buffer
+      // (undefined) produced an empty response which the browser PDF
+      // viewer rendered as "Failed to load PDF document".
+      res.setHeader("Content-Type", file.contentType || r.mime_type || "application/pdf");
+      res.setHeader("Content-Length", String(file.data.length));
       if (req.query.download) {
         res.setHeader("Content-Disposition", `attachment; filename="${r.original_name.replace(/"/g, "")}"`);
       } else {
         // Inline preview for the iframe.
         res.setHeader("Content-Disposition", `inline; filename="${r.original_name.replace(/"/g, "")}"`);
       }
-      res.send(file.buffer);
+      res.send(file.data);
     } catch (e: any) {
       console.error("[property-brochures file]", e?.message);
       res.status(500).json({ error: e?.message });
@@ -246,7 +251,8 @@ export function registerPropertyBrochureRoutes(app: Express) {
       };
 
       const { PDFDocument, rgb } = await import("pdf-lib");
-      const srcPdf = await PDFDocument.load(file.buffer);
+      // getFile returns { data, contentType, ... } — bytes are on `.data`.
+      const srcPdf = await PDFDocument.load(file.data);
       const out = await PDFDocument.create();
 
       const total = srcPdf.getPageCount();
