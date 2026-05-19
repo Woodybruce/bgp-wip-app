@@ -326,22 +326,28 @@ function BrochureTile({
       className={`group border rounded-md overflow-hidden bg-white hover:border-blue-300 transition-colors ${hero ? "h-full flex flex-col" : ""}`}
       data-testid={`brochure-tile-${brochure.id}`}
     >
-      <button
-        onClick={onPreview}
-        className={`block w-full bg-muted/40 relative overflow-hidden ${hero ? "flex-1 min-h-0" : "aspect-[3/4]"}`}
-      >
-        {/* PDF first-page preview via iframe — works for any inline
-            PDF, no thumbnail generation needed. Browser handles
-            rendering; for PDFs the first page shows. */}
+      {/* Inline PDF preview. The iframe owns its own pointer/scroll
+          events so the user can scroll through the brochure's pages
+          right in the tile — previously the iframe was inside a
+          <button onClick={preview}> + pointer-events-none, which meant
+          any attempt to scroll/click instead popped the modal. Now the
+          modal opens only via the Maximize button in the top-right. */}
+      <div className={`relative bg-muted/40 overflow-hidden ${hero ? "flex-1 min-h-0" : "aspect-[3/4]"}`}>
         <iframe
           src={`${brochure.fileUrl}#toolbar=0&navpanes=0&view=FitH`}
-          className="w-full h-full border-0 pointer-events-none"
+          className="w-full h-full border-0"
           title={brochure.name}
         />
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-          <Maximize2 className="w-6 h-6 text-white" />
-        </div>
-      </button>
+        <button
+          type="button"
+          onClick={onPreview}
+          className="absolute top-1.5 right-1.5 p-1.5 rounded-md bg-black/55 text-white opacity-0 group-hover:opacity-100 hover:bg-black/75 transition-opacity"
+          title="Open full preview"
+          data-testid={`brochure-tile-expand-${brochure.id}`}
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
       <div className="p-1.5">
         <p className="text-[10px] font-medium truncate" title={brochure.name}>{brochure.name}</p>
         <div className="flex items-center justify-between mt-0.5">
