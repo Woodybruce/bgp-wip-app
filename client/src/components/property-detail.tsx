@@ -656,11 +656,11 @@ export function PropertyDetail({ id }: { id: string }) {
                   </CardContent>
                 </Card>
                 <ErrorBoundary compact name="Property brochures">
-                  {/* Brochures stretches to fill any remaining height
-                      in the right column — keeps the bottom edge flush
-                      with the Asset Owner + Weekly Focus stack on the
-                      left so the board feels balanced. */}
-                  <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col [&>div>div]:flex-1">
+                  {/* Brochures stretches to fill remaining column
+                      height. The panel itself is h-full + flex-col
+                      internally so the thumbnail expands; here we
+                      just give it a flex slot. */}
+                  <div className="flex-1 min-h-[280px]">
                     <PropertyBrochuresPanel propertyId={property.id} />
                   </div>
                 </ErrorBoundary>
@@ -834,7 +834,7 @@ export function PropertyDetail({ id }: { id: string }) {
             against the global ChatBGP dock now comes from the chat
             panel itself (md:ml-3), so any page that has its own
             right-edge content benefits — not just this one. */}
-        <div className="w-[320px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden xl:flex">
+        <div className="w-[300px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden lg:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">

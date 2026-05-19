@@ -159,9 +159,15 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     const active = tab === "leasing" ? data.leasing : data.investment;
     const archived = tab === "leasing" ? data.archived.leasing : data.archived.investment;
 
+    // Single-tile layout when only one brochure: render it big so it
+    // fills the column height like a hero preview instead of sitting as
+    // a small 3:4 thumbnail with empty space below. Multi-tile keeps
+    // the grid + aspect-ratio pattern so 6 brochures stay legible.
+    const isHero = active.length === 1;
+
     return (
       <>
-        <div className="flex items-center gap-1.5 mb-2">
+        <div className="flex items-center gap-1.5 mb-2 shrink-0">
           <button
             onClick={() => setTab("leasing")}
             className={`px-2 py-1 rounded text-[11px] font-medium ${tab === "leasing" ? "bg-blue-600 text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
@@ -181,9 +187,20 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         </div>
 
         {active.length === 0 ? (
-          <div className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-md">
-            <Upload className="w-5 h-5 mx-auto mb-1 opacity-40" />
+          <div className="flex-1 flex flex-col items-center justify-center text-xs text-muted-foreground py-8 text-center border border-dashed rounded-md min-h-[180px]">
+            <Upload className="w-5 h-5 mb-1 opacity-40" />
             Drag a PDF here or click <span className="font-medium text-foreground">Add</span> above.
+          </div>
+        ) : isHero ? (
+          <div className="flex-1 min-h-0">
+            <BrochureTile
+              brochure={active[0]}
+              hero
+              onPreview={() => setPreviewing(active[0])}
+              onEdit={() => setEditing(active[0])}
+              onArchive={() => archiveMutation.mutate({ id: active[0].id, archived: true })}
+              onDelete={() => { if (confirm(`Delete "${active[0].name}"? This cannot be undone.`)) deleteMutation.mutate(active[0].id); }}
+            />
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -240,9 +257,9 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
         onDrop={onDrop}
-        className="relative"
+        className="relative h-full flex flex-col"
       >
-        <CardContent className="p-3">
+        <CardContent className="p-3 flex-1 flex flex-col min-h-0">
           <div className="flex items-center gap-2 mb-2">
             <FileText className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-xs font-semibold">Brochures</span>
@@ -294,7 +311,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
 }
 
 function BrochureTile({
-  brochure, onPreview, onEdit, onArchive, onDelete, unarchiveLabel,
+  brochure, onPreview, onEdit, onArchive, onDelete, unarchiveLabel, hero,
 }: {
   brochure: Brochure;
   onPreview: () => void;
@@ -302,12 +319,16 @@ function BrochureTile({
   onArchive: () => void;
   onDelete: () => void;
   unarchiveLabel?: boolean;
+  hero?: boolean;
 }) {
   return (
-    <div className="group border rounded-md overflow-hidden bg-white hover:border-blue-300 transition-colors" data-testid={`brochure-tile-${brochure.id}`}>
+    <div
+      className={`group border rounded-md overflow-hidden bg-white hover:border-blue-300 transition-colors ${hero ? "h-full flex flex-col" : ""}`}
+      data-testid={`brochure-tile-${brochure.id}`}
+    >
       <button
         onClick={onPreview}
-        className="block w-full bg-muted/40 aspect-[3/4] relative overflow-hidden"
+        className={`block w-full bg-muted/40 relative overflow-hidden ${hero ? "flex-1 min-h-0" : "aspect-[3/4]"}`}
       >
         {/* PDF first-page preview via iframe — works for any inline
             PDF, no thumbnail generation needed. Browser handles
