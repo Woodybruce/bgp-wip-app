@@ -357,6 +357,19 @@ export interface ReadFileResult {
 export function readFile(args: { bytes: Buffer; filename: string }): ReadFileResult {
   const { bytes, filename } = args;
   const lower = filename.toLowerCase();
+  // Reject image binaries before they hit Claude — the data-import path
+  // is for structured documents (Excel / PDF / CSV / text). Images
+  // belong in Image Studio. Sniff both extension and magic bytes so a
+  // rename can't slip through.
+  const magic = bytes.length >= 8 ? bytes.subarray(0, 8) : Buffer.alloc(0);
+  const isPng = magic.length >= 8 && magic[0] === 0x89 && magic[1] === 0x50 && magic[2] === 0x4e && magic[3] === 0x47;
+  const isJpeg = magic.length >= 3 && magic[0] === 0xff && magic[1] === 0xd8 && magic[2] === 0xff;
+  const isGif = magic.length >= 6 && magic[0] === 0x47 && magic[1] === 0x49 && magic[2] === 0x46;
+  const isWebp = magic.length >= 4 && magic[0] === 0x52 && magic[1] === 0x49 && magic[2] === 0x46 && magic[3] === 0x46;
+  const isImageExt = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|svg)$/i.test(lower);
+  if (isImageExt || isPng || isJpeg || isGif || isWebp) {
+    throw new Error("This looks like an image, not a data file. Upload screenshots via Image Studio. The data importer is for Excel / PDF / CSV / text.");
+  }
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".xlsm")) {
     const wb = XLSX.read(bytes, { type: "buffer", cellDates: true });
     const sheetTexts = wb.SheetNames.map((sheetName) => ({
@@ -373,6 +386,31 @@ export function readFile(args: { bytes: Buffer; filename: string }): ReadFileRes
     return { kind: "pdf", text: "", pdfBase64: bytes.toString("base64"), filename };
   }
   return { kind: "text", text: bytes.toString("utf-8"), filename };
+}
+
+// Extract the first balanced top-level JSON object from a Claude
+// response, ignoring any markdown fences or trailing commentary the
+// model adds after the JSON. Returns null if no balanced { ... } is
+// found. Quote-aware so braces inside strings don't break the count.
+function extractFirstJsonObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\" && inStr) { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -423,12 +461,16 @@ async function callClaudeOnce(args: {
   });
   const textBlock = resp.content.find((b: any) => b.type === "text") as any;
   const raw = textBlock?.text?.trim() || "";
-  const cleaned = raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
+  // Strip markdown fences first, then balanced-brace extract so any
+  // commentary Claude adds after the JSON ("```\nThe file appears…")
+  // doesn't break parsing.
+  const fenceStripped = raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
+  const candidate = extractFirstJsonObject(fenceStripped) ?? fenceStripped;
   try {
-    const parsed = JSON.parse(cleaned);
+    const parsed = JSON.parse(candidate);
     return Array.isArray(parsed?.records) ? parsed.records : [];
   } catch (err: any) {
-    throw new Error(`Claude returned non-JSON: ${err?.message}. First 200 chars: ${cleaned.slice(0, 200)}`);
+    throw new Error(`Claude returned non-JSON: ${err?.message}. First 200 chars: ${candidate.slice(0, 200)}`);
   }
 }
 
@@ -471,8 +513,9 @@ Hints:
     messages: [{ role: "user", content: userContent }],
   });
   const textBlock = resp.content.find((b: any) => b.type === "text") as any;
-  const cleaned = (textBlock?.text || "").trim().replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
-  const parsed = JSON.parse(cleaned);
+  const fenceStripped = (textBlock?.text || "").trim().replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
+  const candidate = extractFirstJsonObject(fenceStripped) ?? fenceStripped;
+  const parsed = JSON.parse(candidate);
   return {
     target: parsed.target,
     confidence: parsed.confidence,
