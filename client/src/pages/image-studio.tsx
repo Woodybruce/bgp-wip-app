@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useSearch } from "wouter";
+import { useSearch, Link as WouterLink } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ImageStudioImage } from "@shared/schema";
@@ -384,10 +384,36 @@ export default function ImageStudio() {
     onError: (e: Error) => toast({ title: "Assign Failed", description: e.message, variant: "destructive" }),
   });
 
-  // Properties list for the assign dialog
+  // Properties list for the assign dialog. Also feeds the lookup maps
+  // below so image tiles can render their CRM link as a clickable chip
+  // pointing at the property page, not just a passive address string.
   const { data: properties = [] } = useQuery<any[]>({
     queryKey: ["/api/projects"],
   });
+
+  // Brands list — needed to turn an image's brand_name (free text) into
+  // a clickable link to the brand profile. Keyed by lowercased name so
+  // "BLUEWATER" / "bluewater" / "Bluewater" all resolve.
+  const { data: crmCompanies = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/companies"],
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const propertyLookup = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>();
+    for (const p of properties) {
+      if (p?.id) m.set(p.id, { id: p.id, name: p.name || p.address || "Property" });
+    }
+    return m;
+  }, [properties]);
+
+  const brandLookup = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>();
+    for (const c of crmCompanies) {
+      if (c?.id && c?.name) m.set(c.name.toLowerCase().trim(), { id: c.id, name: c.name });
+    }
+    return m;
+  }, [crmCompanies]);
 
   // Collections queries
   const { data: collections = [], isLoading: collectionsLoading } = useQuery<any[]>({
@@ -1044,6 +1070,7 @@ export default function ImageStudio() {
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
                       aiTagging={aiTagMutation.isPending}
+                      crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                     />
                   ))}
                 </div>
@@ -1281,6 +1308,7 @@ export default function ImageStudio() {
                             aiTagging={aiTagMutation.isPending}
                             selectMode={false}
                             selected={false}
+                            crmLinks={resolveCrmLinks(imageObj as any, propertyLookup, brandLookup)}
                           />
                         </div>
                       );
@@ -1428,6 +1456,7 @@ export default function ImageStudio() {
                       selectMode={selectMode}
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
+                      crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                     />
                   ))}
                 </div>
@@ -1478,6 +1507,7 @@ export default function ImageStudio() {
                     selectMode={selectMode}
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
+                    crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                   />
                 ))}
               </div>
@@ -1505,6 +1535,7 @@ export default function ImageStudio() {
                     selectMode={selectMode}
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
+                    crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                   />
                 ))}
               </div>
@@ -2361,6 +2392,59 @@ export default function ImageStudio() {
   );
 }
 
+// Resolve the CRM rows this image is linked to. Returns an array of
+// {label, href} for clickable chips — property first (strong signal:
+// the image was directly assigned), brand second (resolved by name
+// from crm_companies). Used by both the grid card and list row so
+// link rendering stays consistent.
+function resolveCrmLinks(
+  image: ImageStudioImage,
+  propertyLookup: Map<string, { id: string; name: string }>,
+  brandLookup: Map<string, { id: string; name: string }>,
+): Array<{ kind: "property" | "brand"; label: string; href: string }> {
+  const out: Array<{ kind: "property" | "brand"; label: string; href: string }> = [];
+  const propertyId = (image as any).propertyId || (image as any).property_id;
+  if (propertyId) {
+    const p = propertyLookup.get(propertyId);
+    if (p) out.push({ kind: "property", label: p.name, href: `/properties/${p.id}` });
+    else if ((image as any).address) out.push({ kind: "property", label: (image as any).address, href: `/properties/${propertyId}` });
+  }
+  const brandName = (image as any).brandName || (image as any).brand_name;
+  if (brandName) {
+    const b = brandLookup.get(String(brandName).toLowerCase().trim());
+    if (b) out.push({ kind: "brand", label: b.name, href: `/companies/${b.id}` });
+  }
+  return out;
+}
+
+function CrmLinkChip({
+  link, dark = false, onClick,
+}: {
+  link: { kind: "property" | "brand"; label: string; href: string };
+  dark?: boolean;
+  onClick?: (e: React.MouseEvent) => void;
+}) {
+  const isProp = link.kind === "property";
+  // Property chips use building icon + amber tint, brand chips use tag + emerald.
+  // On the dark hover overlay we use translucent backgrounds; on the row /
+  // light card we use bright pill colours so the link reads as clickable.
+  const cls = dark
+    ? `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-500/85 text-white hover:bg-amber-500" : "bg-emerald-600/85 text-white hover:bg-emerald-600"}`
+    : `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100" : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"}`;
+  return (
+    <WouterLink
+      href={link.href}
+      onClick={(e) => { e.stopPropagation(); onClick?.(e); }}
+      className={cls}
+      data-testid={`crm-link-${link.kind}`}
+      title={`Open ${link.kind === "property" ? "property page" : "brand profile"}`}
+    >
+      {isProp ? <Building2 className="w-2.5 h-2.5 shrink-0" /> : <Tag className="w-2.5 h-2.5 shrink-0" />}
+      <span className="truncate max-w-[140px]">{link.label}</span>
+    </WouterLink>
+  );
+}
+
 function ImageCard({
   image,
   onView,
@@ -2372,6 +2456,7 @@ function ImageCard({
   selectMode = false,
   selected = false,
   onToggleSelect,
+  crmLinks = [],
 }: {
   image: ImageStudioImage;
   onView: () => void;
@@ -2383,6 +2468,7 @@ function ImageCard({
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
 }) {
   return (
     <div
@@ -2420,12 +2506,23 @@ function ImageCard({
         />
       </div>
       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+      {/* Always-visible CRM link chips. Property / brand the image is
+          linked to render as clickable amber / emerald pills in the
+          top-left corner so the link is obvious without hovering. The
+          stop-propagation on the chip's click means navigating doesn't
+          also trigger the tile's onView. */}
+      {crmLinks.length > 0 && (
+        <div className="absolute top-1.5 left-1.5 z-10 flex flex-col items-start gap-1 max-w-[80%]">
+          {crmLinks.map((l, i) => (
+            <CrmLinkChip key={i} link={l} dark />
+          ))}
+        </div>
+      )}
       <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <p className="text-white text-xs font-medium truncate">{(image as any).brandName || image.fileName}</p>
         <div className="flex items-center gap-1 mt-1 flex-wrap">
           <Badge variant="secondary" className="text-[10px] h-4 px-1">{image.category}</Badge>
           {image.area && <Badge variant="outline" className="text-[10px] h-4 px-1 text-white border-white/30">{image.area}</Badge>}
-          {(image as any).address && <Badge variant="outline" className="text-[10px] h-4 px-1 text-white/70 border-white/20 truncate max-w-[120px]">{(image as any).address}</Badge>}
         </div>
       </div>
       <div className="absolute top-1 left-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex justify-end gap-0.5 flex-wrap">
@@ -2459,6 +2556,7 @@ function ImageListRow({
   selectMode = false,
   selected = false,
   onToggleSelect,
+  crmLinks = [],
 }: {
   image: ImageStudioImage;
   onView: () => void;
@@ -2469,6 +2567,7 @@ function ImageListRow({
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
 }) {
   return (
     <div
@@ -2498,9 +2597,13 @@ function ImageListRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{(image as any).brandName || image.fileName}</p>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+          {/* CRM links first so the relationship is the first thing
+              the eye lands on. Clicking opens the property page or
+              brand profile — the row's own click handler is bypassed
+              by CrmLinkChip's stopPropagation. */}
+          {crmLinks.map((l, i) => <CrmLinkChip key={i} link={l} />)}
           <Badge variant="secondary" className="text-[10px] h-4 px-1">{image.category}</Badge>
           {image.area && <Badge variant="outline" className="text-[10px] h-4 px-1">{image.area}</Badge>}
-          {(image as any).address && <Badge variant="outline" className="text-[10px] h-4 px-1 truncate max-w-[150px]">{(image as any).address}</Badge>}
           {image.source && image.source !== "upload" && (
             <Badge variant="outline" className="text-[10px] h-4 px-1">{image.source}</Badge>
           )}
