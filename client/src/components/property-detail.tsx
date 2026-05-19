@@ -637,11 +637,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </ErrorBoundary>
               </div>
 
-              {/* Property news + Brochures stacked in the right
-                  column — each half the height of the property info
-                  card on the left. Brochures pulls from the property's
-                  SharePoint folder, leasing/investment toggle, click
-                  to pop out full screen. */}
+              {/* Property news sits in the right column alongside the
+                  info card. Brochures moved out below the row so the
+                  carousel can span the full board width. */}
               <div className="space-y-3">
                 <Card>
                   <CardContent className="p-3">
@@ -654,11 +652,15 @@ export function PropertyDetail({ id }: { id: string }) {
                     </ErrorBoundary>
                   </CardContent>
                 </Card>
-                <ErrorBoundary compact name="Property brochures">
-                  <PropertyBrochuresPanel propertyId={property.id} />
-                </ErrorBoundary>
               </div>
             </div>
+
+            {/* Brochure board — full width under the property info /
+                news row so the leasing/investment carousel has room
+                to breathe rather than living in the 1/3 right column. */}
+            <ErrorBoundary compact name="Property brochures">
+              <PropertyBrochuresPanel propertyId={property.id} />
+            </ErrorBoundary>
 
             {/* Risk + Brand Gap — two compact cards side-by-side
                 under the top strip. Weekly Focus moved into the left
