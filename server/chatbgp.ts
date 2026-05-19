@@ -19,6 +19,41 @@ const CHATBGP_MODEL = "claude-opus-4-7";        // Main chat: Opus 4.7 (latest)
 const CHATBGP_OPUS_MODEL = "claude-opus-4-7";   // Same
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
 
+// Resolve a list of chat-media filenames into Graph fileAttachment payloads
+// (base64 + contentType + filename). Each filename is expected to already
+// exist in chat-media storage — anything we can't find is dropped with a
+// warning rather than failing the whole email send. Output is consumed by
+// sendFromSharedMailbox / replyToSharedMailboxMessage which forward it
+// to /me/sendMail via Graph.
+async function resolveChatMediaAttachments(
+  filenames: unknown,
+): Promise<Array<{ name: string; contentType: string; contentBytes: string }>> {
+  if (!Array.isArray(filenames) || filenames.length === 0) return [];
+  const { getFile } = await import("./file-storage");
+  const out: Array<{ name: string; contentType: string; contentBytes: string }> = [];
+  for (const raw of filenames) {
+    if (typeof raw !== "string" || !raw) continue;
+    // Accept either a bare filename or a full /api/chat-media/<filename> URL.
+    const filename = raw.split("/").pop()!.split("?")[0];
+    if (!filename || filename.includes("..") || filename.includes("/")) continue;
+    try {
+      const file = await getFile(`chat-media/${filename}`);
+      if (!file) {
+        console.warn(`[send_email] chat-media attachment not found: ${filename}`);
+        continue;
+      }
+      out.push({
+        name: file.originalName || filename,
+        contentType: file.contentType || "application/octet-stream",
+        contentBytes: file.data.toString("base64"),
+      });
+    } catch (e: any) {
+      console.warn(`[send_email] failed to load attachment ${filename}:`, e?.message);
+    }
+  }
+  return out;
+}
+
 function sanitiseForPdf(text: string): string {
   const emojiMap: Record<string, string> = {
     "\u{1F4A1}": "\u2737 ",  "\u{1F4BB}": "",  "\u{1F4F1}": "",
@@ -2230,14 +2265,19 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "send_email",
-      description: "Send a NEW email from the BGP shared mailbox (chatbgp@brucegillinghampollard.com). Use ONLY for brand new emails, NOT for replying to existing threads. For replies, use reply_email instead to preserve email threading.",
+      description: "Send a NEW email from the BGP shared mailbox (chatbgp@brucegillinghampollard.com). Use ONLY for brand new emails, NOT for replying to existing threads. For replies, use reply_email instead to preserve email threading. **When emailing a file you just generated (PDF / Word / Excel / PPTX), pass the chat-media filename(s) in `chatMediaAttachments` so the file is attached as a real binary — never just paste the /api/chat-media/ URL into the body, those links require auth and break for the recipient.**",
       parameters: {
         type: "object",
         properties: {
           to: { type: "string", description: "Recipient email address" },
           subject: { type: "string", description: "Email subject line" },
-          body: { type: "string", description: "Email body (HTML supported)" },
+          body: { type: "string", description: "Email body (HTML supported). When attaching files, do NOT also put /api/chat-media/ links to the same files in the body — the attachment is the file." },
           cc: { type: "string", description: "CC email address (optional)" },
+          chatMediaAttachments: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional. Array of chat-media filenames (e.g. ['1779162931260-fafba8ed4b186427-The_Broadway__Wimbledon___Why_Buy.pdf']). Each becomes a real binary attachment on the email. Use the filename portion from any /api/chat-media/<filename> URL you previously generated via generate_word, generate_pptx, export_to_excel, generate_claude_designed_pdf, etc.",
+          },
         },
         required: ["to", "subject", "body"],
       },
@@ -2248,13 +2288,18 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "reply_email",
-      description: "Reply to an existing email thread in the BGP shared mailbox. Use this INSTEAD of send_email when responding to an email the user received. This preserves the email thread/conversation. You MUST provide the messageId from the email context (the [msgId:...] tag). The reply is sent from chatbgp@brucegillinghampollard.com and goes to the original sender, preserving the full thread.",
+      description: "Reply to an existing email thread in the BGP shared mailbox. Use this INSTEAD of send_email when responding to an email the user received. This preserves the email thread/conversation. You MUST provide the messageId from the email context (the [msgId:...] tag). The reply is sent from chatbgp@brucegillinghampollard.com and goes to the original sender, preserving the full thread. **Same attachment rules as send_email — pass chatMediaAttachments rather than dropping /api/chat-media/ links into the body.**",
       parameters: {
         type: "object",
         properties: {
           messageId: { type: "string", description: "The Graph API message ID from the email context [msgId:...] tag. This is required to thread the reply correctly." },
           body: { type: "string", description: "The reply body (HTML supported). Write ONLY the new reply content — the original email thread is automatically included by Outlook." },
           cc: { type: "string", description: "Optional CC email address" },
+          chatMediaAttachments: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional. Array of chat-media filenames to attach as real binaries. Same format as send_email.",
+          },
         },
         required: ["messageId", "body"],
       },
@@ -6655,13 +6700,24 @@ async function executeCrmToolRaw(
   if (fnName === "send_email") {
     try {
       const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
       await sendSharedMailboxEmail({
         to: fnArgs.to,
         subject: fnArgs.subject,
         body: fnArgs.body,
         cc: fnArgs.cc,
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
-      return { data: { success: true, action: "email_sent", to: fnArgs.to, subject: fnArgs.subject }, action: { type: "email_sent", to: fnArgs.to } };
+      return {
+        data: {
+          success: true,
+          action: "email_sent",
+          to: fnArgs.to,
+          subject: fnArgs.subject,
+          attachmentCount: attachments.length,
+        },
+        action: { type: "email_sent", to: fnArgs.to },
+      };
     } catch (emailErr: any) {
       return { data: { error: `Failed to send email: ${emailErr?.message || "Unknown error"}` } };
     }
@@ -6671,8 +6727,22 @@ async function executeCrmToolRaw(
     try {
       const { replyToSharedMailboxMessage } = await import("./shared-mailbox");
       const ccList = fnArgs.cc ? [fnArgs.cc] : undefined;
-      await replyToSharedMailboxMessage(fnArgs.messageId, fnArgs.body, ccList);
-      return { data: { success: true, action: "email_replied", messageId: fnArgs.messageId }, action: { type: "email_sent" } };
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
+      await replyToSharedMailboxMessage(
+        fnArgs.messageId,
+        fnArgs.body,
+        ccList,
+        attachments.length > 0 ? attachments : undefined,
+      );
+      return {
+        data: {
+          success: true,
+          action: "email_replied",
+          messageId: fnArgs.messageId,
+          attachmentCount: attachments.length,
+        },
+        action: { type: "email_sent" },
+      };
     } catch (replyErr: any) {
       return { data: { error: `Failed to reply to email: ${replyErr?.message || "Unknown error"}` } };
     }
@@ -10274,14 +10344,22 @@ export async function handleCrmToolCall(
   if (fnName === "send_email") {
     try {
       const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
       await sendSharedMailboxEmail({
         to: fnArgs.to,
         subject: fnArgs.subject,
         body: fnArgs.body,
         cc: fnArgs.cc,
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
-      const reply = await summaryHelper({ success: true, action: "email_sent", to: fnArgs.to, subject: fnArgs.subject });
-      return { handled: true, response: { reply: reply || `Email sent to ${fnArgs.to}.`, action: { type: "email_sent", to: fnArgs.to } } };
+      const reply = await summaryHelper({
+        success: true,
+        action: "email_sent",
+        to: fnArgs.to,
+        subject: fnArgs.subject,
+        attachmentCount: attachments.length,
+      });
+      return { handled: true, response: { reply: reply || `Email sent to ${fnArgs.to}${attachments.length ? ` with ${attachments.length} attachment${attachments.length === 1 ? "" : "s"}` : ""}.`, action: { type: "email_sent", to: fnArgs.to } } };
     } catch (emailErr: any) {
       return { handled: true, response: { reply: `Failed to send email: ${emailErr?.message || "Unknown error"}` } };
     }
@@ -10291,8 +10369,19 @@ export async function handleCrmToolCall(
     try {
       const { replyToSharedMailboxMessage } = await import("./shared-mailbox");
       const ccList = fnArgs.cc ? [fnArgs.cc] : undefined;
-      await replyToSharedMailboxMessage(fnArgs.messageId, fnArgs.body, ccList);
-      const reply = await summaryHelper({ success: true, action: "email_replied", messageId: fnArgs.messageId });
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
+      await replyToSharedMailboxMessage(
+        fnArgs.messageId,
+        fnArgs.body,
+        ccList,
+        attachments.length > 0 ? attachments : undefined,
+      );
+      const reply = await summaryHelper({
+        success: true,
+        action: "email_replied",
+        messageId: fnArgs.messageId,
+        attachmentCount: attachments.length,
+      });
       return { handled: true, response: { reply: reply || "Reply sent successfully, threaded with the original email.", action: { type: "email_sent" } } };
     } catch (replyErr: any) {
       return { handled: true, response: { reply: `Failed to reply to email: ${replyErr?.message || "Unknown error"}` } };
