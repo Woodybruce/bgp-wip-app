@@ -172,9 +172,23 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
           <span className="text-muted-foreground/40">·</span>
           <div className="flex items-center gap-1.5 min-w-0">
             <div className="w-5 h-5 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[9px] font-semibold shrink-0">
-              {data.asset_lead.avatar_url
-                ? <img src={data.asset_lead.avatar_url} alt="" className="w-full h-full object-cover" />
-                : data.asset_lead.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+              {data.asset_lead.avatar_url ? (
+                <img
+                  src={data.asset_lead.avatar_url}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    // Avatar URL is broken (e.g. SharePoint avatar 404'd
+                    // after a profile change). Drop the img and let the
+                    // initials show through from the parent div's text.
+                    const img = e.target as HTMLImageElement;
+                    img.style.display = "none";
+                    if (img.parentElement) img.parentElement.textContent = data.asset_lead!.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase();
+                  }}
+                />
+              ) : (
+                data.asset_lead.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()
+              )}
             </div>
             <span className="text-muted-foreground truncate">
               Lead <span className="text-foreground font-medium">{data.asset_lead.name.split(" ")[0]}</span>

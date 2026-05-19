@@ -860,10 +860,17 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
     if (unitId) { sets.push(`unit_id = $${params.length + 1}`); params.push(unitId); }
     if (tenancyUnitId) { sets.push(`tenancy_unit_id = $${params.length + 1}`); params.push(tenancyUnitId); }
 
-    await pool.query(
-      `UPDATE crm_deals SET ${sets.join(", ")} WHERE id = $2`,
+    // Race-safe — re-assert that the deal is still an orphan when we
+    // write. Between the eligibility SELECT above and this UPDATE,
+    // another concurrent adopt-deal call (or a manual edit) could
+    // have set property_id. We only adopt if it's still NULL.
+    const updRes = await pool.query(
+      `UPDATE crm_deals SET ${sets.join(", ")} WHERE id = $2 AND property_id IS NULL`,
       params
     );
+    if ((updRes.rowCount || 0) === 0) {
+      return res.status(409).json({ error: "Deal was adopted by another request in the meantime — refresh and check the deal's current property." });
+    }
     res.json({ ok: true, unitId, tenancyUnitId });
   } catch (err: any) {
     res.status(500).json({ error: err?.message });

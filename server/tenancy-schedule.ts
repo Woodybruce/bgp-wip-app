@@ -1319,7 +1319,7 @@ const SURVIVORS_CTE = `
       FROM walk w
       JOIN crm_companies c ON c.id = w.step
      WHERE c.merged_into_id IS NOT NULL
-       AND w.depth < 20  -- guardrail against cycles
+       AND w.depth < 100  -- guardrail against cycles; nothing legitimate hits this
   ),
   survivors AS (
     SELECT DISTINCT ON (root) root AS old_id, step AS new_id
