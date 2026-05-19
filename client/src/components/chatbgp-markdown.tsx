@@ -25,8 +25,15 @@ export function AuthDownloadLink({ href, children }: { href: string; children: R
       const url = token ? `${href}${sep}token=${token}` : href;
       const filename = href.split("/").pop()?.split("?")[0] || "download";
       const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // Try to surface the server-side reason — chat-media returns JSON
+        // with { message } on 401, useful for diagnosing token issues.
+        let detail = `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j?.message) detail = `${detail}: ${j.message}`; } catch {}
+        throw new Error(detail);
+      }
       const blob = await res.blob();
+      if (blob.size === 0) throw new Error("Empty response from server");
       const objUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objUrl;
@@ -38,24 +45,30 @@ export function AuthDownloadLink({ href, children }: { href: string; children: R
       // blob URL — revoking immediately can race the download on iOS.
       setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
     } catch (e: any) {
-      setErr(e.message || "Download failed");
+      setErr(e?.message || "Download failed");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy}
-      className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 disabled:opacity-60 transition-colors text-sm font-medium no-underline cursor-pointer min-h-[44px]"
-      data-testid="link-download-file"
-      title={err || undefined}
-    >
-      {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-      {children}
-    </button>
+    <span className="inline-flex flex-col items-start">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 disabled:opacity-60 transition-colors text-sm font-medium no-underline cursor-pointer min-h-[44px]"
+        data-testid="link-download-file"
+      >
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+        {children}
+      </button>
+      {err && (
+        <span className="text-[11px] text-red-600 mt-0.5 max-w-[280px] break-words" data-testid="download-error">
+          Download failed — {err}
+        </span>
+      )}
+    </span>
   );
 }
 
