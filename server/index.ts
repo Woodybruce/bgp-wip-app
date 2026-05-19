@@ -3193,6 +3193,11 @@ app.use("/api/branding/assets", express.static(
               PRIMARY KEY (client_company_id, name)
             )
           `));
+          // color_key was added after the table — earlier prod deploys
+          // got the table without it, which 500s the POST /columns
+          // insert path. Idempotent add.
+          await addColIfMissing("crm_client_team_columns", "color_key", "text");
+          await addColIfMissing("crm_client_team_columns", "created_at", "timestamp DEFAULT now()");
           // One-time seed from legacy data — unnest bgp_contact_user_ids
           // on every company, plus every (property landlord_id × agent
           // user_id) pairing from crm_property_agents. Runs only when the

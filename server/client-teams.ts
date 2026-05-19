@@ -309,6 +309,27 @@ router.post("/api/client-teams/:clientCompanyId/columns", requireAuth, async (re
     `, [req.params.clientCompanyId, name.trim(), sort_order ?? null, color_key || null]);
     res.json(r.rows[0]);
   } catch (e: any) {
+    console.error(`[client-teams] add column failed for ${req.params.clientCompanyId}:`, e?.code, e?.message);
+    // 42703 = column doesn't exist (color_key missing on pre-migration tables).
+    // Fall back to the column-less insert so the user can still add
+    // columns until the next deploy migrates the schema.
+    if (e?.code === "42703") {
+      try {
+        const pool = await getPool();
+        const { name, sort_order } = req.body || {};
+        const r = await pool.query(`
+          INSERT INTO crm_client_team_columns (client_company_id, name, sort_order)
+          VALUES ($1, $2, COALESCE($3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM crm_client_team_columns WHERE client_company_id = $1)))
+          ON CONFLICT (client_company_id, name) DO UPDATE
+            SET sort_order = COALESCE(EXCLUDED.sort_order, crm_client_team_columns.sort_order)
+          RETURNING client_company_id, name, sort_order
+        `, [req.params.clientCompanyId, String(name).trim(), sort_order ?? null]);
+        return res.json(r.rows[0]);
+      } catch (e2: any) {
+        console.error(`[client-teams] fallback add column also failed:`, e2?.message);
+        return res.status(500).json({ error: e2.message });
+      }
+    }
     res.status(500).json({ error: e.message });
   }
 });
