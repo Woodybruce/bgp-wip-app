@@ -395,15 +395,16 @@ export function PropertyDetail({ id }: { id: string }) {
           ]}
         />
       </div>
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 min-w-0">
         {/* min-w-0 lets this flex child shrink past its content's
-            intrinsic width — without it, a wide row (the full-width
-            brochure board, a long unbreakable file name) pushes the
-            whole main column wider than the viewport and the right
-            sidebar gets shoved off-screen / wrapped. overflow-x-hidden
-            is belt-and-braces so any stray wide child clips rather
-            than bleeds. */}
-        <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
+            intrinsic width — without it, a wide row (the tenancy
+            schedule, a long unbreakable file name) pushes the whole
+            main column past the viewport and the right sidebar gets
+            shoved off-screen. overflow-x-auto means wide children
+            (tenancy table) can scroll inside the main column instead
+            of being clipped — overflow-x-hidden cut off the right
+            edge of the leasing table. */}
+        <div className="flex-1 min-w-0 overflow-y-auto overflow-x-auto">
           <div className="p-4 sm:p-6 space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
