@@ -1003,7 +1003,11 @@ router.get("/api/tenancy-schedule/property/:propertyId/links", requireAuth, asyn
     );
 
     const lettingUnits = await pool.query(
-      "SELECT id, unit_name, marketing_status, \"dealId\" FROM available_units WHERE property_id = $1",
+      // Column is snake_case in the DB — the quoted "dealId" was
+      // referencing a non-existent column and 500'ing the panel.
+      // Aliased to dealId on the way out for the client shape.
+      `SELECT id, unit_name, marketing_status, deal_id AS "dealId"
+         FROM available_units WHERE property_id = $1`,
       [propertyId]
     );
 
