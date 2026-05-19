@@ -48,6 +48,9 @@
 html {
   height: 100%;
   overflow: hidden;
+  /* Belt-and-braces: stops any stray element wider than 100vw from
+     hijacking the whole document into a horizontal pan on mobile. */
+  overflow-x: hidden;
 }
 
 body {
@@ -55,11 +58,19 @@ body {
   overscroll-behavior: none;
   height: 100%;
   overflow: hidden;
+  overflow-x: hidden;
 }
 
 #root {
   height: 100%;
-  overflow: auto;
+  /* Lock to vertical scroll only — wide content gets clipped (or its
+     own overflow-x: auto container) instead of nudging the root frame
+     left and right. Mirrors the Claude app's no-horizontal-bounce feel. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Stop rubber-band bounce on the x-axis specifically; keeps the y
+     pull-to-refresh-style overscroll intentional rather than glitchy. */
+  overscroll-behavior-x: none;
 }
 
 @media all and (display-mode: standalone) {
@@ -71,7 +82,8 @@ body {
   }
   #root {
     height: 100dvh;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 }
 
