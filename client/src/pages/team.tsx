@@ -676,7 +676,7 @@ export default function TeamPage() {
 
   return (
     <PageLayout
-      title="People & HR"
+      title="Org Chart"
       subtitle="Org chart, profiles and HR records"
       icon={Users}
       testId="page-team"
