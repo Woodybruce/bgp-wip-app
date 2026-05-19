@@ -208,6 +208,7 @@ function CollapsibleCard({
   onToggle,
   icon: Icon,
   title,
+  badge,
   children,
   testId,
 }: {
@@ -215,6 +216,7 @@ function CollapsibleCard({
   onToggle: () => void;
   icon: any;
   title: string;
+  badge?: string;
   children: React.ReactNode;
   testId?: string;
 }) {
@@ -229,6 +231,7 @@ function CollapsibleCard({
         <div className="flex items-center gap-2">
           <Icon className="w-3.5 h-3.5 text-muted-foreground" />
           <span className="text-xs font-semibold">{title}</span>
+          {badge && <Badge variant="secondary" className="text-[10px] h-4 px-1">{badge}</Badge>}
         </div>
         {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
       </button>
@@ -236,6 +239,11 @@ function CollapsibleCard({
     </Card>
   );
 }
+
+// Alias used for the folded-from-sidebar reference grid. Same component
+// under the hood — separate name kept so the JSX reads as "this is the
+// old sidebar section" at the call site.
+const ReferenceSection = CollapsibleCard;
 
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
@@ -812,254 +820,114 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
-            <div className="md:hidden space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Property reference grid — was the separate right sidebar.
+                Folded into the main column as a 2 / 3 col grid of small
+                collapsible cards so it scrolls with the rest of the page
+                and never bleeds into ChatBGP regardless of viewport
+                width. Each section keeps its own open/closed state via
+                sidebarSections so muscle memory carries over. */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <ReferenceSection
+                title="Files"
+                icon={FolderOpen}
+                open={sidebarSections.files}
+                onToggle={() => toggleSection("files")}
+                testId="toggle-files-section"
+              >
                 <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
+                <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Compliance & KYC"
+                icon={ShieldCheck}
+                open={sidebarSections.compliance}
+                onToggle={() => toggleSection("compliance")}
+                testId="toggle-compliance-section"
+              >
+                <ErrorBoundary compact name="Property compliance & KYC">
+                  <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
+                </ErrorBoundary>
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Recent activity"
+                icon={Activity}
+                badge="14d"
+                open={sidebarSections.activity}
+                onToggle={() => toggleSection("activity")}
+                testId="toggle-activity-section"
+              >
+                <ErrorBoundary compact name="Property recent activity">
+                  <PropertyRecentActivityCard propertyId={property.id} />
+                </ErrorBoundary>
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Data linkage"
+                icon={Activity}
+                open={sidebarSections.linkage}
+                onToggle={() => toggleSection("linkage")}
+                testId="toggle-linkage-section"
+              >
+                <ErrorBoundary compact name="Property linkage audit">
+                  <PropertyLinkageCard propertyId={property.id} />
+                </ErrorBoundary>
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="BGP Contacts"
+                icon={UserCheck}
+                open={sidebarSections.team}
+                onToggle={() => toggleSection("team")}
+                testId="toggle-team-section"
+              >
+                <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Client Board"
+                icon={Users}
+                open={sidebarSections.clients}
+                onToggle={() => toggleSection("clients")}
+                testId="toggle-clients-section"
+              >
+                <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Deals"
+                icon={Handshake}
+                open={sidebarSections.deals}
+                onToggle={() => toggleSection("deals")}
+                testId="toggle-deals-section"
+              >
                 <LinkedDealsPanel propertyId={property.id} />
-              </div>
-              <Card>
-                <CardContent className="p-4 space-y-1">
-                  <p className="text-xs text-muted-foreground">BGP Contacts</p>
-                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
-                </CardContent>
-              </Card>
-              <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
-              <Card>
-                <CardContent className="p-4 space-y-1">
-                  <p className="text-xs text-muted-foreground">WIP</p>
-                  <InlineDeals propertyId={id} dealLinks={dealLinks} allDeals={allDealsForDetail} />
-                </CardContent>
-              </Card>
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Available Units"
+                icon={Store}
+                open={sidebarSections.availableUnits}
+                onToggle={() => toggleSection("availableUnits")}
+                testId="toggle-available-units-section"
+              >
+                <AvailableUnitsPanel propertyId={property.id} />
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Land Registry"
+                icon={Landmark}
+                open={sidebarSections.landRegistry}
+                onToggle={() => toggleSection("landRegistry")}
+                testId="toggle-land-registry-section"
+              >
+                <LinkedLandRegistryPanel propertyId={property.id} />
+              </ReferenceSection>
             </div>
           </div>
         </div>
 
-        {/* Right sidebar = property metadata pane. The gutter
-            against the global ChatBGP dock now comes from the chat
-            panel itself (md:ml-3), so any page that has its own
-            right-edge content benefits — not just this one. */}
-        <div className="w-[300px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden lg:flex">
-          <ScrollArea className="flex-1">
-            <div className="px-4 pt-4 pb-3 border-b">
-              <div className="flex items-start gap-3">
-                {(() => {
-                  const landlordForLogo = property.landlordId ? allCompanies.find(c => c.id === property.landlordId) : null;
-                  return landlordForLogo ? (
-                    <CompanyLogoImg domain={landlordForLogo.domainUrl || landlordForLogo.domain} name={landlordForLogo.name} size={36} />
-                  ) : (
-                    <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      <Building2 className="w-4.5 h-4.5 text-primary" />
-                    </div>
-                  );
-                })()}
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold leading-tight truncate">{property.name}</h3>
-                  {formatAddress(property.address) && (
-                    <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1 truncate">
-                      <MapPin className="w-3 h-3 shrink-0" />
-                      {formatAddress(property.address)}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-1.5 mt-3">
-                {property.status && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-[10px] font-medium">
-                    {property.status}
-                  </span>
-                )}
-                {property.assetClass && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-[10px] font-medium">
-                    {property.assetClass}
-                  </span>
-                )}
-                {property.sqft && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium">
-                    {Number(property.sqft).toLocaleString()} sq ft
-                  </span>
-                )}
-                {property.tenure && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium">
-                    {property.tenure}
-                  </span>
-                )}
-                {property.bgpEngagement && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 text-[10px] font-medium">
-                    {property.bgpEngagement}
-                  </span>
-                )}
-              </div>
-              <Link
-                href="/chatbgp"
-                className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity justify-center"
-                data-testid="button-open-property-chat"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                Chat about this property
-              </Link>
-            </div>
-
-            <div className="border-b">
-              <button onClick={() => toggleSection("files")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-files-section">
-                <div className="flex items-center gap-2">
-                  <FolderOpen className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Files</span>
-                </div>
-                {sidebarSections.files ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.files && (
-                <div className="px-4 pb-3 space-y-3">
-                  <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
-                  <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
-                </div>
-              )}
-            </div>
-
-            {/* Compliance & KYC — billing entity + owner brand checks
-                (UK trading entity, accounts PDF, annual report PDF,
-                officers + PSCs, Red Flag, AML PEP). Single source of
-                truth lives in brand-profile-panel's ComplianceBoard;
-                we embed it here so the asset lead can flip checks
-                without leaving the property page. */}
-            <div className="border-b">
-              <button onClick={() => toggleSection("compliance")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-compliance-section">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Compliance &amp; KYC</span>
-                </div>
-                {sidebarSections.compliance ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.compliance && (
-                <div className="px-4 pb-3">
-                  <ErrorBoundary compact name="Property compliance & KYC">
-                    <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
-                  </ErrorBoundary>
-                </div>
-              )}
-            </div>
-
-            {/* Recent activity — moved out of the main column. Same
-                sanitised summaries (no email body content) so
-                client users like Mark see headline touches without
-                content leakage. */}
-            <div className="border-b">
-              <button onClick={() => toggleSection("activity")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-activity-section">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Recent activity</span>
-                  <Badge variant="secondary" className="text-[10px]">14d</Badge>
-                </div>
-                {sidebarSections.activity ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.activity && (
-                <div className="px-4 pb-3">
-                  <ErrorBoundary compact name="Property recent activity">
-                    <PropertyRecentActivityCard propertyId={property.id} />
-                  </ErrorBoundary>
-                </div>
-              )}
-            </div>
-
-            {/* Linkage audit — diagnostic of what's actually hooked
-                up. Surfaces 'landlord orphans' (deals tagged to the
-                landlord but not the property), schedule units
-                missing from property_units, tenants on the schedule
-                not yet matched to a CRM company. Red numbers =
-                data needing fixing. */}
-            <div className="border-b">
-              <button onClick={() => toggleSection("linkage")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-linkage-section">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Data linkage</span>
-                </div>
-                {sidebarSections.linkage ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.linkage && (
-                <div className="px-4 pb-3">
-                  <ErrorBoundary compact name="Property linkage audit">
-                    <PropertyLinkageCard propertyId={property.id} />
-                  </ErrorBoundary>
-                </div>
-              )}
-            </div>
-
-            <div className="border-b">
-              <button onClick={() => toggleSection("team")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-team-section">
-                <div className="flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">BGP Contacts</span>
-                </div>
-                {sidebarSections.team ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.team && (
-                <div className="px-4 pb-3">
-                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
-                </div>
-              )}
-            </div>
-
-            <div className="border-b">
-              <button onClick={() => toggleSection("clients")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-clients-section">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Client Board</span>
-                </div>
-                {sidebarSections.clients ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.clients && (
-                <div className="px-4 pb-3">
-                  <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
-                </div>
-              )}
-            </div>
-
-            <div className="border-b">
-              <button onClick={() => toggleSection("deals")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-deals-section">
-                <div className="flex items-center gap-2">
-                  <Handshake className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Deals</span>
-                </div>
-                {sidebarSections.deals ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.deals && (
-                <div className="px-4 pb-3 space-y-2">
-                  <LinkedDealsPanel propertyId={property.id} />
-                </div>
-              )}
-            </div>
-
-            <div className="border-b">
-              <button onClick={() => toggleSection("availableUnits")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-available-units-section">
-                <div className="flex items-center gap-2">
-                  <Store className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Available Units</span>
-                </div>
-                {sidebarSections.availableUnits ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.availableUnits && (
-                <div className="px-4 pb-3">
-                  <AvailableUnitsPanel propertyId={property.id} />
-                </div>
-              )}
-            </div>
-
-            <div className="border-b">
-              <button onClick={() => toggleSection("landRegistry")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-land-registry-section">
-                <div className="flex items-center gap-2">
-                  <Landmark className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Land Registry</span>
-                </div>
-                {sidebarSections.landRegistry ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-              </button>
-              {sidebarSections.landRegistry && (
-                <div className="px-4 pb-3">
-                  <LinkedLandRegistryPanel propertyId={property.id} />
-                </div>
-              )}
-            </div>
-
-          </ScrollArea>
-        </div>
       </div>
     </div>
   );
