@@ -66,7 +66,21 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
     retry: false,
   });
 
-  if (isLoading) return null;
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Target className="w-4 h-4 text-purple-500" />
+            Brand gap analysis
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground italic">Loading nearby brand stores…</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (error || !data) {
     return (

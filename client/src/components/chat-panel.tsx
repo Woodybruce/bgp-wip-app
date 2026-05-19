@@ -2453,7 +2453,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   // focus / drag events.
   return (
     <div
-      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-3 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
+      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
