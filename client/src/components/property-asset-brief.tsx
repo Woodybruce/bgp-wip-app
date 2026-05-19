@@ -382,7 +382,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
   const [showUnresolved, setShowUnresolved] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
 
-  const { data, isLoading } = useQuery<any>({
+  const { data, isLoading, isError } = useQuery<any>({
     queryKey: ["/api/properties", propertyId, "linkage-audit"],
     queryFn: async () => {
       const res = await fetch(`/api/properties/${propertyId}/linkage-audit`, { credentials: "include" });
@@ -624,7 +624,7 @@ function UnresolvedTenantsDialog({ propertyId, onClose }: { propertyId: string; 
     queryKey: ["/api/properties", propertyId, "unresolved-tenants"],
     queryFn: async () => {
       const res = await fetch(`/api/properties/${propertyId}/unresolved-tenants`, { credentials: "include" });
-      if (!res.ok) return [];
+      if (!res.ok) throw new Error(`HTTP ${res.status} — couldn't load unresolved tenants`);
       return res.json();
     },
   });
@@ -682,7 +682,7 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
     queryKey: ["/api/properties", propertyId, "duplicate-units"],
     queryFn: async () => {
       const r = await fetch(`/api/properties/${propertyId}/duplicate-units`, { credentials: "include" });
-      if (!r.ok) return { clusters: {} };
+      if (!r.ok) throw new Error(`HTTP ${r.status} — couldn't load duplicate units`);
       return r.json();
     },
   });
