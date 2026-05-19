@@ -395,7 +395,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // after the user has hit "Sync from website" on the landlord profile.
     const landlordFindingsQ = pool.query(
       `SELECT scraped_at, source_urls, logo_url, share_ticker, ir_contact,
-              board_members, annual_report_url, properties, raw_notes, error
+              board_members, annual_report_url, properties, image_urls, raw_notes, error
          FROM landlord_website_findings WHERE company_id = $1`,
       [companyId]
     ).catch(() => ({ rows: [] })); // table may not exist if module never loaded

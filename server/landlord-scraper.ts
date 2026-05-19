@@ -124,21 +124,33 @@ function condenseHtml(html: string, baseUrl: string, maxChars = 12000): string {
 //
 // Strategy:
 //   - og:image / twitter:image (publisher's chosen hero, always good)
-//   - <img src="..."> with width OR srcset hinting >= 800px
-//   - Reject anything matching: favicon, sprite, icon, logo, badge,
-//     placeholder, pixel, tracker, 1x1, plus tiny .svg
+//   - <img src/srcset/data-src/data-original/data-lazy-src> — modern
+//     landlord sites (Landsec / British Land / Hammerson) all use
+//     React or Drupal CMSes with progressive image loading
+//   - CSS background-image:url(...) on hero divs (Landsec's portfolio
+//     tiles are inline-styled bg images, not <img> tags)
+//   - Reject only OBVIOUS junk — substring matches are too aggressive
+//     because CMS URLs often legitimately contain "logo" / "placeholder"
+//     as part of folder names ("/logo-design-portfolio/page-hero.jpg").
+//     We anchor the reject patterns to filename boundaries instead.
 // Returns absolute URLs, deduped, capped at 30 per page.
 function extractImageUrls(html: string, baseUrl: string, limit = 30): string[] {
   if (!html) return [];
   const out: string[] = [];
   const seen = new Set<string>();
+  // Anchor patterns to URL filename boundary so we don't kill
+  // /portfolio-2024-q1-flagship.jpg just because "logo" appears in a
+  // parent folder. Only reject when "logo" / "placeholder" etc. is
+  // clearly the asset's identity, not part of a longer path.
+  const REJECT = /(?:^|[/_-])(favicon|sprite|placeholder|spacer|pixel|tracking|gtm|analytics|1x1)(?:$|[._-])|\bicon-\d+\b|\.svg(?:\?|$)|^data:.*base64,/i;
+  const REJECT_TINY_LOGO = /(?:^|[/_-])logo(?:[-_.][a-z0-9]+)?\.(?:svg|png|gif|webp)(\?|$)/i;
   const push = (url: string | undefined | null) => {
     if (!url) return;
     let abs: string;
     try { abs = new URL(url, baseUrl).toString(); } catch { return; }
     if (seen.has(abs)) return;
-    if (/\.svg(\?|$)/i.test(abs)) return;
-    if (/favicon|sprite|icon[-/]|logo|badge|placeholder|pixel|tracking|gtm|analytics|1x1\.|spacer/i.test(abs)) return;
+    if (REJECT.test(abs)) return;
+    if (REJECT_TINY_LOGO.test(abs)) return;
     seen.add(abs);
     out.push(abs);
   };
@@ -154,19 +166,31 @@ function extractImageUrls(html: string, baseUrl: string, limit = 30): string[] {
     if (cands.length > 0) push(cands[cands.length - 1]);
   }
 
-  // <img src=...> + srcset. Prefer srcset (highest-res entry) but also
-  // accept plain src as a fallback.
+  // <img src=...> + srcset + every lazy-load variant we've seen in the
+  // wild. Prefer srcset (highest-res entry) but accept any of the
+  // attribute names as a fallback. Landsec uses data-src on hydrated
+  // images; British Land uses data-lazy-src; Hammerson's CMS emits
+  // data-original.
   const imgRe = /<img\b[^>]*>/gi;
   let m: RegExpExecArray | null;
   while ((m = imgRe.exec(html)) && out.length < limit) {
     const tag = m[0];
-    const srcset = tag.match(/srcset=["']([^"']+)["']/i)?.[1];
+    const srcset = tag.match(/(?:^|\s)(?:srcset|data-srcset|data-lazy-srcset)=["']([^"']+)["']/i)?.[1];
     if (srcset) {
       const cands = srcset.split(",").map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
       if (cands.length > 0) { push(cands[cands.length - 1]); continue; }
     }
-    push(tag.match(/(?:^|\s)(?:src|data-src)=["']([^"']+)["']/i)?.[1]);
+    push(tag.match(/(?:^|\s)(?:src|data-src|data-original|data-lazy-src|data-srcset|data-image|data-bg)=["']([^"']+)["']/i)?.[1]);
   }
+
+  // Inline background-image:url(...) — Landsec, Land Securities Group,
+  // and most modern CMSes use inline-styled <div> tiles for portfolio
+  // hero panels. Without this we miss all the asset gallery shots.
+  for (const m of html.matchAll(/background-image\s*:\s*url\(["']?([^"')]+)["']?\)/gi)) push(m[1]);
+  // data-bg-* and srcset-style data attributes on non-img tags
+  // (e.g. <div data-bg="..."> patterns).
+  for (const m of html.matchAll(/\sdata-(?:bg|background|hero|image-src)=["']([^"']+)["']/gi)) push(m[1]);
+
   return out.slice(0, limit);
 }
 
@@ -288,6 +312,10 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     }
     if (imageUrls.length >= 40) break;
   }
+  // Log image discovery so we can debug landlord-specific failures
+  // (e.g. Landsec) by watching Railway logs.
+  console.log(`[landlord-scrape ${companyId}] image extraction: ${imageUrls.length} unique URLs across ${fetched.length} pages` +
+    (imageUrls.length === 0 ? ` — no images survived filtering; sample URLs from first page: ${fetched.find(p => p.text.length > 400)?.url}` : ""));
 
   const findings: LandlordFindings = {
     source_urls: fetched.map(f => ({ url: f.url, status: f.status, bytes: f.bytes })),
@@ -411,6 +439,23 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
       }
     } catch (err: any) {
       console.warn(`[landlord-scrape ${companyId}] annual report download error:`, err?.message || err);
+    }
+  }
+
+  // Chain image refresh: now that landlord_website_findings.image_urls
+  // is populated, run the brand-image pipeline so those URLs flow into
+  // image_studio_images and show up in the gallery. Without this they
+  // sit in the DB forever — the auto-fire scrape in
+  // LandlordOwnershipBlock never triggers the manual "Refresh images"
+  // button, so landlords scraped via the auto-flow had empty galleries.
+  if (imageUrls.length > 0) {
+    progress[companyId] = { state: "refreshing_images", updatedAt: new Date().toISOString() };
+    try {
+      const { refreshBrandImages } = await import("./brand-images");
+      const imgResult = await refreshBrandImages(companyId);
+      console.log(`[landlord-scrape ${companyId}] image refresh: imported ${imgResult.imported}/${imgResult.attempted} (sources: ${JSON.stringify(imgResult.bySource)})`);
+    } catch (err: any) {
+      console.warn(`[landlord-scrape ${companyId}] image refresh failed:`, err?.message || err);
     }
   }
 
@@ -559,7 +604,7 @@ export async function getLandlordFindings(companyId: string): Promise<LandlordFi
   await ensureTable();
   const { rows } = await pool.query(
     `SELECT scraped_at, source_urls, logo_url, share_ticker, ir_contact,
-            board_members, annual_report_url, properties, raw_notes, error
+            board_members, annual_report_url, properties, image_urls, raw_notes, error
        FROM landlord_website_findings WHERE company_id = $1`,
     [companyId]
   );
