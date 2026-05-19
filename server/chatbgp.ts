@@ -80,248 +80,6 @@ function sanitiseForPdf(text: string): string {
   return result;
 }
 
-async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data: any; action?: any }> {
-  const PDFDocument = (await import("pdfkit")).default;
-  const crypto = (await import("crypto")).default;
-  const { saveFile } = await import("./file-storage");
-
-  const isLandscape = fnArgs.orientation === "landscape";
-  const doc = new PDFDocument({
-    size: "A4",
-    layout: isLandscape ? "landscape" : "portrait",
-    margins: { top: 70, bottom: 70, left: 55, right: 55 },
-    info: { Title: fnArgs.title, Author: "Bruce Gillingham Pollard", Creator: "BGP Dashboard" },
-    bufferPages: true,
-  });
-
-  // Platform-aware font paths (Linux: DejaVu, macOS: Helvetica built-in)
-  const linuxFont = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-  const linuxFontBold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-  if (process.platform !== "linux" || !require("fs").existsSync(linuxFont)) {
-    doc.registerFont("Body", "Helvetica");
-    doc.registerFont("Body-Bold", "Helvetica-Bold");
-  } else {
-    doc.registerFont("Body", linuxFont);
-    doc.registerFont("Body-Bold", linuxFontBold);
-  }
-
-  const chunks: Buffer[] = [];
-  doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-
-  const pageW = isLandscape ? 842 : 595;
-  const usableW = pageW - 110;
-  const leftM = 55;
-
-  // Resolve BGP wordmark logo once — server-side file read
-  const path = require("path") as typeof import("path");
-  const fs = require("fs") as typeof import("fs");
-  const logoCandidates = [
-    path.join(process.cwd(), "client", "src", "assets", "BGP_BlackHolder.png"),
-    path.join(process.cwd(), "client", "public", "BGP_BlackHolder.png"),
-    path.join(process.cwd(), "attached_assets", "BGP_BlackHolder.png"),
-  ];
-  let logoPath: string | null = null;
-  for (const p of logoCandidates) {
-    try { if (fs.existsSync(p)) { logoPath = p; break; } } catch {}
-  }
-
-  function drawHeader() {
-    if (logoPath) {
-      try {
-        doc.image(logoPath, leftM, 22, { height: 18 });
-      } catch {
-        doc.font("Body-Bold").fontSize(8).fillColor("#232323")
-          .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
-      }
-    } else {
-      doc.font("Body-Bold").fontSize(8).fillColor("#232323")
-        .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
-    }
-    doc.moveTo(leftM, 46).lineTo(leftM + usableW, 46).strokeColor("#232323").lineWidth(0.5).stroke();
-  }
-
-  function drawFooter(pageNum: number, totalPages: number) {
-    const bottomY = isLandscape ? 555 : 790;
-    doc.font("Body").fontSize(7).fillColor("#999999")
-      .text("Bruce Gillingham Pollard \u2014 Confidential", leftM, bottomY, { width: usableW * 0.6 })
-      .text(`Page ${pageNum} of ${totalPages}`, leftM, bottomY, { width: usableW, align: "right" });
-  }
-
-  function newPage(): number { doc.addPage(); drawHeader(); return 60; }
-
-  drawHeader();
-  let y = 60;
-
-  const htmlContent = fnArgs.htmlContent as string;
-
-  const headingMatches: Array<{ text: string; level: number }> = [];
-  const headingRegex = /<h([1-6])[^>]*>([\s\S]*?)<\/h[1-6]>/gi;
-  let hMatch;
-  while ((hMatch = headingRegex.exec(htmlContent)) !== null) {
-    headingMatches.push({
-      text: sanitiseForPdf(hMatch[2].replace(/<[^>]+>/g, "").trim()),
-      level: parseInt(hMatch[1]),
-    });
-  }
-
-  // Preserve bold/italic markers through to a sentinel so we can render them
-  // as styled runs instead of stripping them (user reported flat formatting).
-  const BOLD_OPEN = "\u0001B\u0001";
-  const BOLD_CLOSE = "\u0001b\u0001";
-  const processed = htmlContent
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/h[1-6]>/gi, "\n\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<\/tr>/gi, "\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "  \u2022 ")
-    .replace(/<hr[^>]*>/gi, "\n---\n")
-    .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
-    .replace(/\*\*([^*\n]+)\*\*/g, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
-    .replace(/<(?:em|i)\b[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, "$1")
-    .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
-
-  // Split a line into run pairs — [{text, bold}, ...] — for pdfkit continued text
-  function splitBoldRuns(line: string): Array<{ text: string; bold: boolean }> {
-    const runs: Array<{ text: string; bold: boolean }> = [];
-    let bold = false;
-    let buf = "";
-    for (let i = 0; i < line.length; i++) {
-      if (line.slice(i, i + BOLD_OPEN.length) === BOLD_OPEN) {
-        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
-        bold = true;
-        i += BOLD_OPEN.length - 1;
-        continue;
-      }
-      if (line.slice(i, i + BOLD_CLOSE.length) === BOLD_CLOSE) {
-        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
-        bold = false;
-        i += BOLD_CLOSE.length - 1;
-        continue;
-      }
-      buf += line[i];
-    }
-    if (buf) runs.push({ text: buf, bold });
-    return runs.length > 0 ? runs : [{ text: line, bold: false }];
-  }
-
-  let plainText = processed
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&mdash;/gi, " \u2014 ")
-    .replace(/&ndash;/gi, " \u2013 ")
-    .replace(/&rsquo;/gi, "\u2019")
-    .replace(/&lsquo;/gi, "\u2018")
-    .replace(/&rdquo;/gi, "\u201D")
-    .replace(/&ldquo;/gi, "\u201C")
-    .replace(/&hellip;/gi, "\u2026")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  plainText = sanitiseForPdf(plainText);
-
-  const paragraphs = plainText.split("\n");
-  const numberedRegex = /^(\d+)[.)]\s+(.+)/;
-  const bottomLimit = isLandscape ? 530 : 760;
-  let firstHeadingDone = false;
-
-  for (const para of paragraphs) {
-    const trimmed = para.trim();
-    if (!trimmed) { y += 6; continue; }
-
-    if (y > bottomLimit) y = newPage();
-
-    const matchedHeading = headingMatches.find(h => trimmed === h.text);
-
-    if (trimmed === "---") {
-      y += 4;
-      doc.moveTo(leftM, y).lineTo(leftM + usableW, y).strokeColor("#cccccc").lineWidth(0.3).stroke();
-      y += 8;
-    } else if (matchedHeading) {
-      const level = matchedHeading.level;
-      if (!firstHeadingDone) {
-        firstHeadingDone = true;
-        y += 4;
-        doc.font("Body-Bold").fontSize(20).fillColor("#1a1a1a")
-          .text(trimmed, leftM, y, { width: usableW });
-        y = doc.y + 14;
-      } else {
-        const fontSize = level <= 1 ? 15 : level === 2 ? 13 : level === 3 ? 11.5 : 10.5;
-        const spaceBefore = level <= 1 ? 16 : level === 2 ? 12 : 8;
-        y += spaceBefore;
-        if (y > bottomLimit) y = newPage();
-        doc.font("Body-Bold").fontSize(fontSize).fillColor("#1a1a1a")
-          .text(trimmed, leftM, y, { width: usableW });
-        y = doc.y + 6;
-      }
-    } else if (trimmed.startsWith("\u2022") || trimmed.startsWith("  \u2022")) {
-      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "");
-      const runs = splitBoldRuns("\u2022  " + bulletText);
-      doc.fontSize(10).fillColor("#333333");
-      doc.text("", leftM + 8, y, { width: usableW - 16, indent: 0 });
-      runs.forEach((r, i) => {
-        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
-      });
-      y = doc.y + 3;
-    } else if (numberedRegex.test(trimmed)) {
-      const nMatch = trimmed.match(numberedRegex)!;
-      const num = nMatch[1];
-      const text = nMatch[2];
-      const runs = splitBoldRuns(`${num}.  ${text}`);
-      doc.fontSize(10).fillColor("#333333");
-      doc.text("", leftM + 4, y, { width: usableW - 8 });
-      runs.forEach((r, i) => {
-        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
-      });
-      y = doc.y + 3;
-    } else {
-      const runs = splitBoldRuns(trimmed);
-      doc.fontSize(10).fillColor("#333333");
-      doc.text("", leftM, y, { width: usableW });
-      runs.forEach((r, i) => {
-        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
-      });
-      y = doc.y + 4;
-    }
-  }
-
-  const range = doc.bufferedPageRange();
-  const totalPages = range.start + range.count;
-  for (let i = 0; i < totalPages; i++) {
-    doc.switchToPage(i);
-    drawFooter(i + 1, totalPages);
-  }
-
-  doc.end();
-  await new Promise<void>((resolve) => doc.on("end", resolve));
-  const pdfBuffer = Buffer.concat(chunks);
-
-  const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
-  const uniqueId = crypto.randomBytes(8).toString("hex");
-  const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pdf`;
-  await saveFile(`chat-media/${storageFilename}`, pdfBuffer, "application/pdf", `${safeName}.pdf`);
-  const downloadUrl = `/api/chat-media/${storageFilename}`;
-
-  return {
-    data: {
-      success: true,
-      downloadUrl,
-      filename: `${safeName}.pdf`,
-      pages: totalPages,
-      action: "pdf_generated",
-      downloadMarkdown: `[Download ${safeName}.pdf](${downloadUrl})`,
-      instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the file.",
-    },
-    action: { type: "download", url: downloadUrl, filename: `${safeName}.pdf` },
-  };
-}
 
 interface CacheEntry<T> {
   data: T;
@@ -672,7 +430,6 @@ function getToolProgressLabel(toolName: string): string {
     query_wip: "Querying pipeline...",
     query_xero: "Looking up invoices...",
     export_to_excel: "Generating Excel file...",
-    generate_pdf: "Generating PDF...",
     generate_word: "Generating Word document...",
     generate_pptx: "Generating PowerPoint...",
     generate_document: "Generating document...",
@@ -1140,7 +897,7 @@ You are an active operational agent with full CRM read/write access, internet se
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_claude_designed_pdf\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_claude_designed_pdf\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -1154,8 +911,8 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
 - **Leasing schedule**: query_leasing_schedule for read. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
-- **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
-- **Designed decks & brochures (including Why Buy)**: For ANY client-facing, visually polished output — Why Buy memos, pitch decks, brochures, playbooks, placemaking documents — use **generate_claude_designed_pdf**. It produces a properly designed PDF in BGP house style. Pass a substantive 500-3000 word brief and the right \`scope\` ('why_buy' for buy-side pitches, 'placemaking' for asset-management decks, etc.). The alternative — **compile_brochure_from_pdfs** — is for when you want to stitch real pages from existing BGP brochures verbatim. NEVER use generate_pdf or generate_word for designed output — those are text-only and will produce ugly results.
+- **Editable text documents**: generate_word (Word, .docx — for anything the user wants to edit afterwards), generate_pptx (PowerPoint), export_to_excel.
+- **PDFs are ALWAYS designed.** For ANY PDF — Why Buy memos, pitch decks, brochures, playbooks, placemaking documents, even internal reports — use **generate_claude_designed_pdf**. It produces a properly designed PDF in BGP house style. Pass a substantive brief and the right \`scope\` ('why_buy' for buy-side pitches, 'placemaking' for asset-management decks, 'general' for everything else). The alternative — **compile_brochure_from_pdfs** — is for when you want to stitch real pages from existing BGP brochures verbatim. There is NO text-only PDF tool — Word is the text-output fallback.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
 - **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
@@ -1993,7 +1750,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "upload_to_sharepoint",
-      description: "Upload a file ALREADY IN CHAT-MEDIA STORAGE to a SharePoint folder. Only use for files generated by another tool (export_to_excel, generate_pdf, generate_word, etc.) or files the user has uploaded into the chat. The chatMediaFilename must follow the chat-media pattern (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). DO NOT USE for email attachments — use `download_email_attachment` with `action: 'save_to_sharepoint'` instead, which handles the Graph download → SharePoint upload in one step. DO NOT USE for SharePoint-to-SharePoint moves — use `copy_dropbox_to_sharepoint` for that.",
+      description: "Upload a file ALREADY IN CHAT-MEDIA STORAGE to a SharePoint folder. Only use for files generated by another tool (export_to_excel, generate_word, generate_claude_designed_pdf, etc.) or files the user has uploaded into the chat. The chatMediaFilename must follow the chat-media pattern (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). DO NOT USE for email attachments — use `download_email_attachment` with `action: 'save_to_sharepoint'` instead, which handles the Graph download → SharePoint upload in one step. DO NOT USE for SharePoint-to-SharePoint moves — use `copy_dropbox_to_sharepoint` for that.",
       parameters: {
         type: "object",
         properties: {
@@ -2392,23 +2149,6 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           modelVersionId: { type: "string", description: "Optional specific version id. Defaults to the latest version of the model run." },
         },
         required: ["runId", "modelRunId"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "generate_pdf",
-      description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, Why Buy memos, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_claude_designed_pdf` (Claude-designed HTML → PDF in BGP house style) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Document title for the PDF filename and header" },
-          htmlContent: { type: "string", description: "Full HTML content to render in the PDF. Use <h1>-<h4> for headings, <p> for paragraphs, <ul>/<li> for bullet points, and numbered steps as '1. Step text'. Use <strong> for emphasis. Keep formatting clean and professional. Do NOT use emoji characters — they will not render correctly in the PDF font. Instead use plain text labels like 'Tip:', 'Important:', 'Note:' etc." },
-          orientation: { type: "string", enum: ["portrait", "landscape"], description: "Page orientation. Default portrait." },
-        },
-        required: ["title", "htmlContent"],
       },
     },
   });
@@ -3314,7 +3054,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "generate_claude_designed_pdf",
-      description: "Generate a properly designed, visually polished PDF (deck / brochure / pitch / playbook / Why Buy memo) — Claude renders a self-contained HTML document with BGP brand cues + house-style preferences, then headless Chrome converts to a print-ready PDF. THIS IS THE TOOL for any client-facing visual document, including Why Buy packs. Returns a chat-media download link. Do NOT use generate_word or generate_pdf for these — those are text-only.",
+      description: "Generate a properly designed, visually polished PDF (deck / brochure / pitch / playbook / Why Buy memo / any PDF really) — Claude renders a self-contained HTML document with BGP brand cues + house-style preferences, then headless Chrome converts to a print-ready PDF. THIS IS THE ONLY TOOL THAT MAKES PDFs. Returns a chat-media download link. For text the user will edit afterwards, use generate_word (Word .docx) instead.",
       parameters: {
         type: "object",
         properties: {
@@ -6710,14 +6450,6 @@ async function executeCrmToolRaw(
     return { data: { success: true, navigatedTo: fnArgs.page }, action: { type: "navigate", path } };
   }
 
-  if (fnName === "generate_pdf") {
-    try {
-      return await generatePdfFromHtml(fnArgs);
-    } catch (pdfErr: any) {
-      console.error("[chatbgp] PDF generation error:", pdfErr?.message);
-      return { data: { error: `Failed to generate PDF: ${pdfErr?.message || "Unknown error"}` } };
-    }
-  }
 
   if (fnName === "generate_claude_designed_pdf") {
     try {
@@ -10375,22 +10107,6 @@ export async function handleCrmToolCall(
     }
     const reply = fnArgs.message || `Navigating you to ${fnArgs.page}.`;
     return { handled: true, response: { reply, action: { type: "navigate", path } } };
-  }
-
-  if (fnName === "generate_pdf") {
-    try {
-      const result = await generatePdfFromHtml(fnArgs);
-      const downloadUrl = result.data.downloadUrl;
-      const safeName = result.data.filename;
-      const downloadLink = `[Download ${safeName}](${downloadUrl})`;
-      let reply = await summaryHelper({ success: true, downloadUrl, filename: safeName, pages: result.data.pages, action: "pdf_generated" });
-      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your PDF has been generated.\n\n${downloadLink}`;
-      else if (!reply.includes(downloadUrl)) reply += `\n\n${downloadLink}`;
-      return { handled: true, response: { reply, action: result.action } };
-    } catch (pdfErr: any) {
-      console.error("[chatbgp] PDF generation error:", pdfErr?.message);
-      return { handled: true, response: { reply: `Failed to generate PDF: ${pdfErr?.message || "Unknown error"}` } };
-    }
   }
 
   if (fnName === "generate_word") {
