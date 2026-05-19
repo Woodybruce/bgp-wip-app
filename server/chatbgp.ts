@@ -11976,27 +11976,19 @@ export function setupChatBGPRoutes(app: Express) {
             console.log(`[ChatBGP] Loop ${loopCount}: tool=${tcName}${tcArgs?.command ? ' cmd=' + tcArgs.command.substring(0, 80) : ''}`);
 
             try {
-              // Permissive-by-default timeout ladder. Used to be 15s default
-              // which was killing things like big SharePoint fetches, multi-
-              // step CRM updates, anything chained with a web search.
-              // Default is now 60s — long enough for almost every real tool
-              // to finish. Genuinely-long ones bumped higher.
-              const toolTimeoutMs =
-                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
-                // Audio/video transcription: download (100s of MB) → ffmpeg
-                // strip → segment → Whisper. 30-min recording = ~3-5 min.
-                tcName === "transcribe_audio" ? 300000 :
-                // Claude designs HTML (~30-60s) → puppeteer renders PDF
-                // (~10-30s) → SharePoint upload. Real-world meaty Why
-                // Buy briefs land at 90-120s — 60s was clipping them
-                // and the user got nothing back.
-                tcName === "generate_claude_designed_pdf" || tcName === "compile_brochure_from_pdfs" ? 180000 :
-                tcName.includes("sharepoint") || tcName.includes("file") ? 60000 :
-                60000;
+              // No artificial per-tool timeout. Normal Claude tool use
+              // doesn't impose one — the tool either succeeds or fails
+              // on its own merits. We keep ONE generous hard cap (10
+              // min, matching the client) purely as a safety net for a
+              // genuinely-hung tool (deadlocked query etc.); every
+              // tool worth caring about has its own internal fetch /
+              // abort handling well inside this. The previous 60s
+              // default was clipping legitimate long-running work like
+              // designed PDF generation and big SharePoint fetches.
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
-                toolTimeoutMs,
-                { data: { error: `Tool timed out after ${toolTimeoutMs / 1000}s` } }
+                10 * 60 * 1000,
+                { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
               const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
@@ -12309,27 +12301,19 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
             let tcArgs: any;
             try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
             try {
-              // Permissive-by-default timeout ladder. Used to be 15s default
-              // which was killing things like big SharePoint fetches, multi-
-              // step CRM updates, anything chained with a web search.
-              // Default is now 60s — long enough for almost every real tool
-              // to finish. Genuinely-long ones bumped higher.
-              const toolTimeoutMs =
-                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
-                // Audio/video transcription: download (100s of MB) → ffmpeg
-                // strip → segment → Whisper. 30-min recording = ~3-5 min.
-                tcName === "transcribe_audio" ? 300000 :
-                // Claude designs HTML (~30-60s) → puppeteer renders PDF
-                // (~10-30s) → SharePoint upload. Real-world meaty Why
-                // Buy briefs land at 90-120s — 60s was clipping them
-                // and the user got nothing back.
-                tcName === "generate_claude_designed_pdf" || tcName === "compile_brochure_from_pdfs" ? 180000 :
-                tcName.includes("sharepoint") || tcName.includes("file") ? 60000 :
-                60000;
+              // No artificial per-tool timeout. Normal Claude tool use
+              // doesn't impose one — the tool either succeeds or fails
+              // on its own merits. We keep ONE generous hard cap (10
+              // min, matching the client) purely as a safety net for a
+              // genuinely-hung tool (deadlocked query etc.); every
+              // tool worth caring about has its own internal fetch /
+              // abort handling well inside this. The previous 60s
+              // default was clipping legitimate long-running work like
+              // designed PDF generation and big SharePoint fetches.
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
-                toolTimeoutMs,
-                { data: { error: `Tool timed out after ${toolTimeoutMs / 1000}s` } }
+                10 * 60 * 1000,
+                { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
               const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
