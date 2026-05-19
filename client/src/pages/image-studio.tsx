@@ -178,6 +178,8 @@ export default function ImageStudio() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [streetViewDialogOpen, setStreetViewDialogOpen] = useState(false);
   const [stockSearchOpen, setStockSearchOpen] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const [uploadCategory, setUploadCategory] = useState("Uncategorised");
   const [uploadArea, setUploadArea] = useState("");
@@ -629,6 +631,63 @@ export default function ImageStudio() {
     [uploadCategory, uploadArea, uploadTags, uploadAddress, uploadBrandName, uploadBrandSector, uploadPropertyType, uploadMutation]
   );
 
+  // Page-level drag-and-drop. Drop a JPEG / PNG / WebP anywhere on the
+  // Image Studio and it lands in the library straight away — no dialog,
+  // no category picker first. Picks up the currently-active category
+  // filter as the destination so dropping while viewing "Brands" tags
+  // the image as Brands.
+  const handleFilesDrop = useCallback(
+    (files: FileList | File[]) => {
+      const imageFiles = Array.from(files).filter(f =>
+        f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name)
+      );
+      if (imageFiles.length === 0) {
+        toast({
+          title: "Images only",
+          description: "Drop JPEG / PNG / WebP files. PDFs go under Brochures on a property.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const formData = new FormData();
+      imageFiles.forEach(f => formData.append("images", f));
+      // Default to the current filter category so drops land where the
+      // user expects. "All" → Uncategorised so they show up immediately
+      // in any filter.
+      const dropCategory = selectedCategory === "All" ? "Uncategorised" : selectedCategory;
+      formData.append("category", dropCategory);
+      formData.append("area", "");
+      formData.append("tags", "");
+      uploadMutation.mutate(formData);
+    },
+    [selectedCategory, uploadMutation, toast]
+  );
+
+  const onPageDragEnter = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    dragDepthRef.current++;
+    setIsDraggingFile(true);
+  };
+  const onPageDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current--;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setIsDraggingFile(false);
+    }
+  };
+  const onPageDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+  };
+  const onPageDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDraggingFile(false);
+    if (e.dataTransfer?.files?.length) handleFilesDrop(e.dataTransfer.files);
+  };
+
   const captureStreetViewMutation = useMutation({
     mutationFn: async () => {
       const endpoint = streetViewEnhanceAi
@@ -774,6 +833,22 @@ export default function ImageStudio() {
       fullHeight
       testId="image-studio-page"
     >
+      <div
+        className="flex flex-col flex-1 min-h-0 relative"
+        onDragEnter={onPageDragEnter}
+        onDragOver={onPageDragOver}
+        onDragLeave={onPageDragLeave}
+        onDrop={onPageDrop}
+      >
+        {isDraggingFile && (
+          <div className="absolute inset-0 z-50 bg-blue-50/95 border-4 border-dashed border-blue-500 rounded-lg flex items-center justify-center pointer-events-none">
+            <div className="text-center">
+              <Upload className="w-12 h-12 mx-auto mb-2 text-blue-600" />
+              <p className="text-base font-semibold text-blue-900">Drop image{`${selectedCategory !== "All" ? `s into ${selectedCategory}` : "s"}`}</p>
+              <p className="text-xs text-blue-700 mt-1">JPEG, PNG, WebP, GIF, HEIC</p>
+            </div>
+          </div>
+        )}
       {/* Section tabs */}
       <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-shrink-0">
         <button
@@ -2281,6 +2356,7 @@ export default function ImageStudio() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </PageLayout>
   );
 }
