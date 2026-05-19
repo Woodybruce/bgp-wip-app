@@ -503,6 +503,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 content (image + 3-4 headlines) wants a wider column.
                 Stacks 1-col on smaller screens. */}
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
+              {/* Left column stack: Asset Owner card + Weekly Focus
+                  beneath. Same width as Asset Owner; mirrors the
+                  News + Brochures stack on the right so both columns
+                  feel balanced. */}
+              <div className="space-y-3">
               <Card>
                 <CardContent className="p-3 space-y-2">
                   {/* Property covering strip — Asset Owner + Asset
@@ -535,29 +540,63 @@ export function PropertyDetail({ id }: { id: string }) {
                     </div>
                   </div>
 
-                <div className="border-t pt-2">
-                  <p className="text-[10px] text-muted-foreground leading-tight mb-1.5 flex items-center gap-1">
-                    <Landmark className="w-3 h-3" /> Ownership
-                  </p>
-                  {/* 2-col grid (4 owner rows arranged 2×2) so the
-                      right half of the card isn't dead space when
-                      most slots are empty. */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-                    {[
-                      { label: "Freeholder",       field: "freeholderId",      id: (property as any).freeholderId },
-                      { label: "Long Leaseholder", field: "longLeaseholderId", id: (property as any).longLeaseholderId },
-                      { label: "Senior Lender",    field: "seniorLenderId",    id: (property as any).seniorLenderId },
-                      { label: "Junior Lender",    field: "juniorLenderId",    id: (property as any).juniorLenderId },
-                    ].map(row => (
-                      <div key={row.field} className="grid grid-cols-[90px,1fr] items-center gap-2">
-                        <span className="text-muted-foreground leading-tight truncate">{row.label}</span>
-                        <div className="min-w-0">
-                          <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                {(() => {
+                  // Only render ownership rows that have a value
+                  // assigned. Empty placeholders ("+ Long Leaseholder",
+                  // "+ Junior Lender") chewed up vertical space on
+                  // properties where most ownership slots are blank.
+                  // A single "+ Add owner" affordance at the end keeps
+                  // adding new entries one click away.
+                  const allRows = [
+                    { label: "Freeholder",       field: "freeholderId",      id: (property as any).freeholderId },
+                    { label: "Long Leaseholder", field: "longLeaseholderId", id: (property as any).longLeaseholderId },
+                    { label: "Senior Lender",    field: "seniorLenderId",    id: (property as any).seniorLenderId },
+                    { label: "Junior Lender",    field: "juniorLenderId",    id: (property as any).juniorLenderId },
+                  ];
+                  const filled = allRows.filter(r => !!r.id);
+                  const empty = allRows.filter(r => !r.id);
+                  return (
+                    <div className="border-t pt-2">
+                      <p className="text-[10px] text-muted-foreground leading-tight mb-1.5 flex items-center gap-1">
+                        <Landmark className="w-3 h-3" /> Ownership
+                      </p>
+                      {filled.length === 0 && empty.length > 0 ? (
+                        // No ownership recorded yet — show one inline
+                        // row to start with (Freeholder) so the team
+                        // can click to add without an extra step.
+                        <div className="grid grid-cols-[90px,1fr] items-center gap-2 text-[11px]">
+                          <span className="text-muted-foreground leading-tight truncate">{empty[0].label}</span>
+                          <div className="min-w-0">
+                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                          {filled.map(row => (
+                            <div key={row.field} className="grid grid-cols-[90px,1fr] items-center gap-2">
+                              <span className="text-muted-foreground leading-tight truncate">{row.label}</span>
+                              <div className="min-w-0">
+                                <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                              </div>
+                            </div>
+                          ))}
+                          {empty.length > 0 && (
+                            // One affordance to add the next missing
+                            // slot. The InlineOwnerLink itself renders
+                            // a "+ Add" UI when companyId is null, so
+                            // we just show the first empty row here.
+                            <div className="grid grid-cols-[90px,1fr] items-center gap-2">
+                              <span className="text-muted-foreground leading-tight truncate">{empty[0].label}</span>
+                              <div className="min-w-0">
+                                <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Area + Competitor Agent — fills the bottom of the
                     card. Sq Ft and the competitor-agent picker sit
@@ -589,6 +628,14 @@ export function PropertyDetail({ id }: { id: string }) {
 
                 </CardContent>
               </Card>
+              {/* Weekly Focus — same width as Asset Owner. Lives in
+                  the left column stack so leasing context (news,
+                  brochures) and operational context (tasks) sit on
+                  their respective sides of the row. */}
+              <ErrorBoundary compact name="Weekly focus">
+                <WeeklyFocusCard propertyId={property.id} />
+              </ErrorBoundary>
+              </div>
 
               {/* Property news + Brochures stacked in the right
                   column — each half the height of the property info
@@ -613,27 +660,20 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
-            {/* Focus + Risk — two compact cards side-by-side under
-                the news strip. The week's tasks vs the auto-flagged
-                risks, both feed from the same asset-brief query. */}
+            {/* Risk + Brand Gap — two compact cards side-by-side
+                under the top strip. Weekly Focus moved into the left
+                column above (under Asset Owner) so this row is
+                operational risk + leasing context. */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <ErrorBoundary compact name="Weekly focus">
-                <WeeklyFocusCard propertyId={property.id} />
-              </ErrorBoundary>
               <ErrorBoundary compact name="Risk register">
                 <RiskRegisterCard propertyId={property.id} />
               </ErrorBoundary>
+              <ErrorBoundary compact name="Brand gap">
+                <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
+                  <BrandGapPanel propertyId={property.id} />
+                </CollapsibleCard>
+              </ErrorBoundary>
             </div>
-
-            {/* Brand Gap — peer brand presence + gap analysis.
-                Sits above Pipeline so leasing context (who's around
-                / who's missing) is the first thing the asset lead
-                sees before drilling into the deal funnel. */}
-            <ErrorBoundary compact name="Brand gap">
-              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
-                <BrandGapPanel propertyId={property.id} />
-              </CollapsibleCard>
-            </ErrorBoundary>
 
             {/* Pipeline + Performance combined — single 'how's the
                 building doing' tile that sits above Plans, giving
