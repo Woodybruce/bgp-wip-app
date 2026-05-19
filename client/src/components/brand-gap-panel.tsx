@@ -148,93 +148,101 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
           </div>
         )}
 
-        {/* On-scheme brands */}
-        {data.onScheme.length > 0 && (
-          <div>
-            <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-              <MapPin className="w-3 h-3 text-emerald-500" />
-              On-scheme &amp; immediate area ({data.onScheme.length}) — within 500m
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {data.onScheme.slice(0, 20).map(b => (
-                <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] bg-emerald-50 hover:bg-emerald-100 border-emerald-200 cursor-pointer"
+        {/* Two-column body: chip lists on the left (compact), peer-brand
+            gaps table on the right. Stops the long gap table from
+            stretching the whole card past the Risk Register column. */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="space-y-3">
+            {/* On-scheme brands */}
+            {data.onScheme.length > 0 && (
+              <div>
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-emerald-500" />
+                  On-scheme &amp; immediate area ({data.onScheme.length}) — within 500m
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {data.onScheme.slice(0, 20).map(b => (
+                    <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-emerald-50 hover:bg-emerald-100 border-emerald-200 cursor-pointer"
+                      >
+                        {b.brand_name}
+                        <span className="ml-1 text-muted-foreground">
+                          {b.nearest_distance_km < 0.1 ? "here" : `${(b.nearest_distance_km * 1000).toFixed(0)}m`}
+                        </span>
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Wider area brands */}
+            {data.wider.length > 0 && (
+              <div>
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-blue-500" />
+                  Wider catchment ({data.wider.length}) — 500m–2km
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {data.wider.slice(0, 20).map(b => (
+                    <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-blue-50 hover:bg-blue-100 border-blue-200 cursor-pointer"
+                      >
+                        {b.brand_name}
+                        <span className="ml-1 text-muted-foreground">{b.nearest_distance_km.toFixed(1)}km</span>
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Gap brands — missing from area. Sits to the right of the
+              chip lists on desktop so it doesn't stretch the card. */}
+          {data.gap.length > 0 && (
+            <div>
+              <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <AlertCircle className="w-3 h-3 text-amber-500" />
+                Peer brand gaps ({data.gap.length}) — in similar locations but not here
+              </div>
+              <div className="space-y-0.5 max-h-[260px] overflow-y-auto pr-1">
+                {data.gap.slice(0, 15).map(b => (
+                  <Link
+                    key={b.brand_company_id}
+                    href={`/companies/${b.brand_company_id}`}
+                    className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
                   >
-                    {b.brand_name}
-                    <span className="ml-1 text-muted-foreground">
-                      {b.nearest_distance_km < 0.1 ? "here" : `${(b.nearest_distance_km * 1000).toFixed(0)}m`}
+                    <span className="font-medium truncate flex-1">{b.brand_name}</span>
+                    <Badge variant="outline" className="text-[9px] shrink-0">
+                      {b.total_stores} UK store{b.total_stores === 1 ? "" : "s"}
+                    </Badge>
+                    {b.rollout_status === "scaling" && (
+                      <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">
+                        <TrendingUp className="w-2 h-2 mr-0.5" />scaling
+                      </Badge>
+                    )}
+                    {b.rollout_status === "entering_uk" && (
+                      <Badge className="text-[9px] bg-purple-100 text-purple-700 border-purple-200 shrink-0">
+                        entering UK
+                      </Badge>
+                    )}
+                    <span className="text-[10px] text-muted-foreground shrink-0">
+                      nearest {b.nearest_distance_km.toFixed(0)}km
                     </span>
-                  </Badge>
-                </Link>
-              ))}
+                  </Link>
+                ))}
+                {data.gap.length > 15 && (
+                  <p className="text-[10px] text-muted-foreground pl-1">+{data.gap.length - 15} more gap brands</p>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Wider area brands */}
-        {data.wider.length > 0 && (
-          <div>
-            <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-              <MapPin className="w-3 h-3 text-blue-500" />
-              Wider catchment ({data.wider.length}) — 500m–2km
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {data.wider.slice(0, 20).map(b => (
-                <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] bg-blue-50 hover:bg-blue-100 border-blue-200 cursor-pointer"
-                  >
-                    {b.brand_name}
-                    <span className="ml-1 text-muted-foreground">{b.nearest_distance_km.toFixed(1)}km</span>
-                  </Badge>
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Gap brands — missing from area */}
-        {data.gap.length > 0 && (
-          <div>
-            <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-              <AlertCircle className="w-3 h-3 text-amber-500" />
-              Peer brand gaps ({data.gap.length}) — in similar locations but not here
-            </div>
-            <div className="space-y-0.5">
-              {data.gap.slice(0, 15).map(b => (
-                <Link
-                  key={b.brand_company_id}
-                  href={`/companies/${b.brand_company_id}`}
-                  className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
-                >
-                  <span className="font-medium truncate flex-1">{b.brand_name}</span>
-                  <Badge variant="outline" className="text-[9px] shrink-0">
-                    {b.total_stores} UK store{b.total_stores === 1 ? "" : "s"}
-                  </Badge>
-                  {b.rollout_status === "scaling" && (
-                    <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">
-                      <TrendingUp className="w-2 h-2 mr-0.5" />scaling
-                    </Badge>
-                  )}
-                  {b.rollout_status === "entering_uk" && (
-                    <Badge className="text-[9px] bg-purple-100 text-purple-700 border-purple-200 shrink-0">
-                      entering UK
-                    </Badge>
-                  )}
-                  <span className="text-[10px] text-muted-foreground shrink-0">
-                    nearest {b.nearest_distance_km.toFixed(0)}km
-                  </span>
-                </Link>
-              ))}
-              {data.gap.length > 15 && (
-                <p className="text-[10px] text-muted-foreground pl-1">+{data.gap.length - 15} more gap brands</p>
-              )}
-            </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {data.onScheme.length === 0 && data.wider.length === 0 && data.gap.length === 0 && (
           <p className="text-xs text-muted-foreground italic">
