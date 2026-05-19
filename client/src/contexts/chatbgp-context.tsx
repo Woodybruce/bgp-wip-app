@@ -33,6 +33,11 @@ interface ChatBGPState {
   setProgressLabel: (v: string) => void;
   activeProjectView: any;
   setActiveProjectView: (v: any) => void;
+  // Side-panel open/close state — shared so other pages (e.g.
+  // property-detail) can hide their own right-hand columns when
+  // the chat dock is consuming the right side of the screen.
+  panelOpen: boolean;
+  setPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   reset: () => void;
 }
 
@@ -50,6 +55,7 @@ export function ChatBGPProvider({ children }: { children: ReactNode }) {
   const [queueLength, setQueueLength] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
   const [activeProjectView, setActiveProjectView] = useState<any>(null);
+  const [panelOpen, setPanelOpen] = useState(true);
 
   const setActiveThreadId = useCallback((id: string | null) => {
     activeThreadIdRef.current = id;
@@ -84,6 +90,7 @@ export function ChatBGPProvider({ children }: { children: ReactNode }) {
       messageQueueRef, queueLength, setQueueLength,
       progressLabel, setProgressLabel,
       activeProjectView, setActiveProjectView,
+      panelOpen, setPanelOpen,
       reset,
     }}>
       {children}

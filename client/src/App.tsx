@@ -15,7 +15,7 @@ import { TeamProvider, useTeam } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
-import { ChatBGPProvider } from "@/contexts/chatbgp-context";
+import { ChatBGPProvider, useChatBGPState } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -234,7 +234,10 @@ function Router() {
 function AuthenticatedApp() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const [chatOpen, setChatOpen] = useState(true);
+  // Chat panel open/close state is shared via ChatBGPContext so other
+  // pages can read it (e.g. property-detail hides its inner sidebar
+  // when chat is consuming the right side of the screen).
+  const { panelOpen: chatOpen, setPanelOpen: setChatOpen } = useChatBGPState();
   const [aiChatRequested, setAiChatRequested] = useState(false);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";

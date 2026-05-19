@@ -88,6 +88,17 @@ export function registerPropertyBrochureRoutes(app: Express) {
         total: rows.length,
       });
     } catch (e: any) {
+      // Production may not have redeployed with the property_brochures
+      // migration yet — degrade to empty rather than 500'ing the UI
+      // so the panel renders its empty state instead of a red error.
+      if (e?.code === "42P01" || /relation .* does not exist/i.test(e?.message || "")) {
+        console.warn("[property-brochures list] table not yet created on this DB; returning empty:", e.message);
+        return res.json({
+          leasing: [], investment: [],
+          archived: { leasing: [], investment: [] },
+          total: 0, _pending_migration: true,
+        });
+      }
       console.error("[property-brochures list]", e?.message);
       res.status(500).json({ error: e?.message });
     }
