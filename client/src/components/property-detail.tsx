@@ -645,11 +645,10 @@ export function PropertyDetail({ id }: { id: string }) {
               </ErrorBoundary>
               </div>
 
-              {/* Right column stack: News + Brochures. h-full +
-                  flex-col so the inner flex-1 wrappers can compute
-                  against the grid cell's stretched height. Without
-                  h-full the column collapses to natural content
-                  height and Brochures can't stretch. */}
+              {/* Right column stack: News + Risk Register. Risk
+                  Register sits up here so the operational watch list
+                  is visible at a glance alongside the news ticker.
+                  Brochures moved down to share a row with Brand Gap. */}
               <div className="flex flex-col gap-3 h-full min-h-0">
                 <Card>
                   <CardContent className="p-3">
@@ -662,25 +661,21 @@ export function PropertyDetail({ id }: { id: string }) {
                     </ErrorBoundary>
                   </CardContent>
                 </Card>
-                <ErrorBoundary compact name="Property brochures">
-                  {/* Brochures stretches to fill any remaining height
-                      in the right column — keeps the bottom edge flush
-                      with the Asset Owner + Weekly Focus stack on the
-                      left so the board feels balanced. */}
-                  <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col [&>div>div]:flex-1">
-                    <PropertyBrochuresPanel propertyId={property.id} />
+                <ErrorBoundary compact name="Risk register">
+                  <div className="flex-1 min-h-[280px]">
+                    <RiskRegisterCard propertyId={property.id} />
                   </div>
                 </ErrorBoundary>
               </div>
             </div>
 
-            {/* Risk + Brand Gap — two compact cards side-by-side
-                under the top strip. Weekly Focus moved into the left
-                column above (under Asset Owner) so this row is
-                operational risk + leasing context. */}
+            {/* Brochures + Brand Gap — two side-by-side boards below
+                the top strip. Brochures swapped down from the top-right
+                slot; Risk Register went up so the operational watch
+                list reads alongside the news ticker. */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <ErrorBoundary compact name="Risk register">
-                <RiskRegisterCard propertyId={property.id} />
+              <ErrorBoundary compact name="Property brochures">
+                <PropertyBrochuresPanel propertyId={property.id} />
               </ErrorBoundary>
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
@@ -841,7 +836,7 @@ export function PropertyDetail({ id }: { id: string }) {
             against the global ChatBGP dock now comes from the chat
             panel itself (md:ml-3), so any page that has its own
             right-edge content benefits — not just this one. */}
-        <div className="w-[320px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden xl:flex">
+        <div className="w-[300px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden lg:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <div className="flex items-start gap-3">

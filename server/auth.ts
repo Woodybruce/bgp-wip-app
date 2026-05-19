@@ -9,7 +9,7 @@ import { loginSchema } from "@shared/schema";
 import crypto from "crypto";
 import { resolveCompanyScope, getClientTeamInfo } from "./company-scope";
 
-const ADMIN_EMAILS = new Set([
+export const ADMIN_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
   "rupert@brucegillinghampollard.com",
   "layla@brucegillinghampollard.com",
