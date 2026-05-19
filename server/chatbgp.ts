@@ -11674,7 +11674,11 @@ export function setupChatBGPRoutes(app: Express) {
     };
 
     const requestStart = Date.now();
-    const REQUEST_DEADLINE_MS = 480000; // 8 minutes — complex multi-tool flows need room to breathe
+    // Hard deadline = 10 minutes, matching the client's fetch abort.
+    // Beyond this the SSE connection is going to be torn down anyway,
+    // so cutting the loop is the honest move. Inside the deadline,
+    // Claude is free to run as long as it needs.
+    const REQUEST_DEADLINE_MS = 10 * 60 * 1000;
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
@@ -11875,7 +11879,13 @@ export function setupChatBGPRoutes(app: Express) {
       conversationMessages = [...completionOptions.messages];
       let lastAction: any = null;
       let loopCount = 0;
-      const maxLoops = 20;
+      // Soft cap to prevent a genuinely-stuck Claude looping forever
+      // (e.g. tool keeps erroring, Claude keeps retrying it). Set
+      // high enough that no legitimate multi-step task hits it —
+      // Anthropic's API itself has no per-turn iteration cap, this
+      // is purely a runaway guard. The real cap is the 10-min
+      // deadline above.
+      const maxLoops = 100;
 
       while (loopCount < maxLoops) {
         if (isOverDeadline()) {
@@ -12261,8 +12271,10 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
       ];
       let lastAction: any = null;
       let loopCount = 0;
-      const maxLoops = 15;
-      const deadline = Date.now() + 180000; // 3 min
+      // Same permissive bounds as the main chat handler. Runaway-loop
+      // guard at 100 iterations; the real cap is the 10-min deadline.
+      const maxLoops = 100;
+      const deadline = Date.now() + 10 * 60 * 1000;
 
       while (loopCount < maxLoops) {
         if (clientClosed || Date.now() > deadline) {
