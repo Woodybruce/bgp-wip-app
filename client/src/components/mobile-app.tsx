@@ -1297,6 +1297,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         const res = await apiRequest("POST", "/api/chat/threads", { title, isAiChat: true });
         const thread = await res.json();
         currentThreadId = thread.id;
+        // CRITICAL: persist the thread id to local state right now, NOT
+        // in onSuccess. If the chat call subsequently fails (timeout,
+        // server crash) the thread still exists in the DB — and the
+        // user typing a follow-up should land in the SAME thread, not
+        // spawn yet another one. Previously this was only set on
+        // success, so every retry after an error created a new thread.
+        if (!threadIdProp) setLocalThreadId(currentThreadId);
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
       }
 
@@ -1325,7 +1332,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           const headers: Record<string, string> = { "Content-Type": "application/json" };
           if (token) headers["Authorization"] = `Bearer ${token}`;
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 300000);
+          const timeoutId = setTimeout(() => controller.abort(), 600000)  // 10 min — Why Buy / Pathway turns routinely take 4-5 min so 5 min was clipping legitimate responses;
           try {
             const res = await fetch("/api/chatbgp/chat", {
               method: "POST",
@@ -1443,7 +1450,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     },
     onError: async (err: any) => {
       if (threadId) {
-        const delays = [3000, 8000, 15000, 30000, 60000];
+        // Late-response recovery: ChatBGP turns that touch search +
+        // KB + doc-gen routinely take 4-5 minutes. The fetch may have
+        // aborted client-side but the server keeps going and writes
+        // the assistant message when it's done. We poll for it for
+        // up to ~6 min so the user sees their answer arrive instead
+        // of being told to retry. Delays widen so we stop hammering.
+        const delays = [3000, 8000, 15000, 30000, 60000, 60000, 60000, 60000, 60000];
         for (const delay of delays) {
           try {
             await new Promise(r => setTimeout(r, delay));
@@ -1520,7 +1533,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
       const mentionController = new AbortController();
-      const mentionTimeout = setTimeout(() => mentionController.abort(), 300000);
+      const mentionTimeout = setTimeout(() => mentionController.abort(), 600000)  // 10 min — Why Buy / Pathway turns routinely take 4-5 min so 5 min was clipping legitimate responses;
       const res = await fetch("/api/chatbgp/chat", {
         method: "POST",
         headers,

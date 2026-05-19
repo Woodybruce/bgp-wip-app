@@ -2283,7 +2283,7 @@ export default function ChatBGP() {
       const attemptSend = async (attempt: number): Promise<any> => {
         const controller = new AbortController();
         abortControllerRef.current = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 300000);
+        const timeoutId = setTimeout(() => controller.abort(), 600000);  // 10 min — long Why Buy / Pathway turns hit 4-5 min routinely
         let streamedText = "";
         try {
           const headers: Record<string, string> = { "Content-Type": "application/json" };

@@ -1701,7 +1701,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       const hdrs: Record<string, string> = { "Content-Type": "application/json" };
       if (token) hdrs["Authorization"] = `Bearer ${token}`;
       const mentionCtrl = new AbortController();
-      const mentionTmo = setTimeout(() => mentionCtrl.abort(), 300000);
+      const mentionTmo = setTimeout(() => mentionCtrl.abort(), 600000);
       const res = await fetch("/api/chatbgp/chat", {
         method: "POST",
         headers: hdrs,
