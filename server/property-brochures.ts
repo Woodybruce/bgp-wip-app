@@ -15,9 +15,17 @@
 // link is the @microsoft.graph.downloadUrl from the driveItem.
 
 import type { Express, Request, Response } from "express";
+import multer from "multer";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { getValidMsToken } from "./microsoft";
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  // 100MB cap — investment OMs with high-res photography can hit
+  // 50-80MB. 25MB would clip them.
+  limits: { fileSize: 100 * 1024 * 1024 },
+});
 
 const BROCHURE_PATTERNS = [
   "brochure", "pitch", "marketing pack", "marketing-pack",
@@ -368,6 +376,158 @@ export function registerPropertyBrochureRoutes(app: Express) {
       });
     } catch (err: any) {
       console.error("[property-brochures edit]", err?.message, err?.stack?.split("\n")[1]);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Upload a brochure to a property's SharePoint folder. Multipart form:
+  //   file:  the PDF
+  //   type:  "leasing" | "investment" (drives which subfolder)
+  // Walks (or creates) `Brochures/{Leasing|Investment}` under the
+  // property's root SharePoint folder, then PUTs the file. Returns
+  // the new driveItem id + webUrl so the UI can refresh.
+  app.post("/api/properties/:id/brochures/upload", requireAuth, upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      const token = await getValidMsToken(req);
+      if (!token) return res.status(401).json({ error: "Not connected to Microsoft 365" });
+
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ error: "No file uploaded" });
+      const rawType = String((req.body?.type || "leasing")).toLowerCase();
+      const type: "leasing" | "investment" = rawType === "investment" ? "investment" : "leasing";
+      const subfolderName = type === "investment" ? "Investment" : "Leasing";
+
+      // Resolve the property's root folder.
+      const propRes = await pool.query<{ name: string; sharepoint_folder_url: string | null }>(
+        `SELECT name, sharepoint_folder_url FROM crm_properties WHERE id = $1`,
+        [req.params.id],
+      );
+      const prop = propRes.rows[0];
+      if (!prop) return res.status(404).json({ error: "Property not found" });
+
+      const folderUrl = (prop.sharepoint_folder_url || "").trim();
+      if (!folderUrl) {
+        return res.status(400).json({
+          error: "No SharePoint folder linked to this property. Set sharepoint_folder_url before uploading brochures.",
+        });
+      }
+
+      // Step 1: resolve folder URL → driveItem (root of property folder).
+      const encoded = Buffer.from(folderUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const rootR = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!rootR.ok) return res.status(500).json({ error: `Couldn't resolve property folder (${rootR.status})` });
+      const rootItem: any = await rootR.json();
+      const driveId: string = rootItem.parentReference?.driveId;
+      const rootItemId: string = rootItem.id;
+      if (!driveId || !rootItemId) return res.status(500).json({ error: "Property folder has no drive context" });
+
+      // Step 2: ensure /Brochures and /Brochures/{Leasing|Investment}
+      // exist. Uses POST /children with conflictBehavior:fail to keep
+      // existing folders. If they already exist, re-GET them.
+      const ensureFolder = async (parentId: string, name: string): Promise<string> => {
+        // Try to fetch first — cheaper than create-then-409.
+        const enc = encodeURIComponent(name);
+        const findR = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}:/${enc}?$select=id,folder`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (findR.ok) {
+          const f: any = await findR.json();
+          if (f.folder) return f.id;
+        }
+        // Not found — create.
+        const createR = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}/children`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
+        });
+        if (createR.ok) {
+          const f: any = await createR.json();
+          return f.id;
+        }
+        // 409 means it appeared in the meantime; re-fetch.
+        if (createR.status === 409) {
+          const refind = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}:/${enc}?$select=id`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (refind.ok) {
+            const f: any = await refind.json();
+            return f.id;
+          }
+        }
+        throw new Error(`Couldn't create or find subfolder "${name}" (${createR.status})`);
+      };
+
+      const brochuresFolderId = await ensureFolder(rootItemId, "Brochures");
+      const typeFolderId = await ensureFolder(brochuresFolderId, subfolderName);
+
+      // Step 3: upload the file. Small uploads (< 4MB) can PUT
+      // directly to /content. For larger files create an upload
+      // session — brochures routinely exceed 4MB so we always use
+      // the session path for safety.
+      const cleanName = (file.originalname || "Brochure.pdf").replace(/[\/\\:*?"<>|]/g, "-");
+      const encName = encodeURIComponent(cleanName);
+
+      let newItem: any;
+      if (file.size < 4 * 1024 * 1024) {
+        const putR = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${typeFolderId}:/${encName}:/content`,
+          {
+            method: "PUT",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": file.mimetype || "application/pdf" },
+            body: file.buffer,
+          },
+        );
+        if (!putR.ok) throw new Error(`Upload failed (${putR.status}): ${await putR.text().catch(() => "")}`);
+        newItem = await putR.json();
+      } else {
+        const sessR = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${typeFolderId}:/${encName}:/createUploadSession`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              item: { "@microsoft.graph.conflictBehavior": "rename", name: cleanName },
+            }),
+          },
+        );
+        if (!sessR.ok) throw new Error(`Upload session create failed (${sessR.status})`);
+        const sess: any = await sessR.json();
+        const uploadUrl: string = sess.uploadUrl;
+        // 5MB chunks. Graph requires multiples of 320KB; 5MB is well-formed.
+        const CHUNK = 5 * 1024 * 1024;
+        let offset = 0;
+        let last: any = null;
+        while (offset < file.size) {
+          const end = Math.min(offset + CHUNK, file.size);
+          const chunk = file.buffer.slice(offset, end);
+          const partR = await fetch(uploadUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Length": String(chunk.length),
+              "Content-Range": `bytes ${offset}-${end - 1}/${file.size}`,
+            },
+            body: chunk,
+          });
+          if (!partR.ok && partR.status !== 202) throw new Error(`Chunk upload failed at ${offset} (${partR.status})`);
+          if (partR.status === 200 || partR.status === 201) last = await partR.json();
+          offset = end;
+        }
+        if (!last) throw new Error("Upload session completed but no driveItem returned");
+        newItem = last;
+      }
+
+      res.json({
+        ok: true,
+        id: newItem.id,
+        name: newItem.name,
+        webUrl: newItem.webUrl,
+        size: newItem.size,
+        type,
+      });
+    } catch (err: any) {
+      console.error("[property-brochures upload]", err?.message, err?.stack?.split("\n")[1]);
       res.status(500).json({ error: err?.message });
     }
   });

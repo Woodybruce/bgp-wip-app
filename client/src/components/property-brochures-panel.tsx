@@ -9,7 +9,7 @@
 // an old agent's logo with our own. Saves a new "(edited <date>).pdf"
 // alongside the original so the source brochure stays intact.
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, Download, Maximize2, Pencil, Archive, ChevronDown, ChevronRight,
-  X, Loader2, Trash2,
+  X, Loader2, Trash2, Upload, Plus,
 } from "lucide-react";
 
 interface Brochure {
@@ -58,10 +58,15 @@ function fmtDate(iso: string | null): string {
 }
 
 export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [tab, setTab] = useState<"leasing" | "investment">("leasing");
   const [showArchive, setShowArchive] = useState(false);
   const [previewing, setPreviewing] = useState<Brochure | null>(null);
   const [editing, setEditing] = useState<Brochure | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, isError } = useQuery<BrochureResponse>({
     queryKey: ["/api/properties", propertyId, "brochures"],
@@ -71,6 +76,65 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
       return res.json();
     },
   });
+
+  // Upload mutation — POSTs a multipart form with the chosen file
+  // and the active tab as the brochure type. Server creates the
+  // Brochures/{Leasing|Investment} subfolder if missing.
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("type", tab);
+      const r = await fetch(`/api/properties/${propertyId}/brochures/upload`, {
+        method: "POST",
+        body: form,
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    },
+    onSuccess: (j) => {
+      toast({ title: "Brochure uploaded", description: `${j.name} — added to ${tab} brochures.` });
+      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] });
+    },
+    onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  const handleFiles = (files: FileList | File[]) => {
+    const arr = Array.from(files).filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
+    if (arr.length === 0) {
+      toast({ title: "Only PDFs supported", description: "Drop a PDF brochure or pick one with the file picker.", variant: "destructive" });
+      return;
+    }
+    // Upload sequentially so we don't hammer Graph with parallel
+    // uploadSession creates if the user drops 5 at once.
+    (async () => {
+      for (const f of arr) {
+        try { await uploadMutation.mutateAsync(f); } catch { /* error toast already fired */ }
+      }
+    })();
+  };
+
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragDepth.current++;
+    if (e.dataTransfer?.types?.includes("Files")) setIsDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragDepth.current--;
+    if (dragDepth.current <= 0) { dragDepth.current = 0; setIsDragging(false); }
+  };
+  const onDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragDepth.current = 0;
+    setIsDragging(false);
+    if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
+  };
 
   const renderBody = () => {
     if (isLoading) return <Skeleton className="h-40 w-full" />;
@@ -149,14 +213,56 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
 
   return (
     <>
-      <Card data-testid="property-brochures-panel">
+      <Card
+        data-testid="property-brochures-panel"
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        className="relative"
+      >
         <CardContent className="p-3">
           <div className="flex items-center gap-2 mb-2">
             <FileText className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-xs font-semibold">Brochures</span>
+            <span className="ml-auto flex items-center gap-1.5">
+              {uploadMutation.isPending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                multiple
+                className="hidden"
+                onChange={(e) => { if (e.target.files) { handleFiles(e.target.files); e.target.value = ""; } }}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 text-[11px] gap-1 px-1.5"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadMutation.isPending}
+                data-testid="brochure-add-button"
+              >
+                <Plus className="w-3 h-3" />
+                Add
+              </Button>
+            </span>
           </div>
           {renderBody()}
         </CardContent>
+
+        {/* Full-card drop overlay — only shows while a file is being
+            dragged over the card. Indicates which tab the drop will
+            land in so the user can switch first if needed. */}
+        {isDragging && (
+          <div className="absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-500 bg-blue-50/90 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+            <div className="text-center">
+              <Upload className="w-8 h-8 mx-auto mb-1.5 text-blue-600" />
+              <p className="text-sm font-medium text-blue-900">Drop PDF to add as <span className="capitalize">{tab}</span> brochure</p>
+              <p className="text-[10px] text-blue-700 mt-0.5">Lands in this property's SharePoint folder under /Brochures/{tab === "leasing" ? "Leasing" : "Investment"}/</p>
+            </div>
+          </div>
+        )}
       </Card>
 
       {previewing && (
