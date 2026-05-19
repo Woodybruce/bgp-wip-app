@@ -679,6 +679,269 @@ function DealUnitPicker({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Simplified create-deal body — shown by default when opening "New
+// Deal". Five fields, all the team needs to spin a deal up: property,
+// deal type, the relevant counterparty (one smart picker that switches
+// based on deal type), deal name (auto-fills from property), and BGP
+// contacts. Everything else is set later on the deal board / via the
+// "Show all fields" toggle.
+//
+// Picker rules:
+//   - Landlord picker: companies where companyType IS landlord-family
+//     (NOT tenants — the old filter was including them by mistake).
+//   - Tenant picker: companies where companyType IS tenant-family.
+//   - Vendor / Purchaser: investment-side counterparties.
+//   - BGP contacts: users, sorted alphabetically by name.
+// ─────────────────────────────────────────────────────────────────────────
+function SimplifiedCreateBody({
+  form, set, properties, companies, users, toggleAgent, setForm,
+}: {
+  form: any;
+  set: (k: any, v: any) => void;
+  properties: CrmProperty[];
+  companies: CrmCompany[];
+  users: { id: string; name: string }[];
+  toggleAgent: (name: string) => void;
+  setForm: any;
+}) {
+  // Counterparty picker contextual label + filter — driven by deal type.
+  const dt = form.dealType || "";
+  const isInvestment = dt === "Purchase" || dt === "Sale";
+  const counterpartyKind: "landlord" | "tenant" | "vendor" | "purchaser" | "auto" =
+    dt === "Lease Acquisition" ? "landlord"  :
+    dt === "Lease Disposal" ? "tenant"       :
+    dt === "Lease Renewal" || dt === "Rent Review" || dt === "Regear" ? "tenant" :
+    dt === "Purchase" ? "vendor"             :
+    dt === "Sale" ? "purchaser"              :
+    "auto";
+
+  const landlordOptions = companies.filter(c =>
+    c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client"
+    || c.id === form.landlordId
+  );
+  const tenantOptions = companies.filter(c =>
+    (c.companyType?.startsWith("Tenant") || false) || c.id === form.tenantId
+  );
+  const vendorOptions = companies.filter(c =>
+    c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client"
+    || c.id === form.vendorId
+  );
+  const purchaserOptions = companies.filter(c =>
+    (c.companyType?.startsWith("Tenant") || false) || c.companyType === "Purchaser" || c.companyType === "Investor"
+    || c.id === form.purchaserId
+  );
+
+  // BGP contacts (internalAgent multi-select) sorted alphabetically.
+  const sortedUsers = [...users].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const toComboItems = (list: CrmCompany[]) =>
+    list.map(c => ({
+      id: c.id,
+      label: c.name,
+      subLabel: c.companyType || undefined,
+      keywords: [c.domainUrl || "", c.domain || ""],
+    }));
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <Label>Property *</Label>
+        <EntityCombobox
+          testId="select-deal-property-top"
+          placeholder="Select property"
+          searchPlaceholder="Type to search properties…"
+          value={form.propertyId}
+          items={properties.map((p) => ({
+            id: p.id,
+            label: p.name,
+            subLabel: p.postcode || undefined,
+            keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
+          }))}
+          onChange={(val) => {
+            set("propertyId", val);
+            if (val && !form.name.trim()) {
+              const prop = properties.find(p => p.id === val);
+              if (prop) set("name", prop.name);
+            }
+          }}
+        />
+      </div>
+
+      <div>
+        <Label>Deal Type *</Label>
+        <Select
+          value={form.dealType || undefined}
+          onValueChange={(v) => {
+            const val = v === "__clear__" ? "" : v;
+            set("dealType", val);
+            // Auto-assign team based on deal type — matches the existing rule.
+            let autoTeam: string | null = null;
+            if (["Purchase", "Sale"].includes(val)) autoTeam = "Investment";
+            else if (val === "Lease Acquisition") autoTeam = "Tenant Rep";
+            else if (["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"].includes(val)) autoTeam = "Lease Advisory";
+            if (autoTeam && !form.team.includes(autoTeam)) {
+              setForm((p: any) => ({ ...p, team: [...p.team, autoTeam] }));
+            }
+          }}
+        >
+          <SelectTrigger data-testid="select-deal-type">
+            <SelectValue placeholder="Select type" />
+          </SelectTrigger>
+          <SelectContent>
+            {CRM_OPTIONS.dealType.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Counterparty — contextual to deal type. For "auto" (no deal
+          type picked, or a type without an obvious counterparty),
+          show both landlord and tenant pickers. */}
+      {counterpartyKind === "landlord" && (
+        <div>
+          <Label>Landlord</Label>
+          <EntityCombobox
+            testId="select-deal-landlord"
+            placeholder="Link landlord"
+            searchPlaceholder="Search landlords…"
+            value={form.landlordId}
+            items={toComboItems(landlordOptions)}
+            onChange={(v) => set("landlordId", v)}
+          />
+        </div>
+      )}
+      {counterpartyKind === "tenant" && (
+        <>
+          <div>
+            <Label>Landlord</Label>
+            <EntityCombobox
+              testId="select-deal-landlord"
+              placeholder="Link landlord"
+              searchPlaceholder="Search landlords…"
+              value={form.landlordId}
+              items={toComboItems(landlordOptions)}
+              onChange={(v) => set("landlordId", v)}
+            />
+          </div>
+          <div>
+            <Label>Tenant</Label>
+            <EntityCombobox
+              testId="select-deal-tenant"
+              placeholder="Link tenant"
+              searchPlaceholder="Search tenants…"
+              value={form.tenantId}
+              items={toComboItems(tenantOptions)}
+              onChange={(v) => set("tenantId", v)}
+            />
+          </div>
+        </>
+      )}
+      {counterpartyKind === "vendor" && (
+        <div>
+          <Label>Vendor</Label>
+          <EntityCombobox
+            testId="select-deal-vendor"
+            placeholder="Link vendor"
+            searchPlaceholder="Search vendors…"
+            value={form.vendorId}
+            items={toComboItems(vendorOptions)}
+            onChange={(v) => set("vendorId", v)}
+          />
+        </div>
+      )}
+      {counterpartyKind === "purchaser" && (
+        <div>
+          <Label>Purchaser</Label>
+          <EntityCombobox
+            testId="select-deal-purchaser"
+            placeholder="Link purchaser"
+            searchPlaceholder="Search purchasers…"
+            value={form.purchaserId}
+            items={toComboItems(purchaserOptions)}
+            onChange={(v) => set("purchaserId", v)}
+          />
+        </div>
+      )}
+      {counterpartyKind === "auto" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>Landlord</Label>
+            <EntityCombobox
+              testId="select-deal-landlord"
+              placeholder="Link landlord"
+              searchPlaceholder="Search landlords…"
+              value={form.landlordId}
+              items={toComboItems(landlordOptions)}
+              onChange={(v) => set("landlordId", v)}
+            />
+          </div>
+          <div>
+            <Label>Tenant</Label>
+            <EntityCombobox
+              testId="select-deal-tenant"
+              placeholder="Link tenant"
+              searchPlaceholder="Search tenants…"
+              value={form.tenantId}
+              items={toComboItems(tenantOptions)}
+              onChange={(v) => set("tenantId", v)}
+            />
+          </div>
+        </div>
+      )}
+
+      <div>
+        <Label htmlFor="deal-name">Deal Name <span className="text-muted-foreground text-xs">(optional — auto-fills from property)</span></Label>
+        <Input
+          id="deal-name"
+          value={form.name}
+          onChange={(e) => set("name", e.target.value)}
+          placeholder={form.propertyId ? properties.find(p => p.id === form.propertyId)?.name || "" : "Enter deal name"}
+          data-testid="input-deal-name"
+        />
+      </div>
+
+      <div>
+        <Label>BGP Contact</Label>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
+              {form.internalAgent.length === 0 ? (
+                <span className="text-muted-foreground">Select BGP contacts…</span>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {form.internalAgent.map((name: string) => (
+                    <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
+                  ))}
+                </div>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
+            {sortedUsers.map(u => (
+              <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
+                <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
+                  {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
+                </div>
+                <span className="truncate">{u.name}</span>
+              </DropdownMenuItem>
+            ))}
+            {form.internalAgent.length > 0 && (
+              <DropdownMenuItem onClick={() => setForm((p: any) => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
+                <X className="w-3 h-3 mr-2 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Clear all</span>
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground border-t pt-3">
+        That's all you need to start. Rent, fees, areas, dates, AML, Xero — all editable on the deal board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need to fill anything else now.
+      </p>
+    </div>
+  );
+}
+
 export function DealFormDialog({
   open,
   onOpenChange,
@@ -701,6 +964,10 @@ export function DealFormDialog({
   const [form, setForm] = useState<DealFormData>(deal ? dealToForm(deal) : { ...emptyForm });
   const [changeReason, setChangeReason] = useState("");
   const [learning, setLearning] = useState("");
+  // When creating a deal, the form defaults to a stripped-down view
+  // showing only the essentials. Set true to reveal every legacy
+  // field. EDIT always renders the full form regardless.
+  const [showAllFields, setShowAllFields] = useState(false);
   const [approvalGateOpen, setApprovalGateOpen] = useState(false);
   const [approvalGateMessage, setApprovalGateMessage] = useState("");
 
@@ -796,6 +1063,24 @@ export function DealFormDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* On CREATE, render a stripped-down form by default — just
+              what the team needs to spin a deal up. Property, Deal
+              Type, the right counterparty, Deal Name, BGP Contact.
+              Everything else (rent / yield / areas / dates / Xero /
+              AML) lives behind a "Show all fields" toggle and can
+              also be filled in later on the actual deal board. The
+              EDIT path always renders the full form. */}
+          {!isEdit && !showAllFields ? (
+            <SimplifiedCreateBody
+              form={form}
+              set={set}
+              properties={properties}
+              companies={companies}
+              users={users}
+              toggleAgent={toggleAgent}
+              setForm={setForm}
+            />
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <Label>Property *</Label>
@@ -1000,7 +1285,10 @@ export function DealFormDialog({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-                  {users.map(u => (
+                  {/* Alphabetical sort — was rendered in DB-row order
+                      which made it nearly impossible to find someone
+                      in a team of 30. */}
+                  {[...users].sort((a, b) => (a.name || "").localeCompare(b.name || "")).map(u => (
                     <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
                       <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
                         {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
@@ -1054,8 +1342,14 @@ export function DealFormDialog({
               const showArea = isLease || isAdvisory || showAll;
               const showTenure = isLease || isInvestment || showAll;
 
-              const tenantTypes = companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === form.tenantId);
-              const landlordTypes = companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === form.landlordId);
+              // Strict picker filtering — the legacy Landlord picker
+              // also included every Tenant in the CRM (carry-over from
+              // an early data shape where types were mixed). Cleaned up
+              // so Landlord = landlord-family only, Tenant = tenant-
+              // family only. Tenants joining a Landlord picker was the
+              // top user complaint on this form.
+              const tenantTypes = companies.filter(c => c.companyType?.startsWith("Tenant") || c.id === form.tenantId);
+              const landlordTypes = companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === form.landlordId);
               const vendorTypes = companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === form.vendorId);
               const purchaserTypes = companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === form.purchaserId);
 
@@ -1287,8 +1581,21 @@ export function DealFormDialog({
               />
             </div>
           </div>
+          )}
 
-          <DialogFooter>
+          <DialogFooter className="flex items-center gap-2">
+            {!isEdit && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllFields(s => !s)}
+                className="mr-auto text-xs text-muted-foreground"
+                data-testid="button-toggle-all-fields"
+              >
+                {showAllFields ? "← Back to essentials" : "Show all fields →"}
+              </Button>
+            )}
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-deal">
               Cancel
             </Button>

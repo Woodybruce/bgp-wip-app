@@ -952,7 +952,20 @@ export const crmDeals = pgTable("crm_deals", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertCrmDealSchema = createInsertSchema(crmDeals).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertCrmDealSchema = createInsertSchema(crmDeals)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  // Date fields arrive from the HTML <input type="date"> as ISO date
+  // strings ("2026-05-05") or as null when blank. Drizzle's generated
+  // schema expects Date objects, which would 400 the deal create
+  // path. Coerce on the way in.
+  .extend({
+    instructedAt: z.coerce.date().nullable().optional(),
+    targetDate: z.coerce.date().nullable().optional(),
+    exchangedAt: z.coerce.date().nullable().optional(),
+    completedAt: z.coerce.date().nullable().optional(),
+    invoicedAt: z.coerce.date().nullable().optional(),
+    lastInteraction: z.coerce.date().nullable().optional(),
+  });
 export type InsertCrmDeal = z.infer<typeof insertCrmDealSchema>;
 export type CrmDeal = typeof crmDeals.$inferSelect;
 
