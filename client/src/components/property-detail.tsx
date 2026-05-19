@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
 import { PropertyBrochuresPanel } from "@/components/property-brochures-panel";
+import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -299,6 +300,10 @@ export function PropertyDetail({ id }: { id: string }) {
     linkage: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
+  // When the global chat dock is open, hide our own right sidebar —
+  // otherwise the two right-edge columns crowd each other and the
+  // main board gets crushed.
+  const { panelOpen: chatPanelOpen } = useChatBGPState();
 
   // Heavy panels in the main column — collapsed by default to keep the page short.
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
@@ -824,11 +829,13 @@ export function PropertyDetail({ id }: { id: string }) {
           </div>
         </div>
 
-        {/* Right sidebar = property metadata pane. Hidden under xl
-            (1280px) because at smaller widths the ChatBGP dock (340px)
-            + this sidebar (320px) leaves the main board crushed.
-            Everything in here is also reachable via the collapsible
-            cards inside the main column, so hiding it loses nothing. */}
+        {/* Right sidebar = property metadata pane. Hidden when the
+            global ChatBGP dock is open (the two right-edge columns
+            crowded each other and crushed the main board) OR on
+            screens below xl. Everything in here is also reachable
+            via the collapsible cards inside the main column, so
+            hiding it loses nothing. */}
+        {!chatPanelOpen && (
         <div className="w-[320px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden xl:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
@@ -1051,6 +1058,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
           </ScrollArea>
         </div>
+        )}
       </div>
     </div>
   );
