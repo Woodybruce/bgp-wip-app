@@ -743,7 +743,7 @@ router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: R
     const fullSelect = `t.user_id, COALESCE(u.name, u.username, u.email) AS owner_name, u.profile_pic_url`;
     const safeSelect = `t.user_id, COALESCE(u.name, u.username, u.email) AS owner_name, NULL::text AS profile_pic_url`;
     const buildSql = (sel: string) => `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.is_pinned,
-              t.linked_deal_id, t.linked_property_id, t.linked_contact_id, t.created_at, t.updated_at,
+              t.linked_deal_id, t.linked_property_id, t.linked_contact_id, t.created_at,
               ${sel},
               d.name AS deal_name
          FROM user_tasks t

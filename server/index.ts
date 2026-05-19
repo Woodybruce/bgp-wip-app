@@ -3069,6 +3069,32 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("users", "email", "text");
           await addColIfMissing("users", "team", "text");
 
+          // user_tasks.updated_at — original CREATE TABLE only set
+          // created_at + completed_at. Queries that ORDER BY or
+          // RETURNING updated_at (e.g. property tasks endpoint) were
+          // 500'ing on prod.
+          await addColIfMissing("user_tasks", "updated_at", "TIMESTAMP DEFAULT NOW()");
+
+          // crm_interactions.deal_id — added when interactions started
+          // linking to deals (for the property asset-brief activity
+          // feed + linkage audit). The column was never in the original
+          // CREATE TABLE / Drizzle schema, so prod queries that JOIN
+          // crm_deals on i.deal_id 500.
+          await addColIfMissing("crm_interactions", "deal_id", "varchar");
+
+          // crm_deal_agents — many-to-many between deals and BGP users.
+          // The property asset-brief deals feed array_aggs user_ids
+          // from this table; if it doesn't exist the whole asset-brief
+          // and brief-dependent endpoints (tasks, activity) 500.
+          await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS crm_deal_agents (
+            deal_id VARCHAR NOT NULL,
+            user_id VARCHAR NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (deal_id, user_id)
+          )`));
+          await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_crm_deal_agents_deal ON crm_deal_agents (deal_id)`));
+          await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_crm_deal_agents_user ON crm_deal_agents (user_id)`));
+
           // Ensure leasing_schedule_units has all columns added after initial deploy.
           await addColIfMissing("leasing_schedule_units", "rent_pa", "real");
           await addColIfMissing("leasing_schedule_units", "sqft", "real");
