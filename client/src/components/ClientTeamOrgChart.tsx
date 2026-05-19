@@ -36,13 +36,22 @@ interface Candidate {
   username: string | null;
   email: string | null;
   bgp_title: string | null;
+  existing_count?: number;
 }
 
 interface PropertyAssignment {
   id: string;
   name: string;
-  address: string | null;
+  // Server coalesces address (JSONB) into a single readable line, but in
+  // case a future endpoint sends the raw object through, render defensively.
+  address: string | { address?: string; street?: string; city?: string; postcode?: string } | null;
   assigned: boolean;
+}
+
+function readableAddress(a: PropertyAssignment["address"]): string {
+  if (!a) return "";
+  if (typeof a === "string") return a;
+  return a.address || a.street || a.city || a.postcode || "";
 }
 
 interface ColumnDef {
@@ -670,7 +679,7 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
                     />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate">{p.name}</div>
-                      {p.address && <div className="text-[10px] text-muted-foreground truncate">{p.address}</div>}
+                      {readableAddress(p.address) && <div className="text-[10px] text-muted-foreground truncate">{readableAddress(p.address)}</div>}
                     </div>
                   </label>
                 ))}
@@ -750,30 +759,38 @@ function AddMemberDialog({ clientCompanyId, onClose, onAdded }: {
           {isLoading ? (
             <div className="text-xs text-muted-foreground flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" />Loading...</div>
           ) : filtered.length === 0 ? (
-            <div className="text-xs text-muted-foreground py-4 text-center">No candidates — everyone on the BGP team is already on this client.</div>
+            <div className="text-xs text-muted-foreground py-4 text-center">No active BGP staff match.</div>
           ) : (
             <div className="space-y-1">
-              {filtered.map(c => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => addMutation.mutate(c.id)}
-                  disabled={addMutation.isPending}
-                  className="w-full flex items-center gap-2 p-2 border rounded hover:bg-gray-50 dark:hover:bg-gray-800 text-left"
-                  data-testid={`add-member-candidate-${c.id}`}
-                >
-                  <img
-                    src={`/api/hr/photo/${c.id}`}
-                    alt={c.full_name || c.username || ""}
-                    className="w-8 h-8 rounded-full object-cover border bg-gray-100 flex-shrink-0"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{c.full_name || c.username}</div>
-                    {c.bgp_title && <div className="text-[10px] text-muted-foreground truncate">{c.bgp_title}</div>}
-                  </div>
-                </button>
-              ))}
+              {filtered.map(c => {
+                const already = c.existing_count || 0;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => addMutation.mutate(c.id)}
+                    disabled={addMutation.isPending}
+                    className="w-full flex items-center gap-2 p-2 border rounded hover:bg-gray-50 dark:hover:bg-gray-800 text-left"
+                    data-testid={`add-member-candidate-${c.id}`}
+                  >
+                    <img
+                      src={`/api/hr/photo/${c.id}`}
+                      alt={c.full_name || c.username || ""}
+                      className="w-8 h-8 rounded-full object-cover border bg-gray-100 flex-shrink-0"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate flex items-center gap-1.5">
+                        {c.full_name || c.username}
+                        {already > 0 && (
+                          <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">already × {already}</Badge>
+                        )}
+                      </div>
+                      {c.bgp_title && <div className="text-[10px] text-muted-foreground truncate">{c.bgp_title}</div>}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

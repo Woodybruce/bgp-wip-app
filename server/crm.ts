@@ -2160,15 +2160,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
       const [link] = await db.insert(crmPropertyAgents).values({ propertyId: req.params.id, userId, role: cleanRole } as any).returning();
       // Mirror the assignment onto the landlord's client team so the org
-      // chart on the company page stays in sync (no-op when the row
-      // already exists — UNIQUE(client_company_id, user_id) guards it).
+      // chart on the company page stays in sync. The unique constraint
+      // was dropped to allow the same person in multiple columns, so we
+      // guard duplicates with a NOT EXISTS check instead of ON CONFLICT.
       try {
         await db.execute(sql`
           INSERT INTO crm_client_team_members (client_company_id, user_id, team_group)
           SELECT p.landlord_id, ${userId}, 'Unassigned'
-          FROM crm_properties p
-          WHERE p.id = ${req.params.id} AND p.landlord_id IS NOT NULL
-          ON CONFLICT (client_company_id, user_id) DO NOTHING
+            FROM crm_properties p
+           WHERE p.id = ${req.params.id} AND p.landlord_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM crm_client_team_members tm
+                WHERE tm.client_company_id = p.landlord_id AND tm.user_id = ${userId}
+             )
         `);
       } catch (e: any) { console.warn("[property-agents POST] team mirror failed:", e.message); }
       res.json(link);

@@ -65,13 +65,13 @@ router.post("/api/client-teams/:clientCompanyId/member", requireAuth, async (req
     const { clientCompanyId } = req.params;
     const { user_id, team_group, role, reports_to_user_id, sort_order } = req.body || {};
     if (!user_id) return res.status(400).json({ error: "user_id is required" });
+    // No ON CONFLICT — the UNIQUE constraint was dropped on boot so the
+    // same person can sit in multiple columns on a client (e.g. Investment
+    // + Lease Advisory). Each row is its own slot.
     const ins = await pool.query(`
       INSERT INTO crm_client_team_members
         (client_company_id, user_id, team_group, role, reports_to_user_id, sort_order)
       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0))
-      ON CONFLICT (client_company_id, user_id) DO UPDATE
-        SET team_group = COALESCE(EXCLUDED.team_group, crm_client_team_members.team_group),
-            role = COALESCE(EXCLUDED.role, crm_client_team_members.role)
       RETURNING *
     `, [clientCompanyId, user_id, team_group || null, role || null, reports_to_user_id || null, sort_order]);
     res.json(ins.rows[0]);
@@ -170,7 +170,15 @@ router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requi
     const pool = await getPool();
     const { clientCompanyId, userId } = req.params;
     const rows = await pool.query(`
-      SELECT p.id, p.name, p.address,
+      SELECT p.id, p.name,
+             -- crm_properties.address is JSONB. Pick a readable line so
+             -- the client can render it without exploding on a raw object.
+             COALESCE(
+               NULLIF(TRIM(p.address->>'address'), ''),
+               NULLIF(TRIM(p.address->>'street'), ''),
+               NULLIF(TRIM(p.address->>'city'), ''),
+               p.postcode
+             ) AS address,
              EXISTS (
                SELECT 1 FROM crm_property_agents pa
                 WHERE pa.property_id = p.id AND pa.user_id = $2
@@ -229,14 +237,18 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
 router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    // No longer filter out staff who are already on the team — duplicates
+    // are now allowed so the same person can sit in multiple columns
+    // (Investment + Lease Advisory, etc). Mark the existing-on-team count
+    // so the picker can hint "already on team in 2 columns" inline.
     const rows = await pool.query(`
-      SELECT u.id, u.name AS full_name, u.username, u.email, u.role AS bgp_title
+      SELECT u.id, u.name AS full_name, u.username, u.email, u.role AS bgp_title,
+             (SELECT COUNT(*)::int
+                FROM crm_client_team_members tm
+               WHERE tm.client_company_id = $1 AND tm.user_id = u.id) AS existing_count
       FROM users u
       LEFT JOIN staff_profiles sp ON sp.user_id = u.id
       WHERE COALESCE(sp.status, 'active') = 'active'
-        AND u.id NOT IN (
-          SELECT user_id FROM crm_client_team_members WHERE client_company_id = $1
-        )
       ORDER BY u.name, u.username
     `, [req.params.clientCompanyId]);
     res.json(rows.rows);

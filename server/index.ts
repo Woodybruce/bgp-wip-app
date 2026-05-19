@@ -3132,6 +3132,27 @@ app.use("/api/branding/assets", express.static(
           // team can pin a specific person here so the chip doesn't
           // jump around as property allocations change.
           await addColIfMissing("crm_client_team_members", "is_lead", "boolean DEFAULT false");
+          // Drop the UNIQUE(client_company_id, user_id) so the same person
+          // can appear in multiple columns on a client (e.g. someone who
+          // sits in both Investment and Lease Advisory). The original
+          // constraint name from CREATE TABLE is the column-name-suffix
+          // form, but we also catch the generic "..._key" pattern just in
+          // case Postgres auto-named it differently on this database.
+          await db.execute(sql.raw(`
+            DO $$
+            DECLARE
+              cname text;
+            BEGIN
+              FOR cname IN
+                SELECT conname FROM pg_constraint
+                 WHERE conrelid = 'crm_client_team_members'::regclass
+                   AND contype = 'u'
+              LOOP
+                EXECUTE format('ALTER TABLE crm_client_team_members DROP CONSTRAINT %I', cname);
+              END LOOP;
+            EXCEPTION WHEN undefined_table THEN NULL;
+            END $$;
+          `));
           // Editable column list per client. Members keep their team_group
           // as a free string; this table just holds the visible column
           // ordering and any user-renamed labels so the kanban can render
@@ -3155,16 +3176,18 @@ app.use("/api/branding/assets", express.static(
           ));
           const seedRowCount = Number((seedCheck as any).rows?.[0]?.n ?? 0);
           if (seedRowCount === 0) {
+            // No ON CONFLICT — the UNIQUE constraint was dropped above to
+            // allow the same person in multiple columns. DISTINCT keeps
+            // intra-statement duplicates out of the seed.
             await db.execute(sql.raw(`
               INSERT INTO crm_client_team_members
                 (client_company_id, user_id, team_group)
-              SELECT id AS client_company_id,
+              SELECT DISTINCT id AS client_company_id,
                      UNNEST(bgp_contact_user_ids) AS user_id,
                      'Unassigned' AS team_group
               FROM crm_companies
               WHERE bgp_contact_user_ids IS NOT NULL
                 AND array_length(bgp_contact_user_ids, 1) > 0
-              ON CONFLICT (client_company_id, user_id) DO NOTHING
             `));
             await db.execute(sql.raw(`
               INSERT INTO crm_client_team_members
@@ -3175,7 +3198,11 @@ app.use("/api/branding/assets", express.static(
               FROM crm_property_agents pa
               JOIN crm_properties p ON p.id = pa.property_id
               WHERE p.landlord_id IS NOT NULL
-              ON CONFLICT (client_company_id, user_id) DO NOTHING
+                AND NOT EXISTS (
+                  SELECT 1 FROM crm_client_team_members tm
+                   WHERE tm.client_company_id = p.landlord_id
+                     AND tm.user_id = pa.user_id
+                )
             `));
           }
           // Floor-level distinct from Zone — Landsec sheets give the floor
