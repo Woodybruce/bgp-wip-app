@@ -4796,6 +4796,93 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <div className="text-[10px] text-muted-foreground">{data.images.length} image{data.images.length === 1 ? "" : "s"}</div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    // Chain: re-scrape landlord website (refills
+                    // landlord_website_findings.image_urls from /portfolio
+                    // and /our-places), then auto-trigger refresh-images
+                    // so the new URLs actually flow into the gallery.
+                    // Bypasses the 14-day freshness gate that suppresses
+                    // the on-load auto-scrape, which is what stranded
+                    // landlords scraped before the pipeline reorder.
+                    try {
+                      toast({ title: "Re-scraping website…", description: "Hitting /portfolio + /our-places. 60-120s." });
+                      const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio`, {
+                        method: "POST",
+                        headers: { ...getAuthHeaders() },
+                      });
+                      if (!r.ok && r.status !== 202) {
+                        const result = await r.json().catch(() => ({}));
+                        toast({ title: "Scrape failed", description: result.error || `HTTP ${r.status}`, variant: "destructive" });
+                        return;
+                      }
+                      const started = Date.now();
+                      const MAX_WAIT = 5 * 60_000;
+                      const pollScrape = async (): Promise<boolean> => {
+                        if (Date.now() - started > MAX_WAIT) return false;
+                        try {
+                          const s = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, {
+                            headers: getAuthHeaders(),
+                            credentials: "include",
+                          });
+                          if (s.ok) {
+                            const st = await s.json();
+                            if (st.progress?.state === "done") return true;
+                            if (st.progress?.state === "error") {
+                              toast({ title: "Scrape failed", description: st.progress.error || "Unknown error", variant: "destructive" });
+                              return false;
+                            }
+                          }
+                        } catch {}
+                        await new Promise(r => setTimeout(r, 5000));
+                        return pollScrape();
+                      };
+                      const ok = await pollScrape();
+                      if (!ok) return;
+                      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                      // Chain straight into image refresh so the freshly
+                      // harvested URLs actually populate the gallery.
+                      toast({ title: "Scrape done — refreshing images…" });
+                      await fetch(`/api/brand/${companyId}/refresh-images`, {
+                        method: "POST",
+                        headers: { ...getAuthHeaders() },
+                      });
+                      const imgStarted = Date.now();
+                      const pollImages = async () => {
+                        if (Date.now() - imgStarted > MAX_WAIT) return;
+                        try {
+                          const s = await fetch(`/api/brand/${companyId}/refresh-images/status`, {
+                            headers: getAuthHeaders(),
+                            credentials: "include",
+                          });
+                          if (s.ok) {
+                            const st = await s.json();
+                            if (st.state === "done") {
+                              const result = st.result || {};
+                              toast({
+                                title: result.imported > 0 ? `Imported ${result.imported} new images` : "No new images found",
+                                description: result.imported > 0 ? Object.entries(result.bySource || {}).map(([k, n]) => `${n} from ${k}`).join(", ") : undefined,
+                              });
+                              queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                              return;
+                            }
+                            if (st.state === "error") return;
+                          }
+                        } catch {}
+                        setTimeout(pollImages, 5000);
+                      };
+                      setTimeout(pollImages, 5000);
+                    } catch (e: any) {
+                      toast({ title: "Re-scrape failed", description: e?.message, variant: "destructive" });
+                    }
+                  }}
+                  className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                  data-testid="btn-rescrape-landlord-website"
+                >
+                  Re-scrape website
+                </button>
               <button
                 type="button"
                 onClick={async () => {
@@ -4851,6 +4938,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               >
                 Refresh images
               </button>
+              </div>
             </div>
             {data.images.length > 0 && (
               <div className="grid grid-cols-4 gap-1">
