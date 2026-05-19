@@ -326,9 +326,24 @@ async function generateThumbnail(buffer: Buffer): Promise<{ thumbnail: string; w
 async function requireAdmin(req: Request, res: Response, next: Function) {
   const userId = req.session?.userId || (req as any).tokenUserId;
   if (!userId) return res.status(401).json({ error: "Not authenticated" });
-  const result = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
-  if (!result.rows[0]?.is_admin) return res.status(403).json({ error: "Admin access required" });
-  next();
+  try {
+    // Match auth.ts: admin if is_admin=true OR email is in ADMIN_EMAILS.
+    // Without the email fallback, a user gated by email-only admin could
+    // load image-studio (other routes use auth.ts requireAdmin) but get
+    // 403 on bulk-categorize / bulk-tag / etc.
+    const { ADMIN_EMAILS } = await import("./auth");
+    const result = await pool.query("SELECT is_admin, email FROM users WHERE id = $1", [userId]);
+    const row = result.rows[0];
+    if (!row) return res.status(401).json({ error: "Not authenticated" });
+    const emailMatches = (ADMIN_EMAILS as Set<string>).has(String(row.email || "").toLowerCase().trim());
+    if (!row.is_admin && !emailMatches) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    next();
+  } catch (e: any) {
+    console.error("[image-studio requireAdmin] DB check failed:", e?.message);
+    res.status(500).json({ error: "Auth check failed", detail: e?.message });
+  }
 }
 
 /**
@@ -1054,12 +1069,13 @@ export function registerImageStudioRoutes(app: Express) {
         return res.status(400).json({ error: "ids (array) and category (string) required" });
       }
       const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
-      await pool.query(
+      const r = await pool.query(
         `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
         [...ids, category]
       );
-      res.json({ success: true, updated: ids.length });
+      res.json({ success: true, updated: r.rowCount ?? 0 });
     } catch (e: any) {
+      console.error("[image-studio bulk-categorize] failed:", e?.code, e?.message);
       res.status(500).json({ error: e.message });
     }
   });

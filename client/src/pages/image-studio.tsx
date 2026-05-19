@@ -338,15 +338,20 @@ export default function ImageStudio() {
 
   const bulkCategorizeMutation = useMutation({
     mutationFn: async ({ ids, category }: { ids: string[]; category: string }) => {
+      const count = ids.length;
       await apiRequest("PATCH", "/api/image-studio/bulk-categorize", { ids, category });
+      return { count };
     },
-    onSuccess: () => {
+    onSuccess: ({ count }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
       setSelectedIds(new Set());
       setSelectMode(false);
       setBulkCategory("");
-      toast({ title: "Categorised", description: `${selectedIds.size} images updated` });
+      toast({ title: "Categorised", description: `${count} image${count === 1 ? "" : "s"} updated` });
+    },
+    onError: (e: any) => {
+      toast({ title: "Categorise failed", description: e?.message || "Unknown error", variant: "destructive" });
     },
   });
 
