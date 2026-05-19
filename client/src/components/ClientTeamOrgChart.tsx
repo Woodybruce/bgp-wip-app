@@ -1,6 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
-import { ReactFlow, Background, Controls, MiniMap, Handle, Position } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { Link } from "wouter";
@@ -8,7 +6,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, Plus, X, Building2, Mail } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Loader2, Plus, Building2, Mail, GripVertical } from "lucide-react";
 
 interface TeamMember {
   id: string;
@@ -36,183 +36,92 @@ interface Candidate {
   bgp_title: string | null;
 }
 
-// Card dimensions used by the layout algorithm. Kept consistent so the
-// auto-layout's coordinate math matches the rendered size.
-const NODE_W = 200;
-const NODE_H = 96;
-const COL_GAP = 40;
-const ROW_GAP = 32;
+interface PropertyAssignment {
+  id: string;
+  name: string;
+  address: string | null;
+  assigned: boolean;
+}
 
-// Custom node — headshot, name, BGP title, role pill. Click opens the
-// side sheet (handled by the parent via onNodeClick).
-function MemberNode({ data }: { data: any }) {
-  const m = data.member as TeamMember;
-  const photoUrl = `/api/hr/photo/${m.user_id}`;
-  const displayName = m.full_name || m.username || "Unknown";
+// Kanban columns — same 7 teams as the /team org chart, with Unassigned
+// pinned to the end so freshly added members are visible until someone
+// drops them into a real team.
+const COLUMNS = [
+  "Office / Corporate",
+  "Investment",
+  "Lease Advisory",
+  "National Leasing",
+  "Development",
+  "Tenant Rep",
+  "London Leasing",
+  "Unassigned",
+];
+
+const COLUMN_STYLES: Record<string, { bg: string; border: string; chip: string }> = {
+  "Office / Corporate": { bg: "bg-purple-50/50 dark:bg-purple-950/20", border: "border-purple-200 dark:border-purple-800", chip: "bg-purple-500" },
+  "Investment":          { bg: "bg-emerald-50/50 dark:bg-emerald-950/20", border: "border-emerald-200 dark:border-emerald-800", chip: "bg-emerald-500" },
+  "Lease Advisory":      { bg: "bg-amber-50/50 dark:bg-amber-950/20", border: "border-amber-200 dark:border-amber-800", chip: "bg-amber-500" },
+  "National Leasing":    { bg: "bg-orange-50/50 dark:bg-orange-950/20", border: "border-orange-200 dark:border-orange-800", chip: "bg-orange-500" },
+  "Development":         { bg: "bg-pink-50/50 dark:bg-pink-950/20", border: "border-pink-200 dark:border-pink-800", chip: "bg-pink-500" },
+  "Tenant Rep":          { bg: "bg-sky-50/50 dark:bg-sky-950/20", border: "border-sky-200 dark:border-sky-800", chip: "bg-sky-500" },
+  "London Leasing":      { bg: "bg-yellow-50/50 dark:bg-yellow-950/20", border: "border-yellow-200 dark:border-yellow-800", chip: "bg-yellow-500" },
+  "Unassigned":          { bg: "bg-muted/40", border: "border-border", chip: "bg-gray-400" },
+};
+
+function normaliseGroup(g: string | null | undefined): string {
+  if (!g) return "Unassigned";
+  // If the stored group matches a column exactly, use it; otherwise drop
+  // to Unassigned so the card is at least visible.
+  return COLUMNS.includes(g) ? g : "Unassigned";
+}
+
+function MemberCard({ member, onClick, onDragStart }: {
+  member: TeamMember;
+  onClick: () => void;
+  onDragStart: (e: React.DragEvent) => void;
+}) {
+  const photoUrl = `/api/hr/photo/${member.user_id}`;
+  const displayName = member.full_name || member.username || "Unknown";
   return (
-    <div
-      className="relative bg-white dark:bg-gray-900 border rounded-lg shadow-sm hover:shadow-md transition-shadow"
-      style={{ width: NODE_W, height: NODE_H }}
+    <button
+      type="button"
+      draggable
+      onDragStart={onDragStart}
+      onClick={onClick}
+      className="group relative w-full text-left bg-card border rounded-lg shadow-sm hover:shadow-md hover:border-primary/40 transition-all px-2.5 py-2"
+      data-testid={`team-member-card-${member.id}`}
     >
-      <Handle type="target" position={Position.Top} className="!bg-gray-300 !w-2 !h-2" />
-      {m.property_count > 0 && (
-        <div className="absolute -top-2 -right-2 bg-indigo-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">
-          {m.property_count}
+      {member.property_count > 0 && (
+        <div className="absolute -top-1.5 -right-1.5 bg-indigo-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow">
+          {member.property_count}
         </div>
       )}
-      <div className="flex items-center gap-2 p-2 h-full">
+      <div className="flex items-center gap-2">
+        <GripVertical className="w-3 h-3 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0" />
         <img
           src={photoUrl}
           alt={displayName}
-          className="w-14 h-14 rounded-full object-cover border bg-gray-100 dark:bg-gray-800 flex-shrink-0"
+          className="w-9 h-9 rounded-full object-cover border bg-muted shrink-0"
           onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
         />
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-xs truncate" title={displayName}>{displayName}</div>
-          {m.bgp_title && <div className="text-[10px] text-muted-foreground truncate" title={m.bgp_title}>{m.bgp_title}</div>}
-          {m.role && (
-            <div className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate mt-0.5" title={m.role}>{m.role}</div>
+          <div className="font-semibold text-[12px] leading-tight truncate" title={displayName}>{displayName}</div>
+          {member.bgp_title && <div className="text-[10px] text-muted-foreground truncate" title={member.bgp_title}>{member.bgp_title}</div>}
+          {member.role && (
+            <div className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate mt-0.5" title={member.role}>{member.role}</div>
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className="!bg-gray-300 !w-2 !h-2" />
-    </div>
+    </button>
   );
-}
-
-// Team-group header chip — narrow, light-bg cards above the column.
-function GroupHeaderNode({ data }: { data: any }) {
-  return (
-    <div
-      className="bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-md text-center text-[11px] font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200 px-2 py-1.5 shadow-sm"
-      style={{ width: data.width, minHeight: 36 }}
-    >
-      {data.label}
-    </div>
-  );
-}
-
-const nodeTypes = { member: MemberNode, groupHeader: GroupHeaderNode };
-
-// Auto-layout — group members by team_group, compute depth via reports_to
-// BFS, and place each member in (column = team_group index, row = depth).
-// Roots without a team_group sit centred above the columns as the apex.
-function autoLayout(members: TeamMember[]) {
-  const byId = new Map(members.map(m => [m.user_id, m] as const));
-  // depth per user_id — climb the reports_to chain
-  const depthCache = new Map<string, number>();
-  const computeDepth = (m: TeamMember, seen = new Set<string>()): number => {
-    if (depthCache.has(m.user_id)) return depthCache.get(m.user_id)!;
-    if (!m.reports_to_user_id || !byId.has(m.reports_to_user_id) || seen.has(m.user_id)) {
-      depthCache.set(m.user_id, 0);
-      return 0;
-    }
-    const seenNext = new Set(seen);
-    seenNext.add(m.user_id);
-    const d = 1 + computeDepth(byId.get(m.reports_to_user_id)!, seenNext);
-    depthCache.set(m.user_id, d);
-    return d;
-  };
-  for (const m of members) computeDepth(m);
-
-  // Apex = the root with the most direct reports (Managing Director slot).
-  // Others-without-a-reports_to drop into depth 1.
-  const directReportCount = new Map<string, number>();
-  for (const m of members) {
-    if (m.reports_to_user_id) {
-      directReportCount.set(m.reports_to_user_id, (directReportCount.get(m.reports_to_user_id) || 0) + 1);
-    }
-  }
-  const roots = members.filter(m => !m.reports_to_user_id || !byId.has(m.reports_to_user_id || ""));
-  roots.sort((a, b) => (directReportCount.get(b.user_id) || 0) - (directReportCount.get(a.user_id) || 0));
-  const apex = roots[0] || null;
-  const apexId = apex?.user_id || null;
-
-  // Columns = distinct team_group values, sorted alphabetically except a
-  // pinned "Unassigned" at the end. The apex sits above all columns.
-  const groups = [...new Set(members
-    .filter(m => m.user_id !== apexId)
-    .map(m => m.team_group || "Unassigned")
-  )];
-  groups.sort((a, b) => {
-    if (a === "Unassigned") return 1;
-    if (b === "Unassigned") return -1;
-    return a.localeCompare(b);
-  });
-  const colX = (group: string) => groups.indexOf(group) * (NODE_W + COL_GAP);
-  const totalWidth = groups.length * (NODE_W + COL_GAP) - COL_GAP;
-
-  const nodes: any[] = [];
-  const edges: any[] = [];
-
-  // Apex node centred above the columns.
-  if (apex) {
-    nodes.push({
-      id: `m-${apex.id}`,
-      type: "member",
-      position: { x: Math.max(0, totalWidth / 2 - NODE_W / 2), y: 0 },
-      data: { member: apex },
-    });
-  }
-
-  // Team-group headers — one row beneath the apex.
-  for (const g of groups) {
-    nodes.push({
-      id: `g-${g}`,
-      type: "groupHeader",
-      position: { x: colX(g), y: apex ? NODE_H + ROW_GAP : 0 },
-      data: { label: g, width: NODE_W },
-      draggable: false,
-      selectable: false,
-    });
-  }
-
-  // For each column, rank members by depth (smallest first), break ties by
-  // sort_order then full_name.
-  const headerY = (apex ? NODE_H + ROW_GAP : 0) + 36 + ROW_GAP;
-  const colCursor = new Map<string, number>(groups.map(g => [g, 0]));
-  const ordered = [...members].filter(m => m.user_id !== apexId);
-  ordered.sort((a, b) => {
-    const da = computeDepth(a);
-    const db = computeDepth(b);
-    if (da !== db) return da - db;
-    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-    return (a.full_name || "").localeCompare(b.full_name || "");
-  });
-  for (const m of ordered) {
-    const g = m.team_group || "Unassigned";
-    const row = colCursor.get(g) || 0;
-    nodes.push({
-      id: `m-${m.id}`,
-      type: "member",
-      position: { x: colX(g), y: headerY + row * (NODE_H + ROW_GAP) },
-      data: { member: m },
-    });
-    colCursor.set(g, row + 1);
-  }
-
-  // Edges — only render reports_to lines for users who have a known boss
-  // also on the team.
-  for (const m of members) {
-    if (!m.reports_to_user_id) continue;
-    const boss = members.find(x => x.user_id === m.reports_to_user_id);
-    if (!boss) continue;
-    edges.push({
-      id: `e-${boss.id}-${m.id}`,
-      source: `m-${boss.id}`,
-      target: `m-${m.id}`,
-      type: "smoothstep",
-      style: { stroke: "#94a3b8", strokeWidth: 1.5 },
-    });
-  }
-
-  return { nodes, edges };
 }
 
 export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: string }) {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<TeamMember | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const draggingId = useRef<string | null>(null);
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -224,16 +133,56 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     enabled: !!clientCompanyId,
   });
 
-  const { nodes, edges } = useMemo(() => autoLayout(members), [members]);
+  const updateMutation = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: any }) => apiRequest("PATCH", `/api/client-teams/member/${id}`, patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] }),
+  });
 
-  // Keep the side-sheet's member object in sync with the latest server data
-  // so edits to role / team_group / reports_to reflect without re-clicking.
+  // Bucket members into columns; track the account-lead (highest property
+  // count, ties broken by name) so it can sit as an apex card above.
+  const byColumn = useMemo(() => {
+    const map: Record<string, TeamMember[]> = {};
+    for (const c of COLUMNS) map[c] = [];
+    for (const m of members) map[normaliseGroup(m.team_group)].push(m);
+    for (const c of COLUMNS) {
+      map[c].sort((a, b) => (a.sort_order - b.sort_order) || (a.full_name || "").localeCompare(b.full_name || ""));
+    }
+    return map;
+  }, [members]);
+
+  const apex = useMemo<TeamMember | null>(() => {
+    if (members.length === 0) return null;
+    // Whoever has the most properties on this client is the account lead.
+    // Falls back to first by name if everyone's on zero.
+    return [...members].sort((a, b) =>
+      (b.property_count - a.property_count) || (a.full_name || "").localeCompare(b.full_name || "")
+    )[0];
+  }, [members]);
+
   useEffect(() => {
     if (selected) {
       const fresh = members.find(m => m.id === selected.id);
-      if (fresh && fresh !== selected) setSelected(fresh);
+      if (fresh) setSelected(fresh);
     }
   }, [members]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDrop = (column: string) => {
+    setDragOver(null);
+    const id = draggingId.current;
+    draggingId.current = null;
+    if (!id) return;
+    const m = members.find(x => x.id === id);
+    if (!m) return;
+    const currentColumn = normaliseGroup(m.team_group);
+    if (currentColumn === column) return;
+    // Persist the move via PATCH. Optimistic update keeps the card in
+    // the new column while the request is in flight.
+    queryClient.setQueryData<TeamMember[]>(["/api/client-teams", clientCompanyId], (prev) => {
+      if (!prev) return prev;
+      return prev.map(x => x.id === id ? { ...x, team_group: column === "Unassigned" ? null : column } : x);
+    });
+    updateMutation.mutate({ id, patch: { team_group: column === "Unassigned" ? null : column } });
+  };
 
   if (isLoading) {
     return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading team...</div>;
@@ -244,44 +193,73 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Badge variant="secondary" className="text-xs">{members.length} team member{members.length === 1 ? "" : "s"}</Badge>
+          {apex && (
+            <span className="text-[11px] text-muted-foreground">Lead: <span className="font-medium text-foreground">{apex.full_name || apex.username}</span></span>
+          )}
         </div>
         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">
           <Plus className="w-3 h-3 mr-1" />Add to team
         </Button>
       </div>
 
-      <div className="border rounded-lg" style={{ height: 600 }}>
-        {members.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm">
-            <Building2 className="w-8 h-8 opacity-30 mb-2" />
-            <div>No BGP team assigned yet</div>
-            <div className="text-xs mt-1">Click "Add to team" to get started</div>
+      {members.length === 0 ? (
+        <div className="border rounded-lg py-12 flex flex-col items-center justify-center text-muted-foreground text-sm">
+          <Building2 className="w-8 h-8 opacity-30 mb-2" />
+          <div>No BGP team assigned yet</div>
+          <div className="text-xs mt-1">Click "Add to team" to get started</div>
+        </div>
+      ) : (
+        <div className="overflow-x-auto pb-2">
+          <div className="flex gap-2 min-w-max">
+            {COLUMNS.map(col => {
+              const style = COLUMN_STYLES[col];
+              const peeps = byColumn[col] || [];
+              const isOver = dragOver === col;
+              return (
+                <div
+                  key={col}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(col); }}
+                  onDragLeave={() => setDragOver(prev => prev === col ? null : prev)}
+                  onDrop={() => handleDrop(col)}
+                  className={`w-[220px] shrink-0 rounded-lg border ${style.border} ${isOver ? "ring-2 ring-primary/60 ring-offset-1" : ""} ${style.bg} p-2 flex flex-col gap-2`}
+                  data-testid={`team-column-${col.replace(/\s+/g, "-").toLowerCase()}`}
+                >
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${style.chip}`} />
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{col}</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground/70">{peeps.length}</span>
+                  </div>
+                  {peeps.length === 0 ? (
+                    <div className="flex-1 min-h-[60px] flex items-center justify-center text-[11px] text-muted-foreground/50 italic">
+                      drop here
+                    </div>
+                  ) : (
+                    peeps.map(m => (
+                      <MemberCard
+                        key={m.id}
+                        member={m}
+                        onClick={() => setSelected(m)}
+                        onDragStart={(e) => {
+                          draggingId.current = m.id;
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                      />
+                    ))
+                  )}
+                </div>
+              );
+            })}
           </div>
-        ) : (
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.15 }}
-            onNodeClick={(_, node) => {
-              if (node.type !== "member") return;
-              const m = (node.data as any).member as TeamMember;
-              setSelected(m);
-            }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background gap={20} size={1} color="#e2e8f0" />
-            <Controls showInteractive={false} />
-            <MiniMap zoomable pannable className="!bg-white dark:!bg-gray-900 !border" />
-          </ReactFlow>
-        )}
-      </div>
+        </div>
+      )}
 
       {selected && (
         <MemberSheet
           member={selected}
           allMembers={members}
+          clientCompanyId={clientCompanyId}
           onClose={() => setSelected(null)}
           onChange={() => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] })}
         />
@@ -301,19 +279,22 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   );
 }
 
-function MemberSheet({ member, allMembers, onClose, onChange }: {
+function MemberSheet({ member, allMembers, clientCompanyId, onClose, onChange }: {
   member: TeamMember;
   allMembers: TeamMember[];
+  clientCompanyId: string;
   onClose: () => void;
   onChange: () => void;
 }) {
+  const queryClient = useQueryClient();
   const { toast } = useTryToast();
-  const [teamGroup, setTeamGroup] = useState(member.team_group || "");
+  const [teamGroup, setTeamGroup] = useState(member.team_group || "Unassigned");
   const [role, setRole] = useState(member.role || "");
   const [reportsTo, setReportsTo] = useState(member.reports_to_user_id || "");
+  const [propBusy, setPropBusy] = useState(false);
 
   useEffect(() => {
-    setTeamGroup(member.team_group || "");
+    setTeamGroup(member.team_group || "Unassigned");
     setRole(member.role || "");
     setReportsTo(member.reports_to_user_id || "");
   }, [member.id]);
@@ -333,17 +314,44 @@ function MemberSheet({ member, allMembers, onClose, onChange }: {
     onError: (e: any) => toast({ title: "Remove failed", description: e.message, variant: "destructive" }),
   });
 
-  const groupOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const m of allMembers) if (m.team_group) s.add(m.team_group);
-    return [...s].sort();
-  }, [allMembers]);
+  const propertiesQuery = useQuery<PropertyAssignment[]>({
+    queryKey: ["/api/client-teams", clientCompanyId, "member", member.user_id, "properties"],
+    queryFn: async () => {
+      const r = await fetch(`/api/client-teams/${clientCompanyId}/member/${member.user_id}/properties`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const toggleProperty = async (propertyId: string, assigned: boolean) => {
+    setPropBusy(true);
+    // Optimistic flip.
+    queryClient.setQueryData<PropertyAssignment[]>(
+      ["/api/client-teams", clientCompanyId, "member", member.user_id, "properties"],
+      (prev) => prev?.map(p => p.id === propertyId ? { ...p, assigned: !assigned } : p)
+    );
+    try {
+      const body = assigned ? { remove: [propertyId] } : { add: [propertyId] };
+      await apiRequest("POST", `/api/client-teams/${clientCompanyId}/member/${member.user_id}/properties`, body);
+      // Refresh property_count badge on the card by re-querying the team.
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+    } catch (e: any) {
+      // Roll back optimistic flip.
+      queryClient.setQueryData<PropertyAssignment[]>(
+        ["/api/client-teams", clientCompanyId, "member", member.user_id, "properties"],
+        (prev) => prev?.map(p => p.id === propertyId ? { ...p, assigned } : p)
+      );
+      toast({ title: "Allocation failed", description: e.message, variant: "destructive" });
+    } finally {
+      setPropBusy(false);
+    }
+  };
 
   const bossOptions = useMemo(() => allMembers.filter(m => m.user_id !== member.user_id), [allMembers, member.user_id]);
 
   return (
     <Sheet open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-[420px] sm:max-w-[420px] overflow-y-auto">
+      <SheetContent side="right" className="w-[440px] sm:max-w-[440px] overflow-y-auto">
         <SheetHeader>
           <SheetTitle>{displayName}</SheetTitle>
         </SheetHeader>
@@ -370,18 +378,20 @@ function MemberSheet({ member, allMembers, onClose, onChange }: {
           <div className="space-y-2 border-t pt-3">
             <div>
               <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Team group</label>
-              <Input
+              <Select
                 value={teamGroup}
-                onChange={(e) => setTeamGroup(e.target.value)}
-                onBlur={() => { if (teamGroup !== (member.team_group || "")) updateMutation.mutate({ team_group: teamGroup || null }); }}
-                placeholder="Investment / Lease Advisory / ..."
-                list={`team-groups-${member.id}`}
-                className="h-8 text-sm"
-                data-testid="member-team-group"
-              />
-              <datalist id={`team-groups-${member.id}`}>
-                {groupOptions.map(g => <option key={g} value={g} />)}
-              </datalist>
+                onValueChange={(v) => {
+                  setTeamGroup(v);
+                  updateMutation.mutate({ team_group: v === "Unassigned" ? null : v });
+                }}
+              >
+                <SelectTrigger className="h-8 text-sm" data-testid="member-team-group">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COLUMNS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Role on this client</label>
@@ -408,6 +418,33 @@ function MemberSheet({ member, allMembers, onClose, onChange }: {
                 ))}
               </select>
             </div>
+          </div>
+
+          <div className="border-t pt-3">
+            <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Properties on this client</label>
+            {propertiesQuery.isLoading ? (
+              <div className="text-xs text-muted-foreground flex items-center gap-2 mt-2"><Loader2 className="w-3 h-3 animate-spin" />Loading properties…</div>
+            ) : (propertiesQuery.data || []).length === 0 ? (
+              <div className="text-xs text-muted-foreground mt-2 italic">This client has no properties yet.</div>
+            ) : (
+              <div className="mt-2 max-h-[260px] overflow-y-auto border rounded-md divide-y">
+                {(propertiesQuery.data || []).map(p => (
+                  <label key={p.id} className="flex items-start gap-2 px-2 py-1.5 hover:bg-accent/40 cursor-pointer text-xs">
+                    <Checkbox
+                      checked={p.assigned}
+                      disabled={propBusy}
+                      onCheckedChange={() => toggleProperty(p.id, p.assigned)}
+                      className="mt-0.5"
+                      data-testid={`property-allocation-${p.id}`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{p.name}</div>
+                      {p.address && <div className="text-[10px] text-muted-foreground truncate">{p.address}</div>}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           {(member.cv_summary || member.bio) && (
@@ -514,11 +551,8 @@ function AddMemberDialog({ clientCompanyId, onClose, onAdded }: {
   );
 }
 
-// Toast helper — falls back to a no-op when the toast provider isn't
-// mounted, so the org chart works embedded anywhere on the company page.
 function useTryToast() {
   try {
-    // Lazy require so we don't crash builds that don't ship the hook.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { useToast } = require("@/hooks/use-toast");
     return useToast();

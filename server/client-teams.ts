@@ -118,6 +118,68 @@ router.delete("/api/client-teams/member/:id", requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/client-teams/:clientCompanyId/member/:userId/properties — list
+// every property on this landlord with an `assigned` flag for whether the
+// given staff member is on the crm_property_agents link. Drives the
+// multi-select in the org chart's side sheet.
+router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { clientCompanyId, userId } = req.params;
+    const rows = await pool.query(`
+      SELECT p.id, p.name, p.address,
+             EXISTS (
+               SELECT 1 FROM crm_property_agents pa
+                WHERE pa.property_id = p.id AND pa.user_id = $2
+             ) AS assigned
+      FROM crm_properties p
+      WHERE p.landlord_id = $1
+      ORDER BY p.name
+    `, [clientCompanyId, userId]);
+    res.json(rows.rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST/DELETE bulk-toggle assignments. Body: { add: string[], remove: string[] }
+// — both arrays of property_ids. Single request keeps the side-sheet
+// commit atomic from the UI's point of view.
+router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { clientCompanyId, userId } = req.params;
+    const { add = [], remove = [] } = (req.body || {}) as { add?: string[]; remove?: string[] };
+    for (const pid of add) {
+      // Guard against duplicate links — crm_property_agents doesn't carry
+      // a UNIQUE(property_id, user_id) constraint in prod yet, so we
+      // check-then-insert rather than ON CONFLICT.
+      const exists = await pool.query(
+        "SELECT 1 FROM crm_property_agents WHERE property_id = $1 AND user_id = $2 LIMIT 1",
+        [pid, userId]
+      );
+      if (exists.rows.length > 0) continue;
+      await pool.query(`
+        INSERT INTO crm_property_agents (property_id, user_id)
+        SELECT $1, $2 WHERE EXISTS (
+          SELECT 1 FROM crm_properties WHERE id = $1 AND landlord_id = $3
+        )
+      `, [pid, userId, clientCompanyId]);
+    }
+    for (const pid of remove) {
+      await pool.query(`
+        DELETE FROM crm_property_agents pa
+         USING crm_properties p
+         WHERE pa.property_id = $1 AND pa.user_id = $2
+           AND p.id = pa.property_id AND p.landlord_id = $3
+      `, [pid, userId, clientCompanyId]);
+    }
+    res.json({ ok: true, added: add.length, removed: remove.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/client-teams/:clientCompanyId/candidates — list BGP staff
 // who aren't already on this client's team, so the "Add to team" picker
 // has a clean shortlist. Excludes leavers via staff_profiles.status.
