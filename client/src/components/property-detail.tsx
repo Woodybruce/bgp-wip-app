@@ -831,6 +831,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </Card>
             </div>
           </div>
+        </div>
 
         {/* Right sidebar = property metadata pane. The gutter
             against the global ChatBGP dock now comes from the chat
@@ -1057,7 +1058,6 @@ export function PropertyDetail({ id }: { id: string }) {
             </div>
 
           </ScrollArea>
-        </div>
         </div>
       </div>
     </div>
