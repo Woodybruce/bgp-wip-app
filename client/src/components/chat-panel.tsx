@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
-import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { ChatBGPMarkdown, AuthDownloadLink } from "@/components/chatbgp-markdown";
 import {
   Sparkles,
   Send,
@@ -312,17 +312,11 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
         >{match[3]}</a>
       );
     } else if (match[5] && match[6]) {
-      // Add auth token to download URL so mobile browsers can download natively
-      const dlToken = localStorage.getItem("bgp_auth_token") || "";
-      const dlSep = match[6].includes("?") ? "&" : "?";
-      const dlUrl = dlToken ? `${match[6]}${dlSep}token=${dlToken}` : match[6];
-      const dlName = match[6].split("/").pop()?.split("?")[0] || "download";
-      result.push(
-        <a key={key++} href={dlUrl} download={dlName} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 transition-colors text-sm font-medium no-underline min-h-[44px]"
-          data-testid="link-download-file"
-        >{match[5]}</a>
-      );
+      // Delegate to the shared AuthDownloadLink (fetch → blob → click)
+      // so the download path is identical across desktop, /chatbgp page
+      // and the mobile PWA. Inline <a href download> previously caused
+      // iOS PWA white-screens on authenticated binary responses.
+      result.push(<AuthDownloadLink key={key++} href={match[6]}>{match[5]}</AuthDownloadLink>);
     } else if (match[7]) {
       result.push(<strong key={key++}>{match[7]}</strong>);
     } else if (match[8]) {

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
+import { AuthDownloadLink } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
 import type { User as UserType } from "@shared/schema";
@@ -275,19 +276,10 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
         >{match[3]}</a>
       );
     } else if (match[5] && match[6]) {
-      // Append the auth token from localStorage so mobile Safari/Chrome
-      // can fetch the file via the same session as the chat — without
-      // this the download endpoint 401s under PWA WebView.
-      const dlToken = localStorage.getItem("bgp_auth_token") || "";
-      const dlSep = match[6].includes("?") ? "&" : "?";
-      const dlUrl = dlToken ? `${match[6]}${dlSep}token=${dlToken}` : match[6];
-      const dlName = match[6].split("/").pop()?.split("?")[0] || "download";
-      result.push(
-        <a key={key++} href={dlUrl} download={dlName} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 transition-colors text-sm font-medium no-underline min-h-[44px]"
-          data-testid="link-download-file"
-        >{match[5]}</a>
-      );
+      // Shared AuthDownloadLink — fetch + blob + click, the only download
+      // pattern that works inside an iOS PWA WebView without causing the
+      // white-screen-forcing-quit symptom on authenticated binary URLs.
+      result.push(<AuthDownloadLink key={key++} href={match[6]}>{match[5]}</AuthDownloadLink>);
     } else if (match[7]) {
       result.push(<strong key={key++}>{match[7]}</strong>);
     } else if (match[8]) {
