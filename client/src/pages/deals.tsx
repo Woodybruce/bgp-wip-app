@@ -757,13 +757,31 @@ function SimplifiedCreateBody({
   const createVendor = makeCompanyCreator("Vendor");
   const createPurchaser = makeCompanyCreator("Purchaser");
 
-  const toComboItems = (list: CrmCompany[]) =>
-    list.map(c => ({
-      id: c.id,
-      label: c.name,
-      subLabel: c.companyType || undefined,
-      keywords: [c.domainUrl || "", c.domain || ""],
-    }));
+  const toComboItems = (list: CrmCompany[]) => {
+    // SubLabel = legal/contracting entity ("Land Securities Group Plc"
+    // under "Landsec") rather than the companyType chip, which now
+    // ends up implicit (the user already picked the column the brand
+    // sits in). companyType moves into keywords so it's still
+    // searchable. Trading entity aliases come in as keywords too so
+    // typing any legal entity name still finds the brand row.
+    return list.map(c => {
+      const trading = Array.isArray((c as any).tradingEntities) ? (c as any).tradingEntities : [];
+      const aliases = trading.map((t: any) => t?.name).filter((n: any) => typeof n === "string" && n.length > 0);
+      const uk = (c as any).ukEntityName || (c as any).uk_entity_name || null;
+      return {
+        id: c.id,
+        label: c.name,
+        subLabel: uk || aliases[0] || undefined,
+        keywords: [
+          c.companyType || "",
+          c.domainUrl || "",
+          c.domain || "",
+          ...(uk ? [uk] : []),
+          ...aliases,
+        ].filter(Boolean),
+      };
+    });
+  };
 
   return (
     <div className="space-y-4">

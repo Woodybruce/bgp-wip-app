@@ -848,14 +848,31 @@ function TenantBrandPicker({
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const { data: allCompanies = [] } = useQuery<Array<{ id: string; name: string; meta: string | null }>>({
+  const { data: allCompanies = [] } = useQuery<Array<{ id: string; name: string; meta: string | null; subLabel: string | null; aliases: string[] }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
       const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);
-      return arr.map((c: any) => ({ id: String(c.id), name: c.name, meta: c.companyType || c.company_type || null }));
+      return arr.map((c: any) => {
+        // Trading-entity aliases — every legal entity that's been
+        // recorded against this brand. Searching any of them lands
+        // back on the brand row.
+        const trading = Array.isArray(c.tradingEntities || c.trading_entities) ? (c.tradingEntities || c.trading_entities) : [];
+        const aliases = trading.map((t: any) => t?.name).filter((n: any) => typeof n === "string" && n.length > 0);
+        const uk = c.ukEntityName || c.uk_entity_name || null;
+        return {
+          id: String(c.id),
+          name: c.name,
+          // subLabel = first legal entity in priority order. UK
+          // contracting entity wins (it's the canonical lease party),
+          // else the first trading-entity alias.
+          subLabel: uk || aliases[0] || null,
+          aliases,
+          meta: c.companyType || c.company_type || null,
+        };
+      });
     },
     staleTime: 120000,
   });

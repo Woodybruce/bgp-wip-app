@@ -736,7 +736,13 @@ function InlineDateCell({ unitId, field, value, onSave, className = "" }: {
   </span>;
 }
 
-interface CrmCompanyBasic { id: string; name: string; }
+interface CrmCompanyBasic {
+  id: string;
+  name: string;
+  meta?: string | null;       // companyType chip (Tenant / Landlord / Agent…)
+  subLabel?: string | null;   // UK contracting entity (or first trading-entity alias)
+  aliases?: string[];         // trading-entity names, all searchable
+}
 
 function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate }: {
   unitId: string;
@@ -756,7 +762,21 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);
-      return arr.map((c: any) => ({ id: String(c.id), name: c.name, meta: c.companyType || c.company_type || null }));
+      // Carry trading name + UK contracting entity + alias list so the
+      // picker can show "Landsec" with "Land Securities Group Plc"
+      // underneath, and match searches against either.
+      return arr.map((c: any) => {
+        const trading = Array.isArray(c.tradingEntities || c.trading_entities) ? (c.tradingEntities || c.trading_entities) : [];
+        const aliases = trading.map((t: any) => t?.name).filter((n: any) => typeof n === "string" && n.length > 0);
+        const uk = c.ukEntityName || c.uk_entity_name || null;
+        return {
+          id: String(c.id),
+          name: c.name,
+          meta: c.companyType || c.company_type || null,
+          subLabel: uk || aliases[0] || null,
+          aliases,
+        };
+      });
     },
     staleTime: 120000,
   });

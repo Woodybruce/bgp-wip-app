@@ -32,6 +32,20 @@ export interface CrmEntityOption {
   name: string;
   /** Optional short label shown to the right (e.g. company type, role). */
   meta?: string | null;
+  /**
+   * Optional secondary identifier shown UNDER the name in muted text —
+   * use for legal/contracting entity (e.g. "Land Securities Group Plc"
+   * under "Landsec") or any alias the user might search for. The
+   * picker matches the search query against this string too, so a
+   * user typing "Land Securities Group" still lands on the Landsec
+   * brand row.
+   */
+  subLabel?: string | null;
+  /**
+   * Optional extra strings to match the search against (trading
+   * entity aliases, common misspellings, etc). Not displayed.
+   */
+  aliases?: string[];
 }
 
 interface CrmEntityPickerProps {
@@ -128,18 +142,33 @@ export function CrmEntityPicker({
     [selectedIds, options],
   );
 
+  // Build a haystack of every searchable string per option (name +
+  // subLabel + aliases) so the user can search either the trading
+  // name ("Landsec") or the legal entity ("Land Securities Group Plc")
+  // and still find the same brand row.
+  const haystackFor = (o: CrmEntityOption): string => {
+    const parts: string[] = [o.name];
+    if (o.subLabel) parts.push(o.subLabel);
+    if (o.aliases) parts.push(...o.aliases);
+    return parts.join(" ").toLowerCase();
+  };
+
   const matches = useMemo(() => {
     const s = search.trim().toLowerCase();
     const remaining = options.filter(o => !selectedIds.includes(o.id));
     if (!s) return remaining.slice(0, matchLimit);
     return remaining
-      .filter(o => o.name.toLowerCase().includes(s))
+      .filter(o => haystackFor(o).includes(s))
       .slice(0, matchLimit);
   }, [options, search, selectedIds, matchLimit]);
 
   const exactMatch = useMemo(() => {
     const s = search.trim().toLowerCase();
     if (!s) return undefined;
+    // "Exact" still matches the displayed name only — sub-label /
+    // alias matches stay as candidates in the dropdown, but they
+    // don't suppress the Create row if the user genuinely typed
+    // a new name.
     return options.find(o => o.name.toLowerCase() === s);
   }, [options, search]);
 
@@ -260,8 +289,16 @@ export function CrmEntityPicker({
             data-testid={`${testIdPrefix}-option-${o.id}`}
           >
             <Icon className="w-3 h-3 text-gray-400 shrink-0" />
-            <span className="truncate flex-1 min-w-0">{o.name}</span>
-            {o.meta && <span className="text-[9px] text-gray-400 shrink-0">{o.meta}</span>}
+            <div className="flex-1 min-w-0">
+              <div className="truncate">{o.name}</div>
+              {o.subLabel && (
+                // Legal entity / contracting name underneath the
+                // trading name in muted text. e.g. 'Land Securities
+                // Group Plc' under 'Landsec'.
+                <div className="truncate text-[10px] text-gray-400">{o.subLabel}</div>
+              )}
+            </div>
+            {o.meta && <span className="text-[9px] text-gray-400 shrink-0 self-start mt-0.5">{o.meta}</span>}
           </button>
         ))}
         {onCreate && search.trim() && !exactMatch && (
