@@ -820,7 +820,10 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
         )}
       </div>
       {open && (
-        <div className="absolute z-50 mt-1 bg-white dark:bg-gray-900 border rounded-lg shadow-lg w-[220px] left-0" data-testid={`target-picker-${unitId}`}>
+        // z-[60] keeps the dropdown above sticky table headers and any
+        // tooltips that share z-50. Opaque shadow + ring stops table
+        // rows behind it from bleeding through visually.
+        <div className="absolute z-[60] mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl ring-1 ring-black/5 w-[220px] left-0" data-testid={`target-picker-${unitId}`}>
           <div className="p-1.5">
             <div className="flex flex-wrap gap-0.5 mb-1">
               {linkedCompanies.map(c => (
@@ -1454,6 +1457,18 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
     },
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids?: string[]) => {
+      const r = await apiRequest("POST", "/api/leasing-schedule/bulk-delete", { propertyId, ids: ids ?? null });
+      return r.json() as Promise<{ deleted: number }>;
+    },
+    onSuccess: (out) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+      toast({ title: `${out.deleted} unit${out.deleted === 1 ? "" : "s"} deleted` });
+    },
+    onError: (err: any) => toast({ title: "Bulk delete failed", description: err.message, variant: "destructive" }),
+  });
+
   const [includeArchived, setIncludeArchived] = useState(false);
 
   const inlineUpdate = (unitId: string, field: string, value: string) => {
@@ -1691,6 +1706,30 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <Button variant="outline" size="sm" onClick={() => setShowAddUnit(true)} data-testid="btn-add-unit">
             <Plus className="w-3.5 h-3.5 mr-1" />Add Unit
           </Button>
+          {units.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const n = units.length;
+                if (!confirm(`Delete ALL ${n} unit${n === 1 ? "" : "s"} on this leasing schedule? This cannot be undone.`)) return;
+                if (!confirm(`Are you sure? Type 'OK' on the next prompt to confirm.`)) return;
+                const typed = prompt(`Type DELETE to wipe all ${n} units:`);
+                if ((typed || "").trim().toUpperCase() !== "DELETE") {
+                  toast({ title: "Cancelled — text did not match" });
+                  return;
+                }
+                bulkDeleteMutation.mutate(undefined);
+              }}
+              disabled={bulkDeleteMutation.isPending}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              data-testid="btn-delete-all-units"
+              title="Delete every unit on this leasing schedule"
+            >
+              {bulkDeleteMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 mr-1" />}
+              Delete all
+            </Button>
+          )}
         </div>
       </div>
       {/* Last updated + meeting month banner */}

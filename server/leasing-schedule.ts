@@ -388,6 +388,54 @@ router.delete("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) =>
   }
 });
 
+// Bulk-delete leasing schedule units for a property. Body:
+//   { propertyId, ids?: string[] }
+// If ids is omitted, every unit on the property is wiped — guarded by the
+// per-property access check, and the audit log records each deletion so a
+// rogue 'delete all' is reconstructible. Used by the 'Delete all' button
+// in the leasing schedule when the user wants to start the schedule over.
+router.post("/api/leasing-schedule/bulk-delete", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId, ids } = req.body || {};
+    if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+
+    const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const filterByIds = Array.isArray(ids) && ids.length > 0;
+    const selectQ = filterByIds
+      ? "SELECT id, unit_name FROM leasing_schedule_units WHERE property_id = $1 AND id = ANY($2::varchar[])"
+      : "SELECT id, unit_name FROM leasing_schedule_units WHERE property_id = $1";
+    const selectParams = filterByIds ? [propertyId, ids] : [propertyId];
+    const { rows: targets } = await pool.query(selectQ, selectParams);
+
+    if (targets.length === 0) return res.json({ success: true, deleted: 0 });
+
+    const deleteQ = filterByIds
+      ? "DELETE FROM leasing_schedule_units WHERE property_id = $1 AND id = ANY($2::varchar[])"
+      : "DELETE FROM leasing_schedule_units WHERE property_id = $1";
+    await pool.query(deleteQ, selectParams);
+
+    for (const t of targets) {
+      await logAudit(pool, {
+        unitId: t.id,
+        propertyId,
+        userId: user.id,
+        userName: user.username,
+        action: "delete",
+        fieldName: "unit_name",
+        oldValue: t.unit_name,
+      }).catch(() => { /* don't block delete on audit failure */ });
+    }
+
+    res.json({ success: true, deleted: targets.length });
+  } catch (e: any) {
+    console.error("[leasing-schedule bulk-delete] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post("/api/leasing-schedule/import", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
