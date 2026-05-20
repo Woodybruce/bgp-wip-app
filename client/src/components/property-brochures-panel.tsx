@@ -18,8 +18,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, Download, Maximize2, Pencil, Archive, ChevronDown, ChevronRight,
-  Loader2, Trash2, Upload, Plus,
+  Loader2, Trash2, Upload, Plus, Sparkles, AlertTriangle, CheckCircle2,
 } from "lucide-react";
+
+type IngestStatus = "pending" | "running" | "done" | "error" | "skipped" | null;
 
 interface Brochure {
   id: string;
@@ -33,6 +35,21 @@ interface Brochure {
   uploadedBy: string | null;
   fileUrl: string;
   downloadUrl: string;
+  ingestStatus: IngestStatus;
+  ingestStartedAt: string | null;
+  ingestCompletedAt: string | null;
+  ingestResult: {
+    applied?: {
+      propertyFieldsUpdated?: string[];
+      imagesStored?: number;
+      imagesByKind?: Record<string, number>;
+      tenancyRowsInserted?: number;
+      agentLinked?: boolean;
+      geocoded?: boolean;
+    };
+    extraction?: { confidence?: string };
+  } | null;
+  ingestError: string | null;
 }
 
 interface BrochureResponse {
@@ -74,6 +91,29 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
+    // Poll every 4s while any brochure is still being ingested so the
+    // badge transitions pending → running → done without a manual refresh.
+    refetchInterval: (q) => {
+      const d = q.state.data as BrochureResponse | undefined;
+      if (!d) return false;
+      const all = [...(d.leasing || []), ...(d.investment || []), ...(d.archived?.leasing || []), ...(d.archived?.investment || [])];
+      return all.some(b => b.ingestStatus === "pending" || b.ingestStatus === "running") ? 4000 : false;
+    },
+  });
+
+  const reingestMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/properties/${propertyId}/brochures/${id}/reingest`, {
+        method: "POST", credentials: "include",
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] }),
+    onError: (e: any) => toast({ title: "Re-extract failed", description: e.message, variant: "destructive" }),
   });
 
   const uploadMutation = useMutation({
@@ -200,6 +240,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
               onEdit={() => setEditing(active[0])}
               onArchive={() => archiveMutation.mutate({ id: active[0].id, archived: true })}
               onDelete={() => { if (confirm(`Delete "${active[0].name}"? This cannot be undone.`)) deleteMutation.mutate(active[0].id); }}
+              onReingest={() => reingestMutation.mutate(active[0].id)}
             />
           </div>
         ) : (
@@ -212,6 +253,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
                 onEdit={() => setEditing(b)}
                 onArchive={() => archiveMutation.mutate({ id: b.id, archived: true })}
                 onDelete={() => { if (confirm(`Delete "${b.name}"? This cannot be undone.`)) deleteMutation.mutate(b.id); }}
+                onReingest={() => reingestMutation.mutate(b.id)}
               />
             ))}
           </div>
@@ -238,6 +280,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
                     onEdit={() => setEditing(b)}
                     onArchive={() => archiveMutation.mutate({ id: b.id, archived: false })}
                     onDelete={() => { if (confirm(`Delete "${b.name}"? This cannot be undone.`)) deleteMutation.mutate(b.id); }}
+                    onReingest={() => reingestMutation.mutate(b.id)}
                     unarchiveLabel
                   />
                 ))}
@@ -310,17 +353,60 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
   );
 }
 
+function ingestBadge(brochure: Brochure) {
+  const s = brochure.ingestStatus;
+  if (!s || s === "skipped") return null;
+  if (s === "pending" || s === "running") {
+    return (
+      <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-blue-600 text-white">
+        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+        Extracting…
+      </span>
+    );
+  }
+  if (s === "error") {
+    return (
+      <span
+        className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-rose-600 text-white"
+        title={brochure.ingestError || "Ingestion failed"}
+      >
+        <AlertTriangle className="w-2.5 h-2.5" />
+        Extract failed
+      </span>
+    );
+  }
+  // s === "done"
+  const a = brochure.ingestResult?.applied;
+  const total = (a?.imagesStored || 0) + (a?.tenancyRowsInserted || 0) + (a?.propertyFieldsUpdated?.length || 0);
+  if (total === 0) return null;
+  const parts: string[] = [];
+  if (a?.imagesStored) parts.push(`${a.imagesStored} img`);
+  if (a?.tenancyRowsInserted) parts.push(`${a.tenancyRowsInserted} units`);
+  if (a?.propertyFieldsUpdated?.length) parts.push(`${a.propertyFieldsUpdated.length} fields`);
+  return (
+    <span
+      className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-emerald-600 text-white"
+      title={`Extracted: ${parts.join(", ")}${a?.geocoded ? " · geocoded" : ""}${a?.agentLinked ? " · agent linked" : ""}`}
+    >
+      <CheckCircle2 className="w-2.5 h-2.5" />
+      {parts.join(" · ")}
+    </span>
+  );
+}
+
 function BrochureTile({
-  brochure, onPreview, onEdit, onArchive, onDelete, unarchiveLabel, hero,
+  brochure, onPreview, onEdit, onArchive, onDelete, onReingest, unarchiveLabel, hero,
 }: {
   brochure: Brochure;
   onPreview: () => void;
   onEdit: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  onReingest: () => void;
   unarchiveLabel?: boolean;
   hero?: boolean;
 }) {
+  const ingestRunning = brochure.ingestStatus === "pending" || brochure.ingestStatus === "running";
   return (
     <div
       className={`group border rounded-md overflow-hidden bg-white hover:border-blue-300 transition-colors ${hero ? "h-full flex flex-col" : ""}`}
@@ -338,6 +424,7 @@ function BrochureTile({
           className="w-full h-full border-0"
           title={brochure.name}
         />
+        {ingestBadge(brochure)}
         <button
           type="button"
           onClick={onPreview}
@@ -356,6 +443,15 @@ function BrochureTile({
             {brochure.pageCount ? ` · ${brochure.pageCount}p` : ""}
           </span>
           <div className="flex gap-0.5">
+            <button
+              onClick={onReingest}
+              disabled={ingestRunning}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40"
+              title={ingestRunning ? "Extraction in progress" : "Re-extract images + fields from this brochure"}
+              data-testid={`brochure-tile-reingest-${brochure.id}`}
+            >
+              <Sparkles className="w-2.5 h-2.5" />
+            </button>
             <button
               onClick={onEdit}
               className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"

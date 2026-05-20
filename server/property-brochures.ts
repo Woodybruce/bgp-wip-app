@@ -4,12 +4,20 @@
 // table. No SharePoint dependency — brochures live in our DB and are
 // served by us.
 //
-// Surfaces three endpoints:
-//   GET  /api/properties/:id/brochures        list (grouped + archived split)
-//   POST /api/properties/:id/brochures/upload multipart upload (PDF)
-//   GET  /api/properties/:id/brochures/:bid/file  serve bytes for preview/download
-//   POST /api/properties/:id/brochures/:bid/edit  pdf-lib edits (delete pages, cover logo)
-//   PATCH /api/properties/:id/brochures/:bid       toggle archived / change type / rename
+// On upload, the file is hashed (sha256) for dedupe and then handed
+// off to `brochure-ingest` which extracts images, classifies them
+// (hero / floor plan / location plan), runs Claude vision over the
+// rasterised pages to extract structured property fields + a tenancy
+// schedule, and folds the lot back into crm_properties /
+// tenancy_schedule_units / image_studio_images.
+//
+// Endpoints:
+//   GET    /api/properties/:id/brochures           list (grouped + archived split)
+//   POST   /api/properties/:id/brochures/upload    multipart upload (PDF) + auto-ingest
+//   GET    /api/properties/:id/brochures/:bid/file serve bytes for preview/download
+//   POST   /api/properties/:id/brochures/:bid/edit pdf-lib edits (delete pages, cover logo)
+//   POST   /api/properties/:id/brochures/:bid/reingest  re-run the vision pipeline
+//   PATCH  /api/properties/:id/brochures/:bid      toggle archived / change type / rename
 //   DELETE /api/properties/:id/brochures/:bid
 
 import type { Express, Request, Response } from "express";
@@ -18,6 +26,7 @@ import crypto from "crypto";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { saveFile, getFile } from "./file-storage";
+import { ingestBrochure } from "./brochure-ingest";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -40,6 +49,14 @@ type BrochureRow = {
   uploaded_by: string | null;
   created_at: string;
   updated_at: string;
+  // Ingestion columns added by ensureIngestColumns() — may be undefined on
+  // legacy rows until the migration runs.
+  file_sha256?: string | null;
+  ingest_status?: "pending" | "running" | "done" | "error" | "skipped" | null;
+  ingest_started_at?: string | null;
+  ingest_completed_at?: string | null;
+  ingest_result?: any;
+  ingest_error?: string | null;
 };
 
 function actorId(req: Request): string | null {
@@ -60,10 +77,78 @@ function rowToJson(r: BrochureRow) {
     // URL the client uses for both thumbnail-iframe preview and download.
     fileUrl: `/api/properties/${r.property_id}/brochures/${r.id}/file`,
     downloadUrl: `/api/properties/${r.property_id}/brochures/${r.id}/file?download=1`,
+    ingestStatus: r.ingest_status || null,
+    ingestStartedAt: r.ingest_started_at || null,
+    ingestCompletedAt: r.ingest_completed_at || null,
+    ingestResult: r.ingest_result || null,
+    ingestError: r.ingest_error || null,
   };
 }
 
+// Auto-migrate: the original property_brochures table predates the
+// ingestion pipeline. Add the columns we need on the fly so deployments
+// don't need a manual migration step.
+let _columnsEnsured = false;
+async function ensureIngestColumns(): Promise<void> {
+  if (_columnsEnsured) return;
+  try {
+    await pool.query(`
+      ALTER TABLE property_brochures
+        ADD COLUMN IF NOT EXISTS file_sha256 TEXT,
+        ADD COLUMN IF NOT EXISTS ingest_status TEXT,
+        ADD COLUMN IF NOT EXISTS ingest_started_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS ingest_completed_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS ingest_result JSONB,
+        ADD COLUMN IF NOT EXISTS ingest_error TEXT
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_property_brochures_sha256 ON property_brochures (file_sha256)`);
+    _columnsEnsured = true;
+  } catch (err: any) {
+    // The table may not exist on first deploy — that's fine, the upload
+    // route handles "relation does not exist" gracefully below.
+    if (err?.code !== "42P01") {
+      console.warn("[property-brochures] ensureIngestColumns:", err?.message);
+    }
+  }
+}
+
+// Fire-and-forget background ingest. We don't await this from the upload
+// handler so a slow Claude vision pass (10-30s) doesn't block the HTTP
+// response or hit Railway's edge timeout.
+function runIngestInBackground(brochureId: string, propertyId: string, pdfBuffer: Buffer, userId: string | null): void {
+  setImmediate(async () => {
+    const startedAt = new Date();
+    await pool.query(
+      `UPDATE property_brochures SET ingest_status = 'running', ingest_started_at = $1, ingest_error = NULL WHERE id = $2`,
+      [startedAt, brochureId]
+    ).catch(() => {});
+    const result = await ingestBrochure({ brochureId, propertyId, pdfBuffer, userId });
+    await pool.query(
+      `UPDATE property_brochures
+         SET ingest_status = $1,
+             ingest_completed_at = NOW(),
+             ingest_result = $2,
+             ingest_error = $3
+       WHERE id = $4`,
+      [
+        result.status,
+        JSON.stringify({ applied: result.applied, extraction: result.extraction || null }),
+        result.error || null,
+        brochureId,
+      ],
+    ).catch((e: any) => console.warn("[property-brochures] ingest status update failed:", e?.message));
+    console.log(
+      `[property-brochures] ingest ${result.status} for ${brochureId}:`,
+      JSON.stringify(result.applied),
+    );
+  });
+}
+
 export function registerPropertyBrochureRoutes(app: Express) {
+  // Add the ingestion-tracking columns on boot so existing deployments
+  // pick them up without a manual migration step.
+  ensureIngestColumns().catch(err => console.warn("[property-brochures] init:", err?.message));
+
   // List brochures attached to a property, grouped by type with the
   // archived rows separated so the UI's accordion shows them only
   // when asked.
@@ -111,6 +196,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
     upload.single("file"),
     async (req: Request, res: Response) => {
       try {
+        await ensureIngestColumns();
         const file = (req as any).file as Express.Multer.File | undefined;
         if (!file) return res.status(400).json({ error: "No file uploaded" });
         const rawType = String((req.body?.type || "leasing")).toLowerCase();
@@ -121,6 +207,18 @@ export function registerPropertyBrochureRoutes(app: Express) {
         const sniff = file.buffer.subarray(0, 5).toString("utf8");
         const isPdf = sniff.startsWith("%PDF-") || file.mimetype === "application/pdf" || /\.pdf$/i.test(file.originalname || "");
         if (!isPdf) return res.status(400).json({ error: "Only PDFs are accepted as brochures." });
+
+        // Dedupe: hash the bytes, see if the same brochure already exists
+        // on this property. Same PDF arriving twice (resends from agents)
+        // returns the existing row rather than creating a duplicate.
+        const sha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
+        const dupe = await pool.query<BrochureRow>(
+          `SELECT * FROM property_brochures WHERE property_id = $1 AND file_sha256 = $2 LIMIT 1`,
+          [req.params.id, sha256],
+        );
+        if (dupe.rows[0]) {
+          return res.json({ ok: true, brochure: rowToJson(dupe.rows[0]), duplicate: true });
+        }
 
         // Try to read the page count via pdf-lib so the UI can show it.
         // Failure is non-fatal — page_count stays NULL.
@@ -139,18 +237,52 @@ export function registerPropertyBrochureRoutes(app: Express) {
 
         const { rows } = await pool.query<BrochureRow>(
           `INSERT INTO property_brochures
-             (property_id, type, original_name, storage_key, mime_type, size_bytes, page_count, uploaded_by)
-           VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7)
+             (property_id, type, original_name, storage_key, mime_type, size_bytes, page_count, uploaded_by, file_sha256, ingest_status)
+           VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'pending')
            RETURNING *`,
-          [req.params.id, type, cleanName, storageKey, file.size, pageCount, actorId(req)],
+          [req.params.id, type, cleanName, storageKey, file.size, pageCount, actorId(req), sha256],
         );
-        res.json({ ok: true, brochure: rowToJson(rows[0]) });
+        const brochure = rows[0];
+
+        // Kick the ingestion in the background. The HTTP response returns
+        // straight away with ingest_status='pending'; the client polls the
+        // list endpoint (or refreshes) to see status become 'running' then
+        // 'done' once Claude finishes.
+        runIngestInBackground(brochure.id, String(req.params.id), file.buffer, actorId(req));
+
+        res.json({ ok: true, brochure: rowToJson(brochure) });
       } catch (e: any) {
         console.error("[property-brochures upload]", e?.message);
         res.status(500).json({ error: e?.message });
       }
     },
   );
+
+  // Re-run the ingestion pipeline for an existing brochure. Useful when
+  // we tune the vision prompt, or when an old upload predates this
+  // pipeline. Wipes any rows previously tagged with this brochure's id
+  // marker (in image_studio_images.tags and tenancy_schedule_units.comments)
+  // before re-inserting, so hand-edited rows are preserved.
+  app.post("/api/properties/:id/brochures/:bid/reingest", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await ensureIngestColumns();
+      const { rows } = await pool.query<BrochureRow>(
+        `SELECT * FROM property_brochures WHERE id = $1 AND property_id = $2`,
+        [req.params.bid, req.params.id],
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Brochure not found" });
+
+      const file = await getFile(row.storage_key);
+      if (!file) return res.status(404).json({ error: "Brochure file missing from storage" });
+
+      runIngestInBackground(row.id, row.property_id, file.data, actorId(req));
+      res.json({ ok: true, brochureId: row.id, status: "running" });
+    } catch (e: any) {
+      console.error("[property-brochures reingest]", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
 
   // Serve the bytes — used by the preview iframe (no download header)
   // and the download button (download=1 adds Content-Disposition).

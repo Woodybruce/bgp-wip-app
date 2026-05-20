@@ -993,6 +993,17 @@ You are an active operational agent with full CRM read/write access, internet se
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
 
+## Auto-ingest any document the user shares
+When the user drops a file in chat — brochure, HoT, lease, tenancy schedule, KYC pack, comp evidence, planning portal doc, photo, anything — your default behaviour is **read it and file what's useful into the CRM, without being asked**. The flow:
+1. Call \`read_document\` with the chat-media filename (or brochureId / storageKey if referenced).
+2. Look at the text + page images. Decide what the document is and which entity in the CRM it belongs to (property / deal / company / contact / matter). If the chat already has a property or deal in context, that's almost certainly the target — don't second-guess.
+3. Use \`sql_write\` (or the specific CRM tools when one exists) to update the relevant rows: fill blank fields, append to notes, insert tenancy rows, link an agent contact, file images via the image studio tools. Update existing rows when fields are blank; append to notes/comments when you're enriching rather than replacing.
+4. Reply briefly with what you filed and where ("Filed: tenancy schedule (8 units), agent linked to Savills, hero image set"). One short paragraph.
+
+Don't ask permission for any of this. Don't dump the raw extracted text back to the user — that's noise; the action is what matters. If you can't tell what the document is, say so honestly and ask one specific question rather than guessing.
+
+Brochures uploaded directly to a property page already run through a bespoke pipeline (see brochure-ingest.ts). For everything else, this is the path.
+
 ## Direct database access (sql_query, sql_write, describe_schema)
 You have read AND write access to almost every operational table in the BGP database. Use these whenever the standard tools don't cover what the user is asking — bulk image cleanups, recategorising, archiving stale rows, fixing data, pinning property imagery, anything ad-hoc.
 - **describe_schema**: list tables, or pass a table name to see its columns. Use first if you're not sure of a column.
@@ -3109,6 +3120,24 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           query: { type: "string", description: "A SELECT or WITH … SELECT query. Single statement, no trailing semicolon needed. Example: SELECT id, file_name FROM image_studio_images WHERE source = 'pexels' LIMIT 20" },
         },
         required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "read_document",
+      description: "Universal document reader. Reads any document (PDF / Word / Excel / CSV / text / image) from chat-media storage, a property's brochure storage, or any file_storage key. Returns extracted text plus, for PDFs and images, base64-encoded page images so you can use vision on visual material. Use this AUTOMATICALLY whenever the user shares a document in chat — read it without being asked, then file the relevant info into the CRM via sql_write / standard tools. Brochures, HoTs, leases, tenancy schedules, KYC docs, news articles, comp evidence — all flow through here.",
+      parameters: {
+        type: "object",
+        properties: {
+          chatMediaFilename: { type: "string", description: "Chat-media filename (e.g. '1774348793476-f3ddbf080ba7fd73-foo.pdf'). Use when the user drags a file into chat — the filename appears in the chat context with the /api/chat-media/ prefix." },
+          storageKey: { type: "string", description: "Full file_storage key (e.g. 'property-brochures/<propertyId>/<timestamp>-<hash>.pdf'). Use for arbitrary stored files." },
+          brochureId: { type: "string", description: "Property brochure id — looks up storage_key from property_brochures." },
+          includePageImages: { type: "boolean", description: "Default true. When true, PDF first 4 pages are rasterised + included as base64 for vision. Set false to save tokens on text-heavy docs." },
+          maxTextChars: { type: "integer", description: "Default 40000 chars of extracted text. Drop lower for huge documents." },
+        },
       },
     },
   });
@@ -6222,6 +6251,23 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] vision_describe_image error:", err?.message);
       return { data: { success: false, error: `Vision failed: ${err?.message}` } };
+    }
+  }
+
+  // ─── Universal document reader ──────────────────────────────────────────
+  if (fnName === "read_document") {
+    try {
+      const { readDocumentForAI } = await import("./document-reader");
+      const result = await readDocumentForAI({
+        chatMediaFilename: fnArgs.chatMediaFilename as string | undefined,
+        storageKey: fnArgs.storageKey as string | undefined,
+        brochureId: fnArgs.brochureId as string | undefined,
+        includePageImages: fnArgs.includePageImages !== false,
+        maxTextChars: typeof fnArgs.maxTextChars === "number" ? fnArgs.maxTextChars : 40_000,
+      });
+      return { data: result };
+    } catch (err: any) {
+      return { data: { error: err?.message || String(err) } };
     }
   }
 
