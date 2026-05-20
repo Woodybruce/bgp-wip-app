@@ -537,6 +537,44 @@ function convertToolsForClaude(tools: any[]): any[] {
   }));
 }
 
+// Claude vision only accepts jpeg / png / gif / webp. iPhone uploads
+// (.heic), Android (.bmp), and any other format trip a 400. Plus a
+// single message with multiple unresized photos easily blows past the
+// 32MB request cap (413). This helper:
+//   1. Converts non-supported formats to JPEG.
+//   2. Resizes anything wider than 1600px so a 12MP iPhone shot drops
+//      from ~3MB to ~250KB.
+//   3. Strips EXIF (orientation already applied) so we don't pay for
+//      metadata bytes.
+// Returns the normalised buffer + the matching MIME type. On failure
+// it falls back to the original — better to let Claude reject than to
+// drop the image silently.
+const CLAUDE_VISION_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+async function normaliseImageForClaude(
+  buffer: Buffer,
+  mimeType: string | undefined,
+  filename?: string,
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  try {
+    const ext = (filename?.split(".").pop() || "").toLowerCase();
+    const isHeic = ext === "heic" || ext === "heif" || mimeType === "image/heic" || mimeType === "image/heif";
+    const isSupported = mimeType && CLAUDE_VISION_MIMES.has(mimeType) && !isHeic;
+    // For supported formats under ~1.5MB, skip resize — saves CPU.
+    if (isSupported && buffer.length < 1_500_000) {
+      return { buffer, mimeType: mimeType! };
+    }
+    const sharpMod = (await import("sharp")).default;
+    const pipeline = sharpMod(buffer, { failOn: "none" })
+      .rotate() // honour EXIF orientation, then drop EXIF
+      .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true });
+    const jpeg = await pipeline.jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+    return { buffer: jpeg, mimeType: "image/jpeg" };
+  } catch (err: any) {
+    console.warn("[normaliseImageForClaude] conversion failed, passing original through:", err?.message);
+    return { buffer, mimeType: mimeType || "image/jpeg" };
+  }
+}
+
 function convertMessagesForClaude(messages: any[]): { system: string; messages: any[] } {
   let system = "";
   const claudeMessages: any[] = [];
@@ -10745,11 +10783,15 @@ export function setupChatBGPRoutes(app: Express) {
 
           if (isImage) {
             try {
-              const base64 = fileData.toString("base64");
-              const mimeType = file.mimetype || "image/png";
+              // Normalise HEIC / oversize iPhone photos to ≤1600px JPEG
+              // before sending to Claude — Anthropic rejects HEIC
+              // (400) and chains of unresized photos blow the 32MB
+              // request cap (413). Defaults to original on failure.
+              const normalised = await normaliseImageForClaude(fileData, file.mimetype, file.originalname);
+              const base64 = normalised.buffer.toString("base64");
               imageContentParts.push({
                 type: "image_url",
-                image_url: { url: `data:${mimeType};base64,${base64}`, detail: "auto" },
+                image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" },
               });
             } catch (err: any) {
               console.error(`Chat image read error (${file.originalname}):`, err?.message);
@@ -11678,8 +11720,12 @@ export function setupChatBGPRoutes(app: Express) {
               }
             }
             if (imageData) {
-              const base64 = imageData.toString("base64");
-              contentParts.push({ type: "image_url", image_url: { url: `data:${mime};base64,${base64}`, detail: "auto" } });
+              // Same normalisation as the live upload paths — HEIC
+              // files persisted to chat-media still need converting
+              // before they hit Claude on a later thread reload.
+              const normalised = await normaliseImageForClaude(imageData, mime, filename);
+              const base64 = normalised.buffer.toString("base64");
+              contentParts.push({ type: "image_url", image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" } });
             }
           } catch (err: any) {
             console.error(`[ChatBGP] Failed to load pasted image ${filename}:`, err?.message);
@@ -11981,11 +12027,13 @@ export function setupChatBGPRoutes(app: Express) {
           }
           if (isImage) {
             try {
-              const base64 = fileData.toString("base64");
-              const mimeType = file.mimetype || "image/png";
+              // HEIC / oversize photos rejected by Claude — normalise
+              // to JPEG ≤1600px first. See normaliseImageForClaude.
+              const normalised = await normaliseImageForClaude(fileData, file.mimetype, file.originalname);
+              const base64 = normalised.buffer.toString("base64");
               imageContentParts.push({
                 type: "image_url",
-                image_url: { url: `data:${mimeType};base64,${base64}`, detail: "auto" },
+                image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" },
               });
             } catch (err: any) {
               console.error(`[ChatBGP Excel] Image read error (${file.originalname}):`, err?.message);
