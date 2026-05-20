@@ -3336,13 +3336,33 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showDeals, setShowDeals] = useState(false);
   const [showComps, setShowComps] = useState(false);
   const [showLeaseEvents, setShowLeaseEvents] = useState(false);
+  const [showPathway, setShowPathway] = useState(false);
+  const pathwayMarkersRef = useRef<L.LayerGroup | null>(null);
+  // ── Street View on-click ───────────────────────────────────────────────────
+  // When toggled on, clicking the map opens an embedded Google Street View
+  // panorama at that lat/lng in a popup. Reuses the GOOGLE_API_KEY already
+  // wired through /api/config/maps-key.
+  const [showStreetView, setShowStreetView] = useState(false);
+  const [googleMapsKey, setGoogleMapsKey] = useState<string | null>(null);
+  const streetViewClickRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
+  // ── Retail Context layer (BGP Goad-style data, live) ───────────────────────
+  // When toggled on, fetch mapped units (VOA + OSM + Places + CRM) for the
+  // current map view and render circle markers coloured by retail category.
+  // Same data source as the deck-export PNG (server/goad-plan-data.ts).
+  const [showRetailContext, setShowRetailContext] = useState(false);
+  const [retailUnits, setRetailUnits] = useState<Array<{ lat: number; lng: number; address: string; tenantName?: string; category: string; voaDescription?: string; rateableValue?: number; tradingStatus?: string; isSubject?: boolean }>>([]);
+  const [retailFetching, setRetailFetching] = useState(false);
+  const [excludedRetailCategories, setExcludedRetailCategories] = useState<Set<string>>(new Set());
+  const retailMarkersRef = useRef<L.LayerGroup | null>(null);
+  const retailFetchTokenRef = useRef(0);
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
-  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
+  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[]; pathway?: any[] } | null>(null);
 
   // Land Registry title boundaries — always-on red-line layer
   const titleBoundaryLayerRef = useRef<L.LayerGroup | null>(null);
+  const centreTenantLayerRef = useRef<L.LayerGroup | null>(null);
   const titleBoundaryBboxRef = useRef<string>("");
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
@@ -3435,6 +3455,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     const titlePane = map.createPane("titlePane");
     titlePane.style.zIndex = "455";
     titleBoundaryLayerRef.current = L.layerGroup({ pane: "titlePane" }).addTo(map);
+    centreTenantLayerRef.current = L.layerGroup().addTo(map);
 
     // CRM data layer groups — clustered (Deals / Comps / Lease Events)
     const crmPane = map.createPane("crmPane");
@@ -3586,6 +3607,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       // polygon and adopts the tenant name. Good enough to put "Boots",
       // "Pret", "Costa" etc. into Cardinal Place's subdivided NGD parts.
       const centreLabels: Array<{ lat: number; lng: number; label: string }> = [];
+      // Also draw each tenant as an independent on-map text marker so
+      // centres that NGD doesn't subdivide (Cardinal Place shows as one
+      // big polygon) still get every tenant's name rendered. These
+      // markers live on centreTenantLayerRef and are refreshed on every
+      // moveend.
+      if (centreTenantLayerRef.current && mapRef.current) {
+        centreTenantLayerRef.current.clearLayers();
+      }
       for (const c of (centreDirectories || []) as any[]) {
         const tenants: any[] = Array.isArray(c?.tenants) ? c.tenants : [];
         if (!tenants.length) continue;
@@ -3596,7 +3625,20 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           const angle = (2 * Math.PI * i) / Math.max(tenants.length, 1);
           const dLat = (R / 111) * Math.cos(angle);
           const dLng = (R / (111 * Math.cos(c._centreLat * Math.PI / 180))) * Math.sin(angle);
-          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: t.unit ? `${t.unit} ${t.name}` : t.name });
+          const labelText = t.unit ? `${t.unit} ${t.name}` : t.name;
+          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: labelText });
+          // Also drop an independent label marker at this ring position
+          // so the tenant name shows even when NGD gives us one big
+          // polygon for the whole centre.
+          if (centreTenantLayerRef.current && mapRef.current && mapRef.current.getZoom() >= 17) {
+            const icon = L.divIcon({
+              html: `<div class="centre-tenant-label">${labelText.replace(/</g, "&lt;")}</div>`,
+              className: "centre-tenant-icon",
+              iconSize: [80, 14],
+              iconAnchor: [40, 7],
+            });
+            L.marker([c._centreLat + dLat, c._centreLng + dLng], { icon, interactive: false }).addTo(centreTenantLayerRef.current);
+          }
         });
       }
 
@@ -3800,6 +3842,39 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     }
   }, [showComps, mapPins]);
 
+  // Render Pathway runs layer — pins for active investigations.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!pathwayMarkersRef.current) {
+      pathwayMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    pathwayMarkersRef.current.clearLayers();
+    if (!showPathway || !mapPins?.pathway?.length) return;
+    for (const r of mapPins.pathway) {
+      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lng)) continue;
+      const stage = r.currentStage || 0;
+      const stageLabel = stage > 0 ? `Stage ${stage}` : "Not started";
+      const marker = L.circleMarker([r.lat, r.lng], {
+        radius: 7,
+        fillColor: "#10b981", // emerald — pathway = active investigation
+        color: "#fff",
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.85,
+      });
+      marker.bindPopup(`
+        <div style="font-size:12px;max-width:240px">
+          <strong>${r.label || "Pathway run"}</strong>
+          ${r.postcode ? `<br/><span style="color:#666">${r.postcode}</span>` : ""}
+          ${r.tenant ? `<br/><span style="color:#666">Tenant: ${r.tenant}</span>` : ""}
+          <br/><span style="font-size:10px;background:#10b981;color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">${stageLabel}</span>
+          <br/><a href="/property-pathway?runId=${r.id}" style="display:inline-block;margin-top:8px;font-size:11px;color:#10b981;text-decoration:none;border:1px solid #d1fae5;padding:3px 8px;border-radius:4px">Open run →</a>
+        </div>
+      `, { closeButton: false, offset: L.point(0, -5), maxWidth: 260 });
+      pathwayMarkersRef.current.addLayer(marker);
+    }
+  }, [showPathway, mapPins]);
+
   // Render Lease Events layer
   useEffect(() => {
     const map = mapRef.current;
@@ -3984,6 +4059,162 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       crmMarkersRef.current.addLayer(marker);
     }
   }, [showCrmLayer, crmProperties]);
+
+  // ─── Retail Context layer ───────────────────────────────────────
+  // Fetch mapped units for the current map centre when the layer is
+  // toggled on or the user pans far enough. Tokenised so out-of-order
+  // responses don't clobber a newer fetch.
+  useEffect(() => {
+    if (!showRetailContext) {
+      retailMarkersRef.current?.clearLayers();
+      return;
+    }
+    const map = mapRef.current;
+    if (!map) return;
+    let cancelled = false;
+    const fetchForCentre = async () => {
+      const c = map.getCenter();
+      const myToken = ++retailFetchTokenRef.current;
+      setRetailFetching(true);
+      try {
+        const r = await fetch(`/api/retail-context-plan/units?lat=${c.lat}&lng=${c.lng}&radius=180`, { credentials: "include" });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled || myToken !== retailFetchTokenRef.current) return;
+        setRetailUnits(Array.isArray(data?.units) ? data.units : []);
+      } catch {
+        /* ignore — toggle still works, just no data */
+      } finally {
+        if (!cancelled && myToken === retailFetchTokenRef.current) setRetailFetching(false);
+      }
+    };
+    fetchForCentre();
+    // Refetch on significant pan. moveend fires after the user releases
+    // the mouse; debounced via the tokenised pattern above.
+    const onMoveEnd = () => fetchForCentre();
+    map.on("moveend", onMoveEnd);
+    return () => { cancelled = true; map.off("moveend", onMoveEnd); };
+  }, [showRetailContext]);
+
+  // ── Persist last map centre to localStorage ───────────────────────────────
+  // Lets sibling components (e.g. the MAP BGP "🌐 3D View" button) pick up
+  // wherever the user last looked, even though they live outside this map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const onMove = () => {
+      try {
+        const c = map.getCenter();
+        localStorage.setItem(
+          "bgp_map_last_centre",
+          JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom(), ts: Date.now() }),
+        );
+      } catch { /* localStorage may be disabled */ }
+    };
+    map.on("moveend", onMove);
+    onMove();
+    return () => { map.off("moveend", onMove); };
+  }, []);
+
+  // ── Street View on-click toggle ────────────────────────────────────────────
+  // Fetch Google Maps API key once so we can build embed URLs.
+  useEffect(() => {
+    if (googleMapsKey !== null) return;
+    fetch("/api/config/maps-key", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setGoogleMapsKey(d?.key || ""))
+      .catch(() => setGoogleMapsKey(""));
+  }, [googleMapsKey]);
+
+  // Bind a map-click handler when the toggle is on; clean up on toggle off.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const container = map.getContainer();
+    if (!showStreetView) {
+      container.style.cursor = "";
+      if (streetViewClickRef.current) {
+        map.off("click", streetViewClickRef.current);
+        streetViewClickRef.current = null;
+      }
+      return;
+    }
+    container.style.cursor = "crosshair";
+    const handler = (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng;
+      const key = googleMapsKey || "";
+      // Embed URL works with any key that has Maps Embed enabled. If the
+      // key is missing, fall back to a public Maps link.
+      const embedSrc = key
+        ? `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(key)}&location=${lat},${lng}&heading=0&pitch=0&fov=90`
+        : "";
+      const fallback = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
+      const html = embedSrc
+        ? `<div style="width:360px"><iframe src="${embedSrc}" width="360" height="240" style="border:0;border-radius:6px" allow="fullscreen" referrerpolicy="no-referrer-when-downgrade"></iframe>
+            <div style="text-align:right;margin-top:4px"><a href="${fallback}" target="_blank" rel="noreferrer" style="font-size:11px;color:#1a73e8">Open in Maps ↗</a></div></div>`
+        : `<div style="width:240px;font-size:12px"><p>Google Maps key not configured.</p><a href="${fallback}" target="_blank" rel="noreferrer" style="font-size:11px;color:#1a73e8">Open Street View in Maps ↗</a></div>`;
+      L.popup({ maxWidth: 380, closeButton: true })
+        .setLatLng(e.latlng)
+        .setContent(html)
+        .openOn(map);
+    };
+    streetViewClickRef.current = handler;
+    map.on("click", handler);
+    return () => {
+      map.off("click", handler);
+      container.style.cursor = "";
+      streetViewClickRef.current = null;
+    };
+  }, [showStreetView, googleMapsKey]);
+
+  // Render the units as colour-coded circle markers. Re-runs when units
+  // change OR when the user toggles a category checkbox in the layer
+  // panel (excludedRetailCategories).
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!retailMarkersRef.current) {
+      retailMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    retailMarkersRef.current.clearLayers();
+    if (!showRetailContext) return;
+
+    const COLOURS: Record<string, { fill: string; stroke: string; label: string }> = {
+      fashion:     { fill: "#C9A961", stroke: "#8A7237", label: "Fashion & Comparison" },
+      convenience: { fill: "#7FA99B", stroke: "#4F7064", label: "Convenience & Food Retail" },
+      fnb:         { fill: "#D08F6E", stroke: "#8A5A3F", label: "Food & Beverage" },
+      services:    { fill: "#8B9DC3", stroke: "#5C6E94", label: "Services" },
+      beauty:      { fill: "#B8A4B6", stroke: "#7C6A7A", label: "Beauty & Personal Care" },
+      vacant:      { fill: "#FF7D00", stroke: "#B25600", label: "Vacant" },
+      other:       { fill: "#A8A8A8", stroke: "#707070", label: "Other / Unknown" },
+    };
+
+    for (const u of retailUnits) {
+      if (!Number.isFinite(u.lat) || !Number.isFinite(u.lng)) continue;
+      if (excludedRetailCategories.has(u.category)) continue;
+      const style = COLOURS[u.category] || COLOURS.other;
+      const marker = L.circleMarker([u.lat, u.lng], {
+        radius: u.isSubject ? 9 : 6,
+        fillColor: style.fill,
+        color: u.isSubject ? "#001524" : style.stroke,
+        weight: u.isSubject ? 2.5 : 1.2,
+        opacity: 1,
+        fillOpacity: 0.85,
+      });
+      const ratable = u.rateableValue ? `<br/><span style="color:#666">RV £${u.rateableValue.toLocaleString()}</span>` : "";
+      const status = u.tradingStatus && u.tradingStatus !== "trading" ? `<br/><span style="font-size:10px;background:#ef4444;color:white;padding:1px 6px;border-radius:8px">${u.tradingStatus.replace(/_/g, " ")}</span>` : "";
+      marker.bindPopup(`
+        <div style="font-size:12px;max-width:240px">
+          <strong>${u.tenantName || u.address || "Unit"}</strong>
+          ${u.address && u.tenantName ? `<br/><span style="color:#666">${u.address}</span>` : ""}
+          ${u.voaDescription ? `<br/><span style="color:#666;font-style:italic">${u.voaDescription}</span>` : ""}
+          ${ratable}
+          <br/><span style="font-size:10px;background:${style.fill};color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">${style.label}</span>
+          ${status}
+        </div>
+      `, { closeButton: false, offset: L.point(0, -5) });
+      retailMarkersRef.current.addLayer(marker);
+    }
+  }, [showRetailContext, retailUnits, excludedRetailCategories]);
 
   // ─── OS Data Layers: fetch buildings / sites on map move ─────────
   const [highlightedBuildingLayer, setHighlightedBuildingLayer] = useState<L.GeoJSON | null>(null);
@@ -4482,6 +4713,23 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         .edozo-label::before {
           display: none !important;
         }
+        .centre-tenant-icon {
+          background: transparent !important;
+          border: none !important;
+        }
+        .centre-tenant-label {
+          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+          font-size: 9px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.2px;
+          color: #0a0a0a;
+          text-align: center;
+          line-height: 1.1;
+          white-space: nowrap;
+          text-shadow: 0 0 2px rgba(255,255,255,0.95), 0 0 3px rgba(255,255,255,0.8);
+          pointer-events: none;
+        }
         .leaflet-control-attribution {
           font-size: 9px !important;
           background: rgba(255,255,255,0.8) !important;
@@ -4568,6 +4816,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
+              { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
+              { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: retailUnits.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
+              { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
             ].map((row) => (
               <button
                 key={row.key}
@@ -4588,6 +4839,47 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               </button>
             ))}
           </div>
+          {/* Category filter for the Retail Context layer — only shown
+              when the layer is on. Click to exclude / include a band. */}
+          {showRetailContext && (
+            <div className="mt-3 pt-2.5 border-t">
+              <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Retail bands</p>
+              {!retailFetching && retailUnits.length === 0 && (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
+                  No retail data here yet. Try zooming closer to a UK high street, or pan and the layer will refetch.
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-1">
+                {[
+                  { k: "fashion",     l: "Fashion",     c: "#C9A961" },
+                  { k: "convenience", l: "Convenience", c: "#7FA99B" },
+                  { k: "fnb",         l: "Food & Drink",c: "#D08F6E" },
+                  { k: "services",    l: "Services",    c: "#8B9DC3" },
+                  { k: "beauty",      l: "Beauty",      c: "#B8A4B6" },
+                  { k: "vacant",      l: "Vacant",      c: "#FF7D00" },
+                  { k: "other",       l: "Other",       c: "#A8A8A8" },
+                ].map((cat) => {
+                  const showing = !excludedRetailCategories.has(cat.k);
+                  return (
+                    <button
+                      key={cat.k}
+                      onClick={() => setExcludedRetailCategories((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(cat.k)) next.delete(cat.k); else next.add(cat.k);
+                        return next;
+                      })}
+                      className={`flex items-center gap-1.5 text-[10px] rounded px-1.5 py-0.5 border ${
+                        showing ? "bg-white border-gray-200" : "bg-gray-100 border-gray-200 opacity-50 line-through"
+                      }`}
+                    >
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: cat.c }} />
+                      <span>{cat.l}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <ScrollArea className="flex-1">

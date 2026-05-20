@@ -27,21 +27,832 @@ import {
   xeroInvoices, availableUnits, investmentTracker,
   dealAuditLog,
 } from "@shared/schema";
+import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { searchPipnetRequirements } from "./pipnet";
 import { xeroApi, refreshXeroToken } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
+import { getPlanningSummary } from "./planning-summary";
 
 import { randomUUID } from "crypto";
 import type { Pool } from "pg";
+
+// Snapshot a completed deal into the appropriate comps schedule. Idempotent:
+// skips if a comp already exists for this deal. The original deal stays on
+// its tracker (it will continue to INV when Xero invoices it).
+async function maybeCopyDealToComps(deal: any): Promise<void> {
+  if (!deal?.id) return;
+  const dealType = String(deal.dealType || "").toLowerCase();
+  const isInvestment = dealType.includes("investment") || dealType.includes("acquisition") || dealType === "sale";
+
+  if (isInvestment) {
+    const existing = await pool.query(`SELECT 1 FROM investment_comps WHERE rca_deal_id = $1 LIMIT 1`, [deal.id]);
+    if ((existing.rowCount ?? 0) > 0) return;
+    await pool.query(
+      `INSERT INTO investment_comps (id, rca_deal_id, status, transaction_type, property_name, transaction_date, price)
+       VALUES (gen_random_uuid(), $1, 'COM', $2, $3, $4, $5)`,
+      [deal.id, deal.dealType || null, deal.name || null, deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : null, deal.fee || null]
+    );
+    console.log(`[deal->comps] Copied investment deal ${deal.id} (${deal.name}) into investment_comps`);
+  } else {
+    const existing = await pool.query(`SELECT 1 FROM crm_comps WHERE deal_id = $1 LIMIT 1`, [deal.id]);
+    if ((existing.rowCount ?? 0) > 0) return;
+    await pool.query(
+      `INSERT INTO crm_comps (id, name, deal_id, property_id, deal_type, completion_date)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
+      [deal.name || "Untitled deal", deal.id, deal.propertyId || null, deal.dealType || null, deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : null]
+    );
+    console.log(`[deal->comps] Copied leasing deal ${deal.id} (${deal.name}) into crm_comps`);
+  }
+}
 
 function parseAiJson(raw: string): any {
   let cleaned = raw.trim();
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
   }
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e: any) {
+    throw new Error(`Failed to parse AI JSON response: ${e.message}. Raw: ${cleaned.slice(0, 200)}`);
+  }
+}
+
+/**
+ * Parse a Sage WIP Excel buffer and import it into wip_entries + sync to
+ * crm_deals. Used by:
+ *   - the direct file-upload route POST /api/wip/import
+ *   - the ChatBGP tool `import_wip_excel` (via chat-media filename)
+ *
+ * `append: false` (default) wipes wip_entries first, then loads. Use
+ * `append: true` only for incremental updates between full Sage exports.
+ *
+ * Two Sage export layouts are supported:
+ *
+ * 1) **Legacy layout** ("WIP by deal" report):
+ *    Ref, Group, Project, Tenant, Team, Agent, Amt WIP, Amt invoice,
+ *    Month, Deal status, Stage, InvoiceNo, ORDER_NUMBER.
+ *
+ * 2) **Current Sage TransactionsExpo layout** (what BGP actually exports):
+ *    TRAN_NUMBER (often blank), HEADER_NUMBER (deal external ref),
+ *    Project, Tenant, Client, NAME, ADDRESS_*, Group, Team, Agent,
+ *    NetAmount, STOCK_CODE (CON049 = BGP House 10% slice), DealStatus,
+ *    MonthYear, DueDate_EOMonth, etc. Each row is a single fee slice;
+ *    multiple rows per HEADER_NUMBER sum to the total deal fee.
+ *
+ * The parser auto-detects which layout the workbook uses by sniffing
+ * the first data row's keys, then maps columns into the canonical
+ * wip_entries shape. Month strings (`Apr-26` or `2026-04`) are normalised
+ * into a fiscal year assuming BGP's FY runs Apr–Mar — Apr-26 → FY 2027.
+ *
+ * Throws on invalid input (no rows / unreadable file) so callers can
+ * surface a clear error.
+ */
+export async function importWipFromBuffer(
+  buffer: Buffer,
+  opts: { append?: boolean; archiveOrphans?: boolean } = {},
+): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any; orphans?: any; diagnostics?: any }> {
+  // Ensure schema additions are present before any inserts — idempotent.
+  await pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS billing_entity TEXT`).catch(() => {});
+
+  const XLSX = await import("xlsx");
+  const wb = XLSX.read(buffer, { type: "buffer" });
+
+  // Scan all sheets for one that matches known WIP column signatures.
+  // "AuditInvoices_OrdersWIP" and similar custom sheet names won't be
+  // SheetNames[0] so we can't hardcode the index.
+  const normaliseKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const WIP_COLS = new Set(["headernumber", "netamount", "ref", "amtwip", "amtinvoice"]);
+
+  let data: any[] = [];
+  let foundSheet = "";
+
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    // Try normal header detection first
+    let rows: any[] = (XLSX.utils.sheet_to_json as any)(ws, { defval: null, cellDates: true });
+    if (rows.length > 0) {
+      const keys = new Set(Object.keys(rows[0]).map(normaliseKey));
+      if ([...WIP_COLS].some(c => keys.has(c))) { data = rows; foundSheet = name; break; }
+    }
+    // Header might not be on row 1 — scan first 10 rows to find it
+    const rawRows: any[][] = (XLSX.utils.sheet_to_json as any)(ws, { header: 1, defval: null }) as any[][];
+    for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+      const candidate = rawRows[i];
+      if (!candidate) continue;
+      const normCols = candidate.map((c: any) => normaliseKey(String(c ?? "")));
+      if (normCols.some((c: string) => WIP_COLS.has(c))) {
+        // Re-parse using this row as header
+        rows = (XLSX.utils.sheet_to_json as any)(ws, { header: candidate, range: i, defval: null, cellDates: true });
+        rows = rows.slice(1); // drop the header row itself
+        if (rows.length > 0) { data = rows; foundSheet = name; break; }
+      }
+    }
+    if (data.length > 0) break;
+  }
+
+  if (data.length === 0) {
+    const sheetList = wb.SheetNames.join(", ");
+    throw new Error(
+      `No data found in file. Sheets found: [${sheetList}]. ` +
+      `The importer looks for columns: HEADER_NUMBER, NetAmount (Sage) or Ref, Amt WIP (legacy). ` +
+      `If your export uses different column names, share a sample row and we can extend the parser.`
+    );
+  }
+
+  // Build a case- and punctuation-insensitive key map per row, so column
+  // names like "HEADER_NUMBER" / "Header Number" / "headerNumber" all
+  // resolve to the same value. Sage exports sometimes change punctuation
+  // between report versions and we want the importer to keep working.
+  // (normaliseKey is already declared above for sheet scanning)
+  const buildKeyMap = (row: any): Record<string, any> => {
+    const out: Record<string, any> = {};
+    if (!row) return out;
+    for (const k of Object.keys(row)) out[normaliseKey(k)] = row[k];
+    return out;
+  };
+  /** Look up a column value by trying multiple aliases case/punctuation-insensitively. */
+  const pick = (row: Record<string, any>, ...aliases: string[]): any => {
+    for (const a of aliases) {
+      const v = row[normaliseKey(a)];
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return null;
+  };
+
+  const firstRow = data.find((r: any) => r && Object.values(r).some((v: any) => v !== null && v !== "")) || data[0];
+  const rawKeys = Object.keys(firstRow || {});
+  const normKeys = new Set(rawKeys.map(normaliseKey));
+  const isLegacy = normKeys.has("ref") || normKeys.has("amtwip") || normKeys.has("amtinvoice");
+  const isSage = normKeys.has("headernumber") || normKeys.has("netamount");
+  const layout: "legacy" | "sage_transactionsexpo" | "unknown" =
+    isLegacy ? "legacy" : isSage ? "sage_transactionsexpo" : "unknown";
+
+  if (layout === "unknown") {
+    throw new Error(
+      `Could not recognise the WIP export format. Saw columns: ${rawKeys.slice(0, 12).join(", ")}. ` +
+      `Expected either legacy (Ref, Amt WIP, Amt invoice, …) or Sage TransactionsExpo (HEADER_NUMBER, NetAmount, …).`
+    );
+  }
+
+  // Diagnostics: how many rows have each critical column populated. Helps
+  // diagnose "0 deals created" symptoms when the source layout drifts.
+  const diagnostics = {
+    layout,
+    totalDataRows: data.length,
+    rowsWithHeaderNumber: 0,
+    rowsWithNetAmount: 0,
+    rowsWithProject: 0,
+    rowsWithTenant: 0,
+    rowsWithName: 0,
+    rowsWithAgent: 0,
+    rawKeys: rawKeys.slice(0, 30),
+    sampleFirstRow: firstRow,
+  };
+
+  // Sage rows are fee SLICES — multiple rows per HEADER_NUMBER, each with a
+  // different Agent and a slice of the total fee. Aggregate them per deal so
+  // we can later upsert billing entity + per-agent allocations + tenant-rep
+  // searches in a single post-process step. Empty for legacy layout.
+  type SageEnrichment = {
+    headerNumber: string;
+    billingEntity: {
+      name: string;
+      addressLine1?: string;
+      addressLine2?: string;
+      city?: string;
+      postcode?: string;
+    } | null;
+    feeSlices: Array<{ agent: string; amount: number; isBgpHouse: boolean }>;
+    status: string | null;
+    project: string | null;
+    tenant: string | null;
+    client: string | null;
+  };
+  const enrichments = new Map<string, SageEnrichment>();
+  // Sage's TransactionsExpo export sometimes leaves HEADER_NUMBER blank and
+  // puts the deal reference (4975, 5144, …) in `Document` instead — column
+  // drift from Sage. We also see a duplicate `Document*` column at the end
+  // of the export. Pick HEADER_NUMBER first, fall back to either Document
+  // variant.
+  const pickDealRef = (kr: Record<string, any>): string => {
+    const raw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number")
+      ?? pick(kr, "Document", "Document*", "DocumentNumber", "Document Number");
+    if (raw == null) return "";
+    const s = String(raw).trim();
+    // Skip totals/footer rows ("Total", empty, etc.) — those aren't deals.
+    if (!s || s.toLowerCase() === "total") return "";
+    return s;
+  };
+  const upsertEnrichment = (kr: Record<string, any>) => {
+    const headerNum = pickDealRef(kr);
+    if (!headerNum) return;
+    let e = enrichments.get(headerNum);
+    if (!e) {
+      e = {
+        headerNumber: headerNum,
+        billingEntity: null,
+        feeSlices: [],
+        status: null,
+        project: null,
+        tenant: null,
+        client: null,
+      };
+      enrichments.set(headerNum, e);
+    }
+    if (!e.status) {
+      const s = pick(kr, "DealStatus", "Deal Status", "Deal status");
+      if (s) e.status = String(s).trim();
+    }
+    if (!e.project) {
+      const p = pick(kr, "Project");
+      if (p) e.project = String(p).trim();
+    }
+    if (!e.tenant) {
+      const t = pick(kr, "Tenant");
+      if (t) e.tenant = String(t).trim();
+    }
+    if (!e.client) {
+      const c = pick(kr, "Client");
+      if (c) e.client = String(c).trim();
+    }
+    if (!e.billingEntity) {
+      const name = pick(kr, "NAME", "Name", "BillingName", "ClientName");
+      if (name) {
+        // Sage 50 stores addresses in ADDRESS_1..ADDRESS_5 (line1, line2, town, county, postcode).
+        // Fall back to legacy/long names for older exports.
+        e.billingEntity = {
+          name: String(name).trim(),
+          addressLine1: pick(kr, "ADDRESS_1", "ADDRESS_LINE1", "AddressLine1", "Address Line 1") || undefined,
+          addressLine2: pick(kr, "ADDRESS_2", "ADDRESS_LINE2", "AddressLine2", "Address Line 2") || undefined,
+          city: pick(kr, "ADDRESS_3", "ADDRESS_CITY", "City", "AddressCity", "Address City") || undefined,
+          postcode: pick(kr, "ADDRESS_5", "ADDRESS_4", "ADDRESS_POSTCODE", "Postcode", "PostalCode", "AddressPostcode", "Post Code") || undefined,
+        };
+      }
+    }
+    const agent = pick(kr, "Agent");
+    const amount = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || 0) || 0;
+    if (agent && amount !== 0) {
+      const stockCode = String(pick(kr, "STOCK_CODE", "StockCode", "Stock Code") || "").toUpperCase();
+      const agentName = String(agent).trim();
+      e.feeSlices.push({
+        agent: agentName.toLowerCase() === "bgp house" ? "BGP" : agentName,
+        amount,
+        isBgpHouse: stockCode === "CON049",
+      });
+    }
+  };
+
+  const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  // Convert Excel serial number (e.g. 46357) to a JS Date (UTC).
+  // Excel counts from 1900-01-00 with a phantom leap day on 1900-02-29,
+  // so the Unix-epoch offset is 25569 days.
+  const excelSerialToDate = (serial: number): Date =>
+    new Date((serial - 25569) * 86400 * 1000);
+
+  // Clamp to BGP-plausible year window — protects against Excel 2-digit-year
+  // ambiguity (e.g. "Sep-01" stored as 2001 instead of 2026). Anything before
+  // currentYear-15 or after currentYear+5 is treated as a parse artefact.
+  const clampYr = (y: number): number => {
+    const now = new Date().getUTCFullYear();
+    if (y < now - 15 || y > now + 5) return now;
+    return y;
+  };
+
+  const parseFiscalYear = (raw: any): number | null => {
+    if (!raw) return null;
+    // XLSX may return a native Date when the cell is date-formatted
+    if (raw instanceof Date) {
+      if (isNaN(raw.getTime())) return null;
+      const mIdx0 = raw.getUTCMonth();
+      const yr = clampYr(raw.getUTCFullYear());
+      return mIdx0 >= 3 ? yr + 1 : yr;
+    }
+    const s = String(raw).trim();
+    const mDash = s.match(/^([A-Za-z]{3})[-/ ]+(\d{2,4})$/);
+    if (mDash) {
+      const mIdx = monthOrder.indexOf(mDash[1].slice(0, 3));
+      const yrRaw = parseInt(mDash[2]);
+      const yr = clampYr(mDash[2].length === 2 ? 2000 + yrRaw : yrRaw);
+      if (mIdx >= 0 && !isNaN(yr)) return mIdx >= 3 ? yr + 1 : yr;
+    }
+    const mYearFirst = s.match(/^(\d{4})[-/](\d{1,2})/);
+    if (mYearFirst) {
+      const yr = clampYr(parseInt(mYearFirst[1]));
+      const mIdx0 = parseInt(mYearFirst[2]) - 1;
+      if (!isNaN(yr) && mIdx0 >= 0 && mIdx0 < 12) return mIdx0 >= 3 ? yr + 1 : yr;
+    }
+    // Excel serial number exported as a bare integer (e.g. 46357 = 2026-12-31).
+    // Range 40000–60000 safely covers 2009–2064 without false-positives.
+    if (/^\d+$/.test(s)) {
+      const serial = parseInt(s);
+      if (serial >= 40000 && serial <= 60000) {
+        const d = excelSerialToDate(serial);
+        const mIdx0 = d.getUTCMonth();
+        const yr = clampYr(d.getUTCFullYear());
+        return mIdx0 >= 3 ? yr + 1 : yr;
+      }
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const mIdx0 = d.getUTCMonth();
+      const yr = d.getUTCFullYear();
+      return mIdx0 >= 3 ? yr + 1 : yr;
+    }
+    return null;
+  };
+
+  // Derive a "Mon-YY" label from any date-like value (MonthYear text, Excel serial,
+  // JS Date object, or formatted date string). Year is clamped to the BGP-plausible
+  // window so an Excel "Sep-01" (= 2001) is normalised to current year.
+  const deriveMonthLabel = (raw: any): string | null => {
+    if (!raw) return null;
+    // XLSX may return a native Date when the cell is date-formatted
+    if (raw instanceof Date) {
+      if (isNaN(raw.getTime())) return null;
+      return `${monthOrder[raw.getUTCMonth()]}-${String(clampYr(raw.getUTCFullYear())).slice(2)}`;
+    }
+    const s = String(raw).trim();
+    if (!s) return null;
+    // Pre-stamp "Mon-YY" — but if YY parses to a year outside window, normalise
+    const preStamped = s.match(/^([A-Za-z]{3})-(\d{2,4})$/);
+    if (preStamped) {
+      const yrRaw = parseInt(preStamped[2]);
+      const yr = clampYr(preStamped[2].length === 2 ? 2000 + yrRaw : yrRaw);
+      return `${preStamped[1]}-${String(yr).slice(2)}`;
+    }
+    // Excel serial number (e.g. 46357 = Feb-26); range 40000-60000 = 2009-2064
+    if (/^\d+$/.test(s)) {
+      const serial = parseInt(s);
+      if (serial >= 40000 && serial <= 60000) {
+        const d = excelSerialToDate(serial);
+        return `${monthOrder[d.getUTCMonth()]}-${String(clampYr(d.getUTCFullYear())).slice(2)}`;
+      }
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return `${monthOrder[d.getUTCMonth()]}-${String(clampYr(d.getUTCFullYear())).slice(2)}`;
+    }
+    return null;
+  };
+
+  const rows = data.filter((r: any) => {
+    if (!r) return false;
+    const kr = buildKeyMap(r);
+    if (layout === "legacy") {
+      const refRaw = pick(kr, "Ref");
+      const ref = refRaw != null ? String(refRaw) : "";
+      if (!ref || ref === "Total" || ref.startsWith("Applied filters")) return false;
+      if (!pick(kr, "Group") && !pick(kr, "Project") && !pick(kr, "Tenant") && !pick(kr, "Team")) return false;
+      return true;
+    }
+    const headerNum = pickDealRef(kr);
+    const net = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || NaN);
+    if (headerNum) diagnostics.rowsWithHeaderNumber++;
+    if (!isNaN(net)) diagnostics.rowsWithNetAmount++;
+    if (pick(kr, "Project")) diagnostics.rowsWithProject++;
+    if (pick(kr, "Tenant")) diagnostics.rowsWithTenant++;
+    if (pick(kr, "NAME", "Name")) diagnostics.rowsWithName++;
+    if (pick(kr, "Agent")) diagnostics.rowsWithAgent++;
+    if (!headerNum && !pick(kr, "Project") && !pick(kr, "Tenant")) return false;
+    if (String(pick(kr, "Project") || "").toLowerCase() === "total") return false;
+    if (!headerNum && (!net || isNaN(net))) return false;
+    return true;
+  }).map((r: any) => {
+    const kr = buildKeyMap(r);
+    if (layout === "legacy") {
+      return {
+        ref: pick(kr, "Ref") ? String(pick(kr, "Ref")) : null,
+        groupName: pick(kr, "Group") || null,
+        project: pick(kr, "Project") || null,
+        tenant: pick(kr, "Tenant") || null,
+        billingEntity: pick(kr, "NAME", "Name", "BillingName", "ClientName") || null,
+        team: normalizeTeamName(pick(kr, "Team")),
+        agent: pick(kr, "Agent") || null,
+        amtWip: parseFloat(pick(kr, "Amt WIP", "AmtWIP")) || 0,
+        amtInvoice: parseFloat(pick(kr, "Amt invoice", "AmtInvoice")) || 0,
+        month: pick(kr, "Month") || null,
+        dealStatus: pick(kr, "Deal status", "DealStatus") || null,
+        stage: pick(kr, "Stage") || null,
+        invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
+        orderNumber: pick(kr, "ORDER_NUMBER", "OrderNumber") ? String(pick(kr, "ORDER_NUMBER", "OrderNumber")) : null,
+        fiscalYear: parseFiscalYear(pick(kr, "Month")),
+      };
+    }
+    upsertEnrichment(kr);
+    const status = String(pick(kr, "DealStatus", "Deal Status", "Deal status") || "").toUpperCase();
+    // SOL = Solicitors instructed — deal agreed but not yet invoiced, stays in WIP
+    const isInvoiced = status === "SOLD" || status === "INVOICED";
+    const net = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || 0) || 0;
+    const headerNum = pickDealRef(kr);
+    return {
+      ref: headerNum || null,
+      groupName: pick(kr, "Group") || null,
+      project: pick(kr, "Project") || null,
+      tenant: pick(kr, "Tenant") || null,
+      billingEntity: pick(kr, "NAME", "Name", "BillingName", "ClientName") || null,
+      team: normalizeTeamName(pick(kr, "Team")),
+      agent: (() => {
+        const a = String(pick(kr, "Agent") || "").trim().replace(/\s*\(BGP House\)/i, "").trim();
+        return a.toLowerCase() === "bgp house" ? "BGP" : (a || null);
+      })(),
+      amtWip: isInvoiced ? 0 : net,
+      amtInvoice: isInvoiced ? net : 0,
+      month: (() => {
+        // Only use the fee-period columns; "Date"/"Trans Date" etc. are transaction dates, not fee months
+        const monthAliases = ["MonthYear", "Month Year", "DueDate_EOMonth", "DueDate", "Due Date"];
+        const raw = pick(kr, ...monthAliases);
+        if (raw) return deriveMonthLabel(raw);
+        // Catch-all: find any column whose name contains "month" (not bare "date")
+        const fallbackKey = Object.keys(kr).find(k => /month/i.test(k));
+        return fallbackKey ? deriveMonthLabel(kr[fallbackKey]) : null;
+      })(),
+      dealStatus: pick(kr, "DealStatus", "Deal Status", "Deal status") || null,
+      stage: pick(kr, "Stage") || pick(kr, "STOCK_CODE", "StockCode") || null,
+      invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
+      orderNumber: pick(kr, "ORDER_NUMBER", "OrderNumber") ? String(pick(kr, "ORDER_NUMBER", "OrderNumber")) : null,
+      fiscalYear: (() => {
+        const monthAliases = ["MonthYear", "Month Year", "DueDate_EOMonth", "DueDate", "Due Date"];
+        const raw = pick(kr, ...monthAliases);
+        if (raw) return parseFiscalYear(raw);
+        const fallbackKey = Object.keys(kr).find(k => /month/i.test(k));
+        return fallbackKey ? parseFiscalYear(kr[fallbackKey]) : null;
+      })(),
+    };
+  });
+
+  // Final diagnostic: how many of the rows we'll insert have a non-null
+  // ref. If this is 0 the syncWipToCrmDeals step will create no deals,
+  // which is the symptom the user was seeing.
+  (diagnostics as any).rowsWithRefAfterMap = rows.filter((r: any) => r.ref).length;
+  console.log(`[WIP Import] diagnostics: ${JSON.stringify(diagnostics)}`);
+
+  if (rows.length === 0) {
+    throw new Error(
+      `Recognised layout=${layout} but every row was filtered out. ` +
+      `Check that the export contains data rows (not just headers / "Applied filters" rows). ` +
+      `Sample first row keys: ${rawKeys.slice(0, 8).join(", ")}.`
+    );
+  }
+
+  if (layout === "sage_transactionsexpo" && (diagnostics as any).rowsWithRefAfterMap === 0) {
+    throw new Error(
+      `Imported ${rows.length} rows but every row has a null \`ref\` (neither HEADER_NUMBER nor Document populated). ` +
+      `This means syncWipToCrmDeals would create 0 deals. Sample raw column keys we saw: ` +
+      `${rawKeys.slice(0, 20).join(", ")}. ` +
+      `Parser tries HEADER_NUMBER → Document → Document* (case-insensitive). If the deal ref is in a different column, tell the dev which one.`
+    );
+  }
+
+  await db.transaction(async (tx) => {
+    if (!opts.append) {
+      await tx.delete(wipEntries);
+    }
+    for (let i = 0; i < rows.length; i += 100) {
+      await tx.insert(wipEntries).values(rows.slice(i, i + 100));
+    }
+  });
+
+  const syncResult = await syncWipToCrmDeals(pool);
+  const enrichmentResult = layout === "sage_transactionsexpo"
+    ? await enrichWipDealsFromSage(pool, enrichments)
+    : { skipped: "legacy layout — no per-agent slice / billing entity data in this format" };
+
+  // Source-of-truth mode: archive any crm_deals that were previously synced
+  // from a WIP import (have "WIP Ref: N" in comments) but whose ref is no
+  // longer present in the freshly loaded wip_entries. Soft delete only —
+  // sets status='ARCH' and prepends [ARCHIVED <date>] to comments so the
+  // operation is reversible.
+  let orphansResult: any = undefined;
+  if (opts.archiveOrphans && !opts.append) {
+    orphansResult = await archiveOrphanedWipDeals(pool);
+  }
+
+  return { success: true, imported: rows.length, layout, sync: syncResult, enrichment: enrichmentResult, orphans: orphansResult, diagnostics };
+}
+
+/**
+ * Find crm_deals that were synced from a previous WIP import (comments contain
+ * "WIP Ref: N") but whose ref is no longer in the freshly loaded wip_entries,
+ * and soft-archive them. Pure soft delete — no data loss, fully reversible.
+ */
+export async function archiveOrphanedWipDeals(
+  dbPool: Pool,
+): Promise<{ archived: number; deals: { id: string; name: string; ref: string; status: string; fee: number }[] }> {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // After syncWipToCrmDeals has run, every current wip_entries row points
+    // at a crm_deals row via deal_id. A deal is an orphan iff its previous
+    // sync left a "WIP Ref:" tag on comments AND no current wip_entries row
+    // references it. Using the FK avoids the comments/name-format drift that
+    // caused live deals to be archived in earlier cycles (refs 4697, 5097,
+    // 5144, 5173 etc.).
+    const { rows: linkedDealIds } = await client.query(
+      `SELECT DISTINCT deal_id FROM wip_entries WHERE deal_id IS NOT NULL`
+    );
+    const linkedSet = new Set<string>(linkedDealIds.map((r: any) => String(r.deal_id)));
+
+    // Belt-and-braces: also collect the raw refs in case some wip_entries
+    // rows weren't FK-stamped this cycle (e.g. partial-failure mid-sync).
+    const { rows: currentRefs } = await client.query(
+      `SELECT DISTINCT ref FROM wip_entries WHERE ref IS NOT NULL AND ref != ''`
+    );
+    const currentRefSet = new Set<string>(currentRefs.map((r: any) => String(r.ref)));
+
+    const { rows: candidates } = await client.query(
+      `SELECT id, name, status, fee, comments
+         FROM crm_deals
+        WHERE comments LIKE 'WIP Ref: %'
+          AND status NOT IN ('ARCH', 'COM', 'INV')`
+    );
+
+    const orphans: { id: string; name: string; ref: string; status: string; fee: number }[] = [];
+    for (const d of candidates) {
+      // Primary check: is this deal linked from current wip_entries?
+      if (linkedSet.has(d.id)) continue;
+      // Fallback check: does the comments-tagged ref still exist in this import?
+      const m = (d.comments || "").match(/WIP Ref:\s*(\d+)/);
+      const ref = m ? m[1] : "";
+      if (ref && currentRefSet.has(ref)) continue;
+      orphans.push({ id: d.id, name: d.name, ref, status: d.status, fee: Number(d.fee) || 0 });
+    }
+
+    if (orphans.length > 0) {
+      const stamp = new Date().toISOString().slice(0, 10);
+      for (const o of orphans) {
+        await client.query(
+          `UPDATE crm_deals SET status='ARCH', comments=CONCAT('[ARCHIVED ${stamp} — not in latest WIP] ', comments), updated_at=NOW() WHERE id=$1`,
+          [o.id]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    console.log(`[WIP Sync] Archived ${orphans.length} orphan deals not in latest WIP file`);
+    return { archived: orphans.length, deals: orphans };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[WIP Sync] Archive error:", err);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Post-import enrichment for Sage TransactionsExpo WIP exports.
+ *
+ * Each Sage row is a single fee slice (Agent + NetAmount); multiple rows per
+ * HEADER_NUMBER aggregate to one deal. The basic `syncWipToCrmDeals` step
+ * has already created the deal records. This step layers on the
+ * billing-entity / fee-split / tenant-rep relationships that Sage carries
+ * but the legacy WIP report didn't expose:
+ *
+ *   - **Billing identity** (`NAME` + `ADDRESS_*`) → cached on the deal as
+ *     `xero_contact_name` + `xero_billing_address`. Xero is the source of
+ *     truth for the actual contact link; this just records the Sage name
+ *     so a user can match it to a real Xero contact when invoicing.
+ *   - **Per-agent allocations** (`Agent` + `NetAmount`, with `STOCK_CODE`
+ *     CON049 tagged as BGP House) → wipes existing `deal_fee_allocations`
+ *     for the deal, then inserts one row per slice as `allocationType=fixed`
+ *     `fixedAmount=NetAmount`. BGP House slices are name-tagged so the UI
+ *     can colour them differently.
+ *   - **Tenant-rep searches** for NEG status → upserts a `tenant_rep_searches`
+ *     row keyed by dealId so each NEG deal has a kanban entry. Dedup by
+ *     dealId so re-runs don't double-up.
+ */
+async function enrichWipDealsFromSage(
+  dbPool: Pool,
+  enrichments: Map<string, {
+    headerNumber: string;
+    billingEntity: { name: string; addressLine1?: string; addressLine2?: string; city?: string; postcode?: string } | null;
+    feeSlices: Array<{ agent: string; amount: number; isBgpHouse: boolean }>;
+    status: string | null;
+    project: string | null;
+    tenant: string | null;
+    client: string | null;
+  }>,
+) {
+  const result = {
+    dealsEnriched: 0,
+    billingNamesStamped: 0,
+    allocationsCreated: 0,
+    tenantRepSearchesCreated: 0,
+    skippedNoDeal: 0,
+  };
+  if (enrichments.size === 0) return result;
+
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Map deals by their WIP Ref (stamped into `comments` by syncWipToCrmDeals).
+    const { rows: deals } = await client.query(
+      `SELECT id, comments, tenant_id FROM crm_deals WHERE comments LIKE '%WIP Ref:%'`,
+    );
+    const refToDeal = new Map<string, { id: string; tenantId: string | null }>();
+    for (const d of deals) {
+      const m = d.comments?.match(/WIP Ref:\s*(\d+)/);
+      if (m) refToDeal.set(m[1], { id: d.id, tenantId: d.tenant_id });
+    }
+
+    for (const [headerNum, enrich] of enrichments) {
+      const deal = refToDeal.get(headerNum);
+      if (!deal) {
+        result.skippedNoDeal++;
+        continue;
+      }
+      result.dealsEnriched++;
+
+      // 1) Billing identity — cached from Sage NAME/ADDRESS_*. We do not
+      //    create a CRM company; Xero is the source of truth for the
+      //    actual contact link. The user picks the real Xero contact
+      //    later via the deal form's Xero contact picker, which
+      //    overwrites these cached fields with authoritative data.
+      if (enrich.billingEntity?.name) {
+        const addressParts = [
+          enrich.billingEntity.addressLine1,
+          enrich.billingEntity.addressLine2,
+          enrich.billingEntity.city,
+          enrich.billingEntity.postcode,
+        ].filter(Boolean).join(", ");
+        const addressBlob = (addressParts || enrich.billingEntity.postcode)
+          ? JSON.stringify({
+              AddressType: "POBOX",
+              AddressLine1: enrich.billingEntity.addressLine1 || null,
+              AddressLine2: enrich.billingEntity.addressLine2 || null,
+              City: enrich.billingEntity.city || null,
+              PostalCode: enrich.billingEntity.postcode || null,
+            })
+          : null;
+        await client.query(
+          `UPDATE crm_deals
+              SET xero_contact_name = $1,
+                  xero_billing_address = COALESCE(xero_billing_address, $2::jsonb),
+                  updated_at = NOW()
+            WHERE id = $3`,
+          [enrich.billingEntity.name, addressBlob, deal.id],
+        );
+        result.billingNamesStamped++;
+      }
+
+      // 2) Fee allocations ---------------------------------------------------
+      // Wipe-and-replace so re-imports don't accumulate duplicates. BGP House
+      // CON049 slices are tagged in the agent name so the UI can call them
+      // out (the agent decode UI already handles the " (BGP House)" suffix).
+      await client.query(`DELETE FROM deal_fee_allocations WHERE deal_id = $1`, [deal.id]);
+      for (const slice of enrich.feeSlices) {
+        if (!slice.agent || slice.amount === 0) continue;
+        await client.query(
+          `INSERT INTO deal_fee_allocations (id, deal_id, agent_name, allocation_type, fixed_amount, created_at)
+           VALUES (gen_random_uuid(), $1, $2, 'fixed', $3, NOW())`,
+          [
+            deal.id,
+            slice.isBgpHouse ? `${slice.agent} (BGP House)` : slice.agent,
+            slice.amount,
+          ],
+        );
+        result.allocationsCreated++;
+      }
+
+      // 3) Tenant rep searches for NEG status --------------------------------
+      // Only seed once per deal; deal lead can edit downstream without us
+      // overwriting on the next import.
+      const isNeg = (enrich.status || "").toUpperCase() === "NEG";
+      if (isNeg) {
+        const { rows: existing } = await client.query(
+          `SELECT id FROM tenant_rep_searches WHERE deal_id = $1 LIMIT 1`,
+          [deal.id],
+        );
+        if (existing.length === 0) {
+          const clientName = (enrich.tenant || enrich.client || enrich.project || "Unknown").trim();
+          await client.query(
+            `INSERT INTO tenant_rep_searches (id, client_name, company_id, deal_id, status, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, 'In Progress', NOW(), NOW())`,
+            [clientName, deal.tenantId || null, deal.id],
+          );
+          result.tenantRepSearchesCreated++;
+        }
+      }
+    }
+
+    await client.query("COMMIT");
+    console.log(`[WIP Enrich] ${JSON.stringify(result)}`);
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[WIP Enrich] Error:", err);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Normalise a company/property name for fuzzy matching:
+// strips "the", legal suffixes, punctuation so "The Crown Estate Ltd" ≈ "Crown Estate".
+function normaliseWipName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\bthe\b/gi, "")
+    .replace(/\b(ltd|limited|plc|llp|inc|corp|group|holdings|property|properties|estate|estates|shopping|centre|center)\b/gi, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Words >= 3 chars, excluding common stop-words.
+function sigWords(norm: string): string[] {
+  const stop = new Set(["and", "the", "for", "of", "at", "in", "on", "de"]);
+  return norm.split(" ").filter(w => w.length >= 3 && !stop.has(w));
+}
+
+// Fuzzy match a WIP name against a Map of lowercased CRM names → ids.
+// Returns the matched id or null (never creates records).
+function wipFuzzyMatch(wipName: string, nameMap: Map<string, string>): string | null {
+  const key = wipName.toLowerCase().trim();
+  if (nameMap.has(key)) return nameMap.get(key)!;
+
+  const wipNorm = normaliseWipName(wipName);
+  if (!wipNorm) return null;
+
+  // Pass 1: normalised exact match
+  for (const [k, id] of nameMap) {
+    if (normaliseWipName(k) === wipNorm) return id;
+  }
+
+  // Pass 2: one normalised name is a prefix of the other (min 5 chars)
+  for (const [k, id] of nameMap) {
+    const kNorm = normaliseWipName(k);
+    if (!kNorm) continue;
+    const shorter = wipNorm.length < kNorm.length ? wipNorm : kNorm;
+    const longer = wipNorm.length < kNorm.length ? kNorm : wipNorm;
+    if (shorter.length >= 5 && longer.startsWith(shorter)) return id;
+  }
+
+  // Pass 3: all significant words in the WIP name appear as prefixes of
+  // words in the CRM name (e.g. "Land Sec" → "Land Securities")
+  const wipWords = sigWords(wipNorm);
+  if (wipWords.length >= 2) {
+    for (const [k, id] of nameMap) {
+      const kWords = sigWords(normaliseWipName(k));
+      if (wipWords.every(w => kWords.some(kw => kw.startsWith(w) || w.startsWith(kw)))) return id;
+    }
+  }
+
+  return null;
+}
+
+// Sage WIP exports use legacy team labels. Normalize them on the way in so the
+// rest of the app sees the canonical team set (matches the filter dropdowns).
+//   "London Leasing Hospitality"        → "London F&B"
+//   "London Leasing Hospitality & USA"  → "London F&B"
+//   "London Leasing Retail"             → "London Retail"
+export function normalizeTeamName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (lower.includes("hospitality")) return "London F&B";
+  if (lower.includes("london") && lower.includes("retail")) return "London Retail";
+  return trimmed;
+}
+
+// Clamp a year that came out of a date-string parse to the BGP-plausible
+// window (currentYear-15 → currentYear+5). Anything outside is almost
+// certainly a data-entry error or Excel 2-digit-year artefact (e.g. "Sep-01"
+// stored as 2001 instead of the intended 2026), so we snap to the current
+// year. Used by every WIP date parser.
+function clampWipYear(y: number): number {
+  const now = new Date().getUTCFullYear();
+  if (y < now - 15 || y > now + 5) return now;
+  return y;
+}
+
+function parseWipMonthToDate(month: string | null): Date | null {
+  if (!month) return null;
+  const m = month.trim();
+  // "2026-04" or "2026-4"
+  const iso = m.match(/^(\d{4})-(\d{1,2})$/);
+  if (iso) {
+    const y = clampWipYear(parseInt(iso[1], 10)), mo = parseInt(iso[2], 10);
+    if (mo >= 1 && mo <= 12) return new Date(Date.UTC(y, mo - 1, 1));
+  }
+  // "Apr-26" / "April-2026"
+  const named = m.match(/^([A-Za-z]+)[\s\-]?(\d{2,4})$/);
+  if (named) {
+    const months = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+    const idx = months.indexOf(named[1].slice(0, 3).toLowerCase());
+    if (idx >= 0) {
+      let y = parseInt(named[2], 10);
+      if (y < 100) y += 2000;
+      y = clampWipYear(y);
+      return new Date(Date.UTC(y, idx, 1));
+    }
+  }
+  return null;
 }
 
 export async function syncWipToCrmDeals(dbPool: Pool) {
@@ -50,17 +861,19 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
     await client.query('BEGIN');
 
     const { rows: deals } = await client.query(`
-      SELECT 
+      SELECT
         ref,
         MIN(group_name) as group_name,
         MIN(project) as project,
         MIN(tenant) as tenant,
+        MIN(billing_entity) as billing_entity,
         ARRAY_AGG(DISTINCT team) FILTER (WHERE team IS NOT NULL AND team != '' AND team != 'BGP') as teams,
         ARRAY_AGG(DISTINCT agent) FILTER (WHERE agent IS NOT NULL AND agent != '' AND agent != 'BGP') as agents,
         SUM(amt_wip) as total_wip,
         SUM(amt_invoice) as total_invoice,
         MIN(stage) as stage,
-        MIN(deal_status) as deal_status
+        MIN(deal_status) as deal_status,
+        MIN(month) as month
       FROM wip_entries
       WHERE ref IS NOT NULL AND ref != ''
       GROUP BY ref
@@ -75,97 +888,165 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
     const compMap = new Map<string, string>();
     for (const c of existingCompanies) compMap.set(c.name_lower, c.id);
 
-    const { rows: existingDeals } = await client.query(`SELECT id, comments FROM crm_deals`);
     const wipRefToDealId = new Map<string, string>();
-    for (const d of existingDeals) {
-      const match = d.comments?.match(/WIP Ref: (\d+)/);
-      if (match) wipRefToDealId.set(match[1], d.id);
+
+    // Prefer the hard FK on wip_entries (set by previous import). Falls back
+    // to the legacy "WIP Ref: N" comment regex for deals predating the FK.
+    const { rows: existingFkRefs } = await client.query(
+      `SELECT DISTINCT ref, deal_id FROM wip_entries WHERE ref IS NOT NULL AND ref != '' AND deal_id IS NOT NULL`
+    );
+    for (const r of existingFkRefs) {
+      // Verify the deal still exists before trusting the link
+      const { rows: stillThere } = await client.query(`SELECT 1 FROM crm_deals WHERE id=$1`, [r.deal_id]);
+      if (stillThere.length > 0) wipRefToDealId.set(String(r.ref), r.deal_id);
     }
 
-    let created = 0, updated = 0, propertiesCreated = 0, companiesCreated = 0;
+    const { rows: existingDeals } = await client.query(`SELECT id, comments FROM crm_deals`);
+    for (const d of existingDeals) {
+      const match = d.comments?.match(/WIP Ref: (\d+)/);
+      if (match && !wipRefToDealId.has(match[1])) wipRefToDealId.set(match[1], d.id);
+    }
+
+    let created = 0, updated = 0, propertiesCreated = 0;
+    const unmatchedGroups = new Set<string>();
+    const unmatchedProjects = new Set<string>();
 
     for (const deal of deals) {
+      // ── Property (Project column) ───────────────────────────────────────
       let propertyId: string | null = null;
       if (deal.project?.trim()) {
-        const projKey = deal.project.trim().toLowerCase();
-        if (propMap.has(projKey)) {
-          propertyId = propMap.get(projKey)!;
+        const matched = wipFuzzyMatch(deal.project, propMap);
+        if (matched) {
+          propertyId = matched;
         } else {
+          // Create a bare property record — user will add address later
           propertyId = randomUUID();
           await client.query(
             `INSERT INTO crm_properties (id, name, status, created_at, updated_at) VALUES ($1, $2, 'Active', NOW(), NOW())`,
             [propertyId, deal.project.trim()]
           );
-          propMap.set(projKey, propertyId);
+          propMap.set(deal.project.trim().toLowerCase(), propertyId);
           propertiesCreated++;
+          unmatchedProjects.add(deal.project.trim());
         }
       }
 
+      // ── Client group (Group column) — the BGP client who instructed the deal ──
       let landlordId: string | null = null;
       if (deal.group_name?.trim()) {
-        const groupKey = deal.group_name.trim().toLowerCase();
-        if (compMap.has(groupKey)) {
-          landlordId = compMap.get(groupKey)!;
-        } else {
+        landlordId = wipFuzzyMatch(deal.group_name, compMap);
+        if (!landlordId) {
           landlordId = randomUUID();
           await client.query(
             `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, 'Client', NOW(), NOW())`,
             [landlordId, deal.group_name.trim()]
           );
-          compMap.set(groupKey, landlordId);
-          companiesCreated++;
+          compMap.set(deal.group_name.trim().toLowerCase(), landlordId);
+          unmatchedGroups.add(deal.group_name.trim());
         }
       }
 
+      // ── Tenant ─────────────────────────────────────────────────────────
       let tenantId: string | null = null;
       if (deal.tenant?.trim()) {
-        const tenantKey = deal.tenant.trim().toLowerCase();
-        if (compMap.has(tenantKey)) {
-          tenantId = compMap.get(tenantKey)!;
-        } else {
+        tenantId = wipFuzzyMatch(deal.tenant, compMap);
+        // Tenants often aren't in CRM yet — create if not found
+        if (!tenantId) {
           tenantId = randomUUID();
           await client.query(
             `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, 'Tenant', NOW(), NOW())`,
             [tenantId, deal.tenant.trim()]
           );
-          compMap.set(tenantKey, tenantId);
-          companiesCreated++;
+          compMap.set(deal.tenant.trim().toLowerCase(), tenantId);
         }
       }
 
-      const teamArr = (deal.teams || []).filter(Boolean);
-      const agentArr = (deal.agents || []).filter(Boolean);
-      let dealType = 'Leasing';
-      if (teamArr.some((t: string) => t === 'Investment')) dealType = 'Investment';
-      else if (teamArr.some((t: string) => t === 'Tenant Rep')) dealType = 'Tenant Rep';
-      else if (teamArr.some((t: string) => t === 'Lease Advisory')) dealType = 'Lease Advisory';
+      // ── Billing entity (Sage NAME column) ──────────────────────────────
+      // The company that pays the invoice. Auto-create if not in CRM yet.
+      // Billing identity comes from Xero now. We just stamp the WIP
+      // "billing_entity" string onto the deal as a cached name; the user
+      // links to a real Xero contact via the deal form.
+      const billingEntityName: string | null = deal.billing_entity?.trim() || null;
 
-      let status = 'Live';
-      if (deal.stage === 'invoiced') status = 'Invoiced';
-      else if (deal.deal_status === 'SOL') status = 'SOLs';
+      const teamArr = Array.from(new Set(
+        (deal.teams || []).map((t: string) => normalizeTeamName(t)).filter(Boolean) as string[]
+      ));
+      const agentArr = (deal.agents || []).filter(Boolean);
+
+      // Sage WIP rows are post-NEG by definition; default to NEG when no status code present
+      let status = 'NEG';
+      if (deal.stage === 'invoiced') status = 'INV';
+      else if (deal.deal_status === 'SOL') status = 'SOL';
       else if (deal.deal_status === 'NEG') status = 'NEG';
-      else if (deal.deal_status === 'EXC') status = 'Exchanged';
-      else if (deal.deal_status === 'DRAFT INV' || deal.deal_status === 'DRAFT PO' || deal.deal_status === 'AWAIT PO') status = 'Invoiced';
+      else if (deal.deal_status === 'EXC') status = 'EXC';
+      else if (deal.deal_status === 'COM') status = 'COM';
+      else if (deal.deal_status === 'DRAFT INV' || deal.deal_status === 'DRAFT PO' || deal.deal_status === 'AWAIT PO') status = 'INV';
 
       const dealName = `${deal.project || ''} - ${deal.tenant || ''}`;
       const fee = (deal.total_wip || 0) + (deal.total_invoice || 0);
       const comments = `WIP Ref: ${deal.ref}. WIP: £${(deal.total_wip || 0).toLocaleString()}. Invoiced: £${(deal.total_invoice || 0).toLocaleString()}. Status: ${deal.deal_status || 'N/A'}.`;
-      const teamPg = `{${teamArr.map((t: string) => `"${t}"`).join(',')}}`;
-      const agentPg = `{${agentArr.map((a: string) => `"${a}"`).join(',')}}`;
+      const teamPg = teamArr;
+      const agentPg = agentArr;
+      // The Sage WIP month is the anticipated completion/billing month — that's
+      // our target_date. If the deal is already at COM/INV, also stamp the
+      // corresponding actual date so the timeline stays consistent.
+      const targetDate = parseWipMonthToDate(deal.month);
+      const completedAt = (status === 'COM' || status === 'INV') ? targetDate : null;
+      const invoicedAt = status === 'INV' ? targetDate : null;
 
-      if (wipRefToDealId.has(deal.ref)) {
-        const existingId = wipRefToDealId.get(deal.ref)!;
+      // Dedupe lookup — if no ref→id link exists yet, check whether an active
+      // deal already exists with the same name + landlord + tenant. Stops the
+      // importer creating duplicate rows for the same deal across reimports.
+      let resolvedDealId = wipRefToDealId.get(deal.ref);
+      if (!resolvedDealId) {
+        const { rows: dupes } = await client.query(
+          `SELECT id FROM crm_deals
+            WHERE LOWER(name) = LOWER($1)
+              AND COALESCE(landlord_id, '') = COALESCE($2, '')
+              AND COALESCE(tenant_id, '')   = COALESCE($3, '')
+              AND status NOT IN ('ARCH', 'COM')
+            LIMIT 1`,
+          [dealName, landlordId, tenantId]
+        );
+        if (dupes.length > 0) {
+          resolvedDealId = dupes[0].id;
+          wipRefToDealId.set(deal.ref, resolvedDealId);
+        }
+      }
+
+      if (resolvedDealId) {
+        const existingId = resolvedDealId;
         await client.query(
-          `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8, internal_agent=$9, fee=$10, comments=$11, updated_at=NOW() WHERE id=$12`,
-          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, existingId]
+          `UPDATE crm_deals
+             SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5,
+                 deal_type = CASE WHEN deal_type IN ('Leasing', 'Investment', 'Tenant Rep', 'Lease Advisory') THEN NULL ELSE deal_type END,
+                 status=$6, team=$7::text[], internal_agent=$8::text[],
+                 fee=$9, comments=$10,
+                 target_date = COALESCE(target_date, $11),
+                 completed_at = COALESCE(completed_at, $12),
+                 invoiced_at = COALESCE(invoiced_at, $13),
+                 xero_contact_name = COALESCE(xero_contact_name, $15),
+                 updated_at=NOW()
+           WHERE id=$14`,
+          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId, billingEntityName]
+        );
+        // Write hard FKs back onto every wip_entries row for this ref so
+        // future reads don't have to re-derive from strings.
+        await client.query(
+          `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
+          [existingId, propertyId, deal.ref]
         );
         updated++;
       } else {
         const dealId = randomUUID();
         await client.query(
-          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())`,
-          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments]
+          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, xero_contact_name, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8::text[], $9::text[], $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
+          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, billingEntityName]
+        );
+        await client.query(
+          `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
+          [dealId, propertyId, deal.ref]
         );
 
         if (landlordId) {
@@ -182,8 +1063,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
     }
 
     await client.query('COMMIT');
-    console.log(`[WIP Sync] Created: ${created}, Updated: ${updated}, New properties: ${propertiesCreated}, New companies: ${companiesCreated}`);
-    return { created, updated, propertiesCreated, companiesCreated };
+    const unmatchedGroupList = [...unmatchedGroups];
+    const unmatchedProjectList = [...unmatchedProjects];
+    console.log(`[WIP Sync] Created: ${created}, Updated: ${updated}, New properties: ${propertiesCreated}, Unmatched groups: ${unmatchedGroupList.join(", ") || "none"}, Unmatched projects: ${unmatchedProjectList.join(", ") || "none"}`);
+    return { created, updated, propertiesCreated, unmatchedGroups: unmatchedGroupList, unmatchedProjects: unmatchedProjectList };
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[WIP Sync] Error:', err);
@@ -195,6 +1078,27 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
 
 export function setupCrmRoutes(app: Express) {
   // Ensure new comp columns exist (safe to re-run)
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS area_basis TEXT`).catch(() => {});
+  // Activity curator cache — see server/ai-activity-curator.ts. One row per
+  // (subject_type, subject_id). Each curate call costs ~30s and 50k+ tokens
+  // so we cache aggressively; clients pass `refresh: true` to bypass.
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS crm_activity_cache (
+      subject_type TEXT NOT NULL,
+      subject_id   TEXT NOT NULL,
+      markdown     TEXT NOT NULL DEFAULT '',
+      email_refs   JSONB NOT NULL DEFAULT '[]',
+      meeting_refs JSONB NOT NULL DEFAULT '[]',
+      latest_at    TIMESTAMPTZ,
+      generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (subject_type, subject_id)
+    )
+  `).catch(() => {});
+  // last_interaction columns (ISO timestamp string; existing schema uses TEXT)
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});
@@ -204,12 +1108,225 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_phone TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_email TEXT`).catch(() => {});
 
+  // wip_entries hard FKs (mirror schema.ts) — safe to re-run on each boot
+  pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS deal_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS property_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS billing_entity TEXT`).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_wip_entries_deal_id ON wip_entries (deal_id)`).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_wip_entries_property_id ON wip_entries (property_id)`).catch(() => {});
+
+  // crm_deals soft dedupe — partial unique index on (lower(name), landlord_id, tenant_id)
+  // for active deals only. Stops syncWipToCrmDeals from re-creating duplicate
+  // Brent Cross / Bullring rows on every reimport. Historic dupes (status='ARCH'
+  // or 'COM') are excluded so the index can be created without conflicts.
+  pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_crm_deals_dedupe
+       ON crm_deals (LOWER(name), COALESCE(landlord_id, ''), COALESCE(tenant_id, ''))
+       WHERE status NOT IN ('ARCH', 'COM')`
+  ).catch(() => {});
+
+  // ── Single deal date journey migration ──────────────────────────────
+  // Consolidates the historic mess (timeline_start, timeline_end,
+  // completion_date, completion_target_date, completion_timing,
+  // hots_completed_at) into one canonical four-field journey:
+  // target_date → exchanged_at → completed_at → invoiced_at.
+  // Idempotent — re-running is a no-op once the old columns are gone.
+  (async () => {
+    try {
+      // 1. Add the five new columns (timestamps).
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS instructed_at TIMESTAMP`);
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS target_date TIMESTAMP`);
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS exchanged_at TIMESTAMP`);
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP`);
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoiced_at TIMESTAMP`);
+
+      // 2. Backfill from old fields if they still exist. We try each column
+      //    independently so a partially-migrated DB still progresses.
+      const has = async (col: string) => {
+        const r = await pool.query(
+          `SELECT 1 FROM information_schema.columns WHERE table_name='crm_deals' AND column_name=$1`,
+          [col]
+        );
+        return r.rows.length > 0;
+      };
+
+      // target_date ← completion_target_date ?? completion_date(parsed) ?? timeline_end(parsed)
+      if (await has("completion_target_date")) {
+        await pool.query(
+          `UPDATE crm_deals SET target_date = completion_target_date
+             WHERE target_date IS NULL AND completion_target_date IS NOT NULL`
+        );
+      }
+      if (await has("completion_date")) {
+        // text field — best-effort cast, ignore failures
+        await pool.query(
+          `UPDATE crm_deals SET target_date = NULLIF(completion_date,'')::timestamp
+             WHERE target_date IS NULL
+               AND completion_date IS NOT NULL
+               AND completion_date ~ '^\\d{4}-\\d{2}-\\d{2}'`
+        ).catch(() => {});
+        // For completed deals, also stamp completed_at from completion_date
+        await pool.query(
+          `UPDATE crm_deals SET completed_at = NULLIF(completion_date,'')::timestamp
+             WHERE completed_at IS NULL
+               AND status IN ('COM','INV')
+               AND completion_date IS NOT NULL
+               AND completion_date ~ '^\\d{4}-\\d{2}-\\d{2}'`
+        ).catch(() => {});
+      }
+      if (await has("timeline_end")) {
+        await pool.query(
+          `UPDATE crm_deals SET target_date = NULLIF(timeline_end,'')::timestamp
+             WHERE target_date IS NULL
+               AND timeline_end IS NOT NULL
+               AND timeline_end ~ '^\\d{4}-\\d{2}-\\d{2}'`
+        ).catch(() => {});
+      }
+
+      // exchanged_at — if status >= EXC and we have nothing, fall back to stage_entered_at
+      await pool.query(
+        `UPDATE crm_deals SET exchanged_at = stage_entered_at
+           WHERE exchanged_at IS NULL
+             AND status IN ('EXC','COM','INV')
+             AND stage_entered_at IS NOT NULL`
+      ).catch(() => {});
+
+      // invoiced_at — if status = INV
+      await pool.query(
+        `UPDATE crm_deals SET invoiced_at = stage_entered_at
+           WHERE invoiced_at IS NULL AND status = 'INV' AND stage_entered_at IS NOT NULL`
+      ).catch(() => {});
+
+      // 3. Drop the legacy columns. Wrapped in try/catch so re-runs are safe.
+      for (const col of [
+        "timeline_start",
+        "timeline_end",
+        "completion_date",
+        "completion_target_date",
+        "completion_timing",
+        "hots_completed_at",
+      ]) {
+        await pool.query(`ALTER TABLE crm_deals DROP COLUMN IF EXISTS ${col}`).catch(() => {});
+      }
+    } catch (e: any) {
+      console.error("[crm] Date journey migration failed:", e?.message);
+    }
+  })();
+
+  // One-shot status normaliser — runs on every boot, idempotent. Maps any
+  // non-canonical crm_deals.status (legacy free text, leasing-schedule
+  // statuses like "Occupied" / "In Negotiation") to the canonical 10-code
+  // set in shared/deal-status.ts.
+  (async () => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, status FROM crm_deals
+          WHERE status IS NOT NULL
+            AND status NOT IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV','ARCH')`
+      );
+      if (rows.length === 0) return;
+      const { legacyToCode } = await import("../shared/deal-status");
+      let normalised = 0;
+      for (const r of rows) {
+        const code = legacyToCode(r.status);
+        if (code && code !== r.status) {
+          await pool.query(`UPDATE crm_deals SET status=$1 WHERE id=$2`, [code, r.id]);
+          normalised++;
+        }
+      }
+      if (normalised > 0) console.log(`[crm] Normalised ${normalised} deal statuses to canonical codes`);
+    } catch (e: any) {
+      console.error("[crm] Status normaliser failed:", e?.message);
+    }
+  })();
+
+  // Property auto-match sweep — for every active deal with property_id IS NULL,
+  // extract the building name from "Property - Tenant" and run wipFuzzyMatch
+  // against crm_properties. Stamps the FK if matched. Idempotent — only
+  // touches NULL rows. Skips ARCH/COM/INV (historic, not worth backfilling).
+  (async () => {
+    try {
+      const { rows: deals } = await pool.query(
+        `SELECT id, name FROM crm_deals
+          WHERE property_id IS NULL
+            AND status NOT IN ('ARCH','COM','INV')
+            AND name IS NOT NULL AND name != ''`
+      );
+      if (deals.length === 0) return;
+      const { rows: props } = await pool.query(`SELECT id, LOWER(TRIM(name)) AS name_lower FROM crm_properties`);
+      const propMap = new Map<string, string>();
+      for (const p of props) propMap.set(p.name_lower, p.id);
+
+      let matched = 0;
+      for (const d of deals) {
+        // Deal names are typically "Property - Tenant" (see syncWipToCrmDeals)
+        const propName = String(d.name).split(" - ")[0]?.trim();
+        if (!propName) continue;
+        const propertyId = wipFuzzyMatch(propName, propMap);
+        if (propertyId) {
+          await pool.query(`UPDATE crm_deals SET property_id=$1 WHERE id=$2`, [propertyId, d.id]);
+          matched++;
+        }
+      }
+      if (matched > 0) console.log(`[crm] Property auto-match swept ${matched} deals (of ${deals.length} unlinked)`);
+    } catch (e: any) {
+      console.error("[crm] Property auto-match sweep failed:", e?.message);
+    }
+  })();
+
   app.use("/api/crm", requireAuth);
   app.get("/api/crm/stats", async (_req, res) => {
     try {
       const stats = await storage.getCrmStats();
       res.json(stats);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Landlord board — aggregated view of every Landlord company with WIP
+  // fees, active deal count, properties, contacts, and last touchpoint.
+  // All data is already in the CRM; this endpoint just rolls it up.
+  app.get("/api/crm/landlords", async (_req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          c.id, c.name, c.company_type, c.domain, c.head_office_address,
+          c.investment_hunter_flag, c.last_interaction_at, c.bgp_contact_user_ids,
+          COALESCE(deal_stats.active_deals, 0) AS active_deals,
+          COALESCE(deal_stats.total_fee, 0) AS total_fee,
+          COALESCE(deal_stats.last_deal_update, NULL) AS last_deal_update,
+          COALESCE(prop_stats.property_count, 0) AS property_count,
+          COALESCE(contact_stats.contact_count, 0) AS contact_count
+        FROM crm_companies c
+        LEFT JOIN (
+          SELECT landlord_id,
+                 COUNT(*) FILTER (WHERE status NOT IN ('ARCH','COM','INV','WIT')) AS active_deals,
+                 SUM(COALESCE(fee, 0)) FILTER (WHERE status NOT IN ('ARCH','WIT')) AS total_fee,
+                 MAX(updated_at) AS last_deal_update
+            FROM crm_deals
+           WHERE landlord_id IS NOT NULL
+           GROUP BY landlord_id
+        ) deal_stats ON deal_stats.landlord_id = c.id
+        LEFT JOIN (
+          SELECT company_id, COUNT(DISTINCT property_id) AS property_count
+            FROM crm_company_properties
+           GROUP BY company_id
+        ) prop_stats ON prop_stats.company_id = c.id
+        LEFT JOIN (
+          SELECT company_id, COUNT(*) AS contact_count
+            FROM crm_contacts
+           WHERE company_id IS NOT NULL
+           GROUP BY company_id
+        ) contact_stats ON contact_stats.company_id = c.id
+        WHERE LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit')
+           OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
+           OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+        ORDER BY total_fee DESC NULLS LAST, c.name ASC
+      `);
+      res.json({ landlords: rows });
+    } catch (e: any) {
+      console.error("[landlords]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.get("/api/enrichment/stats", requireAuth, async (_req, res) => {
@@ -334,7 +1451,6 @@ export function setupCrmRoutes(app: Express) {
             await tx.update(crmContacts).set({ companyId: keepId }).where(eq(crmContacts.companyId, deleteId));
             await tx.update(crmDeals).set({ landlordId: keepId }).where(eq(crmDeals.landlordId, deleteId));
             await tx.update(crmDeals).set({ tenantId: keepId }).where(eq(crmDeals.tenantId, deleteId));
-            await tx.update(crmDeals).set({ invoicingEntityId: keepId }).where(eq(crmDeals.invoicingEntityId, deleteId));
             await tx.update(crmProperties).set({ landlordId: keepId }).where(eq(crmProperties.landlordId, deleteId));
             await tx.execute(sql`UPDATE crm_company_deals SET company_id = ${keepId} WHERE company_id = ${deleteId} AND deal_id NOT IN (SELECT deal_id FROM crm_company_deals WHERE company_id = ${keepId})`);
             await tx.delete(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, deleteId));
@@ -395,6 +1511,7 @@ export function setupCrmRoutes(app: Express) {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
         companyType: req.query.companyType as string | undefined,
+        includeBillingEntities: req.query.includeBillingEntities === "true",
         page,
         limit,
       };
@@ -786,6 +1903,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         status: req.query.status as string | undefined,
         assetClass: req.query.assetClass as string | undefined,
         bgpEngagement: req.query.bgpEngagement as string | undefined,
+        excludeComps: req.query.excludeComps === "true" || req.query.excludeComps === "1",
         page,
         limit,
       };
@@ -803,7 +1921,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       } else {
         res.json(result);
       }
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) {
+      // Log the full stack so we can diagnose schema / column drift
+      // (the most likely cause of a sudden 500 here is a Drizzle schema
+      // column that doesn't exist in the live DB yet).
+      console.error("[/api/crm/properties] failed:", e?.message);
+      console.error(e?.stack);
+      res.status(500).json({
+        error: e?.message || "unknown error",
+        // Surface the missing-column hint so the frontend can show it.
+        hint: /column .* does not exist/i.test(e?.message || "")
+          ? "A column declared in the Drizzle schema is missing from the live DB. Run the missing migration (likely 0005_property_resolver) — see migrations/ for the SQL."
+          : undefined,
+        stack: process.env.NODE_ENV === "production" ? undefined : e?.stack,
+      });
+    }
   });
 
   app.get("/api/crm/properties/:id", async (req, res) => {
@@ -932,6 +2064,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  app.get("/api/crm/companies/:id/sub-companies", async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, name, company_type, kyc_status, aml_risk_level, companies_house_number, domain_url, domain
+         FROM crm_companies WHERE parent_company_id = $1 ORDER BY name`,
+        [req.params.id]
+      );
+      res.json(rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/crm/companies/:id/deals", async (req, res) => {
     try {
       const deals = await storage.getCompanyDeals(req.params.id);
@@ -960,6 +2103,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const deals = await storage.getCrmDeals({ propertyId: req.params.id });
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/crm/properties/:id/planning-summary", async (req, res) => {
+    try {
+      const force = req.query.force === "true" || req.query.force === "1";
+      const summary = await getPlanningSummary(req.params.id, { force });
+      res.json(summary);
+    } catch (e: any) {
+      console.error("[/api/crm/properties/:id/planning-summary] failed:", e?.message);
+      res.status(500).json({ error: e?.message || "unknown error" });
+    }
   });
 
   app.get("/api/crm/property-deal-links", async (req, res) => {
@@ -994,12 +2148,46 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/properties/:id/agents", async (req, res) => {
     try {
-      const { userId } = req.body;
+      const { userId, role } = req.body;
       if (!userId) return res.status(400).json({ error: "userId required" });
+      const cleanRole = typeof role === "string" && role.trim() ? role.trim() : null;
       const existing = await db.select().from(crmPropertyAgents).where(and(eq(crmPropertyAgents.propertyId, req.params.id), eq(crmPropertyAgents.userId, userId)));
-      if (existing.length > 0) return res.json(existing[0]);
-      const [link] = await db.insert(crmPropertyAgents).values({ propertyId: req.params.id, userId }).returning();
+      if (existing.length > 0) {
+        if (cleanRole && (existing[0] as any).role !== cleanRole) {
+          await db.execute(sql`UPDATE crm_property_agents SET role = ${cleanRole} WHERE id = ${existing[0].id}`);
+        }
+        return res.json({ ...existing[0], role: cleanRole ?? (existing[0] as any).role });
+      }
+      const [link] = await db.insert(crmPropertyAgents).values({ propertyId: req.params.id, userId, role: cleanRole } as any).returning();
+      // Mirror the assignment onto the landlord's client team so the org
+      // chart on the company page stays in sync. The unique constraint
+      // was dropped to allow the same person in multiple columns, so we
+      // guard duplicates with a NOT EXISTS check instead of ON CONFLICT.
+      try {
+        await db.execute(sql`
+          INSERT INTO crm_client_team_members (client_company_id, user_id, team_group)
+          SELECT p.landlord_id, ${userId}, 'Unassigned'
+            FROM crm_properties p
+           WHERE p.id = ${req.params.id} AND p.landlord_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM crm_client_team_members tm
+                WHERE tm.client_company_id = p.landlord_id AND tm.user_id = ${userId}
+             )
+        `);
+      } catch (e: any) { console.warn("[property-agents POST] team mirror failed:", e.message); }
       res.json(link);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Patch only the role for an existing link — used by the role picker on
+  // the property page so the user can change someone from Lead to Letting
+  // Surveyor without dropping + re-adding them.
+  app.patch("/api/crm/properties/:id/agents/:userId", async (req, res) => {
+    try {
+      const { role } = req.body;
+      const cleanRole = typeof role === "string" && role.trim() ? role.trim() : null;
+      await db.execute(sql`UPDATE crm_property_agents SET role = ${cleanRole} WHERE property_id = ${req.params.id} AND user_id = ${req.params.userId}`);
+      res.json({ success: true, role: cleanRole });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -1128,6 +2316,51 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Deal WIP Badges endpoint ──────────────────────────────────────────
+  // MUST be registered before the /:id route below — Express matches routes
+  // in order and "wip-badges" would otherwise be captured as an :id param.
+  app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {
+    try {
+      const { rows: deals } = await pool.query(`SELECT id, name FROM crm_deals`);
+      const { rows: wips } = await pool.query(`
+        SELECT ref, project, amt_wip, amt_invoice, deal_status AS stage, month
+        FROM wip_entries
+      `);
+
+      const result: Record<string, { amtWip: number; amtInvoice: number; count: number; entries: any[] }> = {};
+
+      for (const d of deals) {
+        const matched = wips.filter((w: any) => {
+          if (!w.project || !d.name) return false;
+          const wp = w.project.toLowerCase();
+          const dn = d.name.toLowerCase();
+          return wp.includes(dn) || dn.includes(wp);
+        });
+
+        if (matched.length > 0) {
+          result[d.id] = {
+            amtWip: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_wip) || 0), 0),
+            amtInvoice: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_invoice) || 0), 0),
+            count: matched.length,
+            entries: matched.map((w: any) => ({
+              ref: w.ref,
+              project: w.project,
+              amtWip: parseFloat(w.amt_wip) || 0,
+              amtInvoice: parseFloat(w.amt_invoice) || 0,
+              stage: w.stage,
+              month: w.month,
+            })),
+          };
+        }
+      }
+
+      res.json(result);
+    } catch (e: any) {
+      console.error("[wip-badges] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/crm/deals/:id", async (req, res) => {
     try {
       const deal = await storage.getCrmDeal(req.params.id);
@@ -1142,6 +2375,15 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/deals", async (req, res) => {
     try {
+      // Resolve a "__tenancy__<id>" unitId picked from the tenancy
+      // schedule directly. Finds (or creates) a matching property_units
+      // row on the same property, then swaps the token for the real
+      // unit id so the rest of the pipeline (audit, rent_analysis,
+      // tenancy_unit_id stamp) keeps working unchanged.
+      if (req.body?.unitId && typeof req.body.unitId === "string" && req.body.unitId.startsWith("__tenancy__")) {
+        const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, req.body.propertyId);
+        if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
+      }
       const parsed = insertCrmDealSchema.parse(req.body);
       const deal = await storage.createCrmDeal(parsed);
 
@@ -1160,9 +2402,66 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         if (priceItza !== null) (deal as any).priceItza = priceItza;
       }
 
+      // Canonical unit FK: when the new deal points at a property_units
+      // row, stamp the matching tenancy_schedule_units id so the deal
+      // is bound to the canonical unit by ID, not by a soft-matched
+      // unit_name. No-op for deals that aren't linked to a unit yet.
+      if ((deal as any).propertyId && (deal as any).unitId) {
+        await pool.query(
+          `UPDATE crm_deals d
+              SET tenancy_unit_id = (
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = d.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
+                     (SELECT unit_name FROM property_units WHERE id = d.unit_id), '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              )
+            WHERE d.id = $1 AND d.tenancy_unit_id IS NULL`,
+          [deal.id]
+        ).catch((e: any) => console.warn("[deals] tenancy_unit_id stamp failed:", e?.message));
+      }
+
       res.status(201).json(deal);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
+
+  // Turn a "__tenancy__<id>" token into a real property_units.id by
+  // matching unit_name on the same property. Creates the property_units
+  // row if no match exists — this is what removes the "needs promote"
+  // friction in DealUnitPicker. Returns null if the token can't be
+  // resolved (tenancy row gone, no property_id, blank unit_number),
+  // letting callers decide whether to drop the field or error.
+  async function resolveTenancyTokenToUnitId(token: string, propertyId: string | null | undefined): Promise<string | null> {
+    if (!token || !token.startsWith("__tenancy__") || !propertyId) return null;
+    const tenancyId = token.slice("__tenancy__".length);
+    if (!tenancyId) return null;
+    try {
+      const t = await pool.query(
+        "SELECT unit_number, nia_sqft FROM tenancy_schedule_units WHERE id = $1 LIMIT 1",
+        [tenancyId]
+      );
+      const unitName: string | null = t.rows[0]?.unit_number?.toString().trim() || null;
+      if (!unitName) return null;
+      // Case-insensitive name match against the existing shadow rows.
+      const existing = await pool.query(
+        "SELECT id FROM property_units WHERE property_id = $1 AND lower(trim(unit_name)) = lower($2) LIMIT 1",
+        [propertyId, unitName]
+      );
+      if (existing.rows[0]?.id) return existing.rows[0].id as string;
+      const nia: number | null = t.rows[0]?.nia_sqft ?? null;
+      const ins = await pool.query(
+        `INSERT INTO property_units (property_id, unit_name, sqft)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [propertyId, unitName, nia]
+      );
+      return ins.rows[0]?.id as string ?? null;
+    } catch (e: any) {
+      console.warn("[deals] resolveTenancyTokenToUnitId failed:", e?.message);
+      return null;
+    }
+  }
 
   function calculateRentAnalysis(deal: { rentPa?: number | null; rentFree?: number | null; leaseLength?: number | null; capitalContribution?: number | null; totalAreaSqft?: number | null }): number | null {
     const rentPa = deal.rentPa;
@@ -1199,6 +2498,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
 
+      // Same tenancy-token resolve as POST — picker can hand us a
+      // "__tenancy__<id>" for rows that didn't have a property_units
+      // shadow yet. Find or create one before the audit loop runs so
+      // it sees the canonical id, not the token.
+      if (req.body?.unitId && typeof req.body.unitId === "string" && req.body.unitId.startsWith("__tenancy__")) {
+        const propertyId = req.body.propertyId || oldDeal?.propertyId;
+        const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, propertyId);
+        if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
+      }
+
       // --- Resolve current user for audit + approval ---
       const userId = (req as any).session?.userId || (req as any).tokenUserId;
       let changedByName = "Unknown";
@@ -1214,7 +2523,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
 
       // --- Approval gate for Invoiced / Completed ---
-      const APPROVAL_STATUSES = ["Invoiced", "Completed"];
+      // Senior approval required to set these statuses (canonical + legacy)
+      const APPROVAL_STATUSES = ["INV", "COM", "Invoiced", "Completed", "Billed"];
       const SENIOR_EMAILS = new Set([
         "woody@brucegillinghampollard.com",
         "charlotte@brucegillinghampollard.com",
@@ -1269,12 +2579,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // --- Audit: compare fields before applying update ---
       const auditFields = [
         "status", "fee", "internalAgent", "team", "dealType", "name", "pricing",
-        "yieldPercent", "feeAgreement", "rentPa", "capitalContribution", "rentFree",
-        "leaseLength", "breakOption", "completionDate", "tenureText", "assetClass",
+        "yieldPercent", "feeAgreement", "feeAgreementUrl", "rentPa", "capitalContribution", "rentFree",
+        "leaseLength", "breakOption", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "tenureText", "assetClass",
         "comments", "amlCheckCompleted", "totalAreaSqft", "basementAreaSqft",
-        "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "propertyId", "landlordId",
-        "tenantId", "vendorId", "purchaserId", "invoicingEntityId", "kycApproved",
-        "feePercentage", "completionTiming", "invoicingNotes", "poNumber",
+        "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "areaBasis", "propertyId", "landlordId",
+        "tenantId", "vendorId", "purchaserId", "xeroContactId", "xeroContactName", "kycApproved",
+        "feePercentage", "invoicingNotes", "poNumber",
         "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
         "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
       ];
@@ -1305,7 +2615,66 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         });
       }
 
+      // Knowledge capture — on transition to Completed, if a `learning`
+      // note was posted with the update, persist it as a brand_signals row
+      // against the tenant so the brand card shows our deal learnings.
+      const completing = req.body.status === "Completed" && oldDeal?.status !== "Completed";
+      const learning: string | null = typeof req.body?.learning === "string"
+        ? req.body.learning.trim().slice(0, 2000) || null
+        : null;
+      if (completing && learning && oldDeal?.tenantId) {
+        try {
+          await pool.query(
+            `INSERT INTO brand_signals
+              (brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated)
+              VALUES ($1, 'news', $2, $3, $4, now(), 'medium', 'positive', false)`,
+            [
+              oldDeal.tenantId,
+              `Deal learning: ${oldDeal.name || req.params.id}`.slice(0, 500),
+              learning,
+              `bgp-deal:${req.params.id}`,
+            ]
+          );
+        } catch (e: any) {
+          console.warn("[deal-learning] capture failed:", e?.message);
+        }
+      }
+      // Strip `learning` from body so it doesn't hit the generic updater
+      if ("learning" in req.body) delete req.body.learning;
+
       const deal = await storage.updateCrmDeal(req.params.id, req.body);
+
+      // Re-resolve tenancy_unit_id whenever property_id or unit_id
+      // changes — the canonical unit FK must stay aligned with the
+      // (property, unit) pair the deal points at. Best-effort.
+      if ("propertyId" in req.body || "unitId" in req.body) {
+        await pool.query(
+          `UPDATE crm_deals d
+              SET tenancy_unit_id = CASE
+                WHEN d.unit_id IS NULL THEN NULL
+                ELSE (
+                  SELECT ts.id FROM tenancy_schedule_units ts
+                   WHERE ts.property_id = d.property_id
+                     AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
+                       (SELECT unit_name FROM property_units WHERE id = d.unit_id), '')))
+                     AND coalesce(trim(ts.unit_number), '') <> ''
+                   LIMIT 1
+                )
+              END
+            WHERE d.id = $1`,
+          [req.params.id]
+        ).catch((e: any) => console.warn("[deals] tenancy_unit_id re-stamp failed:", e?.message));
+      }
+
+      // Auto-copy to comps schedule on COM transition (snapshot, deal stays on tracker until INV).
+      // Best-effort: never fails the deal update.
+      try {
+        if (legacyToCode(oldDeal?.status) !== "COM" && legacyToCode(deal.status) === "COM") {
+          await maybeCopyDealToComps(deal);
+        }
+      } catch (compErr: any) {
+        console.warn(`[deal->comps] auto-copy failed for ${deal.id}:`, compErr?.message);
+      }
 
       const rentFields = ["rentPa", "rentFree", "leaseLength", "capitalContribution", "totalAreaSqft"];
       if (rentFields.some(f => req.body[f] !== undefined)) {
@@ -1357,12 +2726,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
 
       const isInvestmentTeam = (Array.isArray(deal.team) ? deal.team : []).some(t => t?.toLowerCase() === "investment");
-      const completedStatuses = ["Exchanged", "Completed", "Investment Comps"];
-      const statusChanged = req.body.status && oldDeal && oldDeal.status !== req.body.status;
-      const nowComplete = completedStatuses.includes(deal.status || "");
+      const newCode = legacyToCode(deal.status);
+      const oldCode = legacyToCode(oldDeal?.status);
+      const statusChanged = req.body.status && oldDeal && oldCode !== newCode;
+      const nowComplete = ["EXC", "COM"].includes(newCode || "");
 
-      const WIP_STATUSES = ["SOLs", "Invoiced", "Exchanged", "Billed", "Completed", "Investment Comps"];
-      if (statusChanged && WIP_STATUSES.includes(deal.status || "")) {
+      // Once a deal has moved past listing (SOL onwards), drop any available_units row tied to it
+      const POST_LISTING_CODES = ["SOL", "EXC", "COM", "INV"];
+      if (statusChanged && POST_LISTING_CODES.includes(newCode || "")) {
         try {
           await db.delete(availableUnits).where(eq(availableUnits.dealId, deal.id));
         } catch (_) {}
@@ -1414,7 +2785,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                 pricePsf: deal.pricePsf || null,
                 capRate: deal.yieldPercent ? deal.yieldPercent / 100 : null,
                 areaSqft: deal.totalAreaSqft || null,
-                transactionDate: deal.completionDate || new Date().toISOString().split("T")[0],
+                transactionDate: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : new Date().toISOString().split("T")[0],
                 buyer: buyerName || null,
                 seller: sellerName || null,
                 comments: deal.comments || null,
@@ -1494,7 +2865,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                 term: deal.leaseLength ? `${deal.leaseLength} years` : null,
                 breakClause: deal.breakOption ? `${deal.breakOption} years` : null,
                 rentAnalysis: deal.rentAnalysis ? String(deal.rentAnalysis) : null,
-                completionDate: deal.completionDate || new Date().toISOString().split("T")[0],
+                completionDate: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : new Date().toISOString().split("T")[0],
                 postcode: propPostcode || null,
                 areaLocation: propAreaLocation || null,
                 comments: deal.comments || null,
@@ -1525,40 +2896,33 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             }
 
             if (existingInvoices.length === 0 && (deal.fee || 0) > 0 && !kycBlocked) {
-              let contactName = "";
-              let contactEmail = "";
-
-              if (deal.invoicingEntityId) {
-                const [entity] = await db.select().from(crmCompanies)
-                  .where(eq(crmCompanies.id, deal.invoicingEntityId)).limit(1);
-                if (entity) {
-                  contactName = entity.name;
-                  contactEmail = deal.invoicingEmail || entity.email || "";
-                }
-              }
+              let contactName = deal.xeroContactName || "";
+              let contactEmail = deal.invoicingEmail || "";
+              let xeroContactId: string | undefined = deal.xeroContactId || undefined;
 
               if (!contactName && deal.tenantId) {
                 const [tenant] = await db.select().from(crmCompanies)
                   .where(eq(crmCompanies.id, deal.tenantId)).limit(1);
                 if (tenant) {
                   contactName = tenant.name;
-                  contactEmail = deal.invoicingEmail || tenant.email || "";
+                  contactEmail = contactEmail || tenant.email || "";
                 }
               }
 
-              if (contactName) {
-                let xeroContactId: string | undefined;
-                const searchRes = await xeroApi(req.session, `/Contacts?where=Name=="${contactName.replace(/"/g, "")}"`);
-                if (searchRes.Contacts?.length > 0) {
-                  xeroContactId = searchRes.Contacts[0].ContactID;
-                } else {
-                  const createContactRes = await xeroApi(req.session, "/Contacts", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      Contacts: [{ Name: contactName, EmailAddress: contactEmail || undefined }],
-                    }),
-                  });
-                  xeroContactId = createContactRes.Contacts?.[0]?.ContactID;
+              if (xeroContactId || contactName) {
+                if (!xeroContactId && contactName) {
+                  const searchRes = await xeroApi(req.session, `/Contacts?where=Name=="${contactName.replace(/"/g, "")}"`);
+                  if (searchRes.Contacts?.length > 0) {
+                    xeroContactId = searchRes.Contacts[0].ContactID;
+                  } else {
+                    const createContactRes = await xeroApi(req.session, "/Contacts", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        Contacts: [{ Name: contactName, EmailAddress: contactEmail || undefined }],
+                      }),
+                    });
+                    xeroContactId = createContactRes.Contacts?.[0]?.ContactID;
+                  }
                 }
 
                 const invoicePayload = {
@@ -1624,11 +2988,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
+      // Auto-fire of AML sweep on counterparty change is handled client-side
+      // via POST /api/kyc/run-all-checks { dealId, bothSides: true } from
+      // deals.tsx inline-edit handler — see commit ee7f9e5. No server-side
+      // trigger here to avoid double-running the orchestrator on every save.
       res.json(deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
-
-  // Deal audit log endpoint
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
     try {
       const logs = await db.select().from(dealAuditLog)
@@ -2006,7 +3372,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   "feePercentage": number - agency fee percentage if mentioned,
   "fee": number - total fee amount in GBP if mentioned,
   "feeAgreement": "string - fee basis e.g. 'Standard %', 'Fixed Fee'",
-  "completionTiming": "string - expected completion timing",
+  "targetDate": "ISO date string - expected exchange or completion date",
   "dealType": "string - one of: New Letting, Lease Renewal, Rent Review, Sub-Letting, Assignment, Lease Disposal, Purchase, Sale, Lease Acquisition, Regear",
   "assetClass": "string - one of: Retail, Office, Industrial, Residential, Mixed-Use, F&B, Leisure, Healthcare, Other",
   "serviceCharge": "string - service charge details",
@@ -2750,12 +4116,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
         id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName,
         status: crmDeals.status, dealType: crmDeals.dealType,
         landlordId: crmDeals.landlordId, tenantId: crmDeals.tenantId,
-        clientContactId: crmDeals.clientContactId, invoicingEntityId: crmDeals.invoicingEntityId,
+        clientContactId: crmDeals.clientContactId,
         comments: crmDeals.comments, internalAgent: crmDeals.internalAgent,
       }).from(crmDeals);
 
       const unlinkedDeals = allDeals.filter(d =>
-        !d.landlordId && !d.tenantId && !d.clientContactId && !d.invoicingEntityId
+        !d.landlordId && !d.tenantId && !d.clientContactId
       );
 
       if (unlinkedDeals.length === 0) {
@@ -2907,9 +4273,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               await db.update(crmDeals).set({ landlordId: entityId }).where(eq(crmDeals.id, dealId));
             } else if (role === "tenant") {
               await db.update(crmDeals).set({ tenantId: entityId }).where(eq(crmDeals.id, dealId));
-            } else if (role === "invoicing_entity") {
-              await db.update(crmDeals).set({ invoicingEntityId: entityId }).where(eq(crmDeals.id, dealId));
             }
+            // Note: "invoicing_entity" role is no longer applied to deals — Xero
+            // contact is the source of truth, set explicitly via the deal form.
             const existing = await db.select().from(crmCompanyDeals)
               .where(and(eq(crmCompanyDeals.companyId, entityId), eq(crmCompanyDeals.dealId, dealId)));
             if (existing.length === 0) {
@@ -3580,7 +4946,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             dealType: deal.dealType || "",
           });
 
-          const completionStr = deal.completionDate || deal.updatedAt?.toISOString?.();
+          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
           if (completionStr) {
             const completionDate = new Date(completionStr);
             if (completionDate >= yearStart && completionDate <= now) {
@@ -3591,12 +4957,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           }
         }
 
-        const isComplete = status === "Invoiced" || status === "Exchanged";
+        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(status) || "");
         if (isComplete) completedCount++;
 
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
           const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
           if (days > 0 && days < 1000) {
             totalDays += days;
@@ -3615,10 +4981,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         "0-30": 0, "31-60": 0, "61-90": 0, "91-180": 0, "181-365": 0, "365+": 0,
       };
       for (const deal of allDeals) {
-        const isComplete = deal.status === "Invoiced" || deal.status === "Exchanged";
+        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(deal.status) || "");
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
           const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
           if (days >= 0 && days < 1000) {
             if (days <= 30) timeToCloseBuckets["0-30"]++;
@@ -3727,7 +5093,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
       const agentTotals = new Map<string, { invoiced: number; wip: number }>();
 
       for (const deal of deals) {
@@ -3740,7 +5105,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (!dealTeamsLower.some(t => t === userTeam.toLowerCase())) continue;
         }
         const totalFee = deal.fee;
-        const isInvoiced = INVOICED_STATUSES.includes(deal.status);
+        const isInvoiced = isInvoicedStatus(deal.status);
         const agents = allocsByDeal.get(deal.id);
 
         if (agents && agents.length > 0) {
@@ -3800,14 +5165,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
-      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
       const result: any[] = [];
 
       for (const deal of deals) {
-        if (EXCLUDED_STATUSES.includes(deal.status || "")) continue;
+        // Skip archived rows: WIT (withdrawn/lost/dead) + legacy comps statuses still present pre-migration
+        const code = legacyToCode(deal.status);
+        if (code === "WIT" || (deal.status || "").toLowerCase().includes("comps")) continue;
         const totalFee = deal.fee || 0;
-        const isInvoiced = INVOICED_STATUSES.includes(deal.status || "");
+        const isInvoiced = isInvoicedStatus(deal.status);
         const dealAllocs = allocsByDeal.get(deal.id);
         let allocatedAmount = 0;
         let isRelevant = false;
@@ -3837,7 +5202,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
         function drilldownStage(status: string | null): string {
           if (!status) return "pipeline";
-          if (INVOICED_STATUSES.includes(status)) return "invoiced";
+          if (isInvoicedStatus(status)) return "invoiced";
           if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
           return "pipeline";
         }
@@ -3874,8 +5239,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const isAdmin = !!currentUser?.isAdmin;
       const userTeam = currentUser?.team || null;
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
-      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
 
       const deals = await db.select().from(crmDeals);
       const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
@@ -3907,27 +5270,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      // Build lookup maps — use separate maps to avoid name/property overwrites
-      const dealByName = new Map<string, typeof deals[0]>();
-      const dealByProperty = new Map<string, typeof deals[0]>();
-      for (const d of deals) {
-        if (d.name) dealByName.set(d.name.toLowerCase().trim(), d);
-        const propName = d.propertyId ? propMap.get(d.propertyId) : null;
-        if (propName) dealByProperty.set(propName.toLowerCase().trim(), d);
-      }
-      // Combined lookup: check name first, then property
-      const findDeal = (key: string) => dealByName.get(key) || dealByProperty.get(key);
-
       function deriveStage(status: string | null): string {
-        if (!status) return "pipeline";
-        if (INVOICED_STATUSES.includes(status)) return "invoiced";
-        if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
-        return "pipeline";
+        return deriveStageFromStatus(status);
       }
 
       function deriveFiscalYear(deal: any): number | null {
-        if (deal.completionDate) {
-          const d = new Date(deal.completionDate);
+        const dateSrc = deal.completedAt || deal.exchangedAt || deal.targetDate;
+        if (dateSrc) {
+          const d = new Date(dateSrc);
           if (!isNaN(d.getTime())) {
             const month = d.getMonth() + 1;
             return month >= 4 ? d.getFullYear() + 1 : d.getFullYear();
@@ -3940,7 +5290,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       }
 
       function deriveMonth(deal: any): string | null {
-        const dateStr = deal.completionDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
@@ -3948,45 +5298,29 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
       }
 
-      const usedDealIds = new Set<string>();
-
-      let entries: any[] = wipRows.map(r => {
-        const projectKey = (r.project || "").toLowerCase().trim();
-        const refKey = (r.ref || "").toLowerCase().trim();
-        const matchedDeal = findDeal(projectKey) || findDeal(refKey);
-        if (matchedDeal) usedDealIds.add(matchedDeal.id);
-        const tenantName = matchedDeal?.tenantId ? compMap.get(matchedDeal.tenantId) || null : null;
-
-        return {
-          id: r.id,
-          dealId: matchedDeal?.id || null,
-          dealType: matchedDeal?.dealType || null,
-          ref: r.ref,
-          groupName: r.groupName,
-          project: r.project,
-          tenant: r.tenant || tenantName,
-          team: r.team,
-          agent: r.agent,
-          assetClass: matchedDeal?.assetClass || null,
-          amtWip: r.amtWip || 0,
-          amtInvoice: r.amtInvoice || 0,
-          month: r.month,
-          dealStatus: r.dealStatus,
-          stage: r.stage,
-          invoiceNo: r.invoiceNo,
-          orderNumber: r.orderNumber,
-          fiscalYear: r.fiscalYear,
-          source: "spreadsheet" as const,
-        };
+      // WIP report shows only deals that are backed by a Sage import — i.e.
+      // have at least one wip_entries row with deal_id matching, or carry the
+      // legacy "WIP Ref: N" comment marker from pre-FK syncs. Stops
+      // leasing-schedule AVA units, manually-created deals, and orphaned
+      // historic rows from bloating the report.
+      const wipBackedDealIds = new Set<string>();
+      for (const w of wipRows) {
+        if (w.dealId) wipBackedDealIds.add(w.dealId);
+      }
+      let entries: any[] = [];
+      const eligibleDeals = deals.filter(d => {
+        const code = legacyToCode(d.status);
+        if (code === null || !WIP_STATUSES.includes(code)) return false;
+        // Must be backed by wip_entries (FK) or legacy WIP Ref comment marker
+        const hasFkBacking = wipBackedDealIds.has(d.id);
+        const hasLegacyMarker = !!(d.comments && /WIP Ref:\s*\d+/.test(d.comments));
+        return hasFkBacking || hasLegacyMarker;
       });
-
-      const unmatchedDeals = deals.filter(d =>
-        !EXCLUDED_STATUSES.includes(d.status || "") && !usedDealIds.has(d.id)
-      );
-      for (const deal of unmatchedDeals) {
+      for (const deal of eligibleDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
+        const billingEntityName = deal.xeroContactName || null;
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
         const isInvoiced = stage === "invoiced";
@@ -4000,21 +5334,32 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           for (const alloc of dealAllocations) {
             const allocPct = (alloc.percentage || 0) / 100;
             const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
-            const agentInvoiceAmt = alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100;
+            // Only emit invoice amount when deal is actually invoiced — otherwise
+            // fixedAmount gets reused for both columns and doubles the totals.
+            const agentInvoiceAmt = isInvoiced
+              ? (alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100)
+              : 0;
             entries.push({
               id: `${deal.id}_${alloc.agentName}`,
               dealId: deal.id,
+              dealRef: deal.dealRef ?? null,
               dealType: deal.dealType || null,
               ref: deal.name,
               groupName: deal.groupName || null,
               project: propertyName,
               tenant: tenantName,
+              billingEntity: billingEntityName,
               team: teamStr,
               agent: alloc.agentName,
               assetClass: deal.assetClass || null,
               amtWip: isInvoiced ? 0 : agentFee,
               amtInvoice: agentInvoiceAmt,
               month: deriveMonth(deal),
+              instructedAt: deal.instructedAt || null,
+              targetDate: deal.targetDate || null,
+              exchangedAt: deal.exchangedAt || null,
+              completedAt: deal.completedAt || null,
+              invoicedAt: deal.invoicedAt || null,
               dealStatus: deal.status || null,
               stage,
               invoiceNo: invoice?.invoiceNo || null,
@@ -4031,17 +5376,24 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             entries.push({
               id: deal.id,
               dealId: deal.id,
+              dealRef: deal.dealRef ?? null,
               dealType: deal.dealType || null,
               ref: deal.name,
               groupName: deal.groupName || null,
               project: propertyName,
               tenant: tenantName,
+              billingEntity: billingEntityName,
               team: teamStr,
               agent: null,
               assetClass: deal.assetClass || null,
               amtWip: isInvoiced ? 0 : totalFee,
               amtInvoice: totalInvoiceAmt,
               month: deriveMonth(deal),
+              instructedAt: deal.instructedAt || null,
+              targetDate: deal.targetDate || null,
+              exchangedAt: deal.exchangedAt || null,
+              completedAt: deal.completedAt || null,
+              invoicedAt: deal.invoicedAt || null,
               dealStatus: deal.status || null,
               stage,
               invoiceNo: invoice?.invoiceNo || null,
@@ -4056,17 +5408,24 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               entries.push({
                 id: `${deal.id}_${agentName}`,
                 dealId: deal.id,
+                dealRef: deal.dealRef ?? null,
                 dealType: deal.dealType || null,
                 ref: deal.name,
                 groupName: deal.groupName || null,
                 project: propertyName,
                 tenant: tenantName,
+                billingEntity: billingEntityName,
                 team: teamStr,
                 agent: agentName,
                 assetClass: deal.assetClass || null,
                 amtWip: isInvoiced ? 0 : perAgentFee,
                 amtInvoice: perAgentInvoice,
                 month: deriveMonth(deal),
+                instructedAt: deal.instructedAt || null,
+                targetDate: deal.targetDate || null,
+                exchangedAt: deal.exchangedAt || null,
+                completedAt: deal.completedAt || null,
+                invoicedAt: deal.invoicedAt || null,
                 dealStatus: deal.status || null,
                 stage,
                 invoiceNo: invoice?.invoiceNo || null,
@@ -4122,65 +5481,87 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // Backfill: parses MonthYear from wip_entries and writes target_date on
+  // matching crm_deals where it's still NULL. Safe to run repeatedly.
+  app.post("/api/wip/backfill-completion-dates", requireAuth, async (req, res) => {
+    try {
+      if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
+      const { rows: entries } = await pool.query(
+        `SELECT ref, MIN(month) as month FROM wip_entries WHERE ref IS NOT NULL AND ref != '' GROUP BY ref`
+      );
+      const { rows: deals } = await pool.query(
+        `SELECT id, comments FROM crm_deals WHERE target_date IS NULL`
+      );
+      const wipRefToDealId = new Map<string, string>();
+      for (const d of deals) {
+        const match = d.comments?.match(/WIP Ref:\s*(\d+)/);
+        if (match) wipRefToDealId.set(match[1], d.id);
+      }
+      let updated = 0;
+      for (const e of entries) {
+        const dealId = wipRefToDealId.get(e.ref);
+        if (!dealId) continue;
+        const targetDate = parseWipMonthToDate(e.month);
+        if (!targetDate) continue;
+        await pool.query(
+          `UPDATE crm_deals SET target_date=$1, updated_at=NOW() WHERE id=$2 AND target_date IS NULL`,
+          [targetDate, dealId]
+        );
+        updated++;
+      }
+      res.json({ success: true, updated, dealsWithoutDate: deals.length, wipEntries: entries.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot: rewrites legacy team labels to the canonical set in both
+  // wip_entries.team (text) and crm_deals.team (text[]). Idempotent.
+  app.post("/api/wip/normalize-team-names", requireAuth, async (req, res) => {
+    try {
+      if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
+
+      const { rows: wipRows } = await pool.query(`SELECT id, team FROM wip_entries WHERE team IS NOT NULL AND team != ''`);
+      let wipUpdated = 0;
+      for (const r of wipRows) {
+        const norm = normalizeTeamName(r.team);
+        if (norm && norm !== r.team) {
+          await pool.query(`UPDATE wip_entries SET team=$1 WHERE id=$2`, [norm, r.id]);
+          wipUpdated++;
+        }
+      }
+
+      const { rows: dealRows } = await pool.query(`SELECT id, team FROM crm_deals WHERE team IS NOT NULL AND array_length(team, 1) > 0`);
+      let dealsUpdated = 0;
+      for (const d of dealRows) {
+        const arr: string[] = Array.isArray(d.team) ? d.team : [];
+        const normalized = Array.from(new Set(
+          arr.map(t => normalizeTeamName(t)).filter(Boolean) as string[]
+        ));
+        const changed = normalized.length !== arr.length || normalized.some((v, i) => v !== arr[i]);
+        if (changed) {
+          await pool.query(`UPDATE crm_deals SET team=$1::text[], updated_at=NOW() WHERE id=$2`, [normalized, d.id]);
+          dealsUpdated++;
+        }
+      }
+
+      res.json({ success: true, wipUpdated, dealsUpdated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/wip/import", requireAuth,
     multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single("file"),
     async (req: Request, res: Response) => {
       try {
         if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-        const XLSX = await import("xlsx");
-        const wb = XLSX.read(req.file.buffer, { type: "buffer" });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const data: any[] = XLSX.utils.sheet_to_json(sheet);
-        if (data.length === 0) return res.status(400).json({ error: "No data found in file" });
-
-        const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-        const rows = data.filter((r: any) => {
-          const ref = r.Ref ? String(r.Ref) : "";
-          if (!ref || ref === "Total" || ref.startsWith("Applied filters")) return false;
-          if (!r.Group && !r.Project && !r.Tenant && !r.Team) return false;
-          return true;
-        }).map((r: any) => {
-          let fiscalYear: number | null = null;
-          if (r.Month) {
-            const parts = String(r.Month).split("-");
-            if (parts.length === 2) {
-              const mIdx = monthOrder.indexOf(parts[0]);
-              const yr = parseInt("20" + parts[1]);
-              if (mIdx >= 0 && !isNaN(yr)) fiscalYear = mIdx >= 3 ? yr + 1 : yr;
-            }
-          }
-          return {
-            ref: r.Ref ? String(r.Ref) : null,
-            groupName: r.Group || null,
-            project: r.Project || null,
-            tenant: r.Tenant || null,
-            team: r.Team || null,
-            agent: r.Agent || null,
-            amtWip: parseFloat(r["Amt WIP"]) || 0,
-            amtInvoice: parseFloat(r["Amt invoice"]) || 0,
-            month: r.Month || null,
-            dealStatus: r["Deal status"] || null,
-            stage: r.Stage || null,
-            invoiceNo: r.InvoiceNo ? String(r.InvoiceNo) : null,
-            orderNumber: r.ORDER_NUMBER ? String(r.ORDER_NUMBER) : null,
-            fiscalYear,
-          };
+        const result = await importWipFromBuffer(req.file.buffer, {
+          append: req.query.append === "true",
+          archiveOrphans: req.query.archiveOrphans === "true" || req.query.sourceOfTruth === "true",
         });
-
-        const appendMode = req.query.append === "true";
-        await db.transaction(async (tx) => {
-          if (!appendMode) {
-            await tx.delete(wipEntries);
-          }
-          for (let i = 0; i < rows.length; i += 100) {
-            await tx.insert(wipEntries).values(rows.slice(i, i + 100));
-          }
-        });
-
-        const syncResult = await syncWipToCrmDeals(pool);
-
-        res.json({ success: true, imported: rows.length, sync: syncResult });
+        res.json(result);
       } catch (e: any) {
         res.status(500).json({ error: e.message });
       }
@@ -4613,6 +5994,44 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     res.json({ classified, processed: untyped.length, remaining });
   });
 
+  // ── Assign ungrouped properties to "Properties" bucket ───────────────────
+  app.post("/api/admin/fix-ungrouped-properties", requireAuth, async (_req, res) => {
+    try {
+      const result = await pool.query(
+        `UPDATE crm_properties
+         SET group_name = 'Properties'
+         WHERE (group_name IS NULL OR group_name = '')
+           AND (status NOT IN ('Investment Comp') OR status IS NULL)
+         RETURNING id`
+      );
+      res.json({ fixed: result.rowCount });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Clean up corrupted assetClass values (JSON arrays stored in text col) ──
+  app.post("/api/admin/fix-asset-class", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, asset_class FROM crm_properties WHERE asset_class IS NOT NULL AND asset_class NOT IN ('Retail','Office','Industrial','Residential','Mixed Use','Mixed-Use','F&B','Leisure','Healthcare','Other','Land','Student','Hotel','Car Park','Logistics')`
+      );
+      let fixed = 0;
+      const KNOWN = new Set(["Retail","Office","Industrial","Residential","Mixed Use","Mixed-Use","F&B","Leisure","Healthcare","Other","Land","Student","Hotel","Car Park","Logistics"]);
+      for (const row of rows) {
+        let raw: string = row.asset_class || "";
+        // Strip outer parens/braces/brackets, unescape, extract first recognisable value
+        raw = raw.replace(/^[({"\[]+|[)}"\\!\]]+$/g, "").replace(/\\"/g, '"').replace(/\\\\"/g, '"');
+        // Split on comma and find first known value
+        const parts = raw.split(",").map(p => p.trim().replace(/^["']+|["']+$/g, ""));
+        const clean = parts.find(p => KNOWN.has(p)) || parts[0]?.substring(0, 50) || null;
+        if (clean !== row.asset_class) {
+          await pool.query(`UPDATE crm_properties SET asset_class = $1 WHERE id = $2`, [clean, row.id]);
+          fixed++;
+        }
+      }
+      res.json({ scanned: rows.length, fixed });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Brand bible seed endpoint ─────────────────────────────────────────
   app.post("/api/admin/seed-brands", requireAuth, async (_req, res) => {
     const SEED_BRANDS: { name: string; companyType: string }[] = [
@@ -4755,16 +6174,17 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       const topTurnover = [...turnoverRows].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
 
-      // Active requirements
+      // Active requirements — note size/use/requirement_locations are text[] arrays,
+      // not numeric size_min/size_max columns.
       const reqRows = await pool.query(`
         SELECT rl.id, rl.company_id, c.name AS company_name, c.company_type, c.domain,
-               rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at,
+               rl.size, rl.use, rl.requirement_locations, rl.comments, rl.created_at,
                COUNT(ct.id) AS contact_count
         FROM crm_requirements_leasing rl
         JOIN crm_companies c ON c.id = rl.company_id
         LEFT JOIN crm_contacts ct ON ct.company_id = c.id
-        WHERE rl.status = 'Active' AND ${tenantFilter.replace('c.', 'c.')}
-        GROUP BY rl.id, rl.company_id, c.name, c.company_type, c.domain, rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at
+        WHERE rl.status = 'Active' AND ${tenantFilter}
+        GROUP BY rl.id, rl.company_id, c.name, c.company_type, c.domain, rl.size, rl.use, rl.requirement_locations, rl.comments, rl.created_at
         ORDER BY rl.created_at DESC
         LIMIT 30
       `).then(r => r.rows);
@@ -4788,6 +6208,180 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       });
     } catch (err: any) {
       console.error("[brands/hub]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Brand Hunter — ranked list of brands most likely to expand into UK ──
+  app.get("/api/brands/hunter", requireAuth, async (_req, res) => {
+    try {
+      const { getStockSnapshots } = await import("./stock-price");
+
+      // Fetch all tracked brands + any manually hunter-flagged brands
+      const brands = await pool.query(`
+        SELECT
+          c.id, c.name, c.company_type, c.domain, c.description,
+          c.rollout_status, c.store_count,
+          c.backers, c.instagram_handle, c.tiktok_handle,
+          c.dept_store_presence, c.franchise_activity,
+          c.hunter_flag, c.concept_pitch, c.stock_ticker,
+          c.brand_analysis,
+          c.created_at
+        FROM crm_companies c
+        WHERE (c.is_tracked_brand = true OR c.hunter_flag = true)
+          AND c.merged_into_id IS NULL
+        ORDER BY c.name
+      `).then(r => r.rows);
+
+      // Fetch recent brand signals for all these brands (last 365 days)
+      const ids = brands.map((b: any) => b.id);
+      let signals: any[] = [];
+      if (ids.length > 0) {
+        signals = await pool.query(`
+          SELECT brand_company_id, signal_type, headline, magnitude, sentiment, signal_date
+          FROM brand_signals
+          WHERE brand_company_id = ANY($1)
+            AND signal_date > NOW() - INTERVAL '365 days'
+          ORDER BY signal_date DESC
+        `, [ids]).then(r => r.rows);
+      }
+
+      // Build signal map
+      const signalMap = new Map<string, any[]>();
+      for (const s of signals) {
+        if (!signalMap.has(s.brand_company_id)) signalMap.set(s.brand_company_id, []);
+        signalMap.get(s.brand_company_id)!.push(s);
+      }
+
+      // Fetch stock snapshots for listed brands in one batch (cached 6h)
+      const tickers = Array.from(new Set(
+        brands.map((b: any) => b.stock_ticker).filter((t: any) => typeof t === "string" && t.trim())
+      ));
+      const stockMap = tickers.length > 0 ? await getStockSnapshots(tickers as string[]) : new Map();
+
+      const EUROPE_KEYWORDS = ["paris", "milan", "berlin", "amsterdam", "dubai", "new york", "nyc", "tokyo", "sydney", "los angeles"];
+      const DTC_KEYWORDS = ["online only", "dtc", "direct to consumer", "direct-to-consumer", "e-commerce", "ecommerce", "no stores"];
+
+      // Score each brand
+      const scored = brands.map((b: any) => {
+        let score = 0;
+        const flags: string[] = [];
+
+        // Manual signals (highest weight)
+        if (b.hunter_flag) { score += 25; flags.push("Hunter Pick"); }
+
+        // Rollout status (strongest structural signal)
+        if (b.rollout_status === "entering_uk") { score += 30; flags.push("Entering UK"); }
+        else if (b.rollout_status === "scaling") { score += 20; flags.push("Scaling"); }
+        else if (b.rollout_status === "rumoured") { score += 10; flags.push("Rumoured"); }
+
+        // Dept store / franchise (strong proof of physical expansion intent)
+        if (b.dept_store_presence) { score += 20; flags.push("Dept Store Entry"); }
+        if (b.franchise_activity) { score += 15; flags.push("Franchise Abroad"); }
+
+        // Funding (capital to expand)
+        if (b.backers) { score += 10; flags.push("Funded"); }
+
+        // Social presence (brand awareness without physical footprint)
+        if (b.tiktok_handle) { score += 5; flags.push("TikTok"); }
+        if (b.instagram_handle) { score += 5; flags.push("Instagram"); }
+
+        // Has stores elsewhere (proven format, just not in UK yet)
+        if (b.store_count && b.store_count > 0) { score += 5; flags.push("Has Stores"); }
+
+        // DTC / online-only brand — strong candidate for first store
+        const pitchLower = (b.concept_pitch || "").toLowerCase();
+        const descLower = (b.description || "").toLowerCase();
+        if (DTC_KEYWORDS.some(k => pitchLower.includes(k) || descLower.includes(k))) {
+          score += 10; flags.push("DTC / Online-only");
+        }
+
+        // Recent brand signals analysis
+        const recentSignals = signalMap.get(b.id) || [];
+
+        // Funding raised — money to expand
+        const fundingSignals = recentSignals.filter((s: any) => s.signal_type === "funding");
+        if (fundingSignals.length > 0) { score += 15; flags.push("Funding Raised"); }
+
+        // New openings in non-UK markets (opening signals)
+        const openingSignals = recentSignals.filter((s: any) => s.signal_type === "opening" && s.sentiment !== "negative");
+        if (openingSignals.length > 0) {
+          const boost = Math.min(openingSignals.length * 8, 16);
+          score += boost;
+          flags.push(`${openingSignals.length} New Opening${openingSignals.length > 1 ? "s" : ""}`);
+        }
+
+        // Exec change — new CEO/CCO with retail/expansion background
+        const execSignals = recentSignals.filter((s: any) => s.signal_type === "exec_change" && s.sentiment === "positive");
+        if (execSignals.length > 0) { score += 8; flags.push("New Leadership"); }
+
+        // European city presence mentioned in signals or concept_pitch
+        const allText = [b.concept_pitch, b.description, b.franchise_activity, b.dept_store_presence,
+          ...recentSignals.map((s: any) => s.headline)].filter(Boolean).join(" ").toLowerCase();
+        const euroMatches = EUROPE_KEYWORDS.filter(city => allText.includes(city));
+        if (euroMatches.length > 0) {
+          score += Math.min(euroMatches.length * 5, 15);
+          flags.push("European Presence");
+        }
+
+        // Pop-up activity (low commitment physical test before full rollout)
+        const popUpSignals = recentSignals.filter((s: any) =>
+          (s.headline || "").toLowerCase().includes("pop-up") ||
+          (s.headline || "").toLowerCase().includes("popup") ||
+          (s.signal_type === "opening" && (s.headline || "").toLowerCase().includes("temporary"))
+        );
+        if (popUpSignals.length > 0) { score += 10; flags.push("Pop-up Activity"); }
+
+        // Press coverage spike (newsworthy brands attract retail interest)
+        const newsSignals = recentSignals.filter((s: any) => s.signal_type === "news" && s.sentiment === "positive");
+        if (newsSignals.length >= 3) { score += 8; flags.push("Press Momentum"); }
+        else if (newsSignals.length >= 1) { score += 3; }
+
+        // Sector move / concept pivot (entering new format)
+        const sectorSignals = recentSignals.filter((s: any) => s.signal_type === "sector_move");
+        if (sectorSignals.length > 0) { score += 5; flags.push("Format Pivot"); }
+
+        // Stock market signals (listed brands only)
+        const stockTicker = b.stock_ticker ? String(b.stock_ticker).trim().toUpperCase() : null;
+        const stock = stockTicker ? stockMap.get(stockTicker) : null;
+        if (stock) {
+          if (stock.signals.strongMomentum) { score += 15; flags.push("Stock +40% YoY"); }
+          else if (stock.signals.stockMomentum) { score += 10; flags.push("Stock Momentum"); }
+          if (stock.signals.largeCap) { score += 5; flags.push("Large Cap"); }
+          else if (stock.signals.midCap) { score += 3; flags.push("Mid Cap"); }
+        }
+
+        return {
+          ...b,
+          expansionScore: Math.min(score, 100),
+          expansionFlags: flags,
+          recentSignals: recentSignals.slice(0, 4),
+          stock: stock || null,
+        };
+      });
+
+      // Sort by score desc
+      scored.sort((a: any, b: any) => b.expansionScore - a.expansionScore);
+
+      res.json(scored);
+    } catch (err: any) {
+      console.error("[brands/hunter]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Toggle hunter_flag on a brand ────────────────────────────────────────
+  app.post("/api/brands/:id/hunter-flag", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await pool.query(
+        `UPDATE crm_companies SET hunter_flag = NOT COALESCE(hunter_flag, false), updated_at = NOW()
+         WHERE id = $1 RETURNING id, hunter_flag`,
+        [id]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Not found" });
+      res.json(result.rows[0]);
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -4929,7 +6523,7 @@ Rules:
       // Get deals where user is internal_agent OR deal team matches user's team
       const { rows: deals } = await pool.query(`
         SELECT d.id, d.name, d.deal_type, d.status, d.fee, d.property_id, d.landlord_id,
-               d.internal_agent, d.team, d.completion_date
+               d.internal_agent, d.team, d.target_date, d.exchanged_at, d.completed_at, d.invoiced_at
         FROM crm_deals d
         WHERE d.status NOT IN ('Dead', 'Draft')
           AND (
@@ -5016,7 +6610,10 @@ Rules:
             dealType: deal.deal_type,
             status: deal.status,
             fee: deal.fee,
-            completionDate: deal.completion_date,
+            targetDate: deal.target_date,
+            exchangedAt: deal.exchanged_at,
+            completedAt: deal.completed_at,
+            invoicedAt: deal.invoiced_at,
           });
         }
       }
@@ -5047,49 +6644,6 @@ Rules:
       res.json(Array.from(grouped.values()));
     } catch (e: any) {
       console.error("[my-portfolio] Error:", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // ── Deal WIP Badges endpoint ──────────────────────────────────────────
-  app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {
-    try {
-      const { rows: deals } = await pool.query(`SELECT id, name FROM crm_deals`);
-      const { rows: wips } = await pool.query(`
-        SELECT ref, project, amt_wip, amt_invoice, deal_status AS stage, month
-        FROM wip_entries
-      `);
-
-      const result: Record<string, { amtWip: number; amtInvoice: number; count: number; entries: any[] }> = {};
-
-      for (const d of deals) {
-        const matched = wips.filter((w: any) => {
-          if (!w.project || !d.name) return false;
-          const wp = w.project.toLowerCase();
-          const dn = d.name.toLowerCase();
-          return wp.includes(dn) || dn.includes(wp);
-        });
-
-        if (matched.length > 0) {
-          result[d.id] = {
-            amtWip: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_wip) || 0), 0),
-            amtInvoice: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_invoice) || 0), 0),
-            count: matched.length,
-            entries: matched.map((w: any) => ({
-              ref: w.ref,
-              project: w.project,
-              amtWip: parseFloat(w.amt_wip) || 0,
-              amtInvoice: parseFloat(w.amt_invoice) || 0,
-              stage: w.stage,
-              month: w.month,
-            })),
-          };
-        }
-      }
-
-      res.json(result);
-    } catch (e: any) {
-      console.error("[wip-badges] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -5153,6 +6707,30 @@ Rules:
         });
       }
 
+      // Query 3: WIP group names that have no matching CRM company (fuzzy)
+      const { rows: allWipGroups } = await pool.query(`
+        SELECT DISTINCT group_name FROM wip_entries
+        WHERE group_name IS NOT NULL AND group_name != ''
+        ORDER BY group_name
+      `);
+      const { rows: allCrmCompanies } = await pool.query(`SELECT LOWER(TRIM(name)) as name_lower FROM crm_companies`);
+      const crmCompSet = new Map<string, string>(allCrmCompanies.map((c: any) => [c.name_lower, c.name_lower]));
+      const unmatchedGroups = allWipGroups
+        .map((r: any) => r.group_name as string)
+        .filter((g: string) => !wipFuzzyMatch(g, crmCompSet));
+
+      // Query 4: WIP projects that have no matching CRM property (fuzzy)
+      const { rows: allWipProjects } = await pool.query(`
+        SELECT DISTINCT project FROM wip_entries
+        WHERE project IS NOT NULL AND project != ''
+        ORDER BY project
+      `);
+      const { rows: allCrmProps } = await pool.query(`SELECT LOWER(TRIM(name)) as name_lower, address FROM crm_properties`);
+      const crmPropSet = new Map<string, string>(allCrmProps.map((p: any) => [p.name_lower, p.name_lower]));
+      const unmatchedProjects = allWipProjects
+        .map((r: any) => r.project as string)
+        .filter((p: string) => !wipFuzzyMatch(p, crmPropSet));
+
       res.json({
         dealsWithoutWip: filteredDeals.map((d: any) => ({
           id: d.id,
@@ -5175,6 +6753,8 @@ Rules:
           groupName: w.group_name,
           dealStatus: w.deal_status,
         })),
+        unmatchedGroups,
+        unmatchedProjects,
       });
     } catch (e: any) {
       console.error("[wip-reconciliation] Error:", e);
@@ -5194,8 +6774,6 @@ Rules:
       const isAdmin = !!currentUser?.isAdmin;
       const userTeam = currentUser?.team || null;
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
-      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
 
       const deals = await db.select().from(crmDeals);
       const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
@@ -5237,15 +6815,13 @@ Rules:
       const findDealExcel = (key: string) => dealByName.get(key) || dealByProperty.get(key);
 
       function deriveStageExcel(status: string | null): string {
-        if (!status) return "pipeline";
-        if (INVOICED_STATUSES.includes(status)) return "invoiced";
-        if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
-        return "pipeline";
+        return deriveStageFromStatus(status);
       }
 
       function deriveFiscalYearExcel(deal: any): number | null {
-        if (deal.completionDate) {
-          const d = new Date(deal.completionDate);
+        const dateSrc = deal.completedAt || deal.exchangedAt || deal.targetDate;
+        if (dateSrc) {
+          const d = new Date(dateSrc);
           if (!isNaN(d.getTime())) {
             const month = d.getMonth() + 1;
             return month >= 4 ? d.getFullYear() + 1 : d.getFullYear();
@@ -5258,7 +6834,7 @@ Rules:
       }
 
       function deriveMonthExcel(deal: any): string | null {
-        const dateStr = deal.completionDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
@@ -5284,7 +6860,17 @@ Rules:
         };
       });
 
-      const unmatchedDeals = deals.filter(d => !EXCLUDED_STATUSES.includes(d.status || "") && !usedDealIds.has(d.id));
+      const wipBackedDealIdsXl = new Set<string>();
+      for (const w of wipRows) { if (w.dealId) wipBackedDealIdsXl.add(w.dealId); }
+      const unmatchedDeals = deals.filter(d => {
+        if (usedDealIds.has(d.id)) return false;
+        const code = legacyToCode(d.status);
+        if (code === null || !WIP_STATUSES.includes(code)) return false;
+        // Same backing requirement as the JSON report — only WIP-imported deals
+        const hasFkBacking = wipBackedDealIdsXl.has(d.id);
+        const hasLegacyMarker = !!(d.comments && /WIP Ref:\s*\d+/.test(d.comments));
+        return hasFkBacking || hasLegacyMarker;
+      });
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
@@ -5300,7 +6886,9 @@ Rules:
           for (const alloc of dealAllocations) {
             const allocPct = (alloc.percentage || 0) / 100;
             const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
-            const agentInvoiceAmt = alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100;
+            const agentInvoiceAmt = isInvoiced
+              ? (alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100)
+              : 0;
             entries.push({
               id: `${deal.id}_${alloc.agentName}`, dealId: deal.id, dealType: deal.dealType || null,
               ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
@@ -5581,7 +7169,7 @@ Rules:
             dealType: deal.dealType || "",
           });
 
-          const completionStr = deal.completionDate || deal.updatedAt?.toISOString?.();
+          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
           if (completionStr) {
             const completionDate = new Date(completionStr);
             if (completionDate >= yearStart && completionDate <= now) {
@@ -5590,12 +7178,12 @@ Rules:
           }
         }
 
-        const isComplete = status === "Invoiced" || status === "Exchanged";
+        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(status) || "");
         if (isComplete) completedCount++;
 
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
           const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
           if (days > 0 && days < 1000) {
             totalDays += days;
@@ -5814,91 +7402,11 @@ async function runAutoEnrichmentCycle() {
   if (autoEnrichRunning) return;
   autoEnrichRunning = true;
 
-  const result: Record<string, any> = { startedAt: new Date().toISOString(), apollo: null, aiCompanies: null, aiContacts: null };
+  const result: Record<string, any> = { startedAt: new Date().toISOString(), aiCompanies: null, aiContacts: null };
 
   try {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-    const apolloKey = process.env.APOLLO_API_KEY;
-    if (apolloKey) {
-      try {
-        const contacts = await pool.query(`
-          SELECT c.id, c.name, c.email, c.phone, c.role, c.linkedin_url, c.avatar_url, c.company_id, c.company_name
-          FROM crm_contacts c
-          WHERE c.email IS NOT NULL AND c.email != ''
-            AND (c.last_enriched_at IS NULL OR c.last_enriched_at < $1)
-          ORDER BY c.last_enriched_at ASC NULLS FIRST
-          LIMIT $2
-        `, [sixMonthsAgo.toISOString(), AUTO_ENRICH_BATCH_SIZE]).then(r => r.rows);
-
-        let enriched = 0;
-        for (const contact of contacts) {
-          try {
-            const nameParts = (contact.name || "").trim().split(/\s+/);
-            const firstName = nameParts[0] || "";
-            const lastName = nameParts.slice(1).join(" ") || "";
-            let companyDomain: string | undefined;
-            let companyName: string | undefined;
-            if (contact.company_id) {
-              const [company] = await pool.query(`SELECT name, domain FROM crm_companies WHERE id = $1`, [contact.company_id]).then(r => r.rows);
-              if (company) { companyName = company.name; companyDomain = company.domain || undefined; }
-            }
-            if (!companyDomain && contact.company_name) companyName = contact.company_name;
-
-            // mixed_people/api_search (replaces deprecated mixed_people/search)
-            const body: Record<string, any> = { page: 1, per_page: 1 };
-            if (contact.email) body.person_emails = [contact.email];
-            if (companyDomain) body.q_organization_domains_list = [companyDomain];
-            else if (companyName) body.organization_names = [companyName];
-            if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
-
-            const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloKey },
-              body: JSON.stringify(body),
-            });
-
-            if (!apolloRes.ok) {
-              if (apolloRes.status === 429) await new Promise(r => setTimeout(r, 3000));
-              await new Promise(r => setTimeout(r, 500));
-              continue;
-            }
-
-            const data = await apolloRes.json() as any;
-            const person = (data.people || data.contacts || [])[0];
-            if (!person) { await new Promise(r => setTimeout(r, 300)); continue; }
-
-            const updates: Record<string, any> = {};
-            if (person.title && !contact.role) updates.role = person.title;
-            if (person.linkedin_url && !contact.linkedin_url) updates.linkedin_url = person.linkedin_url;
-            const phoneNumber = person.phone_numbers?.[0]?.sanitized_number || person.phone_numbers?.[0]?.raw_number || person.organization?.phone;
-            if (phoneNumber && !contact.phone) updates.phone = phoneNumber;
-            if (person.photo_url && !contact.avatar_url) updates.avatar_url = person.photo_url;
-
-            updates.last_enriched_at = new Date();
-            updates.enrichment_source = "apollo-auto";
-            const ALLOWED = new Set(["role", "linkedin_url", "phone", "avatar_url", "last_enriched_at", "enrichment_source"]);
-            const safeUpdates = Object.fromEntries(Object.entries(updates).filter(([k]) => ALLOWED.has(k)));
-
-            if (Object.keys(safeUpdates).length > 0) {
-              const setClauses = Object.keys(safeUpdates).map((k, i) => `${k} = $${i + 2}`);
-              setClauses.push(`updated_at = NOW()`);
-              await pool.query(`UPDATE crm_contacts SET ${setClauses.join(", ")} WHERE id = $1`, [contact.id, ...Object.values(safeUpdates)]);
-              enriched++;
-            }
-            await new Promise(r => setTimeout(r, 300));
-          } catch (err: any) {
-            console.error(`[auto-enrich] Apollo error for ${contact.name}:`, err.message);
-          }
-        }
-        result.apollo = { processed: contacts.length, enriched };
-        if (contacts.length > 0) console.log(`[auto-enrich] Apollo: ${enriched}/${contacts.length} contacts enriched`);
-      } catch (err: any) {
-        result.apollo = { error: err.message };
-        console.error("[auto-enrich] Apollo batch error:", err.message);
-      }
-    }
 
     {
       try {
@@ -6040,15 +7548,64 @@ async function runAutoEnrichmentCycle() {
       }
     }
 
+    // Auto brand analysis — refresh stale AI briefing paragraphs (>14 days).
+    try {
+      const { refreshStaleBrandAnalyses } = await import("./brand-analysis");
+      const out = await refreshStaleBrandAnalyses(3);
+      result.brandAnalysis = out;
+      if (out.processed > 0) console.log(`[auto-enrich] Brand analyses: refreshed ${out.refreshed}/${out.processed}`);
+    } catch (err: any) {
+      result.brandAnalysis = { error: err.message };
+    }
+
+    // Auto store research — find Google Places stores for tracked brands that
+    // either have no stores cached or were last researched >30 days ago.
+    // Skip brands with AI disabled.
+    if (process.env.GOOGLE_API_KEY) {
+      try {
+        const brandsNeedingStores = await pool.query(`
+          SELECT c.id, c.name
+          FROM crm_companies c
+          LEFT JOIN (
+            SELECT brand_company_id, MAX(researched_at) AS last_researched
+            FROM brand_stores
+            WHERE source_type = 'google_places'
+            GROUP BY brand_company_id
+          ) s ON s.brand_company_id = c.id
+          WHERE c.is_tracked_brand = true
+            AND (c.ai_disabled IS NULL OR c.ai_disabled = FALSE)
+            AND c.merged_into_id IS NULL
+            AND (s.last_researched IS NULL OR s.last_researched < NOW() - INTERVAL '30 days')
+          ORDER BY s.last_researched ASC NULLS FIRST
+          LIMIT 3
+        `).then(r => r.rows);
+
+        let researched = 0;
+        for (const b of brandsNeedingStores) {
+          try {
+            const { researchBrandStores } = await import("./brand-profile");
+            const out = await researchBrandStores(b.id);
+            if (out.found > 0) researched++;
+          } catch (err: any) {
+            console.error(`[auto-enrich] Store research error for ${b.name}:`, err.message);
+          }
+        }
+        result.stores = { processed: brandsNeedingStores.length, researched };
+        if (brandsNeedingStores.length > 0) console.log(`[auto-enrich] Stores: researched ${researched}/${brandsNeedingStores.length} brands`);
+      } catch (err: any) {
+        result.stores = { error: err.message };
+      }
+    }
+
     autoEnrichLastRun = new Date();
     autoEnrichLastResult = result;
 
-    const hasActivity = (result.apollo?.processed > 0 || result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0);
+    const hasActivity = (result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0 || result.stores?.processed > 0);
     if (hasActivity) {
-      console.log(`[auto-enrich] Cycle complete — Apollo: ${result.apollo?.enriched || 0}, AI Companies: ${result.aiCompanies?.enriched || 0}, AI Contacts: ${result.aiContacts?.enriched || 0}, Type Classification: ${result.typeClassify?.classified || 0}`);
-      const totalEnriched = (result.apollo?.enriched || 0) + (result.aiCompanies?.enriched || 0) + (result.aiContacts?.enriched || 0) + (result.typeClassify?.classified || 0);
+      console.log(`[auto-enrich] Cycle complete — AI Companies: ${result.aiCompanies?.enriched || 0}, AI Contacts: ${result.aiContacts?.enriched || 0}, Type Classification: ${result.typeClassify?.classified || 0}, Stores: ${result.stores?.researched || 0}`);
+      const totalEnriched = (result.aiCompanies?.enriched || 0) + (result.aiContacts?.enriched || 0) + (result.typeClassify?.classified || 0) + (result.stores?.researched || 0);
       const { logActivity } = await import("./activity-logger");
-      await logActivity("auto-enrich", "enrichment_cycle", `${result.apollo?.enriched || 0} contacts via Apollo, ${result.aiCompanies?.enriched || 0} companies via AI, ${result.aiContacts?.enriched || 0} contact roles via AI`, totalEnriched);
+      await logActivity("auto-enrich", "enrichment_cycle", `${result.aiCompanies?.enriched || 0} companies via AI, ${result.aiContacts?.enriched || 0} contact roles via AI, ${result.stores?.researched || 0} brands got stores`, totalEnriched);
     }
   } catch (err: any) {
     console.error("[auto-enrich] Cycle error:", err.message);

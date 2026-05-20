@@ -1,6 +1,7 @@
-import { guessDomain } from "@/lib/company-logos";
+import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -40,15 +41,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, Building, Building2, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Users, Handshake, Globe, MapPin, Filter, ChevronDown, ChevronUp, Check, Sparkles, ShieldCheck, ExternalLink, CheckCircle2, XCircle, Clock, Circle, Download, FolderTree, Folder, FolderOpen, ChevronRight, Briefcase, Crown, LinkIcon, Upload, FileText, RefreshCw, ArrowUp, UserCheck, FileSearch, Copy, Bot, BotOff, Zap, Linkedin, Phone, Factory, UsersRound, CalendarDays } from "lucide-react";
+import { Search, Building, Building2, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Users, Handshake, Globe, MapPin, Filter, ChevronDown, ChevronUp, Check, Sparkles, ShieldCheck, ExternalLink, CheckCircle2, XCircle, Clock, Circle, Download, FolderTree, Folder, FolderOpen, ChevronRight, Briefcase, Crown, LinkIcon, Upload, FileText, RefreshCw, ArrowUp, UserCheck, FileSearch, Copy, Bot, BotOff, Zap } from "lucide-react";
 import { CompanyLeasingSchedule as CompanyLeasingScheduleSection } from "@/pages/leasing-schedule";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { useRoute, Link } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { CRM_OPTIONS } from "@/lib/crm-options";
@@ -58,7 +60,7 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
-import { ApolloContactsDialog } from "@/components/apollo-contacts-dialog";
+import { LenderPanel } from "@/components/lender-panel";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -103,15 +105,11 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
   const d = extractDomain(domain);
   const guessedDomain = guessDomain(name);
 
+  // Only source: /api/brand-logo/... — the server redirects to logo.dev when
+  // no local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
   const logoSources: string[] = [];
-  if (d) {
-    logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
-  }
-  if (guessedDomain && guessedDomain !== d) {
-    logoSources.push(`https://logo.clearbit.com/${guessedDomain}?size=${Math.min(size * 3, 512)}`);
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessedDomain}&size=128`);
-  }
+  const local = localBrandLogoUrl(name, domain ?? guessedDomain ?? null);
+  if (local) logoSources.push(local);
 
   if (failCount >= logoSources.length) {
     const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
@@ -130,6 +128,8 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
     <img
       src={logoSources[failCount]}
       alt={name || "Company logo"}
+      loading="lazy"
+      decoding="async"
       className="rounded-lg shrink-0 object-contain bg-white border"
       style={{ width: size, height: size }}
       onError={() => setFailCount(c => c + 1)}
@@ -163,6 +163,7 @@ function KycInlineSummary({ company }: { company: CrmCompany }) {
   const storedPscs = chData?.pscs || [];
   const activePscs = storedPscs.filter((p: any) => !p.ceasedOn);
   const checkedAt = chData?.checkedAt || (company as any).kycCheckedAt;
+  const experian = chData?.experian;
 
   if (!chData && !kycStatus) return null;
 
@@ -176,6 +177,19 @@ function KycInlineSummary({ company }: { company: CrmCompany }) {
         {!kycStatus && chData && <Badge variant="outline" className="text-[10px]"><ShieldCheck className="w-3 h-3 mr-1" />Linked — not checked</Badge>}
         {checkedAt && <span className="text-[10px] text-muted-foreground">{new Date(checkedAt).toLocaleDateString("en-GB")}</span>}
       </div>
+      {experian && (
+        <div className="mt-1.5">
+          <p className="text-[10px] text-muted-foreground">Experian covenant</p>
+          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+            {experian.creditBand && <Badge variant="outline" className="text-[10px]">Band {experian.creditBand}</Badge>}
+            {experian.riskIndicator && <Badge variant="outline" className="text-[10px]">{experian.riskIndicator}</Badge>}
+            {experian.creditScore != null && <span className="text-[10px] text-muted-foreground">Score {experian.creditScore}/100</span>}
+            {experian.creditLimit != null && <span className="text-[10px] text-muted-foreground">· Limit £{Number(experian.creditLimit).toLocaleString()}</span>}
+            {!!experian.ccj && <Badge className="text-[10px] bg-red-100 text-red-700 border-0">{experian.ccj} CCJ{experian.ccj === 1 ? "" : "s"}{experian.ccjTotalValue ? ` · £${Number(experian.ccjTotalValue).toLocaleString()}` : ""}</Badge>}
+            {experian.turnover != null && <span className="text-[10px] text-muted-foreground">· Turnover £{Number(experian.turnover).toLocaleString()}</span>}
+          </div>
+        </div>
+      )}
       {activePscs.length > 0 && (
         <div className="mt-1.5 space-y-0.5">
           <p className="text-[10px] text-muted-foreground">Ownership (PSCs)</p>
@@ -184,6 +198,172 @@ function KycInlineSummary({ company }: { company: CrmCompany }) {
               <Badge key={i} variant="outline" className="text-[10px] font-normal">{p.name}</Badge>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentName: string }) {
+  const { data: subs = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/companies", parentId, "sub-companies"],
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/companies/${parentId}/sub-companies`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  if (!subs.length) return null;
+  return (
+    <Card>
+      <CardContent className="p-3 space-y-2">
+        <h3 className="font-semibold text-xs flex items-center gap-1.5">
+          <Building2 className="w-3.5 h-3.5 text-teal-500" />
+          Sub-entities ({subs.length})
+        </h3>
+        <div className="space-y-1">
+          {subs.filter((sub: any) => sub?.id).map((sub: any) => (
+            <Link key={sub.id} href={`/companies/${sub.id}`}>
+              <div className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-muted/60 cursor-pointer transition-colors">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-sm truncate">{sub.name}</span>
+                  {sub.company_type && <Badge variant="outline" className="text-[10px] shrink-0">{sub.company_type}</Badge>}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {sub.kyc_status === "pass" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
+                  {sub.kyc_status === "warning" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 border-0 px-1.5"><AlertCircle className="w-2.5 h-2.5 mr-0.5 inline" />Review</Badge>}
+                  {sub.kyc_status === "fail" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
+                  {!sub.kyc_status && <Badge variant="outline" className="text-[9px] px-1.5"><ShieldCheck className="w-2.5 h-2.5 mr-0.5 inline" />No KYC</Badge>}
+                  {sub.aml_risk && <Badge className={`text-[9px] px-1.5 border-0 ${sub.aml_risk === "high" ? "bg-red-100 text-red-700" : sub.aml_risk === "medium" ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}`}>{sub.aml_risk}</Badge>}
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Trading entities — the legal-entity aliases that appear on leases
+// for a brand. Pret A Manger (brand) → "Pret A Manger UK Ltd", "Pret
+// A Manger Europe Limited" etc. Each entity is a KYC subject in its
+// own right; some brands have one, some have many. Stored as a JSONB
+// array on crm_companies. The tenancy-schedule resolver matches a
+// row's tenant_name against these as well as the brand's own name,
+// then writes the FK back at write-time.
+function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
+  const { toast } = useToast();
+  type Entity = { name: string; companies_house_number?: string; kyc_status?: string; notes?: string };
+  const entities: Entity[] = Array.isArray((company as any).tradingEntities) ? (company as any).tradingEntities : [];
+
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCh, setNewCh] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async (next: Entity[]) => {
+    setSaving(true);
+    try {
+      await apiRequest("PUT", `/api/crm/companies/${company.id}`, { tradingEntities: next });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", company.id] });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addEntity = async () => {
+    if (!newName.trim()) return;
+    const dupe = entities.some(e => e.name.trim().toLowerCase() === newName.trim().toLowerCase());
+    if (dupe) {
+      toast({ title: "Already on file", description: `"${newName}" is already a trading entity for this brand.` });
+      return;
+    }
+    await save([...entities, { name: newName.trim(), companies_house_number: newCh.trim() || undefined }]);
+    setNewName(""); setNewCh(""); setAdding(false);
+  };
+
+  const removeEntity = async (idx: number) => {
+    await save(entities.filter((_, i) => i !== idx));
+  };
+
+  const setStatus = async (idx: number, status: string) => {
+    const next = entities.map((e, i) => i === idx ? { ...e, kyc_status: status } : e);
+    await save(next);
+  };
+
+  return (
+    <div className="border rounded-md p-2 space-y-1.5 bg-slate-50/40 dark:bg-slate-900/20">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-semibold flex items-center gap-1">
+          <Building2 className="w-3 h-3" />
+          Trading entities
+          <Badge variant="secondary" className="text-[9px]">{entities.length}</Badge>
+        </div>
+        <Button size="sm" variant="ghost" className="h-5 text-[10px] gap-0.5 px-1.5" onClick={() => setAdding(v => !v)}>
+          <Plus className="w-3 h-3" />Add
+        </Button>
+      </div>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Legal entities that appear on this brand's leases. Each row is a separate KYC subject. The tenancy schedule auto-resolves any of these names to this brand.
+      </p>
+      {entities.length === 0 && !adding && (
+        <p className="text-[10px] text-muted-foreground italic">No trading entities yet. Add the legal entity from a lease (e.g. "Pret A Manger UK Ltd").</p>
+      )}
+      {entities.map((e, i) => (
+        <div key={`${e.name}-${i}`} className="flex items-center gap-1.5 text-[11px] bg-white dark:bg-slate-800 border rounded px-2 py-1">
+          <span className="font-medium flex-1 truncate">{e.name}</span>
+          {e.companies_house_number && (
+            <Badge variant="outline" className="text-[9px] font-mono">CH {e.companies_house_number}</Badge>
+          )}
+          <select
+            value={e.kyc_status || ""}
+            onChange={(ev) => setStatus(i, ev.target.value)}
+            disabled={saving}
+            className="text-[10px] h-5 rounded border px-1 bg-white dark:bg-slate-800"
+            title="KYC status for this entity"
+          >
+            <option value="">KYC: —</option>
+            <option value="pending">Pending</option>
+            <option value="in_review">In review</option>
+            <option value="pass">Passed</option>
+            <option value="fail">Failed</option>
+            <option value="expired">Expired</option>
+          </select>
+          <button
+            onClick={() => removeEntity(i)}
+            disabled={saving}
+            className="text-rose-400 hover:text-rose-600"
+            title="Remove this entity"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+      {adding && (
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Legal entity name on the lease"
+            className="h-6 text-[11px] flex-1"
+            autoFocus
+          />
+          <Input
+            value={newCh}
+            onChange={(e) => setNewCh(e.target.value)}
+            placeholder="CH no. (optional)"
+            className="h-6 text-[11px] w-28 font-mono"
+          />
+          <Button size="sm" variant="default" className="h-6 text-[10px] px-2" onClick={addEntity} disabled={saving || !newName.trim()}>
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+          </Button>
+          <button onClick={() => { setAdding(false); setNewName(""); setNewCh(""); }} className="text-muted-foreground">
+            <X className="w-3 h-3" />
+          </button>
         </div>
       )}
     </div>
@@ -475,6 +655,10 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
           </div>
         </button>
 
+        {expanded && (
+          <TradingEntitiesPanel company={company} />
+        )}
+
         {!expanded ? null : !displayNumber ? (
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">Link to Companies House to run KYC checks, or click "Run KYC" to auto-match by name.</p>
@@ -545,8 +729,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                     {kycStatus === "pass" ? "KYC Passed" : kycStatus === "warning" ? "Needs Review" : kycStatus === "fail" ? "KYC Failed" : "Linked — Run KYC to verify"}
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"} · Forward to{" "}
-                    <a href="https://kyc4u.co.uk" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">KYC4U</a> for full verification
+                    {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"}
                   </p>
                 </div>
               </div>
@@ -783,7 +966,7 @@ function CompanyFormDialog({
 }) {
   const { toast } = useToast();
   const isEdit = !!company;
-  const [formData, setFormData] = useState({
+  const buildInitial = () => ({
     name: company?.name || "",
     companyType: company?.companyType || "",
     domain: company?.domain || "",
@@ -791,6 +974,8 @@ function CompanyFormDialog({
     description: company?.description || "",
     companyProfileUrl: company?.companyProfileUrl || "",
   });
+  const [formData, setFormData] = useState(buildInitial);
+  useEffect(() => { if (open) setFormData(buildInitial()); }, [open, company?.id]);
 
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -835,7 +1020,14 @@ function CompanyFormDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) return;
-    mutation.mutate(formData);
+    mutation.mutate({
+      ...formData,
+      name: formData.name.trim(),
+      domain: formData.domain.trim(),
+      domainUrl: formData.domainUrl.trim(),
+      description: formData.description.trim(),
+      companyProfileUrl: formData.companyProfileUrl.trim(),
+    });
   };
 
   return (
@@ -924,44 +1116,45 @@ function getCompanyBgpContacts(company: CrmCompany): string[] {
 
 
 function CompanyDetail({ id }: { id: string }) {
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
-  const [apolloOpen, setApolloOpen] = useState(false);
-
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],
   });
 
-  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
+  // Defensive array defaults — these endpoints occasionally return
+  // non-arrays under error / partial-failure paths. Without the
+  // default, downstream .map / .filter / forEach crash the whole page.
+  const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
   });
+  const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
+  const userOptions = useMemo(() => {
+    return allUsers.map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [allUsers]);
 
-  const { data: relatedContacts } = useQuery<CrmContact[]>({
-    queryKey: ["/api/crm/contacts", { companyId: id }],
-    queryFn: async () => {
-      const res = await fetch(`/api/crm/contacts?companyId=${id}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch contacts");
-      return res.json();
-    },
-  });
-
-  const { data: allDeals } = useQuery<CrmDeal[]>({
+  const { data: allDealsRaw } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
+  const allDeals = Array.isArray(allDealsRaw) ? allDealsRaw : [];
 
-  const { data: allProperties } = useQuery<CrmProperty[]>({
+  const { data: allPropertiesRaw } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
+  const allProperties = Array.isArray(allPropertiesRaw) ? allPropertiesRaw : [];
 
-  const { data: companyPropertyLinks } = useQuery<{ companyId: string; propertyId: string }[]>({
+  const { data: companyPropertyLinksRaw } = useQuery<{ companyId: string; propertyId: string }[]>({
     queryKey: ["/api/crm/company-property-links"],
   });
+  const companyPropertyLinks = Array.isArray(companyPropertyLinksRaw) ? companyPropertyLinksRaw : [];
 
-  const { data: companyDealLinksForDetail } = useQuery<{ companyId: string; dealId: string }[]>({
+  const { data: companyDealLinksForDetailRaw } = useQuery<{ companyId: string; dealId: string }[]>({
     queryKey: ["/api/crm/company-deal-links"],
   });
+  const companyDealLinksForDetail = Array.isArray(companyDealLinksForDetailRaw) ? companyDealLinksForDetailRaw : [];
 
   const { data: propertyAgentLinks = [] } = useQuery<{ propertyId: string; userId: string }[]>({
     queryKey: ["/api/crm/property-agents"],
@@ -981,7 +1174,7 @@ function CompanyDetail({ id }: { id: string }) {
 
   const relatedDeals = useMemo(() => {
     if (!allDeals) return [];
-    const directDeals = allDeals.filter(d => d.landlordId === id || d.tenantId === id || d.vendorId === id || d.purchaserId === id || d.invoicingEntityId === id);
+    const directDeals = allDeals.filter(d => d.landlordId === id || d.tenantId === id || d.vendorId === id || d.purchaserId === id);
     const directIds = new Set(directDeals.map(d => d.id));
     const linkedDealIds = (companyDealLinksForDetail || []).filter(l => l.companyId === id).map(l => l.dealId);
     const linkedDeals = allDeals.filter(d => linkedDealIds.includes(d.id) && !directIds.has(d.id));
@@ -1038,20 +1231,21 @@ function CompanyDetail({ id }: { id: string }) {
 
   const enrichCompanyMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/apollo/enrich-company", { companyId: id });
+      const res = await apiRequest("POST", `/api/companies-house/auto-kyc/${id}`, {});
       return res.json();
     },
     onSuccess: (data: any) => {
-      if (data.success) {
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", id] });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-        if (data.updatedFields?.length > 0) {
-          toast({ title: "Company enriched", description: `Updated: ${data.updatedFields.join(", ")}` });
-        } else {
-          toast({ title: "Already enriched", description: "All available data already present on this company" });
-        }
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      if (!data.success && data.kycStatus === "not_found") {
+        toast({ title: "No match found", description: "Couldn't match to Companies House — try setting a CH number or domain manually", variant: "destructive" });
+      } else if (data.kycStatus === "pass") {
+        const parts: string[] = ["CH verified"];
+        if (data.experian) parts.push("Experian credit data");
+        if (data.riskLevel) parts.push(`Risk: ${data.riskLevel}`);
+        toast({ title: "Enrichment complete", description: parts.join(" · ") });
       } else {
-        toast({ title: "No match found", description: "Apollo couldn't find this company — try adding a domain or website", variant: "destructive" });
+        toast({ title: "Enrichment run", description: data.message || `KYC status: ${data.kycStatus || "updated"}` });
       }
     },
     onError: (err: Error) => {
@@ -1075,14 +1269,31 @@ function CompanyDetail({ id }: { id: string }) {
           <CardContent className="py-12 text-center">
             <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
             <h3 className="font-medium mb-1">Company not found</h3>
+            <p className="text-xs text-muted-foreground mb-4">It may have been merged or removed.</p>
+            <Button variant="outline" size="sm" onClick={() => navigate("/companies")} data-testid="button-back-to-companies">
+              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+              Back to Companies
+            </Button>
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  const address = company.headOfficeAddress as Record<string, string> | null;
-  const addressText = address ? [address.street, address.city, address.country].filter(Boolean).join(", ") : "";
+  // Prefer UK Companies House registered office when the CH entity is active —
+  // for global brands (Aesop, A&F) this shows the UK trading entity address
+  // rather than the Apollo head-office (Melbourne / Ohio / etc.).
+  const chProfile = (company.companiesHouseData as any)?.profile;
+  const chRegOffice = chProfile?.registeredOfficeAddress;
+  const chIsActive = (chProfile?.companyStatus || "").toLowerCase() === "active";
+  const ukAddressText = chIsActive && chRegOffice
+    ? [chRegOffice.address_line_1, chRegOffice.locality, chRegOffice.postal_code, chRegOffice.country]
+        .filter(Boolean).join(", ")
+    : "";
+  const globalAddress = company.headOfficeAddress as Record<string, string> | null;
+  const globalAddressText = globalAddress ? [globalAddress.street, globalAddress.city, globalAddress.country].filter(Boolean).join(", ") : "";
+  const addressText = ukAddressText || globalAddressText;
+  const hasGlobalHq = !!ukAddressText && !!globalAddressText && ukAddressText !== globalAddressText;
 
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="company-detail">
@@ -1099,7 +1310,7 @@ function CompanyDetail({ id }: { id: string }) {
             if (window.history.length > 1) {
               window.history.back();
             } else {
-              window.location.href = "/companies";
+              navigate("/companies");
             }
           }}
         >
@@ -1163,90 +1374,48 @@ function CompanyDetail({ id }: { id: string }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-4">
-          <Card>
-            <CardContent className="p-3 space-y-2">
-              <h3 className="font-semibold text-xs">Details</h3>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                {(company.domainUrl || company.domain) && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Website</p>
-                    {company.domainUrl ? (
-                      <a href={company.domainUrl.startsWith("http") ? company.domainUrl : `https://${company.domainUrl}`} target="_blank" rel="noopener noreferrer" className="text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1" data-testid="link-company-website">
-                        <Globe className="w-3 h-3 text-teal-500" />{company.domainUrl.replace(/^https?:\/\//, "")}
-                      </a>
-                    ) : (
-                      <p data-testid="text-company-domain">{company.domain}</p>
-                    )}
-                  </div>
-                )}
-                {getCompanyBgpContacts(company).length > 0 && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">BGP Contacts</p>
-                    <div className="flex flex-wrap gap-1 mt-0.5" data-testid="text-company-bgp-contacts">
-                      {getCompanyBgpContacts(company).map((name: string) => (
-                        <Badge key={name} className={`text-[10px] px-1.5 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {addressText && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Address</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-address"><MapPin className="w-3 h-3 text-teal-500" />{addressText}</p>
-                  </div>
-                )}
-                {company.linkedinUrl && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">LinkedIn</p>
-                    <a href={company.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1" data-testid="link-company-linkedin">
-                      <Linkedin className="w-3 h-3 text-teal-500" />Profile
-                    </a>
-                  </div>
-                )}
-                {company.phone && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Phone</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-phone"><Phone className="w-3 h-3 text-teal-500" />{company.phone}</p>
-                  </div>
-                )}
-                {company.industry && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Industry</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-industry"><Factory className="w-3 h-3 text-teal-500" />{company.industry}</p>
-                  </div>
-                )}
-                {company.employeeCount && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Employees</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-employees"><UsersRound className="w-3 h-3 text-teal-500" />{Number(company.employeeCount).toLocaleString()}</p>
-                  </div>
-                )}
-                {company.annualRevenue && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Annual Revenue</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-revenue">£{Number(company.annualRevenue).toLocaleString()}</p>
-                  </div>
-                )}
-                {company.foundedYear && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Founded</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-founded"><CalendarDays className="w-3 h-3 text-teal-500" />{company.foundedYear}</p>
-                  </div>
-                )}
-                <KycInlineSummary company={company} />
-              </div>
-              {company.description && (
-                <div className="pt-2 border-t">
-                  <p className="text-xs text-muted-foreground mb-1">Description</p>
-                  <p className="text-sm" data-testid="text-company-description">{company.description}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        <div className="lg:col-span-3 space-y-4">
+          {/* Page-level Details card removed May 2026 — BGP Contacts dropdown
+              now lives in the brand profile sidebar (BGP Relationship card),
+              UK registered office + KYC + Ownership (PSCs) moved into the
+              sidebar Covenant card (collapsed). KycInlineSummary component
+              kept in this file for re-use when Red Flag / Experian wiring
+              is finalised. */}
 
-          {!((company?.companyType || "").toLowerCase() === "landlord" || (company?.companyType || "").toLowerCase() === "client" || (company?.companyType || "").toLowerCase() === "landlord / client") && (
-            <BrandProfilePanel companyId={id} />
+          <SubCompaniesPanel parentId={id} parentName={company.name} />
+
+          {(() => {
+            const t = (company.companyType || "").toLowerCase();
+            const isLender = t.includes("lender") || t.includes("clearing bank") || t.includes("investment bank")
+              || t.includes("debt fund") || t.includes("private credit") || t.includes("mezzanine")
+              || t.includes("bridging") || t.includes("development finance") || t.includes("building society")
+              || t.includes("insurance lender") || t.includes("pension fund");
+            const isLandlord = !isLender && (t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund"));
+            if (isLender) {
+              return <LenderPanel companyId={id} company={company} />;
+            }
+            if (isLandlord) {
+              return <BrandProfilePanel companyId={id} />;
+            }
+            return <BrandProfilePanel companyId={id} />;
+          })()}
+
+          {/* BGP Team — wrapped in a 3-col grid so the card occupies 2/3
+              width (matching the Landlord Profile content area in the
+              brand panel above) rather than spreading across the full
+              page. Sits under the brand-expansion narrative. */}
+          {id && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Card className="md:col-span-2">
+                <CardContent className="p-3 space-y-2">
+                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-indigo-500" />
+                    BGP Team
+                  </h3>
+                  <ClientTeamOrgChart clientCompanyId={id} />
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {linkedProperties.length > 0 && (() => {
@@ -1292,68 +1461,13 @@ function CompanyDetail({ id }: { id: string }) {
             );
           })()}
 
-          <Card>
-            <CardContent className="p-3">
-              <CompanyLeasingScheduleSection companyId={id} />
-            </CardContent>
-          </Card>
+          <CompanyLeasingScheduleSection companyId={id} />
 
         </div>
 
-        <div className="space-y-3 flex flex-col">
-          <Card className="flex-1">
-            <CardContent className="p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-teal-500" />
-                  Contacts ({relatedContacts?.length || 0})
-                </h3>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px]"
-                  onClick={() => setApolloOpen(true)}
-                  data-testid="button-apollo-find-contacts"
-                >
-                  <Sparkles className="w-3 h-3 mr-1 text-purple-500" /> Find via Apollo
-                </Button>
-              </div>
-              <ApolloContactsDialog
-                companyId={id}
-                companyName={company.name}
-                open={apolloOpen}
-                onOpenChange={setApolloOpen}
-              />
-              {relatedContacts && relatedContacts.length > 0 ? (
-                <ScrollArea className="max-h-[400px] overflow-y-auto">
-                  <div className="space-y-0.5 pr-2">
-                    {relatedContacts.map((contact) => (
-                      <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                        <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors cursor-pointer" data-testid={`link-contact-${contact.id}`}>
-                          {contact.avatarUrl ? (
-                            <img src={contact.avatarUrl} alt={contact.name} className="w-6 h-6 rounded-full flex-shrink-0 bg-muted" />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300">
-                              {contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                            </div>
-                          )}
-                          <div>
-                            <p className="text-xs font-medium text-teal-700 dark:text-teal-300">{contact.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{contact.role || contact.email}</p>
-                          </div>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </ScrollArea>
-              ) : (
-                <p className="text-xs text-muted-foreground">No contacts linked</p>
-              )}
-            </CardContent>
-          </Card>
-
+        {/* CompaniesHouseCard and CompanyFoldersCard kept but hidden — content surfaced in Brand Profile tabs */}
+        <div className="hidden">
           <CompaniesHouseCard company={company} />
-
           <CompanyFoldersCard companyName={company.name} linkedProperties={linkedProperties} />
         </div>
 
@@ -1456,7 +1570,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
   const [expanded, setExpanded] = useState(false);
   const [currentTeam, setCurrentTeam] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState("");
-  const TEAMS = ["London Leasing", "Investment", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+  const TEAMS = CRM_OPTIONS.dealTeam;
 
   const { data: teamResults } = useQuery<Record<string, { exists: boolean; folders: SpItem[] }>>({
     queryKey: ["/api/microsoft/property-folders-check", propertyName],
@@ -2018,6 +2132,7 @@ function CompanyList() {
   const [search, setSearch] = useState("");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const { toast } = useToast();
 
   const [trlImporting, setTrlImporting] = useState<string | null>(null);
@@ -2107,41 +2222,48 @@ function CompanyList() {
     queryKey: ["/api/crm/companies"],
   });
 
-  const { data: allContacts } = useQuery<CrmContact[]>({
+  // Same defensive array wrappers as CompanyDetail (above) — these
+  // queries occasionally return non-arrays and downstream .map crashes
+  // an otherwise-functional list page.
+  const { data: allContactsRaw } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
   });
+  const allContacts = Array.isArray(allContactsRaw) ? allContactsRaw : [];
 
-  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
+  const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
   });
+  const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
   const userNames = useMemo(() => {
-    if (!allUsers) return [];
     return allUsers.map(u => u.name).sort();
   }, [allUsers]);
 
   const userOptions = useMemo(() => {
-    if (!allUsers) return [];
     return allUsers.map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label));
   }, [allUsers]);
 
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
 
-  const { data: allProperties } = useQuery<CrmProperty[]>({
+  const { data: allPropertiesRaw } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
+  const allProperties = Array.isArray(allPropertiesRaw) ? allPropertiesRaw : [];
 
-  const { data: allDeals } = useQuery<CrmDeal[]>({
+  const { data: allDealsRaw } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
+  const allDeals = Array.isArray(allDealsRaw) ? allDealsRaw : [];
 
-  const { data: companyPropertyLinks } = useQuery<{ companyId: string; propertyId: string }[]>({
+  const { data: companyPropertyLinksRaw } = useQuery<{ companyId: string; propertyId: string }[]>({
     queryKey: ["/api/crm/company-property-links"],
   });
+  const companyPropertyLinks = Array.isArray(companyPropertyLinksRaw) ? companyPropertyLinksRaw : [];
 
-  const { data: companyDealLinks } = useQuery<{ companyId: string; dealId: string }[]>({
+  const { data: companyDealLinksRaw } = useQuery<{ companyId: string; dealId: string }[]>({
     queryKey: ["/api/crm/company-deal-links"],
   });
+  const companyDealLinks = Array.isArray(companyDealLinksRaw) ? companyDealLinksRaw : [];
 
   const propertyIdsByCompany = useMemo(() => {
     if (!companyPropertyLinks) return {};
@@ -2278,8 +2400,14 @@ function CompanyList() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="companies-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="companies-page">
       <CompanyFormDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="crm_companies"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] })}
+      />
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
@@ -2308,6 +2436,10 @@ function CompanyList() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} data-testid="button-import-companies">
+            <Upload className="w-4 h-4 mr-2" />
+            Import
+          </Button>
           <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-company">
             <Plus className="w-4 h-4 mr-2" />
             New Company
@@ -2462,7 +2594,7 @@ function CompanyList() {
               </CardContent>
             </Card>
           ) : (
-            <Card>
+            <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={1800}>
                 <Table>
                   <TableHeader>

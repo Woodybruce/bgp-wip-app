@@ -1,5 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
@@ -10,6 +11,7 @@ import {
   BarChart3,
   Newspaper,
   Users,
+  UserCog,
   X,
 
   FileText,
@@ -28,6 +30,8 @@ import {
   Landmark,
   UserPlus,
   ChevronsUpDown,
+  ChevronDown,
+  ChevronRight,
   Check,
   MapPin,
   Receipt,
@@ -42,6 +46,7 @@ import {
   GraduationCap,
   Store,
   Globe,
+  Target,
 } from "lucide-react";
 import {
   Sidebar,
@@ -79,19 +84,29 @@ const coreNavBase = [
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  // Items below are still being polished — admin-only until ready for the firm
+  { title: "MAP BGP", url: "/map-bgp", icon: MapPin, adminOnly: true },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
-  { title: "People Hub", url: "/contacts", icon: Users },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "CRM", url: "/contacts", icon: Users },
+  { title: "People & HR", url: "/hr", icon: Users },
+  { title: "Team", url: "/team", icon: UserCog },
+  { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Lease Events", url: "/lease-events", icon: Calendar },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
+  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
 ];
 
 const aiNav = [
   { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
+  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI" },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
@@ -104,6 +119,8 @@ const microsoftNav = [
 ];
 
 const adminNavBase = [
+  { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
@@ -115,12 +132,21 @@ const adminNavBase = [
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
-function NavSection({ label, items }: { label: string; items: Array<{ title: string; url: string; icon: any; badge?: string }> }) {
+function NavSection({
+  label,
+  items,
+  defaultOpen = true,
+  storageKey,
+}: {
+  label: string;
+  items: Array<{ title: string; url: string; icon: any; badge?: string }>;
+  defaultOpen?: boolean;
+  storageKey?: string;
+}) {
   const [location] = useLocation();
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
-    // Strip query params for path-only matching
     const path = url.split("?")[0];
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
@@ -130,13 +156,37 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
     return location.startsWith(path);
   };
 
+  // Always expand if a child is active so users never lose their bearings
+  const sectionHasActive = items.some(i => isActive(i.url));
+  const key = storageKey ? `bgp-nav-section-${storageKey}` : null;
+  const [open, setOpen] = useState<boolean>(() => {
+    if (sectionHasActive) return true;
+    if (key && typeof window !== "undefined") {
+      const stored = localStorage.getItem(key);
+      if (stored !== null) return stored === "1";
+    }
+    return defaultOpen;
+  });
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (key) localStorage.setItem(key, next ? "1" : "0");
+  };
+
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => {
-            return (
+      <SidebarGroupLabel
+        onClick={toggle}
+        className="cursor-pointer select-none flex items-center justify-between hover:text-sidebar-foreground transition-colors"
+      >
+        <span>{label}</span>
+        {open ? <ChevronDown className="w-3 h-3 opacity-60" /> : <ChevronRight className="w-3 h-3 opacity-60" />}
+      </SidebarGroupLabel>
+      {open && (
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {items.map((item) => (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton
                   asChild
@@ -152,19 +202,19 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-      </SidebarGroupContent>
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      )}
     </SidebarGroup>
   );
 }
 
 const TYPE_CONFIG: Record<RecentItem["type"], { icon: any; path: string; color: string }> = {
-  deal: { icon: BarChart3, path: "/deals", color: "text-blue-400" },
-  contact: { icon: Users, path: "/contacts", color: "text-green-400" },
-  company: { icon: Briefcase, path: "/companies", color: "text-amber-400" },
-  property: { icon: Building2, path: "/properties", color: "text-purple-400" },
+  deal: { icon: BarChart3, path: "/deals", color: "text-sidebar-primary opacity-80" },
+  contact: { icon: Users, path: "/contacts", color: "text-sidebar-foreground opacity-60" },
+  company: { icon: Briefcase, path: "/companies", color: "text-sidebar-primary opacity-70" },
+  property: { icon: Building2, path: "/properties", color: "text-sidebar-foreground opacity-50" },
 };
 
 function QuickAccessSection() {
@@ -211,12 +261,18 @@ export function AppSidebar() {
   const { brand, isLandsec } = useBrand();
 
   // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
+  // Items flagged adminOnly are work-in-progress — moved out of Core entirely
+  // so the demo nav is clean, and grouped into the Admin section for admins
+  // to keep working on. Non-admins don't see the Admin section at all.
+  const coreWipItems = coreNavBase.filter((i: any) => i.adminOnly);
+  const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly);
   const coreNav = isLandsec
-    ? [...coreNavBase, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
-    : coreNavBase;
-  const adminNav = isLandsec
+    ? [...coreNavFiltered, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
+    : coreNavFiltered;
+  const adminNavCleaned = isLandsec
     ? adminNavBase.filter(i => i.url !== "/reporting")
     : adminNavBase;
+  const adminNav = [...coreWipItems, ...adminNavCleaned];
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
@@ -255,14 +311,14 @@ export function AppSidebar() {
       <SidebarSeparator />
 
       <SidebarContent>
-        <NavSection label="Core" items={coreNav} />
+        <NavSection label="Core" items={coreNav} storageKey="core" />
         <QuickAccessSection />
         <SidebarSeparator />
-        <NavSection label="AI Tools" items={user?.isAdmin ? aiNav : aiNav.filter(i => i.url !== "/image-studio")} />
+        <NavSection label="AI Tools" items={user?.isAdmin ? aiNav : aiNav.filter(i => i.url !== "/image-studio")} storageKey="ai" />
         <SidebarSeparator />
-        <NavSection label="Microsoft 365" items={microsoftNav} />
+        <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
         <SidebarSeparator />
-        <NavSection label="Admin" items={adminNav} />
+        {user?.isAdmin && <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />}
       </SidebarContent>
 
       <SidebarFooter className="p-3 space-y-2">
@@ -376,12 +432,21 @@ const mobileOverlayItems = [
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
-  { title: "People Hub", url: "/contacts", icon: Users },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "CRM", url: "/contacts", icon: Users },
+  { title: "People & HR", url: "/hr", icon: Users },
+  { title: "Team", url: "/team", icon: UserCog },
+  { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
+  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
+  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI" },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
@@ -393,7 +458,7 @@ const mobileOverlayItems = [
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
   { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
   { title: "Settings", url: "/settings", icon: Settings },
@@ -402,9 +467,11 @@ const mobileOverlayItems = [
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { isLandsec } = useBrand();
+  const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
   // Hide Reporting in mobile overlay for non-Landsec tenants (parity with desktop).
-  const items = isLandsec ? mobileOverlayItems : mobileOverlayItems.filter(i => i.url !== "/reporting");
+  const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
+  const items = isLandsec ? filteredByAdmin : filteredByAdmin.filter(i => i.url !== "/reporting");
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";

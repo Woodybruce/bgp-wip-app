@@ -143,7 +143,7 @@ export interface IStorage {
   deleteMemory(id: string): Promise<void>;
   clearMemories(userId: string): Promise<void>;
 
-  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
+  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
   getCrmCompany(id: string): Promise<CrmCompany | undefined>;
   createCrmCompany(company: InsertCrmCompany): Promise<CrmCompany>;
   updateCrmCompany(id: string, updates: Partial<InsertCrmCompany>): Promise<CrmCompany>;
@@ -155,7 +155,7 @@ export interface IStorage {
   updateCrmContact(id: string, updates: Partial<InsertCrmContact>): Promise<CrmContact>;
   deleteCrmContact(id: string): Promise<void>;
 
-  getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]>;
+  getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; excludeComps?: boolean; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]>;
   getCrmProperty(id: string): Promise<CrmProperty | undefined>;
   createCrmProperty(property: InsertCrmProperty): Promise<CrmProperty>;
   updateCrmProperty(id: string, updates: Partial<InsertCrmProperty>): Promise<CrmProperty>;
@@ -709,7 +709,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(chatbgpMemories).where(eq(chatbgpMemories.userId, userId));
   }
 
-  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
+  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
     // Hide companies that have been merged into another — they shouldn't
     // appear in any list view. Their FK references have been rewritten so
     // nothing depends on them any more.
@@ -717,6 +717,13 @@ export class DatabaseStorage implements IStorage {
     if (filters?.search) conditions.push(ilike(crmCompanies.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmCompanies.groupName, filters.groupName));
     if (filters?.companyType) conditions.push(eq(crmCompanies.companyType, filters.companyType));
+    // Hide invoicing/billing entities (Sage-imported SPVs, shell cos used for
+    // invoicing) from the main CRM list by default. They're still resolvable
+    // by ID for the deal page billing-entity link and KYC checks. Pass
+    // includeBillingEntities=true or filter explicitly by companyType to see them.
+    else if (!filters?.includeBillingEntities) {
+      conditions.push(sql`(${crmCompanies.companyType} IS NULL OR ${crmCompanies.companyType} NOT IN ('Billing','Billing Entity'))`);
+    }
     const where = and(...conditions);
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
@@ -746,8 +753,11 @@ export class DatabaseStorage implements IStorage {
     await db.transaction(async (tx) => {
       await tx.update(crmDeals).set({ landlordId: null }).where(eq(crmDeals.landlordId, id));
       await tx.update(crmDeals).set({ tenantId: null }).where(eq(crmDeals.tenantId, id));
-      await tx.update(crmDeals).set({ invoicingEntityId: null }).where(eq(crmDeals.invoicingEntityId, id));
       await tx.update(crmProperties).set({ landlordId: null }).where(eq(crmProperties.landlordId, id));
+      await tx.update(crmProperties).set({ freeholderId: null }).where(eq(crmProperties.freeholderId, id));
+      await tx.update(crmProperties).set({ longLeaseholderId: null }).where(eq(crmProperties.longLeaseholderId, id));
+      await tx.update(crmProperties).set({ seniorLenderId: null }).where(eq(crmProperties.seniorLenderId, id));
+      await tx.update(crmProperties).set({ juniorLenderId: null }).where(eq(crmProperties.juniorLenderId, id));
       await tx.update(crmContacts).set({ companyId: null }).where(eq(crmContacts.companyId, id));
       await tx.update(crmRequirementsLeasing).set({ companyId: null }).where(eq(crmRequirementsLeasing.companyId, id));
       await tx.delete(crmCompanyProperties).where(eq(crmCompanyProperties.companyId, id));
@@ -823,7 +833,18 @@ export class DatabaseStorage implements IStorage {
       const data = await db.select().from(crmContacts).where(where).orderBy(crmContacts.name).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    return db.select().from(crmContacts).where(where).orderBy(crmContacts.name);
+    const rows = await db.select().from(crmContacts).where(where).orderBy(crmContacts.name);
+    // Deduplicate within a company scope: keep the most-recently-updated row per (name, companyId).
+    if (filters?.companyId) {
+      const seen = new Map<string, typeof rows[0]>();
+      for (const r of rows) {
+        const key = `${(r.name || "").toLowerCase()}__${r.companyId || ""}`;
+        const existing = seen.get(key);
+        if (!existing || (r.updatedAt && (!existing.updatedAt || r.updatedAt > existing.updatedAt))) seen.set(key, r);
+      }
+      return Array.from(seen.values()).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    }
+    return rows;
   }
 
   async getCrmContact(id: string): Promise<CrmContact | undefined> {
@@ -857,13 +878,16 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]> {
+  async getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; excludeComps?: boolean; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]> {
     const conditions: any[] = [];
     if (filters?.search) conditions.push(ilike(crmProperties.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmProperties.groupName, filters.groupName));
     if (filters?.status) conditions.push(eq(crmProperties.status, filters.status));
     if (filters?.assetClass) conditions.push(sql`${crmProperties.assetClass} @> ARRAY[${filters.assetClass}]::text[]`);
     if (filters?.bgpEngagement) conditions.push(sql`${crmProperties.bgpEngagement} @> ARRAY[${filters.bgpEngagement}]::text[]`);
+    if (filters?.excludeComps) {
+      conditions.push(sql`(${crmProperties.groupName} IS NULL OR ${crmProperties.groupName} NOT IN ('Investment Comp', 'Investment Comps', 'Leasing Comp', 'Leasing Comps'))`);
+    }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
@@ -942,7 +966,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateCrmDeal(id: string, updates: Partial<InsertCrmDeal>): Promise<CrmDeal> {
     // Coerce any date-string values to Date objects for Drizzle timestamp columns
-    const tsFields = ["kycApprovedAt", "hotsCompletedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
+    const tsFields = ["kycApprovedAt", "instructedAt", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
     const coerced: any = { ...updates };
     for (const f of tsFields) {
       if (coerced[f] && typeof coerced[f] === "string") {

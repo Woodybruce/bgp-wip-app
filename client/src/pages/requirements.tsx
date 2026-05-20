@@ -1,5 +1,5 @@
 import ReactDOM from "react-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useTeam } from "@/lib/team-context";
 import { Card, CardContent } from "@/components/ui/card";
@@ -240,7 +240,7 @@ function MapLocationsCell({
   );
 }
 
-function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
+function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | null; companyFilter?: string | null }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -249,8 +249,167 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
   const [editItem, setEditItem] = useState<CrmRequirementsLeasing | null>(null);
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsLeasing | null>(null);
   const [matchItem, setMatchItem] = useState<CrmRequirementsLeasing | null>(null);
+  const [pipnetSyncing, setPipnetSyncing] = useState(false);
   const { toast } = useToast();
   const [, navigate] = useLocation();
+
+  const syncPipnet = async () => {
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/import-pipnet", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ allPages: true, monthsBack: 3, autoPromote: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Sync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      const parts = [
+        `${data.imported} from last 3 months`,
+        data.promoted ? `${data.promoted} added to requirements page` : null,
+        data.skippedOld ? `${data.skippedOld} older skipped` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "Pipnet synced", description: parts || "No new requirements found" });
+    } catch (err: any) {
+      toast({ title: "Pipnet sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
+  const [pipnetHeadersText, setPipnetHeadersText] = useState<string | null>(null);
+  const inspectPipnetDetail = async () => {
+    try {
+      const res = await fetch("/api/external-requirements/pipnet-inspect-detail", {
+        credentials: "include",
+        headers: { ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed");
+      console.log("[PIPnet detail]", data);
+      const lines: string[] = [];
+      lines.push(`Detail URL: ${data.detailUrl || "(none found)"}`);
+      lines.push(`HTML size: ${data.htmlLength} bytes`);
+      lines.push("");
+      lines.push("--- Candidate links (first 20) ---");
+      lines.push(...(data.candidateLinks || []));
+      lines.push("");
+      lines.push("--- Fields extracted ---");
+      const entries = Object.entries(data.fields || {});
+      if (entries.length === 0) {
+        lines.push("(none — see HTML preview below)");
+      } else {
+        for (const [k, v] of entries) lines.push(`${k}: ${v}`);
+      }
+      lines.push("");
+      lines.push("--- View All Images (brochure) ---");
+      if (data.brochure) {
+        lines.push(`URL: ${data.brochure.url}`);
+        lines.push(`Content-Type: ${data.brochure.contentType}`);
+        lines.push(`Size: ${data.brochure.bytes} bytes`);
+        lines.push(`Is HTML: ${data.brochure.isHtml}`);
+        if (data.brochure.imageUrls?.length) {
+          lines.push(`Image URLs (${data.brochure.imageUrls.length}):`);
+          lines.push(...data.brochure.imageUrls);
+        }
+        if (data.brochure.htmlPreview) {
+          lines.push("");
+          lines.push("Brochure HTML preview:");
+          lines.push(data.brochure.htmlPreview);
+        }
+      } else {
+        lines.push("(no View All Images link found on this requirement)");
+      }
+      lines.push("");
+      lines.push("--- Detail HTML preview (first 1200 chars) ---");
+      lines.push(data.htmlPreview || "");
+      setPipnetHeadersText(lines.join("\n"));
+    } catch (err: any) {
+      toast({ title: "Detail inspect failed", description: err.message, variant: "destructive" });
+    }
+  };
+  const inspectPipnetHeaders = async () => {
+    try {
+      const res = await fetch("/api/external-requirements/pipnet-headers", {
+        credentials: "include",
+        headers: { ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed");
+      console.log("[PIPnet headers]", data);
+      const summary = (data.headers || [])
+        .map((h: any) => `${h.name} (${h.presentIn}) → ${h.samples.join(" | ") || "—"}`)
+        .join("\n");
+      setPipnetHeadersText(`Inspected ${data.rowsInspected} rows.\n\n` + (summary || "No headers found."));
+    } catch (err: any) {
+      toast({ title: "Header inspect failed", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const syncTrl = async () => {
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/sync-trl", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Sync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      toast({ title: "TRL synced", description: `${data.discovered} discovered · ${data.imported} imported · ${data.failed} failed` });
+    } catch (err: any) {
+      toast({ title: "TRL sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
+  const wipeAndResyncTrl = async () => {
+    if (!confirm("This will delete every TRL-sourced requirement and re-import them. Any manual edits on those rows will be lost. Continue?")) return;
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/resync-trl", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Resync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      toast({ title: "TRL wiped and re-synced", description: `${data.deletedReqs} deleted · ${data.imported} re-imported · ${data.failed} failed` });
+    } catch (err: any) {
+      toast({ title: "TRL resync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
+  const wipeAndResyncPipnet = async () => {
+    if (!confirm("This will delete every PIPnet-sourced requirement and re-import them with the corrected agent/contact mapping. Any manual edits on those rows will be lost. Continue?")) return;
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/resync-pipnet", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Resync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      const parts = [
+        `${data.deletedReqs} deleted`,
+        `${data.imported} re-imported`,
+        data.promoted ? `${data.promoted} re-promoted` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "Pipnet wiped and re-synced", description: parts });
+    } catch (err: any) {
+      toast({ title: "Pipnet resync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
 
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
@@ -434,6 +593,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      if (companyFilter && item.companyId !== companyFilter) return false;
       if (teamUserIds) {
         const ids = item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : []);
         if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
@@ -468,7 +628,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
       }
       return true;
     });
-  }, [items, groupFilter, statusFilter, columnFilters, search, teamUserIds]);
+  }, [items, groupFilter, statusFilter, columnFilters, search, teamUserIds, companyFilter]);
 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
@@ -568,6 +728,68 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
             Clear
           </Button>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={syncPipnet}
+          disabled={pipnetSyncing}
+          data-testid="button-sync-pipnet"
+          title="Import active retail requirements from Pipnet"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Sync Pipnet
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={wipeAndResyncPipnet}
+          disabled={pipnetSyncing}
+          data-testid="button-resync-pipnet"
+          title="Delete previous PIPnet imports and re-run with corrected mapping"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Wipe & Resync
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={inspectPipnetHeaders}
+          data-testid="button-inspect-pipnet"
+          title="Show the column headers PIPnet is actually returning"
+        >
+          Inspect PIPnet
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={inspectPipnetDetail}
+          data-testid="button-inspect-pipnet-detail"
+          title="Fetch one requirement's detail page and dump every field"
+        >
+          Inspect Detail
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={syncTrl}
+          disabled={pipnetSyncing}
+          data-testid="button-sync-trl"
+          title="Pull every requirement from TheRequirementList"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Sync TRL
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={wipeAndResyncTrl}
+          disabled={pipnetSyncing}
+          data-testid="button-resync-trl"
+          title="Delete previous TRL imports and re-run"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Wipe & Resync TRL
+        </Button>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
           Add Requirement
@@ -720,6 +942,35 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
             >
               Delete
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!pipnetHeadersText} onOpenChange={(o) => !o && setPipnetHeadersText(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>PIPnet column headers</DialogTitle>
+            <DialogDescription>Format: header name (rows it appears in) → sample values</DialogDescription>
+          </DialogHeader>
+          <textarea
+            readOnly
+            className="w-full h-80 font-mono text-xs p-2 border rounded bg-muted"
+            value={pipnetHeadersText ?? ""}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (pipnetHeadersText) {
+                  navigator.clipboard.writeText(pipnetHeadersText);
+                  toast({ title: "Copied to clipboard" });
+                }
+              }}
+            >
+              Copy
+            </Button>
+            <Button onClick={() => setPipnetHeadersText(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -957,12 +1208,38 @@ function InlineCompanyPicker({
   navigate: (to: string) => void;
   testIdPrefix: string;
 }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Inline-create capability mirrors the TenantBrandPicker / CrmEntityPicker
+  // shape: when the user types a name that doesn't match any existing
+  // company, a green 'Create company "X"' row appears at the bottom of
+  // the dropdown. POSTs to /api/crm/companies, then selects the new
+  // row so the requirement is linked straight away.
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType: "Tenant",
+        isTrackedBrand: true,
+      });
+      return r.json();
+    },
+    onSuccess: (created: any) => {
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+      onSelect(String(created.id), created.name);
+      setEditing(false);
+      toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create company", description: e?.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     if (!editing) return;
@@ -1056,7 +1333,7 @@ function InlineCompanyPicker({
               <X className="w-3 h-3 inline mr-1" /> Remove company link
             </button>
           )}
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !search.trim() ? (
             <div className="p-3 text-xs text-muted-foreground text-center">No companies found</div>
           ) : (
             filtered.map((c) => (
@@ -1074,6 +1351,18 @@ function InlineCompanyPicker({
                 )}
               </button>
             ))
+          )}
+          {search.trim() && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
+            <button
+              type="button"
+              disabled={createMutation.isPending}
+              className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+              onClick={() => createMutation.mutate(search.trim())}
+              data-testid={`${testIdPrefix}-create`}
+            >
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Create company "{search.trim()}"
+            </button>
           )}
         </div>,
         document.body
@@ -1385,12 +1674,36 @@ function InlineContactPicker({
   navigate: (to: string) => void;
   testIdPrefix: string;
 }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Same inline-create pattern as InlineCompanyPicker. Requires a
+  // companyId so the contact lands attached to the right company —
+  // without it we just hide the create row, since an orphan contact
+  // is rarely useful.
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      if (!companyId) throw new Error("Pick a company first");
+      const r = await apiRequest("POST", "/api/crm/contacts", {
+        name: name.trim(),
+        companyId,
+      });
+      return r.json();
+    },
+    onSuccess: (created: any) => {
+      qc.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      onSelect(String(created.id));
+      setEditing(false);
+      toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create contact", description: e?.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     if (!editing) return;
@@ -1503,7 +1816,7 @@ function InlineContactPicker({
               <X className="w-3 h-3 inline mr-1" /> Remove contact
             </button>
           )}
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !search.trim() ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">No contacts found</div>
           ) : (
             filtered.map((c) => (
@@ -1524,6 +1837,18 @@ function InlineContactPicker({
                 </div>
               </button>
             ))
+          )}
+          {search.trim() && companyId && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
+            <button
+              type="button"
+              disabled={createMutation.isPending}
+              className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+              onClick={() => createMutation.mutate(search.trim())}
+              data-testid={`${testIdPrefix}-create`}
+            >
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Create contact "{search.trim()}"
+            </button>
           )}
         </div>,
         document.body
@@ -1612,7 +1937,6 @@ function LeasingSection({
                       />
                     ) : "Status"}
                   </TableHead>
-                  <TableHead className="min-w-[100px] text-center">Progress</TableHead>
                   <TableHead className="min-w-[140px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
@@ -1656,7 +1980,6 @@ function LeasingSection({
                   <TableHead className="min-w-[220px]">Map Locations</TableHead>
                   <TableHead className="min-w-[220px]">Principal Contact</TableHead>
                   <TableHead className="min-w-[220px]">Agent Contact</TableHead>
-                  <TableHead className="min-w-[160px]">BGP Contact</TableHead>
                   <TableHead className="min-w-[180px]">Deal</TableHead>
                   <TableHead className="min-w-[120px]">Landlord Pack</TableHead>
                   <TableHead className="min-w-[120px]">Extract</TableHead>
@@ -1681,6 +2004,19 @@ function LeasingSection({
                         navigate={navigate}
                         testIdPrefix={`name-leasing-${item.id}`}
                       />
+                      {item.sources && item.sources.length > 0 && (
+                        <div className="flex gap-0.5 mt-0.5 flex-wrap">
+                          {item.sources.map((s) => (
+                            <span
+                              key={s}
+                              className={`text-[9px] px-1 py-px rounded ${s === "PIPnet" ? "bg-blue-100 text-blue-700" : s === "TRL" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-700"}`}
+                              data-testid={`source-${item.id}-${s}`}
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <InlineDate
@@ -1695,13 +2031,6 @@ function LeasingSection({
                         colorMap={CRM_OPTIONS.reqLeasingStatusColors}
                         onSave={(v) => inlineUpdate(item.id, { status: v || null })}
                         placeholder="Set status"
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1 text-center">
-                      <ProgressTickCell
-                        item={item}
-                        onUpdate={(data) => inlineUpdate(item.id, data)}
-                        testIdPrefix={`tick-leasing-${item.id}`}
                       />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
@@ -1783,16 +2112,6 @@ function LeasingSection({
                         onSelect={(contactId) => inlineUpdate(item.id, { agentContactId: contactId })}
                         navigate={navigate}
                         testIdPrefix={`agent-contact-${item.id}`}
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      <InlineMultiUserPicker
-                        users={users}
-                        currentUserIds={item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : [])}
-                        userMap={userMap}
-                        onSelect={(userIds) => inlineUpdate(item.id, { bgpContactUserIds: userIds })}
-                        testIdPrefix={`bgp-contact-${item.id}`}
-                        colorMap={colorMap}
                       />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
@@ -1931,7 +2250,7 @@ function CompanySearchPicker({
     return (
       <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
         <Building2 className="w-4 h-4 text-blue-500 shrink-0" />
-        <span className="text-sm font-medium flex-1 truncate">{selectedName}</span>
+        <span className="text-sm font-medium flex-1 truncate min-w-0">{selectedName}</span>
         {company?.companyType && (
           <Badge variant="outline" className="text-[10px] shrink-0">{company.companyType}</Badge>
         )}
@@ -1973,7 +2292,7 @@ function CompanySearchPicker({
                 data-testid={`option-company-${c.id}`}
               >
                 <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{c.name}</span>
+                <span className="flex-1 truncate min-w-0">{c.name}</span>
                 {c.companyType && (
                   <Badge variant="outline" className="text-[10px] shrink-0">{c.companyType}</Badge>
                 )}
@@ -2180,7 +2499,7 @@ function DealSearchPicker({
       return (
         <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
           <FileText className="w-4 h-4 text-blue-500 shrink-0" />
-          <span className="text-sm font-medium flex-1 truncate">{deal.name}</span>
+          <span className="text-sm font-medium flex-1 truncate min-w-0">{deal.name}</span>
           {deal.status && (
             <Badge variant="outline" className="text-[10px] shrink-0">{deal.status}</Badge>
           )}
@@ -2223,7 +2542,7 @@ function DealSearchPicker({
                 data-testid={`option-deal-${d.id}`}
               >
                 <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{d.name}</span>
+                <span className="flex-1 truncate min-w-0">{d.name}</span>
                 {d.status && (
                   <Badge variant="outline" className="text-[10px] shrink-0">{d.status}</Badge>
                 )}
@@ -3296,6 +3615,7 @@ export default function Requirements() {
   const urlParams = new URLSearchParams(window.location.search);
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
+  const companyIdParam = urlParams.get("companyId");
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
   const defaultIsInvestment = effectiveTeam === "Investment";
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
@@ -3310,7 +3630,11 @@ export default function Requirements() {
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
-            <p className="text-sm text-muted-foreground">{isInvestmentView ? "Investment requirements" : "Leasing requirements"}{teamParam ? ` · Filtered by ${teamParam} team` : ""}</p>
+            <p className="text-sm text-muted-foreground">
+              {isInvestmentView ? "Investment requirements" : "Leasing requirements"}
+              {teamParam ? ` · Filtered by ${teamParam} team` : ""}
+              {companyIdParam ? " · Filtered by company" : ""}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-1 bg-muted rounded-lg p-1" data-testid="view-toggle">
@@ -3331,7 +3655,7 @@ export default function Requirements() {
         </div>
       </div>
 
-      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} /> : <LeasingTable teamFilter={teamParam} />}
+      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} />}
     </div>
   );
 }

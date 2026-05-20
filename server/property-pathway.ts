@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { eq, desc, and, or, ilike } from "drizzle-orm";
+import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import {
@@ -103,6 +103,19 @@ interface StageResults {
       dateOfPurchase?: string;
       proprietorCompanyId?: string;
       proprietorCompanyNumber?: string;
+      // True only when the title was resolved via UPRN match (PropertyData
+      // uprn-title). False when sourced from a street-number filter on the
+      // postcode list, the AI's own guess, or the CRM's stored title — in
+      // which case downstream consumers (UI / AI briefing) should treat it
+      // as unverified and prompt the user to confirm before quoting.
+      titleVerified?: boolean;
+      titleSource?: "uprn" | "street_number" | "postcode_only" | "ai" | "crm" | "manual";
+      // True when the user manually picked / entered the title via the
+      // pathway Ownership card. Stage 1 re-runs preserve the user's
+      // override — they can clear it explicitly from the same dialog.
+      manualLock?: boolean;
+      manualSetBy?: string;
+      manualSetAt?: string;
     } | null;
     tenant?: { name: string; companyNumber?: string; companyId?: string };
     folderTree?: { root: string; webUrl: string; children: string[] };
@@ -140,6 +153,15 @@ interface StageResults {
     // transaction comps (PropertyData doesn't expose those for commercial) but
     // anchors the business plan with a defensible market-tone number.
     pdMarket?: import("./propertydata-market").PropertyDataMarketTone;
+    // AI-triaged commentary on the emailHits — replaces the raw email list
+    // in the UI. Markdown body cites emails inline as `[E5]` tokens (1-based
+    // index into emailHits) which the client renders as clickable links to
+    // the in-app email viewer. Generated automatically at end of Stage 1;
+    // re-run on demand via /api/pathway/email-sort.
+    emailCommentary?: {
+      markdown: string;
+      generatedAt: string;
+    };
     // Retail leasing comps extracted from Stage 1 emails by Claude Haiku.
     // Stored in `retail_leasing_comps` (NOT the CRM) so Woody can curate.
     // This field is the trimmed view shown on the Comps card.
@@ -226,6 +248,60 @@ interface StageResults {
       incorporatedOn?: string;
       error?: string;
     }>;
+    // All commercial freeholds detected at the resolved property by the
+    // CCOD/OCOD postcode + address-fuzzy sweep. Lets the user see split
+    // freeholds before Stage 6 builds the business plan — e.g. 18-22
+    // Haymarket has TWO freeholds (Al-Mana NGL952166 + Geaney NGL939200)
+    // and the plan needs to reflect both.
+    candidateTitles?: Array<{
+      titleNumber: string;
+      tenure: string | null;
+      propertyAddress: string | null;
+      pricePaid: string | null;
+      dateProprietorAdded: string | null;
+      proprietors: Array<{
+        proprietorName: string | null;
+        proprietorCategory: string | null;
+        companyRegistrationNo: string | null;
+        countryIncorporated: string | null;
+        dataset: "ccod" | "ocod";
+      }>;
+      // True if this title looks like a sibling carve-out (same postcode
+      // + matching street number) vs an unrelated property in the same
+      // postcode. Set by the sweep heuristic so the UI can sort the
+      // primary title to the top and de-emphasise unrelated neighbours.
+      isLikelyAtAddress: boolean;
+    }>;
+    // ROE filings for OE-prefix proprietors. Free Companies House lookup,
+    // gives the UBOs declared under the 2022 Economic Crime Act regime.
+    roeFilings?: Array<{
+      overseasEntityNumber: string;
+      entityName: string | null;
+      registeredOn: string | null;
+      lastConfirmationDate: string | null;
+      ubos: Array<{
+        name: string;
+        nationality?: string | null;
+        controlNatures: string[];
+        addedOn?: string | null;
+      }>;
+      error?: string;
+    }>;
+    // LLP member listings for OC-prefix proprietors. Free Companies House
+    // lookup; surfaces the people behind a family-office LLP (e.g. the
+    // Geaney members behind The Gainesville Partnership LLP).
+    llpMembers?: Array<{
+      llpNumber: string;
+      llpName: string | null;
+      members: Array<{
+        name: string;
+        role: string;
+        appointedOn?: string | null;
+        nationality?: string | null;
+      }>;
+      pscs: Array<{ name: string; natureOfControl: string[] }>;
+      error?: string;
+    }>;
     proprietorKyc?: any;
   };
   stage5?: {
@@ -251,6 +327,11 @@ interface StageResults {
     modelRunName?: string;
     modelVersionLabel?: string;
     workbookUrl?: string;
+    // SharePoint URL — written by Stage 7 after the workbook is
+    // uploaded to BGP share drive/Investment/<Property>/Models/. The
+    // canonical shareable location; workbookUrl above is the local
+    // BGP-auth-only download path.
+    workbookSharepointUrl?: string;
     agreed?: boolean;
     agreedAt?: string;
     agreedBy?: string;
@@ -301,6 +382,28 @@ interface StageStatusMap {
   stage7?: StageStatus;
   stage8?: StageStatus;
   stage9?: StageStatus;
+}
+
+/**
+ * Pull the resolver-canonical UPRN for a Pathway run if it's linked to a
+ * crm_property. Used so PropertyData uprn-title hits THIS building only,
+ * not every freehold in the postcode area. Best-effort; returns null if
+ * no link or no UPRN on the property.
+ */
+async function uprnForRun(run: PropertyPathwayRun | { propertyId?: string | null }): Promise<string | null> {
+  const propertyId = (run as any)?.propertyId;
+  if (!propertyId) return null;
+  try {
+    const rows = await pool.query(
+      "SELECT uprn FROM crm_properties WHERE id = $1 LIMIT 1",
+      [propertyId],
+    );
+    const u = rows.rows[0]?.uprn;
+    return u ? String(u) : null;
+  } catch (err: any) {
+    console.warn("[property-pathway] uprnForRun failed:", err?.message);
+    return null;
+  }
 }
 
 async function getRun(runId: string): Promise<PropertyPathwayRun | null> {
@@ -1026,6 +1129,15 @@ async function runStage1(runId: string, req: Request): Promise<void> {
   }
 }
 
+/**
+ * Email triage prompt + response parser + Haiku fallback are now shared
+ * across the app — see server/ai-activity-curator.ts. Imported and
+ * re-exported here so all existing callers in this file (Stage 1,
+ * /api/pathway/email-sort, etc.) keep working unchanged.
+ */
+import { buildEmailQuestion, parseEmailChatBgpResponse, runEmailSort } from "./ai-activity-curator";
+export { buildEmailQuestion, parseEmailChatBgpResponse, runEmailSort };
+
 // Autonomous investigator wrapper — delegates Stage 1 to Claude+tools
 async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   const run = await getRun(runId);
@@ -1236,9 +1348,61 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     toolTrace: result.toolTrace,
   };
 
-  // Fall back to prefetch data if Claude didn't extract ownership/rates
-  if (!stage1Payload.initialOwnership && partialPayload.initialOwnership) {
-    stage1Payload.initialOwnership = partialPayload.initialOwnership;
+  // Cross-validate AI ownership against the UPRN-precise resolver result.
+  // The autonomous investigator can hallucinate plausible-but-fictional title
+  // numbers (e.g. NGL939200) when it can't find a real one — those then fail
+  // when the user clicks "Order Title Register" because PropertyData has no
+  // record of them. The verified resolver (resolveBuildingTitles via
+  // land_registry_lookup → matched.freeholds) is authoritative; prefer it.
+  //
+  // Manual override: if the user has previously picked / entered the title
+  // via the Ownership card (manualLock === true), we honour their choice
+  // and leave it untouched. Their picked value is in the existing
+  // stage1.initialOwnership on the run record at this point.
+  const existingStage1 = (run.stageResults as any)?.stage1?.initialOwnership;
+  if (existingStage1?.manualLock) {
+    console.log(`[pathway stage1] manual title lock active (title=${existingStage1.titleNumber} set by ${existingStage1.manualSetBy || "?"}) — skipping cross-validation`);
+    stage1Payload.initialOwnership = existingStage1;
+  } else {
+  const verifiedOwnership = partialPayload.initialOwnership as any;
+  const verifiedTitle = verifiedOwnership?.titleNumber;
+  const aiOwnership = stage1Payload.initialOwnership as any;
+  const aiTitle = aiOwnership?.titleNumber;
+  if (verifiedTitle && verifiedTitle !== "unknown") {
+    if (aiTitle && aiTitle !== "unknown" && aiTitle !== verifiedTitle) {
+      console.log(`[pathway stage1] AI proposed title=${aiTitle} but UPRN-resolver returned ${verifiedTitle} — using verified (AI title may have been hallucinated)`);
+    }
+    // Verified resolver wins. Keep AI-derived enrichment fields (e.g. purchase
+    // price, proprietor company number from web research) where the resolver
+    // didn't fill them. Always carry the resolver's verification flag so the
+    // UI / downstream prompt can tell whether the title is UPRN-precise.
+    stage1Payload.initialOwnership = {
+      ...(aiOwnership || {}),
+      ...verifiedOwnership,
+      titleNumber: verifiedTitle,
+      proprietorName: verifiedOwnership.proprietorName || aiOwnership?.proprietorName,
+      titleVerified: !!verifiedOwnership.titleVerified,
+      titleSource: verifiedOwnership.titleSource,
+    };
+  } else if (!aiOwnership && verifiedOwnership) {
+    // No AI ownership and no verified title (resolver returned only enrichment) —
+    // take the prefetch as-is so we still surface what we have.
+    stage1Payload.initialOwnership = verifiedOwnership;
+  } else if (aiTitle && aiTitle !== "unknown" && !verifiedTitle) {
+    // AI gave a title but the resolver couldn't verify any UPRN. Keep the AI's
+    // answer (it may still be right — PropertyData/OS coverage isn't complete)
+    // but flag it as unverified + ai-sourced so the UI doesn't quote it as
+    // authoritative and the next prompt iteration knows it was a guess.
+    console.warn(`[pathway stage1] AI title=${aiTitle} is unverified — UPRN resolver returned no matched freeholds for ${run.address} ${run.postcode || ""}. Order failures expected.`);
+    stage1Payload.initialOwnership = {
+      ...(aiOwnership || {}),
+      titleVerified: false,
+      titleSource: "ai",
+    };
+  }
+  } // end manualLock branch
+  if (!stage1Payload.rates && partialPayload.rates) {
+    stage1Payload.rates = partialPayload.rates;
   }
   if (!stage1Payload.rates && partialPayload.rates) {
     stage1Payload.rates = partialPayload.rates;
@@ -1320,6 +1484,44 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     console.warn(`[pathway stage1 autonomous] tenancy extractor failed: ${err?.message}`);
   }
 
+  // Email triage — delegate to ChatBGP itself (the same agent the chat
+  // panel runs) so the pathway gets exactly the same output the user
+  // sees when they ask ChatBGP directly. ChatBGP knows the full property
+  // context (tenant brand, owner, deals, comps) and picks much smarter
+  // search terms than a sidecar agent ever does. Best-effort: never
+  // blocks Stage 1 completion. Falls back to the legacy email-sort on
+  // the autonomous AI's already-gathered emailHits if ChatBGP can't
+  // be reached.
+  try {
+    const { askChatBgp } = await import("./chatbgp-internal");
+    const question = buildEmailQuestion(run.address, run.postcode);
+    const raw = await askChatBgp(question, req);
+    if (raw) {
+      const { markdown, emailHits: refs } = parseEmailChatBgpResponse(raw);
+      stage1Payload.emailCommentary = {
+        markdown,
+        generatedAt: new Date().toISOString(),
+      };
+      // Replace the noisy keyword-sweep emailHits with what ChatBGP
+      // actually cited — these are the messages [E#] chips deep-link to.
+      if (refs.length > 0) {
+        stage1Payload.emailHits = refs;
+      }
+      console.log(`[pathway stage1 autonomous] ChatBGP returned ${markdown.length}-char commentary + ${refs.length} cited emails`);
+    } else {
+      const commentary = await runEmailSort(run.address, stage1Payload.emailHits || []);
+      if (commentary) {
+        stage1Payload.emailCommentary = {
+          markdown: commentary.markdown,
+          generatedAt: new Date().toISOString(),
+        };
+        console.log(`[pathway stage1 autonomous] email-sort fallback generated ${commentary.markdown.length} chars from ${stage1Payload.emailHits?.length || 0} hits`);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[pathway stage1 autonomous] email investigator failed: ${err?.message}`);
+  }
+
   console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
 
   await setStageStatus(runId, "stage1", "completed", { stage1: stage1Payload });
@@ -1334,16 +1536,29 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     const stage1UserId = (run as any).startedBy || null;
     const hasOwnership = !!stage1Payload.initialOwnership;
     if (stage1UserId) {
-      const { performPropertyLookup } = await import("./property-lookup");
-      const lookup = await performPropertyLookup({
+      // Use the building-title resolver so the persisted snapshot reflects the
+      // titles that ACTUALLY belong to this building, not every freehold in
+      // the postcode. Falls back to street-number-filtered context if no
+      // UPRN match is found.
+      const { resolveBuildingTitles } = await import("./land-registry");
+      // If the run is anchored to a resolver-canonical property, pass its
+      // UPRN so PropertyData uprn-title returns THIS exact building only,
+      // not every freehold in the postcode area.
+      const runUprn = await uprnForRun(run);
+      const lr = await resolveBuildingTitles({
         address: run.address,
         postcode: run.postcode || "",
-        layers: ["core"],
+        uprn: runUprn,
+        skipPersist: true,
       }).catch(() => null);
-      const freeholds = lookup?.propertyDataCoUk?.freeholds?.data || [];
-      const leaseholds = (lookup?.propertyDataCoUk as any)?.leaseholds?.data || [];
+      const matchedFh = lr?.ok ? lr.matched.freeholds : [];
+      const matchedLh = lr?.ok ? lr.matched.leaseholds : [];
+      const fallbackFh = lr?.ok ? lr.fallback.freeholds : [];
+      const contextFh = lr?.ok ? lr.context.freeholds : [];
+      const freeholds = matchedFh.length > 0 ? matchedFh : (fallbackFh.length > 0 ? fallbackFh : contextFh);
+      const leaseholds = matchedLh;
       const hasLrData = freeholds.length > 0 || leaseholds.length > 0 || hasOwnership;
-      console.log(`[pathway stage1 autonomous] persist LR check: userId=set freeholds=${freeholds.length} leaseholds=${leaseholds.length} ownership=${hasOwnership ? "yes" : "no"}`);
+      console.log(`[pathway stage1 autonomous] persist LR check: userId=set freeholds=${freeholds.length} leaseholds=${leaseholds.length} ownership=${hasOwnership ? "yes" : "no"} source=${lr?.ok ? lr.source : "error"}`);
       if (hasLrData) {
         const { persistLandRegistrySearch } = await import("./land-registry");
         const saved = await persistLandRegistrySearch({
@@ -1399,20 +1614,52 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       return null;
     });
 
-  // 1a. Search CRM for existing records
+  // 1a. Search CRM for existing records.
+  //
+  // Matching priority (so we prefer real matches over fuzzy name collisions):
+  //   1. Exact postcode match (highest confidence — postcodes are unique to a
+  //      handful of buildings, and CRM stores them normalised).
+  //   2. First-line address match against `name` OR `address->>'formatted'`.
+  //
+  // The previous version did `ilike(name, '%${address}%')` with the FULL
+  // address ("18-22 Haymarket, London SW1Y 4DG"), which only fired if the CRM
+  // name literally contained the whole address string — almost never true,
+  // so it routinely fell through to auto-create + spawned a duplicate stub
+  // pointing at the wrong SharePoint folder.
   let crmHits = { properties: [] as any[], deals: [] as any[], companies: [] as any[] };
   try {
-    const propertyMatches = await db
-      .select()
-      .from(crmProperties)
-      .where(
-        or(
-          ilike(crmProperties.name, `%${address}%`),
-          postcode ? ilike(crmProperties.name, `%${postcode}%`) : ilike(crmProperties.name, `%__nomatch__%`)
-        )
-      )
-      .limit(10);
-    crmHits.properties = propertyMatches;
+    const firstLine = (address.split(",")[0] || address).trim();
+    const normalisedPostcode = postcode.replace(/\s+/g, "").toUpperCase();
+
+    let postcodeMatches: any[] = [];
+    if (normalisedPostcode) {
+      postcodeMatches = await db
+        .select()
+        .from(crmProperties)
+        .where(sql`UPPER(REPLACE(${crmProperties.postcode}, ' ', '')) = ${normalisedPostcode}`)
+        .limit(10);
+    }
+
+    const fuzzyMatches = firstLine.length >= 3
+      ? await db
+          .select()
+          .from(crmProperties)
+          .where(
+            or(
+              ilike(crmProperties.name, `%${firstLine}%`),
+              sql`${crmProperties.address}->>'formatted' ILIKE ${`%${firstLine}%`}`,
+            )
+          )
+          .limit(10)
+      : [];
+
+    // De-dupe, postcode hits first.
+    const seen = new Set<string>();
+    crmHits.properties = [...postcodeMatches, ...fuzzyMatches].filter((p) => {
+      if (!p?.id || seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
   } catch (err: any) {
     console.error("[pathway stage1] CRM search error:", err?.message);
   }
@@ -1427,39 +1674,92 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] ensureCrmPropertyLink error:", err?.message);
   }
 
-  // 1b. Ownership — prefer CRM data if we already have it, fall back to PropertyData freeholds lookup
+  // 1b. Ownership — prefer CRM data if we already have it, fall back to the
+  // shared resolveBuildingTitles helper which does Google geocode → OS Places
+  // by lat/lng → PD address-match-uprn → PD uprn-title. Crucially we ONLY
+  // assert ownership from the building-matched titles (matched.freeholds) —
+  // never from the postcode-wide context list, because postcodes like
+  // SW1Y 4DG cover several buildings (e.g. 18-22 Haymarket + 4 Panton St
+  // behind it). Picking from the postcode list used to silently misattribute
+  // a neighbour's title to the queried building.
   let initialOwnership: NonNullable<StageResults["stage1"]>["initialOwnership"] = null;
   const crmMatch = crmHits.properties[0];
   if (crmMatch?.proprietorName || crmMatch?.titleNumber) {
     initialOwnership = {
+      titleVerified: false,
+      titleSource: "crm",
       titleNumber: crmMatch.titleNumber || "unknown",
       proprietorName: crmMatch.proprietorName || undefined,
       proprietorCategory: crmMatch.proprietorType || undefined,
     };
   }
-  // Enrich with PropertyData lookup regardless, in case CRM is incomplete.
-  // Also picks up VOA rateable-value entries for rates/business-rates surface.
   let voaEntries: Array<{ firmName?: string; address?: string; postcode?: string; description?: string; rateableValue?: number | null; effectiveDate?: string; }> = [];
   let stage1FreeholdsData: any[] = [];
   let stage1LeaseholdsData: any[] = [];
+  let resolvedUprn: string | undefined;
   try {
-    const lookup = await performPropertyLookup({ address, postcode, layers: ["core"] });
-    const freeholds = lookup.propertyDataCoUk?.freeholds?.data || [];
-    stage1FreeholdsData = freeholds;
-    stage1LeaseholdsData = (lookup.propertyDataCoUk as any)?.leaseholds?.data || [];
-    if (freeholds.length > 0) {
-      // Prefer the first freehold with an actual proprietor name —
-      // postcode-wide LR queries can return a title with blank
-      // proprietor_name_1 first, which wipes the Ownership card.
-      const best = freeholds.find((f: any) => f?.proprietor_name_1?.trim()) || freeholds[0];
-      initialOwnership = {
-        titleNumber: best.title_number || best.title || initialOwnership?.titleNumber || "unknown",
-        proprietorName: best.proprietor_name_1 || initialOwnership?.proprietorName,
-        proprietorCategory: best.proprietor_category || initialOwnership?.proprietorCategory,
-        pricePaid: best.price_paid ? Number(best.price_paid) : initialOwnership?.pricePaid,
-        dateOfPurchase: best.date_proprietor_added || initialOwnership?.dateOfPurchase,
-      };
+    // Authoritative title resolution — UPRN-precise. Pass through the run's
+    // canonical UPRN if it has one, so PropertyData skips re-discovery and
+    // hits this exact building's title.
+    const { resolveBuildingTitles } = await import("./land-registry");
+    const runUprn = await uprnForRun(run);
+    const lr = await resolveBuildingTitles({ address, postcode, uprn: runUprn, skipPersist: true });
+    if (lr.ok) {
+      resolvedUprn = lr.uprns?.[0];
+      const matchedFh = lr.matched.freeholds || [];
+      const matchedLh = lr.matched.leaseholds || [];
+      const fallbackFh = lr.fallback.freeholds || [];
+      const contextFh = lr.context.freeholds || [];
+      // Persist matched first, then fallback (street-number filter) for
+      // visibility on the LR board, but keep context out of "ownership".
+      stage1FreeholdsData = matchedFh.length > 0
+        ? matchedFh
+        : fallbackFh.length > 0 ? fallbackFh : contextFh;
+      stage1LeaseholdsData = matchedLh;
+
+      const ownershipPool = matchedFh.length > 0 ? matchedFh : fallbackFh;
+      if (ownershipPool.length > 0) {
+        const best = ownershipPool.find((f: any) => f?.proprietor_name_1?.trim()) || ownershipPool[0];
+        // Title is only "verified" when the resolver landed it via UPRN match.
+        // Street-number fallback can pick a neighbour with a similar number;
+        // we surface the title but flag it so the UI / AI prompt can refuse
+        // to quote it as authoritative.
+        const titleVerified = lr.source === "uprn" && matchedFh.length > 0;
+        initialOwnership = {
+          titleNumber: best.title_number || best.title || initialOwnership?.titleNumber || "unknown",
+          proprietorName: best.proprietor_name_1 || initialOwnership?.proprietorName,
+          proprietorCategory: best.proprietor_category || initialOwnership?.proprietorCategory,
+          pricePaid: best.price_paid ? Number(best.price_paid) : initialOwnership?.pricePaid,
+          dateOfPurchase: best.date_proprietor_added || initialOwnership?.dateOfPurchase,
+          titleVerified,
+          titleSource: lr.source,
+        };
+        console.log(`[pathway stage1] ownership resolved via ${lr.source} (verified=${titleVerified}) — title=${initialOwnership.titleNumber} owner=${initialOwnership.proprietorName || "?"}`);
+      } else {
+        console.log(`[pathway stage1] no UPRN-matched title for "${address}" in ${postcode} — leaving ownership null (postcode had ${contextFh.length} other titles)`);
+      }
+    } else {
+      console.warn(`[pathway stage1] resolveBuildingTitles failed (${lr.status}): ${lr.error}`);
     }
+
+    // Still run performPropertyLookup for non-LR layers (VOA, EPC, planning,
+    // market intel). LR responsibilities now sit with resolveBuildingTitles.
+    //
+    // Pass the UPRN (when the resolver found one) so PropertyData uses
+    // building-precise endpoints instead of postcode-wide ones, and pass the
+    // street number / range so postcode-wide returns (price-paid, VOA, EPC,
+    // PD planning-applications) get post-filtered to this building only —
+    // stops a neighbour's planning app on the same postcode bleeding into
+    // the AI briefing context.
+    const streetNumberMatch = address.match(/\b(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
+    const streetNumber = streetNumberMatch ? streetNumberMatch[1].replace(/\s*-\s*/g, "-") : undefined;
+    const lookup = await performPropertyLookup({
+      address,
+      postcode,
+      uprn: resolvedUprn,
+      streetNumber,
+      layers: ["core"],
+    });
     if (Array.isArray((lookup as any).voaRatings)) {
       voaEntries = (lookup as any).voaRatings;
     }
@@ -1713,10 +2013,23 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         if (fromAddr.includes(n) || fromName.includes(n)) return false;
       }
 
-      // 3) Trusted phrase match (Graph already matched a quoted multi-word
-      //    phrase like "22 Haymarket" against full body — don't re-filter it
-      //    against the 255-char bodyPreview or we drop real thread hits).
-      if (trustedPhrase) return true;
+      // 3) Trusted phrase match — Graph found the address phrase in the body.
+      //    Keep by default (the phrase match is strong evidence), but drop if
+      //    the subject explicitly names a DIFFERENT street — that's the
+      //    signature-bleed problem (e.g. "22 King Street, Sandwich" matching
+      //    because Michelle's sig contains "18-22 Haymarket").
+      if (trustedPhrase) {
+        // Drop if subject has a different postcode (already handled above, belt+braces)
+        if (postcodesInSubject.length > 0 && postcodeLc && !postcodesInSubject.includes(postcodeLc)) {
+          return false;
+        }
+        // Drop if subject contains a road-type word (Street/Road/etc.) but none
+        // of our distinctive address words — clear sign it's about a different address.
+        const hasStreetWord = /\b(street|road|avenue|lane|gardens?|place|crescent|terrace|close|drive|court|walk)\b/i.test(subject);
+        const hasOurWord = addressWords.some((w) => subject.includes(w));
+        if (hasStreetWord && !hasOurWord) return false;
+        return true;
+      }
 
       // 4) Postcode in subject/preview → keep (strong signal)
       if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
@@ -2272,7 +2585,9 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   const summary = [
     `Initial search complete for ${address}.`,
     crmHits.properties.length ? `${crmHits.properties.length} CRM property record(s).` : `No existing CRM records.`,
-    initialOwnership?.proprietorName ? `Owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}).` : `Ownership not resolved.`,
+    initialOwnership?.proprietorName
+      ? `Owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}${initialOwnership.titleVerified === false ? " — unverified" : ""}).`
+      : `Ownership not resolved.`,
     deals.length ? `${deals.length} deal(s) in pipeline/history.` : null,
     tenancy?.units?.length ? `${tenancy.units.length} unit(s) on file — ${tenancy.status}.` : null,
     engagements.length ? `${engagements.length} viewing(s)/interaction(s) logged.` : null,
@@ -2513,7 +2828,9 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
         initialOwnership?.proprietorName || aiFacts?.owner ? `Owner: ${initialOwnership?.proprietorName || aiFacts?.owner}` : null,
         initialOwnership?.proprietorCompanyNumber || aiFacts?.ownerCompanyNumber ? `Companies House: ${initialOwnership?.proprietorCompanyNumber || aiFacts?.ownerCompanyNumber}` : null,
         derivedTenantForFilter(run, aiFacts, tenancy) ? `Tenant/Occupier: ${derivedTenantForFilter(run, aiFacts, tenancy)}` : null,
-        initialOwnership?.titleNumber ? `Title number: ${initialOwnership.titleNumber}` : null,
+        initialOwnership?.titleNumber
+          ? `Title number: ${initialOwnership.titleNumber}${initialOwnership.titleVerified === false ? ` (UNVERIFIED — sourced via ${initialOwnership.titleSource || "fallback"}; do not quote as authoritative until confirmed against Land Registry)` : ""}`
+          : null,
         aiFacts?.sizeSqft ? `Size: ${aiFacts.sizeSqft} sq ft` : null,
         aiFacts?.listedStatus ? `Heritage: ${aiFacts.listedStatus}` : null,
         aiFacts?.currentUse ? `Use: ${aiFacts.currentUse}` : null,
@@ -2741,11 +3058,43 @@ Return STRICT JSON only, no prose, no code fences:
     console.warn("[pathway stage1] retail comps extraction failed:", err?.message);
   }
 
-  console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${emailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${retailComps?.length || 0} retail comps, ${rates?.assessmentCount || 0} rates`);
+  // Email triage — delegate to ChatBGP itself rather than a sidecar agent.
+  // Same path the user takes when they open the chat panel: ChatBGP picks
+  // smart queries (tenant brand, owner, deals, comps) and produces the
+  // grouped narrative the analyst expects. The legacy `emailHits` from
+  // the keyword sweep above is kept as input to retail-comps extraction
+  // and as a power-user fallback in the UI. Falls back to runEmailSort
+  // on those legacy hits if ChatBGP can't be reached.
+  let savedEmailHits: NonNullable<StageResults["stage1"]>["emailHits"] = emailHits;
+  let emailCommentary: { markdown: string; generatedAt: string } | undefined;
+  try {
+    const { askChatBgp } = await import("./chatbgp-internal");
+    const question = buildEmailQuestion(run.address, run.postcode);
+    const raw = await askChatBgp(question, req);
+    if (raw) {
+      const { markdown, emailHits: refs } = parseEmailChatBgpResponse(raw);
+      emailCommentary = { markdown, generatedAt: new Date().toISOString() };
+      if (refs.length > 0) {
+        savedEmailHits = refs;
+      }
+      console.log(`[pathway stage1] ChatBGP returned ${markdown.length}-char commentary + ${refs.length} cited emails`);
+    } else {
+      const commentary = await runEmailSort(run.address, emailHits);
+      if (commentary) {
+        emailCommentary = { markdown: commentary.markdown, generatedAt: new Date().toISOString() };
+        console.log(`[pathway stage1] email-sort fallback generated ${commentary.markdown.length} chars from ${emailHits.length} hits`);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[pathway stage1] email investigator failed: ${err?.message}`);
+  }
+
+  console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${savedEmailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${retailComps?.length || 0} retail comps, ${rates?.assessmentCount || 0} rates`);
 
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
-      emailHits,
+      emailHits: savedEmailHits,
+      emailCommentary,
       sharepointHits,
       crmHits,
       initialOwnership,
@@ -3033,6 +3382,70 @@ async function runStage4(runId: string, req: Request): Promise<void> {
     }
 
     console.log(`[pathway stage4] companyTargets resolved: ${companyTargets.map((c) => `${c.role}=${c.companyNumber}(${c.companyName})`).join(", ") || "NONE"}`);
+
+    // ── CCOD/OCOD sweep: every commercial freehold at this address ──
+    // The legacy Stage 1 path only surfaces ONE proprietor (the closest
+    // address match), so split freeholds get missed — see the 18-22
+    // Haymarket dig where Gainesville's carve-out (NGL939200) sat next
+    // to Al-Mana's main (NGL952166) and only one of them appeared. The
+    // sweep queries hmlr_proprietors directly by postcode+address-fuzzy
+    // and returns up to 50 candidate freeholds, with the primary
+    // address-matched ones flagged isLikelyAtAddress=true. Free + sub-
+    // 10ms so it's safe to run on every Stage 4.
+    let candidateTitles: any[] = [];
+    let roeFilings: any[] = [];
+    let llpMembers: any[] = [];
+    try {
+      const { sweepCandidateTitles, enrichProprietorChains } = await import("./pathway-stage4-enrich");
+      candidateTitles = await sweepCandidateTitles(address, postcode);
+      if (candidateTitles.length > 0) {
+        console.log(`[pathway stage4] CCOD sweep found ${candidateTitles.length} candidate freeholds (${candidateTitles.filter((c) => c.isLikelyAtAddress).length} primary, ${candidateTitles.filter((c) => !c.isLikelyAtAddress).length} postcode siblings)`);
+
+        // Pull ROE / LLP enrichment for the newly-discovered freeholds
+        // in parallel with the Clouseau investigations below. ROE/LLP
+        // are free Companies House calls so the cost-of-error is just
+        // a few hundred ms.
+        const chainEnrich = enrichProprietorChains(candidateTitles);
+
+        // Fold any CCOD-surfaced proprietor company numbers that aren't
+        // already on companyTargets — keeps Clouseau running on each so
+        // the existing flow still produces the full investigation
+        // (officers / PSCs / sanctions). Only the primary, address-
+        // matched titles get auto-queued for Clouseau; postcode
+        // siblings stay as "candidates pending user confirmation" to
+        // avoid spending Clouseau capacity on unrelated neighbours.
+        const existingCompanyNums = new Set(companyTargets.map((c) => c.companyNumber.toUpperCase()));
+        for (const t of candidateTitles.filter((c) => c.isLikelyAtAddress)) {
+          for (const p of t.proprietors) {
+            const num = (p.companyRegistrationNo || "").trim().toUpperCase();
+            if (!num || existingCompanyNums.has(num)) continue;
+            companyTargets.push({
+              companyNumber: num,
+              companyName: p.proprietorName || "Proprietor (CCOD)",
+              role: "proprietor",
+            });
+            existingCompanyNums.add(num);
+            console.log(`[pathway stage4] CCOD added proprietor ${num} (${p.proprietorName}) from ${t.titleNumber}`);
+          }
+        }
+
+        const chains = await chainEnrich;
+        roeFilings = chains.roeFilings;
+        llpMembers = chains.llpMembers;
+        if (roeFilings.length > 0) {
+          const uboCount = roeFilings.reduce((n, r) => n + r.ubos.length, 0);
+          console.log(`[pathway stage4] ROE: ${roeFilings.length} overseas entities → ${uboCount} UBOs`);
+        }
+        if (llpMembers.length > 0) {
+          const memCount = llpMembers.reduce((n, l) => n + l.members.length, 0);
+          console.log(`[pathway stage4] LLP: ${llpMembers.length} partnerships → ${memCount} members`);
+        }
+      }
+    } catch (sweepErr: any) {
+      // Sweep is best-effort — never block Stage 4 on a CCOD hiccup. Log
+      // and continue with whatever companyTargets we had from Stage 1.
+      console.warn("[pathway stage4] CCOD sweep failed:", sweepErr?.message);
+    }
 
     // Reuse-first: if Clouseau already has a recent investigation for this
     // company, read it from kyc_investigations and surface the existing
@@ -3385,9 +3798,104 @@ async function runStage4(runId: string, req: Request): Promise<void> {
         planningDocs,
         floorPlanUrls,
         companyKyc,
+        candidateTitles,
+        roeFilings,
+        llpMembers,
         proprietorKyc: null,
       },
     });
+
+    // ── Stamp landlord provenance on the linked crm_property ──────────
+    // When CCOD found a primary (address-matched) freehold with a clear
+    // proprietor, set landlord_id + source='HMLR_CCOD' + confidence on
+    // the property record. Lets the UI strike through stale notes
+    // (e.g. the Sugar/Amsprop legend at Haymarket) once HMLR has
+    // verified the current proprietor. Single-proprietor titles get
+    // high confidence; split-freehold or multi-proprietor cases drop
+    // to "medium" so the user can confirm via Stage 3 gate.
+    try {
+      if (run.propertyId && candidateTitles.length > 0) {
+        const primaries = candidateTitles.filter((t) => t.isLikelyAtAddress);
+        if (primaries.length > 0) {
+          // Prefer a single-proprietor primary title for landlord_id
+          // assignment. If multiple primary titles each with their own
+          // proprietor (split freehold), don't pick one — set
+          // confidence to medium and leave landlord_id alone for the
+          // user to confirm on the gate.
+          const single = primaries.length === 1 && primaries[0].proprietors.length === 1
+            ? primaries[0]
+            : null;
+          if (single && single.proprietors[0].companyRegistrationNo) {
+            const propCo = single.proprietors[0];
+            const { pool } = await import("./db");
+            // Find or create the CRM company by Companies House number.
+            const existing = await pool.query<{ id: string }>(
+              `SELECT id FROM crm_companies WHERE LOWER(companies_house_number) = LOWER($1) LIMIT 1`,
+              [propCo.companyRegistrationNo],
+            );
+            let landlordId = existing.rows[0]?.id || null;
+            if (!landlordId && propCo.proprietorName) {
+              const ins = await pool.query<{ id: string }>(
+                `INSERT INTO crm_companies (name, companies_house_number, company_type, created_at, updated_at)
+                 VALUES ($1, $2, 'Landlord', NOW(), NOW())
+                 RETURNING id`,
+                [propCo.proprietorName, propCo.companyRegistrationNo],
+              );
+              landlordId = ins.rows[0]?.id || null;
+            }
+            if (landlordId) {
+              await pool.query(
+                `UPDATE crm_properties
+                    SET landlord_id = $1,
+                        landlord_source = 'HMLR_CCOD',
+                        landlord_confidence = 'high',
+                        landlord_verified_at = NOW(),
+                        updated_at = NOW()
+                  WHERE id = $2`,
+                [landlordId, run.propertyId],
+              );
+              console.log(`[pathway stage4] stamped landlord ${landlordId} (${propCo.proprietorName}) on property ${run.propertyId} from title ${single.titleNumber}`);
+
+              // Supersede any saved learnings that claimed a different
+              // proprietor for this property. Kills the "Sugar/Amsprop
+              // legend keeps resurfacing" problem ChatBGP hit at
+              // Haymarket — once HMLR verifies the truth, stale
+              // institutional records get retired.
+              try {
+                const { supersedeContradictingLearnings } = await import("./learnings-supersede");
+                const result = await supersedeContradictingLearnings({
+                  propertyId: run.propertyId,
+                  newCompanyNumber: propCo.companyRegistrationNo!,
+                  newCompanyName: propCo.proprietorName,
+                  source: "HMLR_CCOD",
+                });
+                if (result.superseded > 0) {
+                  console.log(`[pathway stage4] superseded ${result.superseded} stale learnings on property ${run.propertyId}: ${result.reason}`);
+                }
+              } catch (supErr: any) {
+                console.warn("[pathway stage4] learning supersession failed:", supErr?.message);
+              }
+            }
+          } else if (primaries.length > 1) {
+            // Multi-title at the same address — split freehold. Don't
+            // pick; mark for review.
+            const { pool } = await import("./db");
+            await pool.query(
+              `UPDATE crm_properties
+                  SET landlord_source = 'HMLR_CCOD',
+                      landlord_confidence = 'medium',
+                      landlord_verified_at = NOW(),
+                      updated_at = NOW()
+                WHERE id = $1`,
+              [run.propertyId],
+            );
+            console.log(`[pathway stage4] split-freehold detected on property ${run.propertyId} (${primaries.length} primary titles) — left landlord_id unset for user review`);
+          }
+        }
+      }
+    } catch (stampErr: any) {
+      console.warn("[pathway stage4] landlord stamp failed:", stampErr?.message);
+    }
 
     // Informed email sweep — run AFTER Stage 4 so we can use Clouseau's full
     // investigation (officers, PSCs, UBOs, title numbers, company number) as
@@ -3790,9 +4298,14 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
   if (!run) throw new Error("Run not found");
 
   const sr = (run.stageResults as StageResults) || {};
+  // Prefer the user-agreed plan; fall back to the AI draft so auto-pilot runs
+  // can produce a model end-to-end without manual sign-off. The model is
+  // marked autoPiloted so the UI can prompt the user to agree before locking.
   const agreed = sr.stage6?.agreed;
-  if (!agreed) {
-    throw new Error("Cannot generate Excel model — business plan has not been agreed yet. Agree Stage 6 first.");
+  const plan = agreed || sr.stage6?.draft;
+  const autoPiloted = !agreed && !!plan;
+  if (!plan) {
+    throw new Error("Cannot generate Excel model — Stage 6 hasn't produced a business plan yet.");
   }
 
   await setStageStatus(runId, "stage7", "running");
@@ -3858,8 +4371,8 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
             currentRentSource = "ai";
           }
         }
-        if (!currentRentPA && typeof agreed.targetPurchasePrice === "number" && typeof agreed.targetNIY === "number") {
-          currentRentPA = Math.round(agreed.targetPurchasePrice * agreed.targetNIY);
+        if (!currentRentPA && typeof plan.targetPurchasePrice === "number" && typeof plan.targetNIY === "number") {
+          currentRentPA = Math.round(plan.targetPurchasePrice * plan.targetNIY);
           currentRentSource = "plan";
         }
 
@@ -3871,15 +4384,62 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
         const seed = await eb.createPathwayModelRun({
           runId,
           address: run.address,
-          plan: agreed,
+          plan,
           totalAreaSqFt,
           currentRentPA,
         });
         patch.modelRunId = seed.modelRunId;
         patch.modelVersionId = seed.modelVersionId;
+        if (autoPiloted) (patch as any).autoPiloted = true;
         patch.modelRunName = seed.modelRunName;
         patch.modelVersionLabel = seed.modelVersionLabel;
         patch.workbookUrl = seed.workbookUrl;
+
+        // Push the generated workbook to SharePoint so the user can
+        // open it from the Pathway UI / share with the team — the
+        // local `/api/models/runs/:id/download` URL is BGP-only and
+        // requires auth, but a SharePoint URL is the canonical
+        // shareable location. Best-effort: failures don't block the
+        // model seed; the local URL still works.
+        try {
+          const { storage } = await import("./storage");
+          const { default: fs } = await import("fs");
+          const { default: path } = await import("path");
+          const { uploadFileToSharePoint } = await import("./microsoft");
+          const modelRun = await storage.getExcelModelRun(seed.modelRunId);
+          if (modelRun?.generatedFilePath) {
+            // Resolve through the same path-rebuilding logic the
+            // download endpoint uses, so a stale container path still
+            // finds the file.
+            const RUNS_DIR = path.join(process.cwd(), "uploads", "model-runs");
+            const resolved = path.resolve(path.join(RUNS_DIR, path.basename(modelRun.generatedFilePath)));
+            let buf: Buffer | null = null;
+            if (fs.existsSync(resolved)) {
+              buf = fs.readFileSync(resolved);
+            } else if (fs.existsSync(modelRun.generatedFilePath)) {
+              buf = fs.readFileSync(modelRun.generatedFilePath);
+            }
+            if (buf) {
+              const safeAddress = (run.address || "Property").replace(/[\/\\:*?"<>|]/g, "-");
+              const folderPath = run.sharepointFolderPath
+                ? `${run.sharepointFolderPath}/Models`
+                : `BGP share drive/Investment/${safeAddress}/Models`;
+              const fileName = `${seed.modelRunName.replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
+              const upload = await uploadFileToSharePoint(
+                buf,
+                fileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                folderPath,
+              );
+              patch.workbookSharepointUrl = upload.webUrl;
+              console.log(`[pathway stage7] uploaded workbook to SharePoint: ${upload.webUrl}`);
+            } else {
+              console.warn("[pathway stage7] workbook file not found on disk, skipping SharePoint upload");
+            }
+          }
+        } catch (err: any) {
+          console.warn("[pathway stage7] SharePoint upload skipped:", err?.message);
+        }
       }
     } catch (err: any) {
       console.warn("[pathway stage7] model seed skipped:", err?.message);
@@ -3956,9 +4516,8 @@ async function runStage8(runId: string, req: Request): Promise<void> {
     console.warn("[pathway stage8] brochure prefetch skipped:", err?.message);
   }
 
-  // 8a. Bulk image sweep — SV 4 headings + area offsets, Places photos,
-  // Clearbit logos, brochure-extracted images — filed into
-  // Building / Tenants / Area collections.
+  // 8a. Bulk image sweep — Places photos + brochure-extracted images —
+  // filed into Building / Tenants / Area collections.
   try {
     const { sweepStage8ImagesForRun } = await import("./image-studio");
     const sweep = await sweepStage8ImagesForRun({
@@ -3970,8 +4529,23 @@ async function runStage8(runId: string, req: Request): Promise<void> {
       userId: (run as any).startedBy || undefined,
       brochurePdfs,
     });
-    patch.streetViewImageId = sweep.streetViewImageId;
     patch.collections = sweep.collections;
+    // Auto-fold the freshly-swept images into property_imagery_assets so
+    // they surface in the picker on the Property Intelligence Imagery
+    // tab and the WhyBuyCard without anyone having to click Discover.
+    if (run.propertyId) {
+      try {
+        const { discoverImagery } = await import("./property-imagery");
+        await discoverImagery({
+          propertyId: run.propertyId,
+          pathwayRunId: runId,
+          userId: (run as any).startedBy || undefined,
+          sources: ["image_studio"], // just fold in; no new captures here
+        });
+      } catch (err: any) {
+        console.warn("[pathway stage8] imagery discover post-sweep failed:", err?.message);
+      }
+    }
   } catch (err: any) {
     console.warn("[pathway stage8] image sweep failed:", err?.message);
   }
@@ -4011,25 +4585,30 @@ async function runStage9(runId: string, req: Request): Promise<void> {
   await setStageStatus(runId, "stage9", "running");
 
   try {
-    const wbMod = await import("./why-buy-renderer").catch(() => null as any);
-    if (!wbMod?.renderWhyBuy) {
-      await setStageStatus(runId, "stage9", "failed", {
-        stage9: { documentUrl: undefined },
-      });
-      return;
-    }
-    const result = await wbMod.renderWhyBuy({ runId, req });
+    // Claude designs the deck per the house style
+    // (preferencesPromptFor("why_buy")) + BGP brand cues. There is no
+    // longer a fallback — the legacy pdfkit renderer was deleted so
+    // the output is binary: a properly designed Claude deck, or
+    // Stage 9 fails loudly. If Claude / puppeteer / SharePoint break,
+    // the error surfaces on the stage card and the team fixes the
+    // root cause rather than shipping the old template.
+    const designMod = await import("./why-buy-design");
+    const result = await designMod.renderClaudeWhyBuy({ runId });
+
     await setStageStatus(runId, "stage9", "completed", {
       stage9: {
         documentUrl: result.documentUrl,
         sharepointUrl: result.sharepointUrl,
         pdfPath: result.pdfPath,
+        designVersionId: result.designVersionId,
       },
     });
     await updateRun(runId, { whyBuyDocumentUrl: result.sharepointUrl || result.documentUrl, completedAt: new Date() });
   } catch (err: any) {
-    console.error("[pathway stage9] failed:", err?.message);
-    await setStageStatus(runId, "stage9", "failed");
+    console.error("[pathway stage9] failed:", err?.message, err?.stack?.split("\n")[1]);
+    await setStageStatus(runId, "stage9", "failed", {
+      stage9: { reason: err?.message || "Why Buy PDF generation failed" } as any,
+    });
   }
 }
 
@@ -4262,6 +4841,41 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // AI email organiser — takes the email hit list from stage 1 and returns
+  // a Claude-organised summary: chronological threads, filtered noise, gaps.
+  app.post("/api/pathway/email-sort", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { address, postcode, emailHits, hints } = req.body as {
+        address?: string;
+        postcode?: string;
+        emailHits?: any[];
+        hints?: { tenant?: string; owner?: string; proprietorCompany?: string };
+      };
+
+      // Re-analyse path — when an address is supplied, ask ChatBGP itself
+      // (same agent the chat panel runs) to pull and group the relevant
+      // emails. Falls through to the legacy keyword-list email-sort if
+      // ChatBGP can't be reached.
+      if (address) {
+        const { askChatBgp } = await import("./chatbgp-internal");
+        const question = buildEmailQuestion(address, postcode);
+        const raw = await askChatBgp(question, req);
+        if (raw) {
+          const { markdown, emailHits: refs } = parseEmailChatBgpResponse(raw);
+          return res.json({ summary: markdown, markdown, emailHits: refs });
+        }
+      }
+
+      if (!emailHits?.length) return res.json({ summary: "No emails to analyse.", markdown: "No emails to analyse." });
+      const result = await runEmailSort(address || "", emailHits);
+      // Keep `summary` for legacy callers; new callers should read `markdown`.
+      res.json({ summary: result?.markdown || "No summary returned.", markdown: result?.markdown || "No summary returned." });
+    } catch (err: any) {
+      console.error("[pathway/email-sort]", err?.message);
+      res.status(500).json({ error: err?.message || "AI analysis failed" });
+    }
+  });
+
   // Start a new pathway run — returns existing run for the same address+postcode if one exists (unless force=true)
   app.post("/api/property-pathway/start", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -4285,7 +4899,12 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const resolvedPostcode = postcode || address.match(UK_POSTCODE_RE)?.[1] || "";
       const normalisedPostcode = resolvedPostcode.trim().replace(/\s+/g, "").toUpperCase();
 
-      // Dedupe: look for an existing (non-deleted) run matching address±postcode
+      // Dedupe: only match when BOTH address and postcode line up. Postcode
+      // alone is far too loose — buildings on the same postcode (e.g. multiple
+      // properties sharing SW1Y 4DG) would otherwise share a single pathway
+      // run and CRM link, which has caused bad cross-linkage in the past
+      // (e.g. an 18-22 Haymarket run pointing at a 12-18 Moorgate CRM record
+      // because they once shared a postcode by mistake).
       if (!force) {
         const existing = await db
           .select()
@@ -4295,10 +4914,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
         const match = existing.find((r) => {
           const rAddr = normaliseAddr(r.address || "");
           const rPostcode = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
-          if (normalisedPostcode && rPostcode) {
-            return rPostcode === normalisedPostcode;
-          }
-          return rAddr === normalisedAddr;
+          // Require address match. Postcode is a tie-breaker only.
+          if (rAddr !== normalisedAddr) return false;
+          if (normalisedPostcode && rPostcode && rPostcode !== normalisedPostcode) return false;
+          return true;
         });
         if (match) {
           return res.json({ success: true, run: match, existing: true });
@@ -4395,11 +5014,129 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // Re-point a pathway run at a different (or no) CRM property. Used when
+  // the auto-link picked the wrong property — e.g. dedupe matched on
+  // postcode and connected an 18-22 Haymarket run to a 12-18 Moorgate
+  // CRM record. Pass `propertyId: null` to break the link entirely (the
+  // next Stage 1 run will then auto-link or auto-create cleanly).
+  app.post("/api/property-pathway/:runId/relink-crm", requireAuth, async (req: Request, res: Response) => {
+    const runId = String(req.params.runId);
+    try {
+      const { propertyId } = req.body as { propertyId?: string | null };
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+
+      let nextPropertyId: string | null = null;
+      if (propertyId) {
+        const [target] = await db
+          .select()
+          .from(crmProperties)
+          .where(eq(crmProperties.id, propertyId))
+          .limit(1);
+        if (!target) return res.status(404).json({ error: "Target CRM property not found" });
+        nextPropertyId = target.id;
+      }
+
+      await db
+        .update(propertyPathwayRuns)
+        .set({ propertyId: nextPropertyId })
+        .where(eq(propertyPathwayRuns.id, runId));
+
+      console.log(`[pathway relink-crm] run ${runId}: ${run.propertyId || "<none>"} -> ${nextPropertyId || "<unlinked>"}`);
+      const updated = await getRun(runId);
+      res.json({ success: true, run: updated });
+    } catch (err: any) {
+      console.error("[pathway relink-crm] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to relink CRM" });
+    }
+  });
+
+  // Manual ownership override. Used when the UPRN resolver couldn't verify
+  // the title — the user picks a candidate from the resolver's postcode list
+  // or pastes one from another source. Persists onto stage1.initialOwnership
+  // with manualLock: true so subsequent Stage 1 re-runs don't overwrite it,
+  // and mirrors title + proprietor onto the linked CRM property so the
+  // override is canonical (other places that read CRM ownership see it too).
+  app.patch("/api/property-pathway/:runId/ownership", requireAuth, async (req: Request, res: Response) => {
+    const runId = String(req.params.runId);
+    try {
+      const { titleNumber, proprietorName, proprietorCompanyNumber, clear } = req.body as {
+        titleNumber?: string | null;
+        proprietorName?: string | null;
+        proprietorCompanyNumber?: string | null;
+        clear?: boolean;
+      };
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+
+      const sr: any = run.stageResults || {};
+      const stage1: any = sr.stage1 || {};
+      const existingOwnership: any = stage1.initialOwnership || {};
+      const userId = (req as any).userId as string | undefined;
+
+      let nextOwnership: any;
+      if (clear) {
+        // Clear the manual override — drop manualLock and rewind to whatever
+        // Stage 1 originally found (resolver/AI/CRM). The user should re-run
+        // Stage 1 to get a fresh result; until then we just strip the flag.
+        nextOwnership = {
+          ...existingOwnership,
+          manualLock: false,
+          manualSetBy: undefined,
+          manualSetAt: undefined,
+        };
+        console.log(`[pathway ownership] run ${runId}: manual lock cleared`);
+      } else {
+        const cleanedTitle = (titleNumber || "").trim();
+        if (!cleanedTitle) return res.status(400).json({ error: "titleNumber is required (or pass { clear: true } to remove the override)" });
+        nextOwnership = {
+          ...existingOwnership,
+          titleNumber: cleanedTitle,
+          proprietorName: (proprietorName || "").trim() || existingOwnership.proprietorName,
+          proprietorCompanyNumber: (proprietorCompanyNumber || "").trim() || existingOwnership.proprietorCompanyNumber,
+          titleVerified: true,
+          titleSource: "manual",
+          manualLock: true,
+          manualSetBy: userId || "user",
+          manualSetAt: new Date().toISOString(),
+        };
+        console.log(`[pathway ownership] run ${runId}: manual title=${cleanedTitle} owner=${nextOwnership.proprietorName || "?"}`);
+      }
+
+      // Mirror onto the linked CRM property when one exists, so any other
+      // surface (property detail page, KYC investigation seed, etc.) reads
+      // the user's confirmed values instead of stale autoresolved ones.
+      if (run.propertyId) {
+        const updates: any = {};
+        if (!clear) {
+          if (nextOwnership.titleNumber) updates.titleNumber = nextOwnership.titleNumber;
+          if (nextOwnership.proprietorName) updates.proprietorName = nextOwnership.proprietorName;
+          if (nextOwnership.proprietorCompanyNumber) updates.proprietorCompanyNumber = nextOwnership.proprietorCompanyNumber;
+        }
+        if (Object.keys(updates).length > 0) {
+          updates.updatedAt = new Date();
+          await db.update(crmProperties).set(updates).where(eq(crmProperties.id, run.propertyId));
+        }
+      }
+
+      await db.update(propertyPathwayRuns).set({
+        stageResults: { ...sr, stage1: { ...stage1, initialOwnership: nextOwnership } },
+        updatedAt: new Date(),
+      }).where(eq(propertyPathwayRuns.id, runId));
+
+      const updated = await getRun(runId);
+      res.json({ success: true, ownership: nextOwnership, run: updated });
+    } catch (err: any) {
+      console.error("[pathway ownership] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to update ownership" });
+    }
+  });
+
   // Advance to / run a specific stage
   app.post("/api/property-pathway/:runId/advance", requireAuth, async (req: Request, res: Response) => {
     const runId = String(req.params.runId);
     try {
-      const { stage, async: asyncMode } = req.body as { stage?: number; async?: boolean };
+      const { stage, async: asyncMode, autoChainTo } = req.body as { stage?: number; async?: boolean; autoChainTo?: number };
       const run = await getRun(runId);
       if (!run) return res.status(404).json({ error: "Run not found" });
       const targetStage = stage ?? run.currentStage;
@@ -4423,11 +5160,42 @@ export function registerPropertyPathwayRoutes(app: Express) {
       // Async mode: kick off stage in background, return immediately.
       // Client polls /api/property-pathway/:runId to watch for completion.
       // Avoids Railway's 45s edge timeout for heavy stages.
-      if (asyncMode || targetStage === 1) {
-        runStage(runId, targetStage, req).catch((err: any) => {
-          console.error(`[pathway advance async] stage ${targetStage} error:`, err?.message);
+      //
+      // autoChainTo (optional): after the target stage completes, keep
+      // running stage+1, stage+2 ... until we hit `autoChainTo` exclusive
+      // (so autoChainTo=6 chains through 1,2,3,4,5 then stops). Stops on
+      // the first stage that doesn't end "completed" or "skipped".
+      // The chain runs entirely in the background — client polls currentStage
+      // to watch progress.
+      if (asyncMode || targetStage === 1 || autoChainTo) {
+        (async () => {
+          const chainCap = typeof autoChainTo === "number" ? autoChainTo : (targetStage + 1);
+          let cur = targetStage;
+          while (cur < chainCap) {
+            console.log(`[pathway advance auto-chain] running stage ${cur} (chain to <${chainCap})`);
+            try {
+              await runStage(runId, cur, req);
+            } catch (err: any) {
+              console.error(`[pathway advance auto-chain] stage ${cur} threw:`, err?.message);
+              break;
+            }
+            // Inspect the saved status — only chain forward if the stage
+            // genuinely completed/was skipped. Halt on failure so the user
+            // can intervene rather than blindly running downstream stages on
+            // bad data.
+            const updatedRun = await getRun(runId).catch(() => null);
+            const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
+            if (status !== "completed" && status !== "skipped") {
+              console.warn(`[pathway advance auto-chain] halting at stage ${cur}, status=${status}`);
+              break;
+            }
+            cur++;
+          }
+          console.log(`[pathway advance auto-chain] chain ended at stage ${cur - 1}`);
+        })().catch((err: any) => {
+          console.error(`[pathway advance auto-chain] outer error:`, err?.message);
         });
-        return res.status(202).json({ success: true, async: true, runId, targetStage });
+        return res.status(202).json({ success: true, async: true, runId, targetStage, autoChainTo: typeof autoChainTo === "number" ? autoChainTo : null });
       }
 
       const updated = await runStage(runId, targetStage, req);
@@ -4444,19 +5212,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
-  // Fetch current state of a run
-  app.get("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const run = await getRun(String(req.params.runId));
-      if (!run) return res.status(404).json({ error: "Run not found" });
-      res.json(run);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message });
-    }
-  });
-
   // Latest pathway run for a property id or address — used by property/deal detail
   // pages to show an intelligence summary without re-running paid lookups.
+  // MUST be registered before /:runId — Express matches in order and "latest"
+  // would otherwise be captured as a runId parameter.
   app.get("/api/property-pathway/latest", requireAuth, async (req: Request, res: Response) => {
     try {
       const propertyId = (req.query.propertyId as string) || "";
@@ -4489,14 +5248,29 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
-  // List recent pathway runs
-  app.get("/api/property-pathway", requireAuth, async (_req: Request, res: Response) => {
+  // Fetch current state of a run
+  app.get("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const runs = await db
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      res.json(run);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // List recent pathway runs
+  app.get("/api/property-pathway", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const propertyId = typeof req.query.propertyId === "string" ? req.query.propertyId : undefined;
+      const q = db
         .select()
         .from(propertyPathwayRuns)
         .orderBy(desc(propertyPathwayRuns.updatedAt))
         .limit(50);
+      const runs = propertyId
+        ? await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.propertyId, propertyId)).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(20)
+        : await q;
       res.json(runs);
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
@@ -4544,10 +5318,11 @@ export function registerPropertyPathwayRoutes(app: Express) {
   // to the user's browser reliably.
   app.get("/api/planning-docs/download", requireAuth, async (req: Request, res: Response) => {
     const url = String(req.query.url || "");
+    const referer = String(req.query.referer || "");
     if (!/^https?:\/\//i.test(url)) return res.status(400).send("invalid url");
     try {
       const { downloadPlanningPdf, getPlanningDownloadLastError } = await import("./planning-docs");
-      const buf = await downloadPlanningPdf(url);
+      const buf = await downloadPlanningPdf(url, referer || undefined);
       if (!buf) {
         const detail = getPlanningDownloadLastError();
         console.warn(`[planning-docs/download] all strategies failed for ${url}: ${detail}`);
@@ -4695,58 +5470,6 @@ export function registerPropertyPathwayRoutes(app: Express) {
       res.status(202).json({ success: true, async: true });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
-    }
-  });
-
-  // Generate a Gamma-powered Why Buy (parallel to the pdfkit renderer).
-  // Returns 202 immediately; client polls the run record for stage9.gamma.* fields.
-  app.post("/api/property-pathway/:runId/why-buy-gamma/generate", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const run = await getRun(String(req.params.runId));
-      if (!run) return res.status(404).json({ error: "Run not found" });
-      if (!process.env.GAMMA_API_KEY) return res.status(400).json({ error: "GAMMA_API_KEY not configured" });
-
-      const exportAs = (req.body?.exportAs === "pptx" ? "pptx" : "pdf") as "pdf" | "pptx";
-      const themeName: string | undefined = req.body?.themeName;
-
-      // Mark stage9.gamma as running
-      const sr = (run.stageResults as StageResults) || {};
-      const stage9 = { ...((sr as any).stage9 || {}) };
-      stage9.gamma = { status: "running", startedAt: new Date().toISOString(), exportAs };
-      await updateRun(run.id, { stageResults: { ...sr, stage9 } as any });
-
-      (async () => {
-        try {
-          const { renderWhyBuyGamma } = await import("./why-buy-gamma");
-          const result = await renderWhyBuyGamma({ runId: run.id, exportAs, themeName });
-          const latest = await getRun(run.id);
-          const lsr = (latest?.stageResults as any) || {};
-          const lstage9 = { ...(lsr.stage9 || {}) };
-          lstage9.gamma = {
-            status: "completed",
-            completedAt: new Date().toISOString(),
-            exportAs,
-            documentUrl: result.documentUrl,
-            sharepointUrl: result.sharepointUrl,
-            gammaUrl: result.gammaUrl,
-            generationId: result.generationId,
-            imageStudioId: result.imageStudioId,
-          };
-          await updateRun(run.id, { stageResults: { ...lsr, stage9: lstage9 } });
-        } catch (err: any) {
-          console.error("[why-buy-gamma] error:", err?.message);
-          const latest = await getRun(run.id);
-          const lsr = (latest?.stageResults as any) || {};
-          const lstage9 = { ...(lsr.stage9 || {}) };
-          lstage9.gamma = { status: "failed", error: err?.message || String(err), exportAs };
-          await updateRun(run.id, { stageResults: { ...lsr, stage9: lstage9 } });
-        }
-      })();
-
-      res.status(202).json({ success: true, async: true });
-    } catch (err: any) {
-      console.error("[why-buy-gamma route] error:", err?.message);
-      res.status(500).json({ error: err?.message || "Failed to start Gamma render" });
     }
   });
 

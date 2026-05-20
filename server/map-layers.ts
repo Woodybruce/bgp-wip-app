@@ -73,11 +73,13 @@ export function registerMapLayerRoutes(app: Express) {
       // Known-centre directory URLs we can scrape directly — much more
       // reliable than asking an LLM to find them. Add more as they're
       // verified. Format is { name → [urls to try in order] }.
+      // Note: Cardinal Place + Nova Victoria share the Landsec-run
+      // atvictorialondon.com directory — same URL for both.
       const CENTRE_URLS: Record<string, string[]> = {
-        "Cardinal Place, London": ["https://cardinalplace.co.uk/stores"],
-        "Nova Victoria, London": ["https://atvictorialondon.com/en/plan-your-visit/centre-map"],
-        "Westfield London, Shepherds Bush": ["https://uk.westfield.com/london/info/centre-map", "https://uk.westfield.com/london"],
-        "Westfield Stratford City": ["https://uk.westfield.com/stratfordcity/info/centre-map", "https://uk.westfield.com/stratfordcity"],
+        "Cardinal Place, London": ["https://www.atvictorialondon.com/en/plan-your-visit/centre-map", "https://www.atvictorialondon.com/en/stores"],
+        "Nova Victoria, London": ["https://www.atvictorialondon.com/en/plan-your-visit/centre-map", "https://www.atvictorialondon.com/en/stores"],
+        "Westfield London, Shepherds Bush": ["https://uk.westfield.com/london/info/centre-map", "https://uk.westfield.com/london/stores"],
+        "Westfield Stratford City": ["https://uk.westfield.com/stratfordcity/info/centre-map", "https://uk.westfield.com/stratfordcity/stores"],
         "Brent Cross Shopping Centre": ["https://www.brentcross.co.uk/stores"],
         "Canary Wharf Shopping": ["https://canarywharf.com/shops-restaurants/"],
         "One New Change, London": ["https://www.onenewchange.com/stores"],
@@ -336,7 +338,56 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
       }
       backgroundGeocode(leaseNeedGeocode.slice(0, 50));
 
-      res.json({ deals, comps, leaseEvents });
+      // ── 4. Pathway runs ────────────────────────────────────────────────────
+      // Active investigations — pin every pathway run that has a linked
+      // property (or a known address via cached geocode). Lets the user
+      // see all in-flight work on the map.
+      const pathwayRes = await pool.query(`
+        SELECT
+          r.id, r.address, r.postcode, r.property_id,
+          r.tenant, r.updated_at,
+          r.stage_results,
+          p.latitude  AS p_lat,
+          p.longitude AS p_lng
+        FROM property_pathway_runs r
+        LEFT JOIN crm_properties p ON p.id = r.property_id
+        ORDER BY r.updated_at DESC
+        LIMIT 500
+      `);
+
+      const pathway: any[] = [];
+      const pathwayNeedGeocode: string[] = [];
+      for (const r of pathwayRes.rows) {
+        let lat: number | null = null;
+        let lng: number | null = null;
+        if (r.p_lat && r.p_lng) {
+          lat = parseFloat(r.p_lat); lng = parseFloat(r.p_lng);
+        } else if (r.address) {
+          const geo = await getCachedGeocode(`${r.address} ${r.postcode || ""}, UK`);
+          if (geo) { lat = geo.lat; lng = geo.lng; }
+          else pathwayNeedGeocode.push(`${r.address} ${r.postcode || ""}, UK`);
+        }
+        if (lat !== null && lng !== null && isFinite(lat) && isFinite(lng)) {
+          // Highest-numbered stage with a result is "current stage"
+          let currentStage = 0;
+          const sr = r.stage_results || {};
+          for (let i = 1; i <= 9; i++) if (sr[`stage${i}`]) currentStage = i;
+          pathway.push({
+            id: r.id,
+            type: "pathway",
+            lat, lng,
+            label: r.address,
+            postcode: r.postcode,
+            tenant: r.tenant,
+            currentStage,
+            propertyId: r.property_id,
+            updatedAt: r.updated_at,
+          });
+        }
+      }
+      backgroundGeocode(pathwayNeedGeocode.slice(0, 50));
+
+      res.json({ deals, comps, leaseEvents, pathway });
     } catch (err: any) {
       console.error("[map-layers] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to load map pins" });
@@ -598,21 +649,17 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
 
       if (!postcode) return res.json({ freeholds: [], leaseholds: [], postcode: null });
 
-      // Fetch freeholds + leaseholds for this postcode — cached 30 days
-      const [freeholds, leaseholds] = await Promise.all([
-        cached(`pd-fh:${postcode}`, async () => {
-          const url = `https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        }, 24 * 30),
-        cached(`pd-lh:${postcode}`, async () => {
-          const url = `https://api.propertydata.co.uk/leaseholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        }, 24 * 30),
-      ]);
+      // Fetch freeholds for this postcode — cached 30 days. PropertyData has
+      // no /leaseholds?postcode endpoint (returns X01 "Invalid API endpoint"),
+      // and per-UPRN lookups across a whole bbox would be far too expensive
+      // for a map view. Map shows freehold polygons only.
+      const freeholds = await cached(`pd-fh:${postcode}`, async () => {
+        const url = `https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
+        const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) return null;
+        return await r.json();
+      }, 24 * 30);
+      const leaseholds = null;
 
       const extract = (payload: any): any[] => {
         const rows = payload?.data || payload?.freeholds?.data || payload?.leaseholds?.data || [];

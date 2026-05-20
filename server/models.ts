@@ -9,7 +9,7 @@ import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
-import { getValidMsToken } from "./microsoft";
+import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
@@ -1334,9 +1334,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1426,9 +1424,7 @@ export function setupModelsRoutes(app: Express) {
         const { getValidMsToken } = await import("./microsoft");
         const msToken = await getValidMsToken(req);
         if (msToken) {
-          const SP_HOST = "brucegillinghampollard.sharepoint.com";
-          const SP_SITE = "/sites/BGPsharedrive";
-          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
           if (siteRes.ok) {
             const site = await siteRes.json();
             const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
@@ -1557,9 +1553,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1614,9 +1608,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected — required for embedded Excel" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1835,7 +1827,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
           }
           console.log("[model-design-chat] Using Gemini 3.1 Pro");
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: { maxOutputTokens: 4096, temperature: 0.3, systemInstruction: systemPrompt },
           });
@@ -2655,7 +2647,7 @@ CRITICAL RULES:
           input_schema: {
             type: "object" as const,
             properties: {
-              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Leasing'. Use empty string for root." },
+              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Retail'. Use empty string for root." },
             },
             required: ["folderPath"],
           },
@@ -2673,7 +2665,7 @@ CRITICAL RULES:
         },
         {
           name: "sharepoint_create_folder",
-          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London Leasing, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
+          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London F&B, London Retail, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
           input_schema: {
             type: "object" as const,
             properties: {
@@ -2740,7 +2732,7 @@ CRITICAL RULES:
             type: "object" as const,
             properties: {
               name: { type: "string", description: "Deal name (usually the property address)" },
-              team: { type: "array", items: { type: "string" }, description: "Team(s): London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+              team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
               dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
               status: { type: "string", description: "Status of the deal" },

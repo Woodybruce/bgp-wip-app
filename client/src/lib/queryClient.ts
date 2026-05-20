@@ -82,3 +82,20 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * Invalidate every cache that derives from crm_deals so an edit on the Deals
+ * page, WIP report, deal detail panel, etc. propagates to all the other
+ * boards in one call. Call this anywhere a deal is created, updated, or
+ * deleted instead of hand-rolling individual invalidations.
+ */
+export function invalidateDealCaches(dealId?: string) {
+  queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/portfolio"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+  if (dealId) {
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "timeline"] });
+  }
+}

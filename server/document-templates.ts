@@ -380,7 +380,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
   if (gemini) {
     try {
       const geminiResponse = await gemini.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: { maxOutputTokens: 2048, temperature: 0.2 },
       });
@@ -816,13 +816,20 @@ Return valid JSON only with this structure:
 }
 
 function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  if (!apiKey || !baseUrl) return null;
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: { apiVersion: "", baseUrl },
-  });
+  // Prefer the Replit AI Integrations setup if both vars are present (gives us a
+  // pre-configured proxy host); otherwise fall back to a direct Google Gemini
+  // call using the standard GEMINI_API_KEY (what Railway has set).
+  const integrationsKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  const integrationsBase = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  if (integrationsKey && integrationsBase) {
+    return new GoogleGenAI({
+      apiKey: integrationsKey,
+      httpOptions: { apiVersion: "", baseUrl: integrationsBase },
+    });
+  }
+  const directKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!directKey) return null;
+  return new GoogleGenAI({ apiKey: directKey });
 }
 
 async function analyzeDocumentWithGemini(text: string, fileName: string): Promise<{
@@ -861,7 +868,7 @@ Return ONLY valid JSON with this structure:
 }`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-2.5-flash",
     contents: [
       {
         role: "user",
@@ -915,7 +922,7 @@ Instructions:
 Return ONLY a valid JSON object where keys are field IDs and values are the extracted/generated text.`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-2.5-flash",
     contents: [
       {
         role: "user",
@@ -957,7 +964,7 @@ Do NOT include HTML tags, CSS, or placeholder text like "[BGP LOGO]".`;
   if (gemini) {
     try {
       const geminiResponse = await gemini.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
         config: { maxOutputTokens: 8192, temperature: 0.3 },
       });
@@ -1514,7 +1521,7 @@ Return ONLY valid JSON:
       if (geminiDesign) {
         try {
           const geminiResponse = await geminiDesign.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             config: { maxOutputTokens: 12000, temperature: 0.2 },
           });
@@ -1718,7 +1725,7 @@ Keep your reply concise (1-2 sentences). Always return the COMPLETE design, not 
           }
           console.log("[design-assistant] Using Gemini 3.1 Pro");
           const geminiResponse = await geminiChat.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: { maxOutputTokens: 8000, temperature: 0.3, systemInstruction: systemPrompt },
           });
@@ -2246,33 +2253,35 @@ Generate the complete document now.`;
       const gemini = getGeminiClient();
       if (gemini) {
         try {
-          console.log("[doc-generate] Using Gemini 3.1 Pro");
+          console.log("[doc-generate] Using Gemini 2.5 Flash");
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
             config: { maxOutputTokens: 8192, temperature: 0.3 },
           });
           content = geminiResponse.text || "";
         } catch (geminiErr: any) {
-          console.log("[doc-generate] Gemini 3.1 Pro failed, falling back to GPT-4o:", geminiErr?.message);
+          console.log("[doc-generate] Gemini failed, falling back to Opus:", geminiErr?.message);
         }
       }
       if (!content) {
-        // Use Opus for high-value document types, Sonnet for routine docs
-        const OPUS_DOCUMENT_TYPES = ["Investment Memo", "Pitch Deck", "Pitch Presentation", "Marketing Particulars", "Board Report", "Client Report"];
-        const docModel = OPUS_DOCUMENT_TYPES.some(t => documentType?.toLowerCase().includes(t.toLowerCase()))
-          ? "claude-opus-4-6"
-          : CHATBGP_HELPER_MODEL;
-        console.log(`[doc-generate] Using model: ${docModel} for type: ${documentType || "unspecified"}`);
-        const completion = await callClaude({
-          model: docModel,
+        // Opus fallback. Cap output at 6000 tokens so the response stays under
+        // Railway's 60s proxy timeout even at Opus's slower output speed
+        // (~30 tok/s for 4.7, so 6000 tokens ≈ 3 minutes worst-case → 6000
+        // is still ambitious; we use a hard 50s wall-clock timeout below).
+        console.log(`[doc-generate] Using Opus for type: ${documentType || "unspecified"}`);
+        const opusPromise = callDocOpus({
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
           temperature: 0.3,
-          max_completion_tokens: docModel === "claude-opus-4-6" ? 8192 : 4000,
+          max_completion_tokens: 6000,
         });
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Opus took longer than 50s — try a shorter document or upload fewer source files")), 50_000);
+        });
+        const completion = await Promise.race([opusPromise, timeoutPromise]);
         content = completion.choices[0]?.message?.content || "No content generated.";
       }
 
@@ -2386,7 +2395,7 @@ Be concise, professional, and use British English. All document advice should al
           }
           geminiContents.push({ role: "user", parts: [{ text: question + fileContext }] });
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: {
               maxOutputTokens: 4096,

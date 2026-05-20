@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Loader2, Map, LayoutGrid, ShieldCheck, Landmark, Receipt, FileSearch, Sparkles } from "lucide-react";
+import { Loader2, Map, LayoutGrid, ShieldCheck, Landmark, Receipt, FileSearch, Sparkles, ImageIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,6 +9,9 @@ import { Button } from "@/components/ui/button";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PropertyResolverBar } from "@/components/property-resolver-bar";
+import { PropertyImageryPicker } from "@/components/property-imagery-picker";
+import { PropertyProvider } from "@/lib/property-context";
 
 const EdozoMap = lazy(() => import("@/pages/edozo-map"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
@@ -16,7 +19,7 @@ const LandRegistry = lazy(() => import("@/pages/land-registry"));
 const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 
-type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-rates";
+type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-rates" | "imagery";
 
 const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "pathway", label: "Pathway", icon: Sparkles },
@@ -24,6 +27,7 @@ const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "investigator", label: "Investigator", icon: ShieldCheck },
   { id: "land-registry", label: "Land Registry", icon: Landmark },
   { id: "business-rates", label: "Business Rates", icon: Receipt },
+  { id: "imagery", label: "Imagery", icon: ImageIcon },
 ];
 
 const SEARCH_STATUSES = ["New", "Investigating", "Contacted Owner", "No Interest", "Acquired"] as const;
@@ -279,6 +283,10 @@ export default function PropertyIntelligence() {
   }, []);
 
   const [pendingSearch, setPendingSearch] = useState<{ address: string; postcode: string | null } | null>(null);
+  // Canonical property identity for the whole page — once resolved, every tab
+  // can read this and stop doing its own ad-hoc lookups. v1: state only;
+  // v2 will pass propertyId into the lazy tab components as a prop.
+  const [resolvedProperty, setResolvedProperty] = useState<{ id: string; name: string; postcode: string | null } | null>(null);
 
   const openMap = (search?: any) => {
     if (search?.address) {
@@ -290,9 +298,22 @@ export default function PropertyIntelligence() {
   };
 
   return (
+    <PropertyProvider initial={resolvedProperty}>
     <div className="flex flex-col h-full min-h-screen">
       <Tabs value={tab} onValueChange={handleTabChange} className="flex flex-col h-full">
         <div className="border-b bg-background sticky top-0 z-10">
+          <div className="px-4 lg:px-6 pt-3 pb-2">
+            <PropertyResolverBar
+              current={resolvedProperty}
+              onResolve={(id, prop) => {
+                setResolvedProperty({ id, name: prop.name, postcode: prop.postcode });
+                // Drive every tab — Map via pendingSearch, others via the
+                // PropertyContext (each can call usePropertyContext() to
+                // read the canonical selection and prefill).
+                setPendingSearch({ address: prop.name, postcode: prop.postcode });
+              }}
+            />
+          </div>
           <div className="px-4 lg:px-6 pt-3">
             <TabsList className="bg-transparent p-0 h-auto gap-1">
               {TABS.map((t) => {
@@ -337,9 +358,20 @@ export default function PropertyIntelligence() {
             <TabsContent value="business-rates" className="m-0">
               <VoaRatings />
             </TabsContent>
+            <TabsContent value="imagery" className="m-0 p-4 lg:p-6">
+              {resolvedProperty ? (
+                <PropertyImageryPicker propertyId={resolvedProperty.id} />
+              ) : (
+                <Card><CardContent className="p-12 text-center text-muted-foreground">
+                  <ImageIcon className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                  <p>Resolve a property above to see and curate its imagery — heroes, internals, location plans, floor plans.</p>
+                </CardContent></Card>
+              )}
+            </TabsContent>
           </Suspense>
         </div>
       </Tabs>
     </div>
+    </PropertyProvider>
   );
 }

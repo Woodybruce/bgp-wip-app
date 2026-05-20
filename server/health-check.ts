@@ -69,7 +69,7 @@ async function checkTableCounts(): Promise<CheckResult> {
     const counts: Record<string, number> = {};
     for (const t of tables) {
       const r = await pool.query(`SELECT COUNT(*)::int as c FROM "${t}"`);
-      counts[t] = r.rows[0].c;
+      counts[t] = r.rows[0]?.c ?? 0;
     }
     const detail = Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ");
     return { name: "Table row counts", status: "pass", detail };
@@ -85,22 +85,22 @@ async function checkOrphanedRecords(): Promise<CheckResult> {
     const orphanedDeals = await pool.query(
       `SELECT COUNT(*)::int as c FROM crm_deals d WHERE d.property_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = d.property_id)`
     );
-    if (orphanedDeals.rows[0].c > 0) {
-      warnings.push(`${orphanedDeals.rows[0].c} deals reference missing properties`);
+    if ((orphanedDeals.rows[0]?.c ?? 0) > 0) {
+      warnings.push(`${orphanedDeals.rows[0]?.c ?? 0} deals reference missing properties`);
     }
 
     const orphanedContacts = await pool.query(
       `SELECT COUNT(*)::int as c FROM crm_contacts c WHERE c.company_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM crm_companies co WHERE co.id = c.company_id)`
     );
-    if (orphanedContacts.rows[0].c > 0) {
-      warnings.push(`${orphanedContacts.rows[0].c} contacts reference missing companies`);
+    if ((orphanedContacts.rows[0]?.c ?? 0) > 0) {
+      warnings.push(`${orphanedContacts.rows[0]?.c ?? 0} contacts reference missing companies`);
     }
 
     const orphanedMessages = await pool.query(
       `SELECT COUNT(*)::int as c FROM chat_messages m WHERE NOT EXISTS (SELECT 1 FROM chat_threads t WHERE t.id = m.thread_id)`
     );
-    if (orphanedMessages.rows[0].c > 0) {
-      warnings.push(`${orphanedMessages.rows[0].c} chat messages reference missing threads`);
+    if ((orphanedMessages.rows[0]?.c ?? 0) > 0) {
+      warnings.push(`${orphanedMessages.rows[0]?.c ?? 0} chat messages reference missing threads`);
     }
 
     if (warnings.length > 0) {
@@ -117,7 +117,7 @@ async function checkExpiredSessions(): Promise<CheckResult> {
     const expired = await pool.query(
       `SELECT COUNT(*)::int as c FROM session WHERE expire < NOW()`
     );
-    const count = expired.rows[0].c;
+    const count = expired.rows[0]?.c ?? 0;
     if (count > 1000) {
       return { name: "Expired sessions", status: "warn", detail: `${count} expired sessions (consider cleanup)` };
     }
@@ -132,7 +132,7 @@ async function checkExpiredTokens(): Promise<CheckResult> {
     const expired = await pool.query(
       `SELECT COUNT(*)::int as c FROM auth_tokens WHERE expires_at < NOW()`
     );
-    const count = expired.rows[0].c;
+    const count = expired.rows[0]?.c ?? 0;
     if (count > 500) {
       return { name: "Expired auth tokens", status: "warn", detail: `${count} expired tokens (consider cleanup)` };
     }

@@ -26,6 +26,8 @@ const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
 const SHAREPOINT_SITE_PATH = "/sites/BGP";
 const SHAREPOINT_ROOT_FOLDER = "BGP share drive";
 
+export { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER };
+
 let msalClient: ConfidentialClientApplication | null = null;
 let msalCacheLock: Promise<void> | null = null;
 
@@ -805,7 +807,7 @@ export function setupMicrosoftRoutes(app: Express) {
                d.pricing, d.deal_type, p.name as property_name
         FROM crm_deals d
         LEFT JOIN crm_properties p ON d.property_id = p.id
-        WHERE d.status NOT IN ('Dead', 'Completed', 'Lost')
+        WHERE d.status NOT IN ('WIT', 'COM', 'INV')
         ORDER BY d.created_at DESC
       `);
       const activeDealRows = dealsResult.rows;
@@ -1046,7 +1048,7 @@ export function setupMicrosoftRoutes(app: Express) {
                  p.name as property_name, p.address as property_address
           FROM crm_deals d
           LEFT JOIN crm_properties p ON d.property_id = p.id
-          WHERE d.company_id = ANY($1) AND d.status NOT IN ('Dead', 'Lost')
+          WHERE d.company_id = ANY($1) AND d.status NOT IN ('WIT')
           ORDER BY d.created_at DESC
           LIMIT 10
         `, [allCompanyIds]);
@@ -1319,7 +1321,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
             messages: [
               {
                 role: "system",
-                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London Leasing team this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
+                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London F&B and London Retail teams this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
               },
               {
                 role: "user",
@@ -1843,7 +1845,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  const TEAM_FOLDERS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
+  const TEAM_FOLDERS = ["Investment", "London F&B", "London Retail", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
 
   const TEAM_FOLDER_TREES: Record<string, string[]> = {
     "Investment": [
@@ -1867,7 +1869,28 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       "Correspondence",
       "Client Reporting",
     ],
-    "London Leasing": [
+    "London F&B": [
+      "Marketing",
+      "Marketing/Brochure",
+      "Marketing/Photography",
+      "Marketing/Floorplans",
+      "Marketing/Window Cards",
+      "Marketing/Social Media",
+      "Heads of Terms",
+      "Legal",
+      "Legal/Lease Drafts",
+      "Legal/Licence for Works",
+      "Inspections",
+      "Inspections/Measured Survey",
+      "Inspections/Schedule of Condition",
+      "Tenant Information",
+      "Tenant Information/References",
+      "Tenant Information/Accounts",
+      "Comparable Evidence",
+      "Correspondence",
+      "Rent Review",
+    ],
+    "London Retail": [
       "Marketing",
       "Marketing/Brochure",
       "Marketing/Photography",
@@ -2283,6 +2306,55 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     try {
       const { team, propertyName } = req.params;
       const subPath = req.query.path as string || "";
+      const folderUrl = (req.query.folderUrl as string || "").trim();
+
+      // If the caller has a stored SharePoint folder URL on the CRM property
+      // (crm_properties.sharepoint_folder_url) prefer that — it always
+      // resolves to the real folder regardless of whether the CRM record's
+      // `name` matches the on-disk folder name. Falls back to path
+      // synthesis (BGP share drive/{team}/{propertyName}) if no URL.
+      if (folderUrl) {
+        const encoded = Buffer.from(folderUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const driveItemRes = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!driveItemRes.ok) {
+          if (driveItemRes.status === 404) return res.json({ exists: false, folders: [] });
+          throw new Error(`Failed to resolve folder URL: ${driveItemRes.status}`);
+        }
+        const driveItem = await driveItemRes.json();
+        const driveId = driveItem.parentReference?.driveId;
+        let itemId = driveItem.id;
+        // Walk into subPath if requested.
+        if (subPath && driveId) {
+          const encodedSub = subPath.split("/").map(s => encodeURIComponent(s)).join("/");
+          const subRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}:/${encodedSub}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!subRes.ok) {
+            if (subRes.status === 404) return res.json({ exists: false, folders: [] });
+            throw new Error(`Failed to walk into subPath: ${subRes.status}`);
+          }
+          const subItem = await subRes.json();
+          itemId = subItem.id;
+        }
+        const childrenRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=100`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!childrenRes.ok) throw new Error(`Failed to list children: ${childrenRes.status}`);
+        const childrenData = await childrenRes.json();
+        const items = (childrenData.value || []).map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          isFolder: !!item.folder,
+          childCount: item.folder?.childCount || 0,
+          size: item.size || 0,
+          webUrl: item.webUrl,
+          lastModified: item.lastModifiedDateTime,
+        }));
+        return res.json({ exists: true, folders: items, path: driveItem.name, webUrl: driveItem.webUrl, source: "url" });
+      }
+
       const spInfo = await getSharePointDriveId(token);
       if (!spInfo) {
         return res.status(404).json({ message: "Could not find BGP SharePoint site" });
@@ -2315,7 +2387,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         lastModified: item.lastModifiedDateTime,
       }));
 
-      res.json({ exists: true, folders: items, path: folderPath });
+      res.json({ exists: true, folders: items, path: folderPath, source: "path" });
     } catch (err: any) {
       console.error("Property folders list error:", err);
       res.status(500).json({ message: "Failed to list property folders" });

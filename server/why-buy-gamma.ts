@@ -1,13 +1,12 @@
-// Why Buy — Gamma variant.
+// Why Buy — brief builder.
 //
-// Parallel path to `why-buy-renderer.ts` (pdfkit). Reads the same pathway run
-// state, flattens it into a structured markdown brief, and hands the brief to
-// Gamma's Generate API. Downloads the resulting PDF, saves to the usual
-// image_studio_images table + SharePoint so the UI can link to it next to the
-// existing Why Buy PDF for comparison.
+// Reads a pathway run's stage results and flattens them into a structured
+// markdown brief that the Why Buy generator consumes. Originally paired
+// with a Gamma renderer (removed Nov 2025); now feeds the Claude-designed
+// HTML renderer in server/why-buy-design.ts. The filename is kept for
+// import-path stability — buildBrief is referenced from several call
+// sites — but the Gamma integration is gone.
 
-import fs from "fs";
-import path from "path";
 import { eq, desc } from "drizzle-orm";
 import { db } from "./db";
 import {
@@ -17,9 +16,7 @@ import {
   imageStudioImages,
   crmCompanies,
 } from "@shared/schema";
-import { gammaGenerate, gammaWaitFor, gammaDownloadExport } from "./gamma";
-
-const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy-gamma");
+import { getPlanningSummary, getPlanningSummaryForLocation, planningSummaryToMarkdown } from "./planning-summary";
 
 function fmtMoney(n?: number | null): string {
   if (n === undefined || n === null || !Number.isFinite(Number(n))) return "—";
@@ -41,7 +38,7 @@ function kv(label: string, value: string | number | null | undefined): string | 
   return `- **${label}:** ${value}`;
 }
 
-async function buildBrief(runId: string): Promise<{ brief: string; title: string; address: string }> {
+export async function buildBrief(runId: string): Promise<{ brief: string; title: string; address: string }> {
   const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
   if (!run) throw new Error("Pathway run not found");
 
@@ -166,10 +163,10 @@ async function buildBrief(runId: string): Promise<{ brief: string; title: string
     if (tenant) {
       const tKv: string[] = [];
       const tkName = kv("Name", tenant.name); if (tkName) tKv.push(tkName);
-      const tkSector = kv("Sector", tenant.sector || tenant.subSector); if (tkSector) tKv.push(tkSector);
-      const tkCov = kv("Covenant / rating", tenant.covenantStrength || tenant.rating); if (tkCov) tKv.push(tkCov);
-      const tkSites = kv("UK sites", tenant.ukStoreCount); if (tkSites) tKv.push(tkSites);
-      const tkRev = kv("Turnover", fmtMoney(tenant.lastTurnover)); if (tkRev) tKv.push(tkRev);
+      const tkSector = kv("Sector", tenant.industry); if (tkSector) tKv.push(tkSector);
+      const tkCov = kv("Covenant / AML risk", tenant.amlRiskLevel); if (tkCov) tKv.push(tkCov);
+      const tkSites = kv("UK sites", tenant.storeCount); if (tkSites) tKv.push(tkSites);
+      const tkRev = kv("Turnover", fmtMoney(tenant.annualRevenue)); if (tkRev) tKv.push(tkRev);
       if (tKv.length) lines.push(...tKv);
       if (tenant.description) lines.push("", tenant.description);
     } else if (mainTenants.length) {
@@ -219,6 +216,28 @@ async function buildBrief(runId: string): Promise<{ brief: string; title: string
     lines.push("");
   }
 
+  // Planning context — sourced live from planning.data.gov.uk + PlanIt so the
+  // brief cites current designations and recent application history regardless
+  // of whether stage 4 of the pathway captured them.
+  try {
+    const planning = run.propertyId
+      ? await getPlanningSummary(run.propertyId)
+      : await getPlanningSummaryForLocation({
+          cacheKey: `pathway:${run.id}`,
+          postcode,
+          lat: (run as any).lat ?? null,
+          lng: (run as any).lng ?? null,
+          propertyName: address,
+        });
+    const planningMd = planningSummaryToMarkdown(planning);
+    if (planningMd && planningMd.split("\n").length > 1) {
+      lines.push(planningMd);
+      lines.push("");
+    }
+  } catch (e: any) {
+    console.warn(`[why-buy-gamma] planning context failed: ${e?.message}`);
+  }
+
   // Next Steps
   lines.push(`## Next Steps`);
   const nextSteps: string[] = Array.isArray(plan.nextSteps) && plan.nextSteps.length
@@ -237,93 +256,8 @@ async function buildBrief(runId: string): Promise<{ brief: string; title: string
   return { brief, title, address };
 }
 
-export interface WhyBuyGammaResult {
-  documentUrl: string;
-  sharepointUrl?: string;
-  pdfPath: string;
-  imageStudioId?: string;
-  gammaUrl?: string;
-  generationId: string;
-}
-
-export async function renderWhyBuyGamma(args: {
-  runId: string;
-  themeName?: string;
-  exportAs?: "pdf" | "pptx";
-}): Promise<WhyBuyGammaResult> {
-  if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
-
-  const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, args.runId)).limit(1);
-  if (!run) throw new Error("Pathway run not found");
-
-  const { brief, title, address } = await buildBrief(args.runId);
-
-  const exportAs = args.exportAs || "pdf";
-  const { generationId } = await gammaGenerate({
-    inputText: brief,
-    format: "document",
-    exportAs,
-    textMode: "preserve",
-    themeName: args.themeName || process.env.GAMMA_DEFAULT_THEME || undefined,
-    additionalInstructions:
-      "BGP investment memo. Institutional / private-equity aesthetic. Serif headlines, " +
-      "clean grid, muted palette (slate, warm grey, white). No emoji. No hype. " +
-      "Confidential investment committee material.",
-    cardOptions: { dimensions: "a4" },
-    imageOptions: { source: "aiGenerated" },
-  });
-
-  const done = await gammaWaitFor(generationId, { timeoutMs: 6 * 60 * 1000 });
-  if (!done.exportUrl) throw new Error(`Gamma returned no exportUrl (gammaUrl: ${done.gammaUrl || "n/a"})`);
-
-  const buf = await gammaDownloadExport(done.exportUrl);
-  const ext = exportAs === "pptx" ? "pptx" : "pdf";
-  const mime = exportAs === "pptx"
-    ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    : "application/pdf";
-  const fileName = `why-buy-gamma-${run.id}-${Date.now()}.${ext}`;
-  const outPath = path.join(OUT_DIR, fileName);
-  fs.writeFileSync(outPath, buf);
-
-  // Optional SharePoint upload
-  let sharepointUrl: string | undefined;
-  try {
-    const { uploadFileToSharePoint } = await import("./microsoft");
-    const folderPath = run.sharepointFolderPath
-      ? `${run.sharepointFolderPath}/Why Buy Deck`
-      : `BGP share drive/Investment/${address.replace(/[\/\\:*?"<>|]/g, "-")}/Why Buy Deck`;
-    const upload = await uploadFileToSharePoint(buf, fileName, mime, folderPath);
-    sharepointUrl = upload.webUrl;
-  } catch (err: any) {
-    console.warn("[why-buy-gamma] SharePoint upload failed:", err?.message);
-  }
-
-  // Log into image_studio_images so the asset is findable in the library
-  let imageStudioId: string | undefined;
-  try {
-    const [row] = await db.insert(imageStudioImages).values({
-      fileName: title,
-      category: "Investment Memo",
-      tags: ["why-buy", "gamma", exportAs, run.id],
-      description: `Gamma-generated Why Buy ${exportAs.toUpperCase()} for ${address}. Source: pathway ${run.id}.`,
-      source: "why-buy-gamma",
-      propertyId: (run as any).propertyId || undefined,
-      address,
-      mimeType: mime,
-      fileSize: buf.length,
-      localPath: outPath,
-    } as any).returning();
-    imageStudioId = row?.id;
-  } catch (err: any) {
-    console.warn("[why-buy-gamma] image_studio insert failed:", err?.message);
-  }
-
-  return {
-    documentUrl: `/uploads/why-buy-gamma/${fileName}`,
-    sharepointUrl,
-    pdfPath: outPath,
-    imageStudioId,
-    gammaUrl: done.gammaUrl,
-    generationId,
-  };
-}
+// File kept for import-path stability — `buildBrief` above is the sole
+// export, and is consumed by server/why-buy-design.ts (the Claude
+// renderer). Both the Gamma export path and the pdfkit template
+// renderer have been deleted; the brief now flows only to the
+// Claude design pipeline.

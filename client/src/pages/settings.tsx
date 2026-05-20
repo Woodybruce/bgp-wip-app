@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,11 +28,12 @@ interface TeamMember {
   isActive?: boolean;
 }
 
-const TEAM_GROUPS = ["Investment", "London Leasing", "Lease Advisory", "Office / Corporate", "National Leasing", "Tenant Rep", "Development", "Landsec"] as const;
+const TEAM_GROUPS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"] as const;
 
 const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Investment: ["Investment"],
-  "London Leasing": ["London Leasing"],
+  "London F&B": ["London F&B"],
+  "London Retail": ["London Retail"],
   "Lease Advisory": ["Lease Advisory"],
   "Office / Corporate": ["Office / Corporate"],
   "National Leasing": ["National Leasing"],
@@ -42,7 +44,8 @@ const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
 
 const teamColors: Record<string, string> = {
   Investment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "London Leasing": "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
+  "London F&B": "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
+  "London Retail": "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
   "Lease Advisory": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
   "Office / Corporate": "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
   "National Leasing": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
@@ -53,7 +56,8 @@ const teamColors: Record<string, string> = {
 
 const teamDotColors: Record<string, string> = {
   Investment: "bg-blue-500",
-  "London Leasing": "bg-sky-500",
+  "London F&B": "bg-rose-500",
+  "London Retail": "bg-teal-500",
   "Lease Advisory": "bg-indigo-500",
   "Office / Corporate": "bg-slate-500",
   "National Leasing": "bg-emerald-500",
@@ -73,7 +77,7 @@ function getTeamGroup(memberTeam: string | null): string | null {
 export default function SettingsPage() {
   const { toast } = useToast();
   const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({
-    Investment: true, "London Leasing": true, "Lease Advisory": true,
+    Investment: true, "Lease Advisory": true,
     "Office / Corporate": true, "National Leasing": true, "Tenant Rep": true, Development: true,
   });
 
@@ -979,6 +983,11 @@ function DataHealthSection() {
   const { toast } = useToast();
   const [scanResult, setScanResult] = useState<DupeScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [renamingTeams, setRenamingTeams] = useState(false);
+  const [syncingLeasingSchedule, setSyncingLeasingSchedule] = useState(false);
+  const [numberingUnits, setNumberingUnits] = useState(false);
+  const [splitTeamOpen, setSplitTeamOpen] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -990,6 +999,59 @@ function DataHealthSection() {
       toast({ title: "Scan failed", description: err.message, variant: "destructive" });
     } finally {
       setScanning(false);
+    }
+  };
+
+  const runBackfill = async () => {
+    setBackfilling(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/backfill-tracker-deals");
+      const data = await res.json();
+      toast({ title: "Backfill complete", description: data.message || `${data.created || 0} deals created` });
+    } catch (err: any) {
+      toast({ title: "Backfill failed", description: err.message, variant: "destructive" });
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
+  const runRenameTeams = async () => {
+    setRenamingTeams(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/rename-teams");
+      const data = await res.json();
+      toast({ title: "Teams renamed", description: data.message });
+    } catch (err: any) {
+      toast({ title: "Rename failed", description: err.message, variant: "destructive" });
+    } finally {
+      setRenamingTeams(false);
+    }
+  };
+
+  const runSyncLeasingSchedule = async () => {
+    setSyncingLeasingSchedule(true);
+    try {
+      const res = await apiRequest("POST", "/api/available-units/backfill-leasing-schedule");
+      const data = await res.json();
+      toast({ title: "Leasing schedule synced", description: `${data.created || 0} unit${data.created === 1 ? "" : "s"} added to property leasing schedules` });
+    } catch (err: any) {
+      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSyncingLeasingSchedule(false);
+    }
+  };
+
+  const runNumberUnits = async () => {
+    if (!window.confirm("Rename every property's units to 'Unit 1', 'Unit 2'… in creation order? Useful for test data — destroys existing unit names.")) return;
+    setNumberingUnits(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/number-test-units");
+      const data = await res.json();
+      toast({ title: "Units renumbered", description: `${data.renamed || 0} unit${data.renamed === 1 ? "" : "s"} renamed` });
+    } catch (err: any) {
+      toast({ title: "Renumber failed", description: err.message, variant: "destructive" });
+    } finally {
+      setNumberingUnits(false);
     }
   };
 
@@ -1035,10 +1097,31 @@ function DataHealthSection() {
             <ShieldCheck className="w-4 h-4" />
             Data Health
           </CardTitle>
-          <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
-            {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-            {scanning ? "Scanning..." : "Scan for Duplicates"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={runBackfill} disabled={backfilling} data-testid="button-backfill-tracker-deals">
+              {backfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {backfilling ? "Backfilling..." : "Backfill Tracker Deals"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runRenameTeams} disabled={renamingTeams}>
+              {renamingTeams ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {renamingTeams ? "Renaming..." : "Rename Legacy Teams"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runSyncLeasingSchedule} disabled={syncingLeasingSchedule} data-testid="button-sync-leasing-schedule">
+              {syncingLeasingSchedule ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {syncingLeasingSchedule ? "Syncing..." : "Sync Tracker → Leasing Schedule"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runNumberUnits} disabled={numberingUnits} data-testid="button-number-units">
+              {numberingUnits ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {numberingUnits ? "Renaming..." : "Renumber Units (test)"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setSplitTeamOpen(true)} data-testid="button-split-teams">
+              <ShieldCheck className="w-4 h-4 mr-2" />Sort Teams
+            </Button>
+            <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
+              {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {scanning ? "Scanning..." : "Scan for Duplicates"}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -1154,7 +1237,143 @@ function DataHealthSection() {
           </div>
         )}
       </CardContent>
+      <SortTeamsDialog open={splitTeamOpen} onClose={() => setSplitTeamOpen(false)} />
     </Card>
+  );
+}
+
+// ── Sort Teams dialog ────────────────────────────────────────────────────────
+function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const TEAMS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate"];
+  const [filterTeam, setFilterTeam] = useState<string>("__all__"); // default: show everyone
+  const [pending, setPending] = useState<Record<string, string>>({});
+
+  const { data: allUsersData = [], isLoading, refetch } = useQuery<Array<{ id: string; name: string; email: string; team: string | null; title: string | null }>>({
+    queryKey: ["/api/admin/users-by-team", "__all__"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/users-by-team?team=", { credentials: "include" });
+      if (!r.ok) return [];
+      // Endpoint returns unassigned when team is empty; fetch everyone in a second pass.
+      const unassigned = await r.json();
+      const teams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec", "London Leasing"];
+      const perTeam = await Promise.all(teams.map(t =>
+        fetch(`/api/admin/users-by-team?team=${encodeURIComponent(t)}`, { credentials: "include" }).then(r2 => r2.ok ? r2.json() : [])
+      ));
+      const seen = new Set<string>();
+      const all: any[] = [];
+      for (const list of [unassigned, ...perTeam]) {
+        for (const u of list) {
+          if (seen.has(u.id)) continue;
+          seen.add(u.id);
+          all.push(u);
+        }
+      }
+      return all.sort((a, b) => (a.team || "").localeCompare(b.team || "") || a.name.localeCompare(b.name));
+    },
+    enabled: open,
+  });
+  const users = filterTeam === "__all__"
+    ? allUsersData
+    : filterTeam === "__unassigned__"
+      ? allUsersData.filter(u => !u.team)
+      : allUsersData.filter(u => u.team === filterTeam);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const assignments = Object.entries(pending).map(([userId, team]) => ({ userId, team }));
+      if (assignments.length === 0) return { updated: 0 };
+      const r = await apiRequest("POST", "/api/admin/users-bulk-reassign-team", { assignments });
+      return r.json();
+    },
+    onSuccess: (d: any) => {
+      toast({ title: "Teams updated", description: `${d.updated || 0} reassigned` });
+      setPending({});
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/team-summary"] });
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const teamCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const u of allUsersData) {
+      const k = u.team || "__unassigned__";
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [allUsersData]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Sort teams</DialogTitle>
+          <DialogDescription>
+            Reassign people to the canonical team list. Useful after a rename / merge — e.g. splitting "London Leasing" into London Retail and London F&B.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap gap-1 mb-3">
+          <button
+            onClick={() => setFilterTeam("__all__")}
+            className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === "__all__"
+              ? "bg-amber-100 border-amber-300 text-amber-900"
+              : "bg-card hover:bg-muted/40"
+            }`}
+          >
+            All <span className="text-muted-foreground">({allUsersData.length})</span>
+          </button>
+          {[...teamCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([t, n]) => (
+            <button
+              key={t}
+              onClick={() => setFilterTeam(t)}
+              className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === t
+                ? "bg-amber-100 border-amber-300 text-amber-900"
+                : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              {t === "__unassigned__" ? "Unassigned" : t} <span className="text-muted-foreground">({n})</span>
+            </button>
+          ))}
+        </div>
+
+        {isLoading ? (
+          <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+        ) : users.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No users in this bucket.</p>
+        ) : (
+          <div className="space-y-2">
+            {users.map(u => (
+              <div key={u.id} className="flex items-center gap-2 p-2 border rounded">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{u.name}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">{u.title || u.email || ""}</div>
+                  <div className="text-[10px] text-muted-foreground">Current: {u.team || "(none)"}</div>
+                </div>
+                <select
+                  className="text-xs border rounded p-1 bg-card"
+                  value={pending[u.id] ?? u.team ?? ""}
+                  onChange={e => setPending(p => ({ ...p, [u.id]: e.target.value }))}
+                >
+                  <option value="">— None —</option>
+                  {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || Object.keys(pending).length === 0}>
+            {save.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+            Save {Object.keys(pending).length > 0 ? `(${Object.keys(pending).length})` : ""}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

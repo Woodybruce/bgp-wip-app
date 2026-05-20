@@ -49,7 +49,7 @@ export default function DealsHub() {
   }, [location, isProfile]);
 
   const allTabs = useMemo(() => [
-    { key: "wip" as const, label: "WIP", icon: BarChart3 },
+    { key: "wip" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
     { key: "wip-report" as const, label: "WIP Report", icon: FileText },

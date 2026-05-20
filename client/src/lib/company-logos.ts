@@ -496,11 +496,9 @@ export function guessDomain(name: string | null | undefined): string | null {
   for (const [key, domain] of Object.entries(KNOWN_DOMAINS)) {
     if (lower.includes(key) || key.includes(lower)) return domain;
   }
-  const slug = lower
-    .replace(/\b(ltd|limited|plc|llp|inc|corp|group|holdings|uk|properties|property|estates|estate|real estate|international|partners|&|and|the)\b/gi, "")
-    .replace(/[^a-z0-9]/g, "")
-    .trim();
-  if (slug.length >= 3) return `${slug}.com`;
+  // Don't fabricate a `{slug}.com` — it produced a flood of 404s on the
+  // Google favicon endpoint for brands we genuinely have no domain for.
+  // Caller falls back to initials when this returns null.
   return null;
 }
 
@@ -516,14 +514,58 @@ export function extractDomain(raw: string | null | undefined): string | null {
   }
 }
 
+// Local Image Studio "Brand Library" lookup. Returns a URL that proxies the
+// saved logo for a given brand name (or null if name is empty). The endpoint
+// 404s if no match — components that use this in an <img onError> cascade will
+// then fall through to the next source (Clearbit/initial tile).
+//
+// Clearbit's logo.clearbit.com was deprecated by HubSpot on 18 Mar 2025 and
+// shuts down completely Dec 2025. We have 768 logos saved locally already
+// (category='Brands' in image_studio_images) so always try them first.
+// Session-cached flag — true once we've confirmed there's at least one row
+// in the brand library. Stays false while the library is empty so we don't
+// spam /api/brand-logo with 404s per thumbnail.
+let _libraryHasLogos: boolean | null = null;
+let _libraryStatsPromise: Promise<boolean> | null = null;
+function probeBrandLibrary(): Promise<boolean> {
+  if (_libraryHasLogos !== null) return Promise.resolve(_libraryHasLogos);
+  if (_libraryStatsPromise) return _libraryStatsPromise;
+  _libraryStatsPromise = fetch("/api/brand-logo-stats", { credentials: "include" })
+    .then(r => r.ok ? r.json() : { hasLogos: false })
+    .then((s: any) => { _libraryHasLogos = !!s?.hasLogos; return _libraryHasLogos; })
+    .catch(() => { _libraryHasLogos = false; return false; });
+  return _libraryStatsPromise;
+}
+// Fire the probe immediately so the first call to localBrandLogoUrl below
+// already knows the answer. Until the probe resolves, treat library as
+// empty so we don't 404-spam on the first paint.
+probeBrandLibrary();
+
+// Cache-buster bumped whenever we change /api/brand-logo behaviour, so
+// browsers don't keep serving stale 404 responses (the old endpoint cached
+// misses for 24h). Increment when the route logic changes.
+const LOGO_CACHE_BUSTER = "v=3";
+
+export function localBrandLogoUrl(name: string | null | undefined, domain?: string | null | undefined): string | null {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return null;
+  const d = extractDomain(domain ?? null);
+  const qs = d
+    ? `?domain=${encodeURIComponent(d)}&${LOGO_CACHE_BUSTER}`
+    : `?${LOGO_CACHE_BUSTER}`;
+  return `/api/brand-logo/${encodeURIComponent(trimmed)}${qs}`;
+}
+
 export function getCompanyLogoUrl(
   domain: string | null | undefined,
   name: string | null | undefined,
-  size: number = 40
+  _size: number = 40
 ): string | null {
-  const d = extractDomain(domain);
-  if (d) return `https://www.google.com/s2/favicons?domain=${d}&sz=${Math.min(size * 2, 128)}`;
-  const guessed = guessDomain(name);
-  if (guessed) return `https://www.google.com/s2/favicons?domain=${guessed}&sz=${Math.min(size * 2, 128)}`;
+  const local = localBrandLogoUrl(name, domain);
+  if (local) return local;
+  const d = extractDomain(domain) ?? guessDomain(name);
+  if (d && (name || "").trim()) {
+    return `/api/brand-logo/${encodeURIComponent((name || "").trim())}?domain=${encodeURIComponent(d)}&${LOGO_CACHE_BUSTER}`;
+  }
   return null;
 }

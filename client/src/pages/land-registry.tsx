@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { usePropertyContext } from "@/lib/property-context";
 import { useLocation, Link } from "wouter";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -242,7 +243,15 @@ function statusColor(status: string | null): string {
 
 function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, label: string) => void }) {
   const [, navigate] = useLocation();
-  const [query, setQuery] = useState("");
+  const ctxProperty = usePropertyContext();
+  const [query, setQuery] = useState(ctxProperty?.name ? `${ctxProperty.name}${ctxProperty.postcode ? ", " + ctxProperty.postcode : ""}` : "");
+  // Refresh when the parent Property Intelligence resolves a different property
+  useEffect(() => {
+    if (ctxProperty?.name) {
+      const v = `${ctxProperty.name}${ctxProperty.postcode ? ", " + ctxProperty.postcode : ""}`;
+      setQuery(v);
+    }
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [results, setResults] = useState<AddressResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [selectedAddress, setSelectedAddress] = useState<AddressResult | null>(null);
@@ -263,6 +272,9 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
   const [aiSummary, setAiSummary] = useState<PropertySummaryData | null>(null);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState(false);
+  const [noTitleData, setNoTitleData] = useState(false);
+  const [pdErrors, setPdErrors] = useState<Array<{ endpoint: string; status?: number; body?: string }>>([]);
+  const [manualTitleInput, setManualTitleInput] = useState("");
   const [showAllTitles, setShowAllTitles] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("overview");
   const requestIdRef = useRef(0);
@@ -469,6 +481,9 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setIntelligence({});
     setAiSummary(null);
     setAiSummaryError(false);
+    setNoTitleData(false);
+    setPdErrors([]);
+    setManualTitleInput("");
     setShowAllTitles(false);
     setActiveSection("overview");
 
@@ -488,6 +503,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
       try {
         // UPRN-accurate title resolution: Google address → PropertyData
         // address-match-uprn → uprn-title. Wider postcode data follows.
+        // Tagging source as 'direct' so the LR board distinguishes manual
+        // searches from Clouseau/Pathway-driven ones.
         const resolvePromise = fetch("/api/land-registry/resolve", {
           method: "POST",
           credentials: "include",
@@ -497,6 +514,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             postcode: cleanPc,
             lat: addr.lat,
             lng: addr.lng,
+            source: "direct",
           }),
         }).then(r => r.ok ? r.json() : null).catch(() => null);
 
@@ -534,12 +552,16 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
           rows.map(r => ({ ...r, _match: matchSource }));
 
         if (matchedFh.length > 0 || matchedLh.length > 0) {
-          fetchedFreeholds = [...tag(matchedFh, "uprn"), ...tag(contextFh, "postcode")];
-          fetchedLeaseholds = [...tag(matchedLh, "uprn"), ...tag(contextLh, "postcode")];
+          // UPRN-confirmed titles only — no postcode dilution. Every other
+          // freehold in this postcode is unrelated to this building.
+          fetchedFreeholds = tag(matchedFh, "uprn");
+          fetchedLeaseholds = tag(matchedLh, "uprn");
         } else if (fallbackFh.length > 0 || fallbackLh.length > 0) {
-          fetchedFreeholds = [...tag(fallbackFh, "street"), ...tag(contextFh, "postcode")];
-          fetchedLeaseholds = [...tag(fallbackLh, "street"), ...tag(contextLh, "postcode")];
+          // Street-number fallback when UPRN match failed — show only those.
+          fetchedFreeholds = tag(fallbackFh, "street");
+          fetchedLeaseholds = tag(fallbackLh, "street");
         } else {
+          // Last resort: postcode-wide. Clearly labelled, but it's all we have.
           fetchedFreeholds = tag(contextFh, "postcode");
           fetchedLeaseholds = tag(contextLh, "postcode");
         }
@@ -572,7 +594,25 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
         }
         setIntelligence(intel);
 
-        fetchAiSummary(thisReqId, addr.label, pc, fetchedFreeholds, fetchedLeaseholds, intel);
+        // The /api/land-registry/resolve call already persisted this search
+        // server-side, so re-pull the saved-searches list now to surface it
+        // on the board immediately. Previously we only refreshed the list
+        // after fetchAiSummary succeeded, which meant searches went missing
+        // from the board when the AI summary failed or was skipped.
+        fetch("/api/land-registry/searches", { credentials: "include", headers: getAuthHeaders() })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (Array.isArray(data)) setSavedSearches(data); })
+          .catch(() => {});
+
+        if (fetchedFreeholds.length > 0 || fetchedLeaseholds.length > 0) {
+          setNoTitleData(false);
+          setPdErrors([]);
+          fetchAiSummary(thisReqId, addr.label, pc, fetchedFreeholds, fetchedLeaseholds, intel);
+        } else {
+          setNoTitleData(true);
+          setPdErrors(resolvedPayload?.pdErrors || []);
+          setAiSummaryLoading(false);
+        }
       } catch {} finally {
         setFreeholdsLoading(false);
         setIntelLoading(false);
@@ -626,6 +666,9 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setDocResults({});
     setIntelligence({});
     setAiSummary(null);
+    setNoTitleData(false);
+    setPdErrors([]);
+    setManualTitleInput("");
     setShowAllTitles(false);
   };
 
@@ -1068,7 +1111,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             </Card>
           )}
 
-          {aiSummaryError && !aiSummaryLoading && !aiSummary && (
+          {aiSummaryError && !aiSummaryLoading && !aiSummary && !noTitleData && (
             <Card className="border-red-200 dark:border-red-800">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
@@ -1090,6 +1133,66 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                     Retry
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {noTitleData && !freeholdsLoading && (
+            <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">No Land Registry title data found via PropertyData</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Common for large commercial and mixed-use properties in Central London. If you know the title number (e.g. from a previous search or a solicitor), enter it below to order directly from HMLR.
+                    </p>
+                  </div>
+                </div>
+                {pdErrors.length > 0 && (
+                  <div className="space-y-0.5">
+                    {pdErrors.slice(0, 3).map((e, i) => (
+                      <p key={i} className="text-[10px] font-mono text-red-600 dark:text-red-400 truncate">
+                        {e.endpoint}{e.status ? ` HTTP ${e.status}` : ""} — {e.body || "unknown error"}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Input
+                    className="h-8 text-xs font-mono uppercase"
+                    placeholder="Title number e.g. LN59572"
+                    value={manualTitleInput}
+                    onChange={e => setManualTitleInput(e.target.value.toUpperCase())}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && manualTitleInput.trim()) {
+                        purchaseDocuments(manualTitleInput.trim(), "both");
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs shrink-0"
+                    disabled={!manualTitleInput.trim() || docPurchasing[manualTitleInput.trim() + "both"]}
+                    onClick={() => purchaseDocuments(manualTitleInput.trim(), "both")}
+                  >
+                    {docPurchasing[manualTitleInput.trim() + "both"] ? <Loader2 className="w-3 h-3 animate-spin" /> : "Order Title"}
+                  </Button>
+                </div>
+                {(() => {
+                  const tn = manualTitleInput.trim();
+                  const result = docResults[tn + "both"];
+                  const url = result?.data?.document_url || result?.document_url;
+                  if (!url) return null;
+                  return (
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                      <Button variant="outline" size="sm" className="h-8 text-xs gap-1 text-emerald-600">
+                        <Download className="w-3 h-3" />
+                        Download Register &amp; Plan
+                      </Button>
+                    </a>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}
@@ -1578,7 +1681,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                     </div>
                   )}
 
-                  {freeholds && freeholds.length === 0 && (!leaseholds || leaseholds.length === 0) && (
+                  {freeholds && freeholds.length === 0 && (!leaseholds || leaseholds.length === 0) && !noTitleData && (
                     <Card>
                       <CardContent className="p-6 text-center text-sm text-muted-foreground">
                         <Landmark className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -2046,6 +2149,7 @@ export default function LandRegistry() {
     <PageLayout
       title="Land Registry & Property Intelligence"
       icon={Landmark}
+      fullHeight
       subtitle="Address search, free market intelligence, title documents, yields, rents, planning & KYC investigation"
       tabs={[
         { label: "Property Search", value: "property-search" },

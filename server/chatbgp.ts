@@ -10,14 +10,49 @@ import path from "node:path";
 import fs from "node:fs";
 import multer from "multer";
 import mammoth from "mammoth";
-import { getValidMsToken } from "./microsoft";
-import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
+import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
+import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
-const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
+const CHATBGP_MODEL = "claude-opus-4-7";        // Main chat: Opus 4.7 (latest)
+const CHATBGP_OPUS_MODEL = "claude-opus-4-7";   // Same
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
+
+// Resolve a list of chat-media filenames into Graph fileAttachment payloads
+// (base64 + contentType + filename). Each filename is expected to already
+// exist in chat-media storage — anything we can't find is dropped with a
+// warning rather than failing the whole email send. Output is consumed by
+// sendFromSharedMailbox / replyToSharedMailboxMessage which forward it
+// to /me/sendMail via Graph.
+async function resolveChatMediaAttachments(
+  filenames: unknown,
+): Promise<Array<{ name: string; contentType: string; contentBytes: string }>> {
+  if (!Array.isArray(filenames) || filenames.length === 0) return [];
+  const { getFile } = await import("./file-storage");
+  const out: Array<{ name: string; contentType: string; contentBytes: string }> = [];
+  for (const raw of filenames) {
+    if (typeof raw !== "string" || !raw) continue;
+    // Accept either a bare filename or a full /api/chat-media/<filename> URL.
+    const filename = raw.split("/").pop()!.split("?")[0];
+    if (!filename || filename.includes("..") || filename.includes("/")) continue;
+    try {
+      const file = await getFile(`chat-media/${filename}`);
+      if (!file) {
+        console.warn(`[send_email] chat-media attachment not found: ${filename}`);
+        continue;
+      }
+      out.push({
+        name: file.originalName || filename,
+        contentType: file.contentType || "application/octet-stream",
+        contentBytes: file.data.toString("base64"),
+      });
+    } catch (e: any) {
+      console.warn(`[send_email] failed to load attachment ${filename}:`, e?.message);
+    }
+  }
+  return out;
+}
 
 function sanitiseForPdf(text: string): string {
   const emojiMap: Record<string, string> = {
@@ -80,248 +115,6 @@ function sanitiseForPdf(text: string): string {
   return result;
 }
 
-async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data: any; action?: any }> {
-  const PDFDocument = (await import("pdfkit")).default;
-  const crypto = (await import("crypto")).default;
-  const { saveFile } = await import("./file-storage");
-
-  const isLandscape = fnArgs.orientation === "landscape";
-  const doc = new PDFDocument({
-    size: "A4",
-    layout: isLandscape ? "landscape" : "portrait",
-    margins: { top: 70, bottom: 70, left: 55, right: 55 },
-    info: { Title: fnArgs.title, Author: "Bruce Gillingham Pollard", Creator: "BGP Dashboard" },
-    bufferPages: true,
-  });
-
-  // Platform-aware font paths (Linux: DejaVu, macOS: Helvetica built-in)
-  const linuxFont = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-  const linuxFontBold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-  if (process.platform !== "linux" || !require("fs").existsSync(linuxFont)) {
-    doc.registerFont("Body", "Helvetica");
-    doc.registerFont("Body-Bold", "Helvetica-Bold");
-  } else {
-    doc.registerFont("Body", linuxFont);
-    doc.registerFont("Body-Bold", linuxFontBold);
-  }
-
-  const chunks: Buffer[] = [];
-  doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-
-  const pageW = isLandscape ? 842 : 595;
-  const usableW = pageW - 110;
-  const leftM = 55;
-
-  // Resolve BGP wordmark logo once — server-side file read
-  const path = require("path") as typeof import("path");
-  const fs = require("fs") as typeof import("fs");
-  const logoCandidates = [
-    path.join(process.cwd(), "client", "src", "assets", "BGP_BlackHolder.png"),
-    path.join(process.cwd(), "client", "public", "BGP_BlackHolder.png"),
-    path.join(process.cwd(), "attached_assets", "BGP_BlackHolder.png"),
-  ];
-  let logoPath: string | null = null;
-  for (const p of logoCandidates) {
-    try { if (fs.existsSync(p)) { logoPath = p; break; } } catch {}
-  }
-
-  function drawHeader() {
-    if (logoPath) {
-      try {
-        doc.image(logoPath, leftM, 22, { height: 18 });
-      } catch {
-        doc.font("Body-Bold").fontSize(8).fillColor("#232323")
-          .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
-      }
-    } else {
-      doc.font("Body-Bold").fontSize(8).fillColor("#232323")
-        .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
-    }
-    doc.moveTo(leftM, 46).lineTo(leftM + usableW, 46).strokeColor("#232323").lineWidth(0.5).stroke();
-  }
-
-  function drawFooter(pageNum: number, totalPages: number) {
-    const bottomY = isLandscape ? 555 : 790;
-    doc.font("Body").fontSize(7).fillColor("#999999")
-      .text("Bruce Gillingham Pollard \u2014 Confidential", leftM, bottomY, { width: usableW * 0.6 })
-      .text(`Page ${pageNum} of ${totalPages}`, leftM, bottomY, { width: usableW, align: "right" });
-  }
-
-  function newPage(): number { doc.addPage(); drawHeader(); return 60; }
-
-  drawHeader();
-  let y = 60;
-
-  const htmlContent = fnArgs.htmlContent as string;
-
-  const headingMatches: Array<{ text: string; level: number }> = [];
-  const headingRegex = /<h([1-6])[^>]*>([\s\S]*?)<\/h[1-6]>/gi;
-  let hMatch;
-  while ((hMatch = headingRegex.exec(htmlContent)) !== null) {
-    headingMatches.push({
-      text: sanitiseForPdf(hMatch[2].replace(/<[^>]+>/g, "").trim()),
-      level: parseInt(hMatch[1]),
-    });
-  }
-
-  // Preserve bold/italic markers through to a sentinel so we can render them
-  // as styled runs instead of stripping them (user reported flat formatting).
-  const BOLD_OPEN = "\u0001B\u0001";
-  const BOLD_CLOSE = "\u0001b\u0001";
-  const processed = htmlContent
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/h[1-6]>/gi, "\n\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<\/tr>/gi, "\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "  \u2022 ")
-    .replace(/<hr[^>]*>/gi, "\n---\n")
-    .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
-    .replace(/\*\*([^*\n]+)\*\*/g, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
-    .replace(/<(?:em|i)\b[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, "$1")
-    .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
-
-  // Split a line into run pairs — [{text, bold}, ...] — for pdfkit continued text
-  function splitBoldRuns(line: string): Array<{ text: string; bold: boolean }> {
-    const runs: Array<{ text: string; bold: boolean }> = [];
-    let bold = false;
-    let buf = "";
-    for (let i = 0; i < line.length; i++) {
-      if (line.slice(i, i + BOLD_OPEN.length) === BOLD_OPEN) {
-        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
-        bold = true;
-        i += BOLD_OPEN.length - 1;
-        continue;
-      }
-      if (line.slice(i, i + BOLD_CLOSE.length) === BOLD_CLOSE) {
-        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
-        bold = false;
-        i += BOLD_CLOSE.length - 1;
-        continue;
-      }
-      buf += line[i];
-    }
-    if (buf) runs.push({ text: buf, bold });
-    return runs.length > 0 ? runs : [{ text: line, bold: false }];
-  }
-
-  let plainText = processed
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&mdash;/gi, " \u2014 ")
-    .replace(/&ndash;/gi, " \u2013 ")
-    .replace(/&rsquo;/gi, "\u2019")
-    .replace(/&lsquo;/gi, "\u2018")
-    .replace(/&rdquo;/gi, "\u201D")
-    .replace(/&ldquo;/gi, "\u201C")
-    .replace(/&hellip;/gi, "\u2026")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  plainText = sanitiseForPdf(plainText);
-
-  const paragraphs = plainText.split("\n");
-  const numberedRegex = /^(\d+)[.)]\s+(.+)/;
-  const bottomLimit = isLandscape ? 530 : 760;
-  let firstHeadingDone = false;
-
-  for (const para of paragraphs) {
-    const trimmed = para.trim();
-    if (!trimmed) { y += 6; continue; }
-
-    if (y > bottomLimit) y = newPage();
-
-    const matchedHeading = headingMatches.find(h => trimmed === h.text);
-
-    if (trimmed === "---") {
-      y += 4;
-      doc.moveTo(leftM, y).lineTo(leftM + usableW, y).strokeColor("#cccccc").lineWidth(0.3).stroke();
-      y += 8;
-    } else if (matchedHeading) {
-      const level = matchedHeading.level;
-      if (!firstHeadingDone) {
-        firstHeadingDone = true;
-        y += 4;
-        doc.font("Body-Bold").fontSize(20).fillColor("#1a1a1a")
-          .text(trimmed, leftM, y, { width: usableW });
-        y = doc.y + 14;
-      } else {
-        const fontSize = level <= 1 ? 15 : level === 2 ? 13 : level === 3 ? 11.5 : 10.5;
-        const spaceBefore = level <= 1 ? 16 : level === 2 ? 12 : 8;
-        y += spaceBefore;
-        if (y > bottomLimit) y = newPage();
-        doc.font("Body-Bold").fontSize(fontSize).fillColor("#1a1a1a")
-          .text(trimmed, leftM, y, { width: usableW });
-        y = doc.y + 6;
-      }
-    } else if (trimmed.startsWith("\u2022") || trimmed.startsWith("  \u2022")) {
-      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "");
-      const runs = splitBoldRuns("\u2022  " + bulletText);
-      doc.fontSize(10).fillColor("#333333");
-      doc.text("", leftM + 8, y, { width: usableW - 16, indent: 0 });
-      runs.forEach((r, i) => {
-        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
-      });
-      y = doc.y + 3;
-    } else if (numberedRegex.test(trimmed)) {
-      const nMatch = trimmed.match(numberedRegex)!;
-      const num = nMatch[1];
-      const text = nMatch[2];
-      const runs = splitBoldRuns(`${num}.  ${text}`);
-      doc.fontSize(10).fillColor("#333333");
-      doc.text("", leftM + 4, y, { width: usableW - 8 });
-      runs.forEach((r, i) => {
-        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
-      });
-      y = doc.y + 3;
-    } else {
-      const runs = splitBoldRuns(trimmed);
-      doc.fontSize(10).fillColor("#333333");
-      doc.text("", leftM, y, { width: usableW });
-      runs.forEach((r, i) => {
-        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
-      });
-      y = doc.y + 4;
-    }
-  }
-
-  const range = doc.bufferedPageRange();
-  const totalPages = range.start + range.count;
-  for (let i = 0; i < totalPages; i++) {
-    doc.switchToPage(i);
-    drawFooter(i + 1, totalPages);
-  }
-
-  doc.end();
-  await new Promise<void>((resolve) => doc.on("end", resolve));
-  const pdfBuffer = Buffer.concat(chunks);
-
-  const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
-  const uniqueId = crypto.randomBytes(8).toString("hex");
-  const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pdf`;
-  await saveFile(`chat-media/${storageFilename}`, pdfBuffer, "application/pdf", `${safeName}.pdf`);
-  const downloadUrl = `/api/chat-media/${storageFilename}`;
-
-  return {
-    data: {
-      success: true,
-      downloadUrl,
-      filename: `${safeName}.pdf`,
-      pages: totalPages,
-      action: "pdf_generated",
-      downloadMarkdown: `[Download ${safeName}.pdf](${downloadUrl})`,
-      instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the file.",
-    },
-    action: { type: "download", url: downloadUrl, filename: `${safeName}.pdf` },
-  };
-}
 
 interface CacheEntry<T> {
   data: T;
@@ -349,7 +142,10 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
 // - mailbox === "all": fans out across the shared inbox + every active BGP user's mailbox
 //   via the app-only token on /users/{email}/messages (requires Mail.Read Application).
 // - mailbox === specific email: uses the app-only token to search just that mailbox.
-async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
+//
+// Exported so the property-pathway email investigator can reuse the same
+// fan-out semantics ChatBGP gets — searching across all 31 BGP mailboxes.
+export async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
   Promise<{ messages: any[]; scope: string } | { error: string }> {
   const { query, top, mailbox, req } = opts;
   const mapMsg = (msg: any, via?: string, mailboxEmail?: string) => ({
@@ -450,6 +246,172 @@ async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: 
   }
 }
 
+// Shared implementation of the search_calendar tool. Mirrors
+// runSearchEmailsTool — same mailbox fan-out semantics, same auth paths,
+// same shape of return value but for Outlook calendar events.
+//
+// Used by ChatBGP itself and by the AI activity curator
+// (server/ai-activity-curator.ts) when it needs to find historic
+// meetings about a deal / brand / landlord across all 31 BGP mailboxes.
+//
+// IMPLEMENTATION NOTE: Graph rejects $search on /events ("Graph $search
+// isn't supported on Events at the moment"). We use /calendarView with a
+// date range and filter for the query term client-side over subject/body/
+// location/attendees/organiser. Same end result — the tool DOES support
+// keyword search, just not via Graph's native operator.
+//
+// Date-bounded by optional startDateTime / endDateTime params (default:
+// last 18 months to next 6 months — covers most "is there a meeting about
+// X?" needs).
+export async function runSearchCalendarTool(opts: {
+  query: string;
+  top: number;
+  mailbox: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  req: any;
+}): Promise<{ events: any[]; scope: string } | { error: string }> {
+  const { query, top, mailbox, req } = opts;
+
+  // Default to last 18 months → next 6 months. Wide enough to catch the
+  // historic comms a deal / brand curation typically wants.
+  const defaultStart = new Date(); defaultStart.setMonth(defaultStart.getMonth() - 18);
+  const defaultEnd = new Date(); defaultEnd.setMonth(defaultEnd.getMonth() + 6);
+  const startDateTime = opts.startDateTime || defaultStart.toISOString();
+  const endDateTime = opts.endDateTime || defaultEnd.toISOString();
+
+  const mapEvent = (ev: any, via?: string, mailboxEmail?: string) => ({
+    id: ev.id,
+    eventId: ev.id,
+    subject: (ev.subject || "(No subject)") + (via ? ` · via ${via}` : ""),
+    organiser: ev.organizer?.emailAddress?.name || ev.organizer?.emailAddress?.address || "Unknown",
+    organiserEmail: ev.organizer?.emailAddress?.address || "",
+    start: ev.start?.dateTime || null,
+    end: ev.end?.dateTime || null,
+    location: ev.location?.displayName || null,
+    isAllDay: !!ev.isAllDay,
+    isCancelled: !!ev.isCancelled,
+    attendees: (ev.attendees || []).map((a: any) => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean).slice(0, 20),
+    preview: (ev.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
+    // Mailbox-scoped event ID — caller must pass mailboxEmail back to
+    // /api/activity/meeting/:mailbox/:eventId or any /events/{id} call.
+    mailboxEmail: mailboxEmail || undefined,
+  });
+
+  const selectFields = "id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,bodyPreview";
+
+  // App-token path (mailbox=email or mailbox=all)
+  if (mailbox && mailbox !== "me") {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const mailboxes: Array<{ email: string; owner: string }> = [];
+      if (mailbox === "all") {
+        const { db } = await import("./db");
+        const { users } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        mailboxes.push({ email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" });
+        try {
+          const activeUsers = await db
+            .select({ username: users.username, email: users.email, name: users.name })
+            .from(users)
+            .where(eq(users.isActive, true));
+          for (const u of activeUsers) {
+            const mb = u.email || u.username;
+            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+              mailboxes.push({ email: mb, owner: u.name || mb });
+            }
+          }
+        } catch {}
+      } else {
+        mailboxes.push({ email: mailbox, owner: mailbox });
+      }
+
+      const seen = new Set<string>();
+      const collected: any[] = [];
+      const errors: string[] = [];
+      // Graph rejects $search on /events ("Graph $search isn't supported on
+      // Events at the moment"), so we use /calendarView with a date range
+      // and filter for the query term client-side over subject/body/location/
+      // attendees. CalendarView also expands recurring instances, which is
+      // what we want for "find a meeting about X" anyway.
+      const q = (query || "").toLowerCase().trim();
+      const matchesQuery = (ev: any) => {
+        if (!q) return true;
+        const hay = [
+          ev.subject || "",
+          ev.bodyPreview || "",
+          ev.location?.displayName || "",
+          ...(ev.attendees || []).flatMap((a: any) => [a.emailAddress?.name || "", a.emailAddress?.address || ""]),
+          ev.organizer?.emailAddress?.name || "",
+          ev.organizer?.emailAddress?.address || "",
+        ].join(" ").toLowerCase();
+        return hay.includes(q);
+      };
+      for (const mb of mailboxes) {
+        try {
+          const url = `/users/${encodeURIComponent(mb.email)}/calendarView?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$top=${Math.max(top * 4, 50)}&$select=${encodeURIComponent(selectFields)}&$orderby=${encodeURIComponent("start/dateTime desc")}`;
+          const data = await graphRequest(url, { headers: { Prefer: "outlook.timezone=\"Europe/London\"" } });
+          for (const ev of data?.value || []) {
+            if (seen.has(ev.id)) continue;
+            if (!matchesQuery(ev)) continue;
+            seen.add(ev.id);
+            collected.push(mapEvent(ev, mailbox === "all" ? mb.owner : undefined, mb.email));
+          }
+        } catch (err: any) {
+          errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
+        }
+      }
+      collected.sort((a, b) => new Date(b.start || 0).getTime() - new Date(a.start || 0).getTime());
+      const scope = mailbox === "all" ? `${mailboxes.length} calendars` : mailbox;
+      if (collected.length === 0 && errors.length > 0) {
+        return { error: `No results, and all calendars errored. First: ${errors[0]}` };
+      }
+      return { events: collected.slice(0, top), scope };
+    } catch (err: any) {
+      return { error: `App-token calendar search setup error: ${err?.message || "unknown"}` };
+    }
+  }
+
+  // Default path: delegated /me/calendarView (Graph rejects $search on events)
+  try {
+    const token = await getValidMsToken(req);
+    if (!token) return { error: "Not connected to Microsoft 365. Please sign in first." };
+    const q = (query || "").toLowerCase().trim();
+    const matchesQuery = (ev: any) => {
+      if (!q) return true;
+      const hay = [
+        ev.subject || "",
+        ev.bodyPreview || "",
+        ev.location?.displayName || "",
+        ...(ev.attendees || []).flatMap((a: any) => [a.emailAddress?.name || "", a.emailAddress?.address || ""]),
+        ev.organizer?.emailAddress?.name || "",
+        ev.organizer?.emailAddress?.address || "",
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    };
+    const url = "https://graph.microsoft.com/v1.0/me/calendarView?" + new URLSearchParams({
+      startDateTime,
+      endDateTime,
+      $top: String(Math.max(top * 4, 50)),
+      $select: selectFields,
+      $orderby: "start/dateTime desc",
+    });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: "outlook.timezone=\"Europe/London\"", "Content-Type": "application/json" } });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { error: `Calendar search failed: ${res.status} ${errText.slice(0, 200)}` };
+    }
+    const data = await res.json();
+    const events = (data.value || [])
+      .filter((ev: any) => matchesQuery(ev))
+      .slice(0, top)
+      .map((ev: any) => mapEvent(ev));
+    return { events, scope: "my calendar" };
+  } catch (err: any) {
+    return { error: `Calendar search error: ${err?.message || "unknown"}` };
+  }
+}
+
 export function invalidateContextCache(prefix?: string): void {
   if (!prefix) {
     contextCache.clear();
@@ -477,7 +439,9 @@ function getToolProgressLabel(toolName: string): string {
     search_crm: "Searching CRM...",
     web_search: "Searching the web...",
     ingest_url: "Reading page...",
+    follow_url: "Adding to news feed...",
     property_lookup: "Looking up property data...",
+    get_property_planning: "Pulling planning constraints + recent applications...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     run_kyc_check: "Running KYC check...",
@@ -496,20 +460,22 @@ function getToolProgressLabel(toolName: string): string {
     send_email: "Sending email...",
     reply_email: "Replying to email...",
     search_emails: "Searching emails...",
+    search_calendar: "Searching calendars...",
     query_calendar: "Checking calendar...",
     query_wip: "Querying pipeline...",
     query_xero: "Looking up invoices...",
     export_to_excel: "Generating Excel file...",
-    generate_pdf: "Generating PDF...",
     generate_word: "Generating Word document...",
     generate_pptx: "Generating PowerPoint...",
     generate_document: "Generating document...",
+    generate_brief_document: "Generating with Claude design...",
     generate_image: "Generating image...",
     browse_sharepoint_folder: "Browsing SharePoint...",
     read_sharepoint_file: "Reading file...",
     search_news: "Searching news...",
     search_green_street: "Searching Green Street...",
     query_leasing_schedule: "Querying leasing schedule...",
+    import_leasing_schedule: "Importing leasing schedule...",
     query_turnover: "Querying turnover data...",
     tfl_nearby: "Finding nearby stations...",
     scan_duplicates: "Scanning for duplicates...",
@@ -571,6 +537,44 @@ function convertToolsForClaude(tools: any[]): any[] {
   }));
 }
 
+// Claude vision only accepts jpeg / png / gif / webp. iPhone uploads
+// (.heic), Android (.bmp), and any other format trip a 400. Plus a
+// single message with multiple unresized photos easily blows past the
+// 32MB request cap (413). This helper:
+//   1. Converts non-supported formats to JPEG.
+//   2. Resizes anything wider than 1600px so a 12MP iPhone shot drops
+//      from ~3MB to ~250KB.
+//   3. Strips EXIF (orientation already applied) so we don't pay for
+//      metadata bytes.
+// Returns the normalised buffer + the matching MIME type. On failure
+// it falls back to the original — better to let Claude reject than to
+// drop the image silently.
+const CLAUDE_VISION_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+async function normaliseImageForClaude(
+  buffer: Buffer,
+  mimeType: string | undefined,
+  filename?: string,
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  try {
+    const ext = (filename?.split(".").pop() || "").toLowerCase();
+    const isHeic = ext === "heic" || ext === "heif" || mimeType === "image/heic" || mimeType === "image/heif";
+    const isSupported = mimeType && CLAUDE_VISION_MIMES.has(mimeType) && !isHeic;
+    // For supported formats under ~1.5MB, skip resize — saves CPU.
+    if (isSupported && buffer.length < 1_500_000) {
+      return { buffer, mimeType: mimeType! };
+    }
+    const sharpMod = (await import("sharp")).default;
+    const pipeline = sharpMod(buffer, { failOn: "none" })
+      .rotate() // honour EXIF orientation, then drop EXIF
+      .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true });
+    const jpeg = await pipeline.jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+    return { buffer: jpeg, mimeType: "image/jpeg" };
+  } catch (err: any) {
+    console.warn("[normaliseImageForClaude] conversion failed, passing original through:", err?.message);
+    return { buffer, mimeType: mimeType || "image/jpeg" };
+  }
+}
+
 function convertMessagesForClaude(messages: any[]): { system: string; messages: any[] } {
   let system = "";
   const claudeMessages: any[] = [];
@@ -588,7 +592,13 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
         claudeMessages.push({ role: "user", content: [toolResult] });
       }
     } else if (msg.role === "assistant") {
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
+      // If we preserved the raw Anthropic content blocks (thinking/text/tool_use with
+      // signatures), replay them verbatim. Extended thinking requires the signed
+      // thinking block to travel with the next assistant turn, or the API 400s with
+      // "thinking block missing".
+      if (Array.isArray((msg as any)._rawContentBlocks) && (msg as any)._rawContentBlocks.length > 0) {
+        claudeMessages.push({ role: "assistant", content: (msg as any)._rawContentBlocks });
+      } else if (msg.tool_calls && msg.tool_calls.length > 0) {
         const content: any[] = [];
         if (msg.content) content.push({ type: "text", text: msg.content });
         for (const tc of msg.tool_calls) {
@@ -694,10 +704,10 @@ export async function callClaude(params: any): Promise<any> {
     messages,
   };
   // Extended thinking — let the model reason before responding.
-  // Requires temperature=1 (SDK default when unset). budget_tokens must be < max_tokens.
   // Opt-in: only enabled when params.thinking === true, to avoid the token cost on helper calls.
+  // Note: adaptive type does not accept budget_tokens — model decides internally.
   if (params.thinking === true) {
-    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+    claudeParams.thinking = { type: "adaptive" };
   }
   // Support structured system prompt (array with cache_control) for prompt caching
   if (params.systemArray) {
@@ -771,6 +781,10 @@ export async function callClaude(params: any): Promise<any> {
         role: "assistant",
         content: textContent || null,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        // Preserve raw Anthropic content blocks (thinking, text, tool_use with signatures)
+        // so that when this message is pushed back into convMessages for a follow-up
+        // turn, extended-thinking signatures survive and the API doesn't 400.
+        _rawContentBlocks: response.content,
       },
     }],
   };
@@ -798,7 +812,7 @@ export async function callClaudeStreaming(
   };
   // Extended thinking — opt-in per callsite (see callClaude comment).
   if (params.thinking === true) {
-    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+    claudeParams.thinking = { type: "adaptive" };
   }
 
   // Support structured system prompt (array with cache_control)
@@ -854,6 +868,7 @@ export async function callClaudeStreaming(
             role: "assistant",
             content: fullText || null,
             tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            _rawContentBlocks: finalMessage.content,
           },
         }],
       };
@@ -955,7 +970,7 @@ You are an active operational agent with full CRM read/write access, internet se
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_designed_deck\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_claude_designed_pdf\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -966,14 +981,25 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
+- **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
-- **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
-- **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
+- **Leasing schedule**: query_leasing_schedule for read. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
+- **Editable text documents**: generate_word (Word, .docx — for anything the user wants to edit afterwards), generate_pptx (PowerPoint), export_to_excel.
+- **PDFs are ALWAYS designed.** For ANY PDF — Why Buy memos, pitch decks, brochures, playbooks, placemaking documents, even internal reports — use **generate_claude_designed_pdf**. It produces a properly designed PDF in BGP house style. Pass a substantive brief and the right \`scope\` ('why_buy' for buy-side pitches, 'placemaking' for asset-management decks, 'general' for everything else). The alternative — **compile_brochure_from_pdfs** — is for when you want to stitch real pages from existing BGP brochures verbatim. There is NO text-only PDF tool — Word is the text-output fallback.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
 - **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
+- **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
-- **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London Leasing, etc.
+- **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
+
+## Direct database access (sql_query, sql_write, describe_schema)
+You have read AND write access to almost every operational table in the BGP database. Use these whenever the standard tools don't cover what the user is asking — bulk image cleanups, recategorising, archiving stale rows, fixing data, pinning property imagery, anything ad-hoc.
+- **describe_schema**: list tables, or pass a table name to see its columns. Use first if you're not sure of a column.
+- **sql_query**: read-only SELECT (auto-LIMIT 500). Use freely.
+- **sql_write**: insert / update / delete. Every write is audited. \`where\` is required for update + delete (you can't accidentally wipe a table). Off-limits: users, sessions, api_keys, msal_token_cache, file_storage.
+- **Confirmation rule for destructives**: Before any DELETE that could affect more than ~10 rows, run sql_query first to count + sample, show the user the number and a few representative rows, then wait for explicit "yes" / "do it" before running sql_write. For UPDATEs of more than ~50 rows, same pattern. Single-row or trivially-small ops can run without a preview.
+- The Brand Library (\`category = 'Brands'\` in image_studio_images) is curated — only delete from it if the user is explicit about wanting to.
 
 ## Memory Systems
 1. **Auto-memories** (per-user): Extracted automatically after conversations. Loaded in future chats.
@@ -987,11 +1013,13 @@ You are an active operational agent with full CRM read/write access, internet se
 3. **Never ask for IDs.** Search by name, find the ID yourself.
 4. **Only confirm when deleting** or genuinely ambiguous (3+ equal matches).
 5. **Match response length to question.** CRM actions: 1-3 sentences. Research/strategy: full thoughtful answer.
-6. **You CAN search the web, create any document, edit source code, move SharePoint files.** NEVER say you lack access.
+6. **You CAN search the web, create any document, edit source code (admin only), move SharePoint files.** NEVER say you lack access.
 7. **Bulk operations are fine.** Create 20 records without asking if they're sure.
 8. **NEVER FAKE ACTIONS.** Only claim you read/created/saved something if there's a corresponding successful tool call. Never invent IDs or filenames. If a tool fails, say so honestly.
-9. **Fix bugs yourself.** You have list_project_files, read_source_file, edit_source_file, restart_application. Never say "this needs a developer."
+9. **Fix bugs yourself when admin.** You have list_project_files, read_source_file, edit_source_file, run_shell_command, add_database_column, restart_application — admin-only. By default \`edit_source_file\` runs in **branch-mode**: the change is committed to a \`chatbgp/<YYYY-MM-DD>\` git branch and is NOT live until merged. After editing, surface the branch + commit hash and the \`nextStep\` instruction from the response — the admin reviews and runs \`merge_chatbgp_branch\` (or merges manually) to apply. If the admin says "go direct" or "skip the branch", pass \`direct: true\`. Use \`list_chatbgp_branches\` to see what's pending. Never say "this needs a developer" to an admin caller.
 10. **log_app_feedback** is SECONDARY only. If user asks you to DO something, do it first.
+11. **Vision (vision_describe_image)** — use to auto-classify untagged images, OCR floor plans / brochure pages, identify brands from shopfronts, write captions. Use task='structured' with applyToImageStudio=true to backfill description+category+tags in one shot.
+12. **Scheduled jobs (scheduled_jobs table)** — for any "run this every day at X" or "remind me weekly" request, INSERT into scheduled_jobs via sql_write. Columns: name, description, schedule_kind ('daily'|'weekly'|'hourly'|'cron'), schedule_value ('07:00' | 'MON:09:00' | '00' | '0 9 * * 1-5'), action_kind ('sql_query'|'sql_write'|'send_chat_message'|'send_email'), action_payload (JSONB matching the action), next_run_at (compute first occurrence — server tz; if uncertain set to NOW() and the worker will recompute). The worker polls every 60s. Use send_chat_message with a threadId for digests; sql_query for periodic "show me X" reports stored in last_run_output; sql_write for periodic cleanups. Three consecutive errors auto-disable a job. NEVER use this for one-off tasks — for those just run the action directly.
 
 ## Response Format
 - **Tone**: Confident, warm, professional, with a dry British wit when the moment suits it. British English. Like a senior property partner who actually enjoys their day.
@@ -1052,7 +1080,49 @@ Drizzle: camelCase (JS) = snake_case (SQL). dealType = deal_type, assetClass = a
   return prompt;
 }
 
-async function getMemoryContext(userId: string): Promise<string> {
+// Per-user personalisation block — appended to the system prompt so ChatBGP
+// opens with the right defaults for whoever is talking to it. Pulls name,
+// role, department from the users table and adds a department-keyed focus
+// hint. Cheap (single SELECT, cached 5 min per user).
+const PERSONALISATION_CACHE = new Map<string, { ctx: string; expires: number }>();
+const DEPARTMENT_FOCUS: Record<string, string> = {
+  "Investment": "Investment-led: deal pipeline, yields, vendor dynamics, off-market opportunities, capital sources. Lead with investment_tracker, comps with capital values, recent transactions. Suggest matched buyer mandates when properties come up.",
+  "Lease Advisory": "Lease Advisory-led: rent reviews, lease renewals, dilapidations, ITZA, net effective. Lead with PLA matters and lease_events. Comps default to leasing — Zone A rents, deal incentives, recent lettings.",
+  "London Retail": "Retail leasing-led: West End / City retail flow, requirements vs available units, target tenants, brand activity. Lead with brand intel and active requirements. Tenant mix recommendations should focus on physical retail / F&B / leisure.",
+  "London F&B": "F&B-led: restaurant operators, café concepts, premium licences, anchor tenants. Lead with brand stores, FHRS data, and recent F&B lettings. Target new entrants to UK and expanding operators.",
+  "National Leasing": "National retail leasing — multi-site mandates, schemes, anchor strategy. Cross-reference brand_stores for footprint, target tenants for expansion intent.",
+  "Tenant Rep": "Tenant rep-led: requirements vs market, broker briefs, viewing programmes. Lead with crm_requirements and matched units. Push proactive options.",
+  "Office / Corporate": "Office-led: corporate occupier requirements, rent affordability, lease structuring. Comps focused on office rents and incentives.",
+  "Development": "Development-led: planning, scheme viability, ERV walks, GDV. Lead with planning_apps and OS/HMLR data.",
+};
+
+async function getUserPersonalisationContext(userId: string): Promise<string> {
+  if (!userId) return "";
+  const cached = PERSONALISATION_CACHE.get(userId);
+  if (cached && cached.expires > Date.now()) return cached.ctx;
+  try {
+    const r = await pool.query(
+      `SELECT name, email, role, department, group_name FROM users WHERE id = $1`,
+      [userId],
+    );
+    if (r.rows.length === 0) return "";
+    const u = r.rows[0];
+    const firstName = (u.name || "").split(" ")[0] || u.name || "there";
+    const dept = u.department || u.group_name || "";
+    const focus = DEPARTMENT_FOCUS[dept] || "";
+    let ctx = `\n\n## You're chatting with ${u.name}${u.role ? ` (${u.role})` : ""}${dept ? ` — ${dept}` : ""}.\n`;
+    ctx += `Open with "${firstName}" not "user". `;
+    if (focus) ctx += `\n\n**Default focus for ${dept}:** ${focus}\n`;
+    ctx += `If their current question contradicts this focus, follow the question — these are just defaults to bias toward when the request is ambiguous.\n`;
+    PERSONALISATION_CACHE.set(userId, { ctx, expires: Date.now() + 5 * 60 * 1000 });
+    return ctx;
+  } catch (err: any) {
+    console.warn("[chatbgp] getUserPersonalisationContext failed:", err?.message);
+    return "";
+  }
+}
+
+export async function getMemoryContext(userId: string): Promise<string> {
   try {
     const memories = await storage.getMemories(userId);
     if (!memories || memories.length === 0) return "";
@@ -1514,6 +1584,52 @@ export async function getAvailableTools(): Promise<{
     });
   }
 
+  // ── New brief-based document generation (Document Studio convergence) ──
+  // Lets users say "Generate a Brochure for 12 Hanover Square" and the
+  // brief framework pulls structured data + auto-resolves imagery + Claude
+  // design renders the final HTML, all in one tool call.
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_brief_document",
+      description: `Generate a polished BGP document from the brief registry — the new path that uses Claude design + the imagery layer. Use this when the user asks for a Brochure, Why Buy memo, Heads of Terms, Rent Review Representations, or Market Report on a specific property or matter. Available briefs:
+- "why-buy-memo" — PE-style 4-page investment memo (best with a Pathway run)
+- "brochure" — letting/sale marketing brochure with hero + internals + floor plan + location plan
+- "heads-of-terms" — concise 2-page HoT for a deal
+- "rent-review-representations" — Tom + Pete's RR pack (REQUIRES matterId)
+- "market-report" — area / asset-class market report with comps chart
+
+The tool runs the brief, renders via Claude design, and saves to the canonical SharePoint folder per brief category. Prefer this over the legacy generate_document for any new property document.`,
+      parameters: {
+        type: "object",
+        properties: {
+          briefId: {
+            type: "string",
+            enum: ["why-buy-memo", "brochure", "heads-of-terms", "rent-review-representations", "market-report"],
+            description: "Which brief to run.",
+          },
+          propertyId: {
+            type: "string",
+            description: "Canonical CRM property id (look it up via search_crm or resolveAddressToUprn first if you have a free-text address).",
+          },
+          matterId: {
+            type: "string",
+            description: "Optional PLA matter id — required for rent-review-representations brief; pulls linked comps + workbook snapshots.",
+          },
+          pathwayRunId: {
+            type: "string",
+            description: "Optional Pathway run id — for why-buy-memo brief, pulls Stage 6 business plan + Stage 7 model.",
+          },
+          saveToSharePoint: {
+            type: "boolean",
+            description: "Save the rendered HTML to the canonical SharePoint folder. Default true.",
+          },
+        },
+        required: ["briefId", "propertyId"],
+      },
+    },
+  });
+
   tools.push({
     type: "function",
     function: {
@@ -1607,7 +1723,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "create_sharepoint_folder",
-      description: "Create a folder in the BGP SharePoint site. All folders must be inside the 'BGP share drive' root folder. Team folders are at 'BGP share drive/Investment', 'BGP share drive/London Leasing', etc. Can create folders inside team folders or any existing folder by providing its path. Call multiple times for nested structures.",
+      description: "Create a folder in the BGP SharePoint site. All folders must be inside the 'BGP share drive' root folder. Team folders are at 'BGP share drive/Investment', 'BGP share drive/London F&B', 'BGP share drive/London Retail', etc. Can create folders inside team folders or any existing folder by providing its path. Call multiple times for nested structures.",
       parameters: {
         type: "object",
         properties: {
@@ -1661,7 +1777,7 @@ export async function getAvailableTools(): Promise<{
         properties: {
           url: {
             type: "string",
-            description: "A SharePoint sharing URL for a folder (e.g. https://brucegillinghampollardlimited-my.sharepoint.com/:f:/g/personal/...) OR a folder path in the BGP SharePoint document library (e.g. 'Investment/Deal Files', 'London Leasing'). Use '/' to browse the root. When drilling into subfolders from a previous browse result, you can omit this and use driveId + itemId instead.",
+            description: "A SharePoint sharing URL for a folder (e.g. https://brucegillinghampollardlimited-my.sharepoint.com/:f:/g/personal/...) OR a folder path in the BGP SharePoint document library (e.g. 'Investment/Deal Files', 'London Retail'). Use '/' to browse the root. When drilling into subfolders from a previous browse result, you can omit this and use driveId + itemId instead.",
           },
           driveId: {
             type: "string",
@@ -1691,7 +1807,7 @@ export async function getAvailableTools(): Promise<{
           },
           destinationFolderPath: {
             type: "string",
-            description: "The path to the destination folder where the item should be moved to (e.g. 'Investment/New Folder', 'London Leasing/Active Deals'). Use '/' for root.",
+            description: "The path to the destination folder where the item should be moved to (e.g. 'Investment/New Folder', 'London Retail/Active Deals'). Use '/' for root.",
           },
           newName: {
             type: "string",
@@ -1707,13 +1823,13 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "upload_to_sharepoint",
-      description: "Upload a file to a specific folder in BGP SharePoint. Use when you need to save a generated file (Excel export, document, etc.) to a SharePoint folder. The file must already exist as a chat-media file (e.g. from export_to_excel). Provide the chat-media filename and the destination folder path.",
+      description: "Upload a file ALREADY IN CHAT-MEDIA STORAGE to a SharePoint folder. Only use for files generated by another tool (export_to_excel, generate_word, generate_claude_designed_pdf, etc.) or files the user has uploaded into the chat. The chatMediaFilename must follow the chat-media pattern (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). DO NOT USE for email attachments — use `download_email_attachment` with `action: 'save_to_sharepoint'` instead, which handles the Graph download → SharePoint upload in one step. DO NOT USE for SharePoint-to-SharePoint moves — use `copy_dropbox_to_sharepoint` for that.",
       parameters: {
         type: "object",
         properties: {
           chatMediaFilename: {
             type: "string",
-            description: "The filename from chat-media storage (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). This is the filename portion from the /api/chat-media/ URL.",
+            description: "The filename from chat-media storage (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). This is the filename portion from the /api/chat-media/ URL — NOT the original file name from an email attachment.",
           },
           destinationFolderPath: {
             type: "string",
@@ -1738,7 +1854,7 @@ export async function getAvailableTools(): Promise<{
         type: "object",
         properties: {
           name: { type: "string", description: "Deal name (usually the property address)" },
-          team: { type: "array", items: { type: "string" }, description: "Team(s): London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+          team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
           dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
           status: { type: "string", description: "Status of the deal" },
@@ -1879,6 +1995,21 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "get_brand_profile",
+      description: "Get the full BGP brand bible for a tracked retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
+      parameters: {
+        type: "object",
+        properties: {
+          companyId: { type: "string", description: "The company UUID. Prefer this when known." },
+          name: { type: "string", description: "Brand name — used if companyId isn't known. Matched case-insensitive." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "update_investment_tracker",
       description: "Update an existing investment tracker item. Use when the user asks to change an investment record's status, client, price, notes, or any other field. Search first to find the record ID.",
       parameters: {
@@ -1950,7 +2081,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "property_lookup",
-      description: "Look up comprehensive property information by property name, address, place name, or postcode. Aggregates data from multiple sources: EPC energy ratings, VOA rateable values, HMLR price paid transaction history, Environment Agency flood risk, Historic England listed buildings, and planning designations (conservation areas, article 4 directions, tree preservation orders, scheduled monuments). Use when the user asks about a property, wants to research an address, or needs property intelligence. You can pass just a property/place name (e.g. 'Harrods', '10 Downing Street', 'One Hyde Park') and the system will automatically find the postcode.",
+      description: "Look up comprehensive property information by property name, address, place name, or postcode. Aggregates data from multiple sources: EPC energy ratings, VOA rateable values, HMLR price paid transaction history, Environment Agency flood risk, Historic England listed buildings, and planning designations (conservation areas, article 4 directions, tree preservation orders, scheduled monuments). Use when the user asks about a property, wants to research an address, or needs property intelligence. You can pass just a property/place name (e.g. 'Harrods', '10 Downing Street', 'One Hyde Park') and the system will automatically find the postcode. For a focused planning-only query on a CRM property, prefer get_property_planning.",
       parameters: {
         type: "object",
         properties: {
@@ -1961,6 +2092,21 @@ export async function getAvailableTools(): Promise<{
           address: { type: "string", description: "Full address string for EPC lookup" },
         },
         required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_property_planning",
+      description: "Get a focused planning-data summary for a CRM property: which constraints affect it (Listed Building, Conservation Area, Article 4 Direction, Tree Preservation Order, Scheduled Monument, World Heritage Site, Flood Risk Zone) and recent planning applications nearby (last 5 years). Faster and more focused than property_lookup when the user is asking specifically about planning, designations, or recent applications. Pass the crm_properties.id when known.",
+      parameters: {
+        type: "object",
+        properties: {
+          propertyId: { type: "string", description: "crm_properties.id of the property to look up" },
+        },
+        required: ["propertyId"],
       },
     },
   });
@@ -2066,16 +2212,16 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "generate_pdf",
-      description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
+      name: "attach_workbook_to_pathway",
+      description: "Attach an existing Excel model run to a Property Pathway's Stage 7 (Excel Model). Use when the user has refined a workbook in the Excel add-in and asks to 'save to the pathway'. Looks up the model run, links it to the pathway (top-level modelRunId + stageResults.stage7), and marks Stage 7 as running so the user can review and agree. Does NOT auto-agree the model — the user still needs to click Agree on the pathway card to lock it.",
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Document title for the PDF filename and header" },
-          htmlContent: { type: "string", description: "Full HTML content to render in the PDF. Use <h1>-<h4> for headings, <p> for paragraphs, <ul>/<li> for bullet points, and numbered steps as '1. Step text'. Use <strong> for emphasis. Keep formatting clean and professional. Do NOT use emoji characters — they will not render correctly in the PDF font. Instead use plain text labels like 'Tip:', 'Important:', 'Note:' etc." },
-          orientation: { type: "string", enum: ["portrait", "landscape"], description: "Page orientation. Default portrait." },
+          runId: { type: "string", description: "The pathway run id" },
+          modelRunId: { type: "string", description: "The excel_model_runs id of the workbook being attached. The Excel add-in surfaces this as the 'linked model run'." },
+          modelVersionId: { type: "string", description: "Optional specific version id. Defaults to the latest version of the model run." },
         },
-        required: ["title", "htmlContent"],
+        required: ["runId", "modelRunId"],
       },
     },
   });
@@ -2157,14 +2303,19 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "send_email",
-      description: "Send a NEW email from the BGP shared mailbox (chatbgp@brucegillinghampollard.com). Use ONLY for brand new emails, NOT for replying to existing threads. For replies, use reply_email instead to preserve email threading.",
+      description: "Send a NEW email from the BGP shared mailbox (chatbgp@brucegillinghampollard.com). Use ONLY for brand new emails, NOT for replying to existing threads. For replies, use reply_email instead to preserve email threading. **When emailing a file you just generated (PDF / Word / Excel / PPTX), pass the chat-media filename(s) in `chatMediaAttachments` so the file is attached as a real binary — never just paste the /api/chat-media/ URL into the body, those links require auth and break for the recipient.**",
       parameters: {
         type: "object",
         properties: {
           to: { type: "string", description: "Recipient email address" },
           subject: { type: "string", description: "Email subject line" },
-          body: { type: "string", description: "Email body (HTML supported)" },
+          body: { type: "string", description: "Email body (HTML supported). When attaching files, do NOT also put /api/chat-media/ links to the same files in the body — the attachment is the file." },
           cc: { type: "string", description: "CC email address (optional)" },
+          chatMediaAttachments: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional. Array of chat-media filenames (e.g. ['1779162931260-fafba8ed4b186427-The_Broadway__Wimbledon___Why_Buy.pdf']). Each becomes a real binary attachment on the email. Use the filename portion from any /api/chat-media/<filename> URL you previously generated via generate_word, generate_pptx, export_to_excel, generate_claude_designed_pdf, etc.",
+          },
         },
         required: ["to", "subject", "body"],
       },
@@ -2175,13 +2326,18 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "reply_email",
-      description: "Reply to an existing email thread in the BGP shared mailbox. Use this INSTEAD of send_email when responding to an email the user received. This preserves the email thread/conversation. You MUST provide the messageId from the email context (the [msgId:...] tag). The reply is sent from chatbgp@brucegillinghampollard.com and goes to the original sender, preserving the full thread.",
+      description: "Reply to an existing email thread in the BGP shared mailbox. Use this INSTEAD of send_email when responding to an email the user received. This preserves the email thread/conversation. You MUST provide the messageId from the email context (the [msgId:...] tag). The reply is sent from chatbgp@brucegillinghampollard.com and goes to the original sender, preserving the full thread. **Same attachment rules as send_email — pass chatMediaAttachments rather than dropping /api/chat-media/ links into the body.**",
       parameters: {
         type: "object",
         properties: {
           messageId: { type: "string", description: "The Graph API message ID from the email context [msgId:...] tag. This is required to thread the reply correctly." },
           body: { type: "string", description: "The reply body (HTML supported). Write ONLY the new reply content — the original email thread is automatically included by Outlook." },
           cc: { type: "string", description: "Optional CC email address" },
+          chatMediaAttachments: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional. Array of chat-media filenames to attach as real binaries. Same format as send_email.",
+          },
         },
         required: ["messageId", "body"],
       },
@@ -2197,8 +2353,30 @@ export async function getAvailableTools(): Promise<{
         type: "object",
         properties: {
           query: { type: "string", description: "Search query — matches against subject, body, sender, recipients, and attachments. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
-          top: { type: "number", description: "Number of results to return (default 25, max 50)" },
+          top: { type: "number", description: "Number of results to return (default 50, max 500)." },
           mailbox: { type: "string", description: "Optional. A specific BGP mailbox email address (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal string 'all' to fan out across every active BGP user's mailbox plus the shared inbox. Omit to search only the current user's inbox." },
+        },
+        required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_calendar",
+      // KEY: this tool DOES support keyword search — implemented via
+      // /calendarView + client-side filter because Graph rejects $search on
+      // /events. Don't tell the user the API can't search keywords; it can.
+      description: "Keyword-search Outlook calendars for meetings — supports full-text search across subject, body, attendees, and location even though Graph's $search operator doesn't work on /events (we use /calendarView + client-side filter under the hood). By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property — never say 'the calendar API can't search keywords', it can. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query — matches subject, body, attendees, location. e.g. 'Aurora Capital', '18-22 Haymarket', 'rent review meeting'." },
+          top: { type: "number", description: "Number of results to return (default 50, max 500)." },
+          mailbox: { type: "string", description: "Optional. A specific BGP mailbox email (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal 'all' to fan out across every active BGP calendar plus the shared inbox. Omit to search only the current user's calendar." },
+          startDateTime: { type: "string", description: "Optional ISO date-time lower bound (default: 18 months ago). Events must start on or after this." },
+          endDateTime: { type: "string", description: "Optional ISO date-time upper bound (default: 6 months from now). Events must end on or before this." },
         },
         required: ["query"],
       },
@@ -2225,7 +2403,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "download_email_attachment",
-      description: "Download and read the content of an email attachment. For text-based files (PDF, Word, Excel, CSV, text), returns the extracted text content so you can read and summarise it. For binary files, returns metadata and a download link. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — the ID is mailbox-scoped.",
+      description: "Download an email attachment and either (a) read its content, or (b) save it directly to a SharePoint folder. THIS IS THE TOOL TO USE when the user asks to 'save this brochure to SharePoint', 'file this attachment under …', 'put the floor plans in the Due Diligence folder', or anything that moves an email attachment into SharePoint. Set `action: 'save_to_sharepoint'` and pass `folderPath` — the tool downloads the binary from Graph and uploads it in a single step. DO NOT try to use upload_to_sharepoint for email attachments; that tool only works for chat-media files. For 'read' mode: PDF/Word/Excel/CSV/text return extracted text; other binaries return metadata. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — Graph IDs are mailbox-scoped.",
       parameters: {
         type: "object",
         properties: {
@@ -2416,7 +2594,7 @@ export async function getAvailableTools(): Promise<{
           sqft: { type: "number", description: "Size in square feet" },
           status: { type: "string", description: "e.g. Active, Pipeline, Completed" },
           notes: { type: "string" },
-          folderTeams: { type: "array", items: { type: "string" }, description: "Teams this property belongs to e.g. ['London Leasing', 'Investment']" },
+          folderTeams: { type: "array", items: { type: "string" }, description: "Teams this property belongs to e.g. ['London Retail', 'Investment']" },
           autoEnrich: { type: "boolean", description: "If true (default), automatically runs Land Registry lookup, AI title matching, proprietor identification, and landlord linking after creation. Set false to skip." },
         },
         required: ["name"],
@@ -2640,79 +2818,165 @@ export async function getAvailableTools(): Promise<{
     },
   });
 
-  if (process.env.CHATBGP_ALLOW_CODE_EDITS === "true") {
-    tools.push({
-      type: "function",
-      function: {
-        name: "edit_source_file",
-        description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. The change is applied immediately and the app restarts. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
-        parameters: {
-          type: "object",
-          properties: {
-            filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
-            action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
-            searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
-            replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
-            insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
-            insertText: { type: "string", description: "For 'insert' action: text to insert" },
-            content: { type: "string", description: "For 'create' action: full file content" },
-            description: { type: "string", description: "Brief description of what this change does, for the audit log" },
-          },
-          required: ["filePath", "action", "description"],
+  // Codebase write + shell + restart tools — always registered. The
+  // dispatcher gates each call on admin. Audit log lives in code_changes.
+  tools.push({
+    type: "function",
+    function: {
+      name: "edit_source_file",
+      description: "Edit or create a project source file. Admin-only. By default, edits commit to a `chatbgp/<YYYY-MM-DD>` git branch via plumbing (no live working-tree change) — the admin then merges the branch into the deploy branch and restarts to apply. The response includes the branch name + commit hash + a `nextStep` instruction you should pass to the user. Set `direct: true` ONLY when the user explicitly says 'go direct' or 'skip branch' — that writes live to the working tree (pre-restart). All edits logged in code_changes. Read the file first to get exact content for replace operations.",
+      parameters: {
+        type: "object",
+        properties: {
+          filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
+          action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
+          searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
+          replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
+          insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
+          insertText: { type: "string", description: "For 'insert' action: text to insert" },
+          content: { type: "string", description: "For 'create' action: full file content" },
+          description: { type: "string", description: "Brief description of what this change does, for the audit log + commit message" },
+          direct: { type: "boolean", description: "Default false. When true, skips branch-mode and writes directly to the live working tree. Use only when the user explicitly opts in." },
         },
+        required: ["filePath", "action", "description"],
       },
-    });
+    },
+  });
 
-    tools.push({
-      type: "function",
-      function: {
-        name: "run_shell_command",
-        description: "Execute a shell command on the server. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
-        parameters: {
-          type: "object",
-          properties: {
-            command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
-            description: { type: "string", description: "Brief description of what this command does, for the audit log" },
-          },
-          required: ["command", "description"],
+  tools.push({
+    type: "function",
+    function: {
+      name: "run_shell_command",
+      description: "Execute a shell command on the server. Admin-only. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
+          description: { type: "string", description: "Brief description of what this command does, for the audit log" },
         },
+        required: ["command", "description"],
       },
-    });
+    },
+  });
 
-    tools.push({
-      type: "function",
-      function: {
-        name: "add_database_column",
-        description: "Add a new column to an existing database table. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
-        parameters: {
-          type: "object",
-          properties: {
-            tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
-            columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
-            columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
-            defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
-            description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
-          },
-          required: ["tableName", "columnName", "columnType", "description"],
+  tools.push({
+    type: "function",
+    function: {
+      name: "add_database_column",
+      description: "Add a new column to an existing database table. Admin-only. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
+      parameters: {
+        type: "object",
+        properties: {
+          tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
+          columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
+          columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
+          defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
+          description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
         },
+        required: ["tableName", "columnName", "columnType", "description"],
       },
-    });
+    },
+  });
 
-    tools.push({
-      type: "function",
-      function: {
-        name: "restart_application",
-        description: "Restart the BGP application after making code changes. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
-        parameters: {
-          type: "object",
-          properties: {
-            reason: { type: "string", description: "Why the restart is needed" },
-          },
-          required: ["reason"],
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_chatbgp_branches",
+      description: "List the chatbgp/* git branches currently holding pending ChatBGP edits. Each row shows the branch name, tip commit hash, tip commit subject, and how many commits the branch is ahead of the deploy branch HEAD. Use to find a branch to merge.",
+      parameters: { type: "object", properties: {} },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "merge_chatbgp_branch",
+      description: "Admin-only. Merge a chatbgp/<date> branch into the current (deploy) branch and optionally restart. Use only after the admin has reviewed the commit(s) and explicitly says 'merge it'. Performs a fast-forward merge if possible; refuses if there's a conflict — admin would then need to resolve manually via terminal.",
+      parameters: {
+        type: "object",
+        properties: {
+          branch: { type: "string", description: "Branch name to merge, e.g. 'chatbgp/2026-05-09'." },
+          restart: { type: "boolean", description: "Default false. When true, calls restart_application after a successful merge." },
+        },
+        required: ["branch"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "grep_codebase",
+      description: "Search the project for a regex pattern. Returns file:line + a snippet for each match. Excludes node_modules, .git, dist, build artefacts. Use this BEFORE read_source_file when you need to find where something is defined or referenced — much faster than guessing paths. Use \"\\b\" word boundaries for symbols. Case-insensitive by default.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Regex pattern to search for. Examples: 'export function buildSystemPrompt', 'eq\\(crmCompanies\\.id', '/api/property-imagery'." },
+          glob: { type: "string", description: "Optional path glob to scope the search, e.g. 'server/**/*.ts', 'client/src/pages/**', 'shared/schema.ts'. Defaults to whole repo." },
+          caseSensitive: { type: "boolean", description: "Default false (case-insensitive). Set true for exact matches." },
+          maxResults: { type: "number", description: "Max matches to return. Default 50, max 200." },
+        },
+        required: ["pattern"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "git_status",
+      description: "Show current branch, working-tree state (clean/dirty + per-file flags), upstream ahead/behind counts, and the last 10 commits. Use to understand what state the repo is in before / after edits.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "git_diff",
+      description: "Show a unified diff. Three modes: (1) no args → diff of working tree against HEAD (uncommitted changes). (2) branch only → diff of that branch against the current deploy branch (use to review a chatbgp/<date> branch before merging). (3) branch + file → diff for one file only. Truncated to 8KB if huge.",
+      parameters: {
+        type: "object",
+        properties: {
+          branch: { type: "string", description: "Optional branch to diff against current HEAD (e.g. 'chatbgp/2026-05-09'). Omit to see uncommitted working-tree changes." },
+          file: { type: "string", description: "Optional file path to scope the diff. Useful for reviewing a single file's changes on a multi-file branch." },
         },
       },
-    });
-  }
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "revert_chatbgp_commit",
+      description: "Drop the most recent commit from a chatbgp/<date> branch. Admin-only. Useful when you spot a typo or wrong edit you just made and want to back the branch up before merging. If the branch only has one commit, deletes the branch entirely. Cannot undo merges or touch any branch other than chatbgp/*. The dropped commit's hash is returned in case you need to recover it manually with `git reflog`.",
+      parameters: {
+        type: "object",
+        properties: {
+          branch: { type: "string", description: "chatbgp/* branch name to back up by one commit." },
+        },
+        required: ["branch"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "restart_application",
+      description: "Restart the BGP application after making code changes. Admin-only. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: { type: "string", description: "Why the restart is needed" },
+        },
+        required: ["reason"],
+      },
+    },
+  });
 
   tools.push({
     type: "function",
@@ -2797,20 +3061,92 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "generate_designed_deck",
-      description: "Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
+      name: "vision_describe_image",
+      description: "Look at an image and return structured intelligence about it via Claude vision. Use to: classify untagged Image Studio rows, OCR floor plans / brochure pages / business rates letters, identify a brand from a shopfront photo, write a caption for a hero shot, or extract structured data from a document scan. Pass either an Image Studio image id (preferred — loads from the local file or fetches from SharePoint), a public https image URL, or base64 data. Optionally apply the result back to the row with applyToImageStudio:true (writes description / category / tags). Cheap (Sonnet) and fast.",
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Document title (also used for the filename)." },
-          inputText: { type: "string", description: "The full content to build the deck from — Gamma turns this into a designed document. Write 500-3000 words of structured content with headings and bullet points. Be specific and substantive — Gamma uses this verbatim to design the pages." },
-          format: { type: "string", enum: ["presentation", "document", "social"], description: "'presentation' = slide deck (use for pitches/decks), 'document' = long-form brochure (use for playbooks/reports), 'social' = square social post. Default: 'document'." },
-          numCards: { type: "number", description: "Target number of pages/slides (default: let Gamma decide)." },
-          themeName: { type: "string", description: "Gamma theme name for visual style (optional — Gamma picks a good default)." },
-          exportAs: { type: "string", enum: ["pdf", "pptx"], description: "Output format. Default 'pdf'. Use 'pptx' if the user wants to edit in PowerPoint." },
-          additionalInstructions: { type: "string", description: "Style guidance for Gamma, e.g. 'Use a minimal design with lots of imagery. Tone: property investment, British, professional.'" },
+          imageStudioId: { type: "string", description: "Preferred — image_studio_images.id. Loads from disk or SharePoint." },
+          imageUrl: { type: "string", description: "Public https image URL (alternative to imageStudioId)." },
+          base64Data: { type: "string", description: "Base64-encoded image bytes (alternative)." },
+          mimeType: { type: "string", description: "Required if base64Data is used. e.g. 'image/jpeg', 'image/png'." },
+          task: { type: "string", enum: ["describe", "classify", "ocr", "tag", "structured"], description: "describe = free-text caption. classify = pick a category from the Image Studio list. ocr = extract all readable text. tag = generate 3-8 short tags. structured = describe + classify + ocr + tag in one pass (recommended for backfill jobs)." },
+          customPrompt: { type: "string", description: "Optional extra instructions appended to the task prompt — e.g. 'this is a UK retail unit, focus on the brand name and shopfront condition'." },
+          applyToImageStudio: { type: "boolean", description: "Default false. When true and imageStudioId is set, writes the result back to the row (description for describe/structured, category for classify/structured, tags for tag/structured, description ← OCR text for ocr)." },
         },
-        required: ["title", "inputText"],
+        required: ["task"],
+      },
+    },
+  });
+
+  // ─── General-purpose database tools ─────────────────────────────────────
+  // Three primitives that let ChatBGP touch most of the app's tables. The
+  // server enforces a deny-list (users / sessions / tokens / file blobs)
+  // and column validation; everything else is fair game so ChatBGP can do
+  // whatever the user asks. Every write is audited in ai_write_audit.
+  tools.push({
+    type: "function",
+    function: {
+      name: "describe_schema",
+      description: "Inspect the BGP database schema. Call without arguments to list all tables. Pass a table name to get its columns. Use this when you need to know what tables/columns exist before crafting a sql_query or sql_write.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "Optional — get the column list for a single table. Omit to list all tables." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "sql_query",
+      description: "Run a read-only SQL SELECT (or WITH) against the BGP database. Use this when the user asks something the standard tools don't cover, or when you need to find rows before mutating them. Auto-LIMITed to 500 rows; 15s timeout; INSERT/UPDATE/DELETE/DDL are blocked — use sql_write for those. Tables off-limits: users, sessions, msal_token_cache, file_storage, ai_write_audit. Call describe_schema first if you don't know the columns.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "A SELECT or WITH … SELECT query. Single statement, no trailing semicolon needed. Example: SELECT id, file_name FROM image_studio_images WHERE source = 'pexels' LIMIT 20" },
+        },
+        required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "sql_write",
+      description: "Run an INSERT, UPDATE, or DELETE on the BGP database. Use whenever the user asks to add, change, archive, or remove rows in any operational table — images, properties, deals, contacts, companies, comps, lease events, PLA matters, available units, tasks, diary, etc. Off-limits: users, sessions, api_keys, msal_token_cache, file_storage, deleted_sharepoint_images. Every write is audited. SAFETY RULE: before any DELETE that could affect more than a handful of rows, run sql_query first to count and show the user what's about to be deleted, get explicit confirmation in chat, then run the sql_write. UPDATE and DELETE both require a `where` clause — refusing to mutate the entire table is the only built-in guardrail.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "Physical table name (snake_case), e.g. 'image_studio_images', 'crm_properties', 'pla_matters'. Call describe_schema if unsure." },
+          op: { type: "string", enum: ["insert", "update", "delete"], description: "Mutation type." },
+          data: { type: "object", description: "For insert: { col: value, ... }. For update: { col: newValue, ... }. Ignored for delete." },
+          rows: { type: "array", items: { type: "object" }, description: "Bulk insert: array of row objects with the same column set. Use instead of `data` for inserting many rows at once." },
+          where: { type: "object", description: "Required for update + delete. { col: value } → equality. { col: [a, b] } → IN (a, b). { col: null } → IS NULL. AND'd together." },
+          returning: { type: "boolean", description: "Default true — return the affected rows. Set false for huge bulk ops where you don't need them." },
+        },
+        required: ["table", "op"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_claude_designed_pdf",
+      description: "Generate a properly designed, visually polished PDF (deck / brochure / pitch / playbook / Why Buy memo / any PDF really) — Claude renders a self-contained HTML document with BGP brand cues + house-style preferences, then headless Chrome converts to a print-ready PDF. THIS IS THE ONLY TOOL THAT MAKES PDFs. Returns a chat-media download link. For text the user will edit afterwards, use generate_word (Word .docx) instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Document title (also used in the filename). e.g. 'Wimbledon Broadway — Why Buy'." },
+          brief: { type: "string", description: "Structured markdown content (500-3000 words). Sections: cover info, executive summary, property/subject, tenant/counterparty, numbers + comps, risks, next steps. Be specific — Claude designs the layout from this verbatim." },
+          scope: { type: "string", enum: ["why_buy", "placemaking", "pitch", "general"], description: "House-style scope to apply. Defaults to 'why_buy'. Picks the accumulated design preferences for that scope (Nick's saved direction etc.)." },
+          additionalInstructions: { type: "string", description: "Optional design steer for this specific document, e.g. 'lead with the 4.86% true initial yield, downplay the headline'." },
+        },
+        required: ["title", "brief"],
       },
     },
   });
@@ -2884,6 +3220,23 @@ export async function getAvailableTools(): Promise<{
           url: { type: "string", description: "The URL to fetch and read" },
           addToNews: { type: "boolean", description: "If true, save the content as a news article in the BGP news feed" },
           sourceName: { type: "string", description: "Source name for the article (e.g. 'Savills Research', 'CBRE', 'Knight Frank')" },
+        },
+        required: ["url"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "follow_url",
+      description: "Register a news/blog/publisher URL as a persistent source in the BGP news feed. The news-feeds cron will then auto-poll it on every cycle, dedupe, AI-score, and link to brands — so new articles appear automatically in /news without any further action. Use whenever the user pastes (or mentions) a URL from a news outlet, journalist blog, columnist page, research publisher, or industry publication and the intent is to track it ongoing rather than just read one page. Examples: a Sky News journalist blog, an FT columnist landing page, a research-house insights index. Do NOT use for: internal app URLs, Companies House records, planning-portal pages, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those).",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The page URL to start tracking. Can be a homepage, section page, author/blog page, or direct article URL — RSS.app will generate an RSS feed from it." },
+          name: { type: "string", description: "Optional display name for the source. If omitted, the page title is used (e.g. 'Mark Kleinman — Sky News')." },
+          category: { type: "string", description: "Category bucket: Property, Retail, Hospitality, Investment, or general. Default 'general'." },
         },
         required: ["url"],
       },
@@ -3045,7 +3398,7 @@ export async function getAvailableTools(): Promise<{
       parameters: {
         type: "object",
         properties: {
-          team: { type: "string", description: "Filter by team: London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+          team: { type: "string", description: "Filter by team: London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
           status: { type: "string", description: "Filter by status/stage e.g. Under Offer, Exchanged, Completed, New Instructions" },
           dealType: { type: "string", description: "Filter by deal type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
           summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return deal details." },
@@ -3090,12 +3443,14 @@ export async function getAvailableTools(): Promise<{
     type: "function" as const,
     function: {
       name: "save_learning",
-      description: "Save a piece of business knowledge or insight that ChatBGP has learned during this conversation. This persists across all future conversations, making ChatBGP smarter about BGP's business over time. Only save genuinely useful, reusable knowledge — not transient details.",
+      description: "Save a piece of business knowledge or insight that ChatBGP has learned during this conversation. This persists across all future conversations, making ChatBGP smarter about BGP's business over time. Only save genuinely useful, reusable knowledge — not transient details. Pass subjectPropertyId or subjectCompanyNumber when the fact is about a specific property or company so later HMLR-verified findings can correctly supersede it.",
       parameters: {
         type: "object",
         properties: {
           category: { type: "string", enum: ["client_intel", "market_knowledge", "bgp_process", "property_insight", "team_preference", "general"], description: "Category of the learning" },
           learning: { type: "string", description: "The specific knowledge or insight to remember. Be concise but include enough context to be useful in future conversations. E.g. 'The Cadogan Estate (SW1) prefer to deal directly with Charlotte Roberts for any leasing enquiries.'" },
+          subjectPropertyId: { type: "string", description: "Optional. The crm_properties.id this learning is about. Use when saving a fact about a specific property (e.g. ownership, tenant, lease terms) so subsequent HMLR-verified data can supersede stale entries." },
+          subjectCompanyNumber: { type: "string", description: "Optional. Companies House number (or OE / OC number) the learning is about. Use for company-specific facts (UBOs, group structure)." },
         },
         required: ["category", "learning"],
       },
@@ -3124,11 +3479,11 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "transcribe_audio",
-      description: "Transcribe audio or video files to text using AI speech recognition (Whisper). Use when a user uploads a voice note, meeting recording, Teams recording, or any audio/video file and wants it transcribed. Supports MP3, MP4, M4A, WAV, WEBM, OGG, and other common formats. After transcription, you can use the transcript to update CRM deals, create diary notes, log viewings, update trackers, or take any follow-up actions the user requests.",
+      description: "Transcribe audio or video files to text using AI speech recognition (Whisper). Use when a user uploads a voice note, meeting recording, Teams recording, or any audio/video file and wants it transcribed. Accepts three source types: (1) chat-media uploads (e.g. '/api/chat-media/filename.mp4'), (2) SharePoint or OneDrive share links (any 'https://...sharepoint.com/...' or 'https://...-my.sharepoint.com/...' URL — auto-resolved via Microsoft Graph and streamed server-side, no need to download first), or (3) any public https URL. Supports MP3, MP4, M4A, WAV, WEBM, OGG, MOV, AVI, MKV and other common formats. After transcription, you can use the transcript to update CRM deals, create diary notes, log viewings, update trackers, or take any follow-up actions the user requests.",
       parameters: {
         type: "object",
         properties: {
-          fileUrl: { type: "string", description: "URL path to the audio/video file (e.g. '/api/chat-media/filename.mp4' for uploaded files, or a full URL for external files)" },
+          fileUrl: { type: "string", description: "Source of the audio/video. Accepts: '/api/chat-media/filename.mp4' for uploaded files, a SharePoint/OneDrive share link (e.g. 'https://yourtenant-my.sharepoint.com/...'), or any public https URL." },
           language: { type: "string", description: "Language code (e.g. 'en' for English). Defaults to 'en'." },
         },
         required: ["fileUrl"],
@@ -3152,6 +3507,72 @@ export async function getAvailableTools(): Promise<{
           limit: { type: "number", description: "Max results to return (default 50)" },
         },
         required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_my_uploads",
+      description: "List files the current user has uploaded to chat recently — most recent first. Use this when the user references a previously-uploaded file ('the Landsec sheet', 'that xlsx I dropped last week') but the exact filename is unclear. Returns filename + size + when uploaded + the chat-media filename to pass to import tools. Always call this BEFORE telling the user 'file not found, please re-upload' — the file is almost certainly still here.",
+      parameters: {
+        type: "object",
+        properties: {
+          search: { type: "string", description: "Optional case-insensitive substring filter (e.g. 'landsec' or 'wip'). Omit to list everything recent." },
+          limit: { type: "number", description: "Max files to return. Default 20, max 50." },
+        },
+        required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "import_leasing_schedule",
+      description: "Import leasing schedule data from an uploaded Excel file into the Leasing Schedule Board (leasing_schedule_units table). The workbook can contain multiple properties — the tool parses property headers and unit rows intelligently. The file must have been uploaded to this chat first (drag & drop, or via file picker). Use when the user asks to import / upload / load / populate / restore a leasing schedule, or says they've dragged in a leasing schedule file. ALWAYS call with mode='preview' first, show the user a summary, then call again with mode='import' only after they confirm.",
+      parameters: {
+        type: "object",
+        properties: {
+          mediaFilename: { type: "string", description: "Name of the uploaded Excel file (e.g. 'Landsec_Leasing_Schedule.xlsx'). Must already be uploaded to this chat." },
+          mode: { type: "string", enum: ["preview", "import"], description: "preview = parse and show what would be imported, no DB writes. import = insert rows into database. Default: preview." },
+          propertyFilter: { type: "string", description: "Optional: import only one property from the file (partial name match, e.g. 'Westgate'). Omit to import every property in the workbook." },
+        },
+        required: ["mediaFilename"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "import_wip_excel",
+      description: "Import a Sage WIP (Work-in-Progress) Excel export end-to-end. Auto-detects either Sage layout: legacy 'WIP by deal' (Ref, Amt WIP, Amt invoice, …) or current Sage TransactionsExpo (HEADER_NUMBER, NetAmount, NAME, ADDRESS_*, STOCK_CODE, DealStatus, …). Wipes wip_entries and reloads (or appends with mode='append'), then on the TransactionsExpo layout ALSO populates: (1) crm_deals via syncWipToCrmDeals, (2) cached billing name + address from NAME + ADDRESS_* onto each deal as `xero_contact_name` / `xero_billing_address` (Xero is the source of truth for the actual contact link, picked by the user via the deal form), (3) deal_fee_allocations from per-Agent NetAmount slices (CON049 STOCK_CODE tagged as BGP House), (4) tenant_rep_searches kanban entries for any NEG-status deals. Idempotent — safe to re-run on each Sage export. Pass either `chatMediaFilename` (file dragged into chat) OR `sharepointUrl` (a SharePoint share link the user pastes). By default REPLACES wip_entries — use mode='append' only for incremental updates between full Sage exports.",
+      parameters: {
+        type: "object",
+        properties: {
+          chatMediaFilename: { type: "string", description: "The chat-media filename of the uploaded Excel (e.g. '1745689452345-abc123def.xlsx'). Use when the user has dragged the file into chat." },
+          sharepointUrl: { type: "string", description: "A SharePoint share URL (e.g. 'https://...sharepoint.com/.../IQ...') pointing at the WIP Excel. Use when the user pastes a share link instead of dragging the file in. Either this or chatMediaFilename must be supplied." },
+          mode: { type: "string", enum: ["replace", "append"], description: "replace = wipe wip_entries and reload from file (default — what Sage gives you each quarter). append = keep existing rows and add new ones. Default: replace." },
+          sourceOfTruth: { type: "boolean", description: "When true (and mode='replace'), also soft-archive any crm_deals previously synced from a WIP import whose ref is no longer in the file. Sets status='ARCH' and tags comments with [ARCHIVED <date>] — fully reversible. Use this for the start-of-year cutover when the new file is the definitive list. Default: false." },
+        },
+        required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "wipe_crm_deals",
+      description: "ADMIN ONLY. Wipe ALL crm_deals from the database so the user can start fresh with a clean WIP import. Clears deal_id/property_id references in wip_entries first, then deletes all deals. Use when the user says 'nuke all deals', 'delete all deals', 'clean reload', or equivalent. After wiping, tell the user to re-import their WIP Excel to repopulate.",
+      parameters: {
+        type: "object",
+        properties: {
+          confirm: { type: "boolean", description: "Must be true to proceed. Ask the user to confirm before setting this." },
+        },
+        required: ["confirm"],
       },
     },
   });
@@ -3428,9 +3849,7 @@ async function executeModelRun(args: { templateId: string; name: string; inputVa
     const { getMicrosoftToken } = await import("./microsoft");
     const msToken = await getMicrosoftToken();
     if (msToken) {
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (siteRes.ok) {
         const site = await siteRes.json();
         const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
@@ -3928,7 +4347,7 @@ async function downloadAndExtractFile(
 
     const tempDir = path.join(process.cwd(), "ChatBGP", "sp-temp");
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, `kb-${Date.now()}-${fileName}`);
+    const tempPath = path.join(tempDir, `kb-${Date.now()}-${path.basename(fileName)}`);
     try {
       fs.writeFileSync(tempPath, buffer);
     } catch (writeErr: any) {
@@ -4092,7 +4511,7 @@ async function executeReadSharePointFile(
       const fileRes = await fetch(downloadUrl);
       if (!fileRes.ok) return { success: false, error: `Download failed (${fileRes.status})` };
       const buffer = Buffer.from(await fileRes.arrayBuffer());
-      const tmpPath = path.join(process.cwd(), "ChatBGP", `tmp-sp-${Date.now()}-${fileName}`);
+      const tmpPath = path.join(process.cwd(), "ChatBGP", `tmp-sp-${Date.now()}-${path.basename(fileName)}`);
       const fsModule = await import("fs");
       const dir = path.dirname(tmpPath);
       if (!fsModule.existsSync(dir)) fsModule.mkdirSync(dir, { recursive: true });
@@ -4261,7 +4680,7 @@ async function executeReadSharePointFile(
 
     const tempDir = path.join(process.cwd(), "ChatBGP", "sp-temp");
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, `sp-${Date.now()}-${fileName}`);
+    const tempPath = path.join(tempDir, `sp-${Date.now()}-${path.basename(fileName)}`);
     try {
       fs.writeFileSync(tempPath, buffer);
     } catch (writeErr: any) {
@@ -4360,14 +4779,14 @@ async function executeCrmToolRaw(
       return or(...conditions);
     };
     if (entityType === "all" || entityType === "deals") {
-      results.deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(15);
+      results.deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
     }
     if (entityType === "all" || entityType === "contacts") {
-      results.contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(15);
+      results.contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
     }
     if (entityType === "all" || entityType === "companies") {
       const { and: andOp, eq: eqOp, ne: neOp } = await import("drizzle-orm");
-      results.companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(andOp(buildOr([crmCompanies.name]), neOp(crmCompanies.aiDisabled, true))).limit(15);
+      results.companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(andOp(buildOr([crmCompanies.name]), neOp(crmCompanies.aiDisabled, true))).limit(100);
     }
     if (entityType === "all" || entityType === "properties") {
       const { sql: sqlTag } = await import("drizzle-orm");
@@ -4377,26 +4796,109 @@ async function executeCrmToolRaw(
       for (const wp of wordPatterns) propConditions.push(ilike(crmProperties.name, wp));
       propConditions.push(sqlTag`${addressText} ILIKE ${exactQ}`);
       for (const wp of wordPatterns) propConditions.push(sqlTag`${addressText} ILIKE ${wp}`);
-      results.properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(15);
+      results.properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(100);
     }
     if (entityType === "all" || entityType === "investment") {
-      results.investmentTracker = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(15);
+      results.investmentTracker = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
     }
     if (entityType === "all" || entityType === "units") {
-      results.availableUnits = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(15);
+      results.availableUnits = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
     }
     if (entityType === "all" || entityType === "requirements") {
       const reqConds = [exactQ, ...wordPatterns].map((p, i) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
       const reqParams = [exactQ, ...wordPatterns];
-      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 15`, reqParams);
+      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 100`, reqParams);
       results.requirements = reqResult.rows;
     }
     if (entityType === "all" || entityType === "comps") {
       const { crmComps } = await import("@shared/schema");
-      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(15);
+      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(100);
     }
     const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
     return { data: { success: true, query: fnArgs.query, totalFound, results } };
+  }
+
+  if (fnName === "get_brand_profile") {
+    let companyId: string | null = fnArgs.companyId || null;
+    if (!companyId && fnArgs.name) {
+      const found = await pool.query(
+        `SELECT id FROM crm_companies WHERE lower(name) = lower($1) AND merged_into_id IS NULL LIMIT 1`,
+        [String(fnArgs.name).trim()]
+      );
+      if (!found.rows[0]) {
+        const fuzzy = await pool.query(
+          `SELECT id, name FROM crm_companies
+             WHERE name ILIKE $1 AND merged_into_id IS NULL
+             ORDER BY CASE WHEN is_tracked_brand THEN 0 ELSE 1 END
+             LIMIT 5`,
+          [`%${String(fnArgs.name).trim()}%`]
+        );
+        if (!fuzzy.rows.length) return { data: { success: false, error: `No brand found matching "${fnArgs.name}"` } };
+        if (fuzzy.rows.length > 1) return { data: { success: false, error: "Multiple matches", candidates: fuzzy.rows } };
+        companyId = fuzzy.rows[0].id;
+      } else {
+        companyId = found.rows[0].id;
+      }
+    }
+    if (!companyId) return { data: { success: false, error: "Provide companyId or name" } };
+
+    // Reuse the brand-profile endpoint directly — proxy via HTTP to keep one
+    // source of truth. Bypasses requireAuth by calling the internal host.
+    try {
+      const port = process.env.PORT || "5000";
+      const res = await fetch(`http://127.0.0.1:${port}/api/brand/${companyId}/profile`, {
+        headers: { cookie: req.headers.cookie || "", authorization: req.headers.authorization || "" },
+      });
+      if (!res.ok) return { data: { success: false, error: `brand-profile ${res.status}` } };
+      const full = await res.json();
+      // Trim for LLM: keep the decision-relevant fields, drop raw CH blobs + images
+      return {
+        data: {
+          success: true,
+          company: {
+            id: full.company.id,
+            name: full.company.name,
+            description: full.company.description,
+            conceptPitch: full.company.concept_pitch,
+            storeCount: full.company.store_count,
+            rolloutStatus: full.company.rollout_status,
+            backers: full.company.backers,
+            isTrackedBrand: full.company.is_tracked_brand,
+            leadBroker: full.company.bgp_contact_crm,
+            industry: full.company.industry,
+            annualRevenue: full.company.annual_revenue,
+          },
+          covenant: full.covenant,
+          rolloutVelocity: full.rolloutVelocity,
+          rentAffordability: full.rentAffordability,
+          turnover: full.turnover,
+          kyc: full.kyc,
+          parentGroup: full.parentGroup,
+          siblings: full.siblings?.slice(0, 10),
+          contactsSummary: {
+            total: full.contacts?.length || 0,
+            lastTouchedAt: full.contacts?.[0]?.last_contacted_at || null,
+            sample: full.contacts?.slice(0, 5).map((ct: any) => ({
+              name: ct.name, role: ct.role, email: ct.email, lastContactedAt: ct.last_contacted_at,
+            })),
+          },
+          completedDealsCount: full.completedDeals?.length || 0,
+          activeDealsCount: full.activeDeals?.length || 0,
+          activeDeals: full.activeDeals?.slice(0, 10).map((d: any) => ({ id: d.id, name: d.name, stage: d.stage, role: d.role })),
+          requirements: full.requirements?.filter((r: any) => r.status === "Active").slice(0, 10),
+          pitchedTo: full.pitchedTo?.slice(0, 15).map((p: any) => ({
+            propertyId: p.property_id, propertyName: p.property_name, unit: p.unit_name, status: p.status,
+          })),
+          signals: full.signals?.slice(0, 15).map((s: any) => ({
+            type: s.signal_type, magnitude: s.magnitude, sentiment: s.sentiment,
+            headline: s.headline, date: s.signal_date, source: s.source,
+          })),
+          representedBy: full.representedBy?.map((r: any) => ({ agent: r.agent_name, type: r.agent_type, region: r.region })),
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: err?.message || "Failed to fetch brand profile" } };
+    }
   }
 
   if (fnName === "update_investment_tracker") {
@@ -4591,7 +5093,7 @@ async function executeCrmToolRaw(
     const postcode = fnArgs.address?.postcode;
     const willEnrich = !!(postcode && fnArgs.autoEnrich !== false);
     if (willEnrich) {
-      const baseUrl = `http://localhost:${process.env.PORT || 5000}`;
+      const baseUrl = process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT || 5000}`;
       fetch(`${baseUrl}/api/title-search/auto-fill-from-postcode/${propertyId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4767,7 +5269,7 @@ async function executeCrmToolRaw(
       const cmd = fnArgs.recursive
         ? `find "${targetDir}" -maxdepth 3 -type f -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" | sort | head -100`
         : `ls -la "${targetDir}" | head -60`;
-      const output = execSync(cmd, { timeout: 5000 }).toString();
+      const output = execSync(cmd, { timeout: 30000 }).toString();
       return { data: { success: true, directory: safePath, files: output } };
     } catch (err: any) {
       return { data: { success: false, error: `Could not list "${safePath}": ${err.message}` } };
@@ -4796,10 +5298,27 @@ async function executeCrmToolRaw(
     }
   }
 
-  if (fnName === "edit_source_file") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Code editing is disabled. Ask Woody to make the change via terminal Claude Code, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+  // Inline helper: admin gate for the codebase-write / shell / restart family.
+  // Looks up the session user and bails if they're not flagged is_admin.
+  // Cheap (one cached query). Returns null on success, an error response on
+  // refusal — caller does `const fail = await ensureAdmin(); if (fail) return fail;`.
+  async function ensureAdmin(): Promise<{ data: { success: false; error: string } } | null> {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return { data: { success: false, error: "Not authenticated." } };
+    try {
+      const r = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (r.rows.length === 0 || !r.rows[0].is_admin) {
+        return { data: { success: false, error: "Admin access required for this tool." } };
+      }
+    } catch (e: any) {
+      return { data: { success: false, error: `Admin check failed: ${e?.message}` } };
     }
+    return null;
+  }
+
+  if (fnName === "edit_source_file") {
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const fs = await import("fs");
     const path = await import("path");
     const projectRoot = process.cwd();
@@ -4810,53 +5329,114 @@ async function executeCrmToolRaw(
     }
     const action = fnArgs.action as string;
     const description = fnArgs.description || "Code change via ChatBGP";
+    // Direct mode = skip branch-mode, write to live working tree. Off by
+    // default — only use when the admin says "go direct" or for files git
+    // wouldn't track anyway.
+    const directMode = fnArgs.direct === true;
 
     try {
       let beforeContent = "";
       try { beforeContent = fs.readFileSync(fullPath, "utf-8"); } catch {}
 
+      // Compute the new content in memory; don't touch disk yet.
       let afterContent = "";
-
       if (action === "create") {
-        const dir = path.dirname(fullPath);
-        fs.mkdirSync(dir, { recursive: true });
         afterContent = fnArgs.content || fnArgs.replaceText || "";
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else if (action === "append") {
         afterContent = beforeContent + "\n" + (fnArgs.replaceText || fnArgs.content || fnArgs.insertText || "");
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else if (action === "replace") {
         if (!fnArgs.searchText) return { data: { success: false, error: "searchText is required for replace action" } };
         if (!beforeContent.includes(fnArgs.searchText)) {
           return { data: { success: false, error: `Could not find the search text in "${safePath}". Read the file first to get the exact content.` } };
         }
         afterContent = beforeContent.replace(fnArgs.searchText, fnArgs.replaceText || "");
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else if (action === "insert") {
         const lines = beforeContent.split("\n");
         const insertAt = Math.max(0, (fnArgs.insertAtLine || 1) - 1);
         lines.splice(insertAt, 0, fnArgs.insertText || "");
         afterContent = lines.join("\n");
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else {
         return { data: { success: false, error: `Unknown action "${action}"` } };
       }
 
+      // Branch-mode (default): commit to chatbgp/<date> via git plumbing,
+      // do NOT touch the live working tree. Admin merges to apply. Falls
+      // back to direct write if git isn't available (Railway strips .git).
+      if (!directMode) {
+        const branchMod = await import("./chatbgp-branch-mode");
+        if (!branchMod.isGitAvailable()) {
+          // No .git in this environment — fall through to direct mode but
+          // tell the caller why. Audit log still records the change.
+          console.warn("[edit_source_file] git unavailable in this environment, falling back to direct write");
+        } else {
+          const userRow = await pool.query(
+            "SELECT name, email FROM users WHERE id = $1",
+            [req.session?.userId || (req as any).tokenUserId],
+          ).catch(() => ({ rows: [] }));
+          const u = userRow.rows[0] || {};
+          try {
+            const result = branchMod.commitToChatbgpBranch({
+              filePath: safePath,
+              newContent: afterContent,
+              description,
+              userName: u.name,
+              userEmail: u.email,
+            });
+            await pool.query(
+              `INSERT INTO code_changes (tool_used, file_path, description, before_content, after_content, status) VALUES ($1, $2, $3, $4, $5, 'committed-to-branch')`,
+              ["edit_source_file", safePath, `[${result.branch}@${result.commitHash.slice(0,8)}] ${description}`, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)],
+            );
+            return {
+              data: {
+                success: true,
+                mode: "branch",
+                branch: result.branch,
+                commitHash: result.commitHash,
+                isFirstCommit: result.isFirstCommit,
+                filePath: safePath,
+                description,
+                linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length),
+                message: result.message,
+                nextStep: `Tell the admin: edit committed to ${result.branch}. To apply, they run \`git checkout <deploy-branch> && git merge ${result.branch}\` and restart. The change is NOT live until merged.`,
+              },
+            };
+          } catch (err: any) {
+            // Git plumbing failed mid-flight (rare — partially stripped .git,
+            // permission issue, etc). Fall through to direct mode.
+            console.warn("[edit_source_file] branch-mode failed, falling back to direct:", err?.message);
+          }
+        }
+      }
+
+      // Direct mode (also the fallback): write live, audit, return.
+      if (action === "create") {
+        const dir = path.dirname(fullPath);
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(fullPath, afterContent, "utf-8");
+
       await pool.query(
         `INSERT INTO code_changes (tool_used, file_path, description, before_content, after_content, status) VALUES ($1, $2, $3, $4, $5, 'applied')`,
-        ["edit_source_file", safePath, description, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)]
+        ["edit_source_file", safePath, `[direct] ${description}`, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)],
       );
-
-      return { data: { success: true, action: action, filePath: safePath, description, linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length) } };
+      return {
+        data: {
+          success: true,
+          mode: "direct",
+          action,
+          filePath: safePath,
+          description,
+          linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length),
+        },
+      };
     } catch (err: any) {
       return { data: { success: false, error: `Failed to edit "${safePath}": ${err.message}` } };
     }
   }
 
   if (fnName === "run_shell_command") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Shell access is disabled. Ask Woody to run the command manually, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
-    }
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const { execSync } = await import("child_process");
     const command = fnArgs.command as string;
     const description = fnArgs.description || "Shell command via ChatBGP";
@@ -4878,17 +5458,17 @@ async function executeCrmToolRaw(
     try {
       const output = execSync(command, {
         cwd: process.cwd(),
-        timeout: 30000,
+        timeout: 300000, // 5 min — admin-gated, no point sub-second cap
         env: { ...process.env },
-        maxBuffer: 1024 * 1024,
+        maxBuffer: 10 * 1024 * 1024, // 10 MB — long outputs like npm install fit
       }).toString();
 
       await pool.query(
         `INSERT INTO code_changes (tool_used, shell_command, shell_output, description, status) VALUES ($1, $2, $3, $4, 'applied')`,
-        ["run_shell_command", command, output.substring(0, 10000), description]
+        ["run_shell_command", command, output.substring(0, 50000), description]
       );
 
-      return { data: { success: true, command, output: output.substring(0, 5000) } };
+      return { data: { success: true, command, output: output.substring(0, 50000) } };
     } catch (err: any) {
       const stderr = err.stderr?.toString?.() || err.message;
       await pool.query(
@@ -4900,9 +5480,8 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "add_database_column") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Schema changes are disabled. Ask Woody to run the migration, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
-    }
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const tableName = fnArgs.tableName as string;
     const columnName = (fnArgs.columnName as string).replace(/[^a-z0-9_]/gi, "");
     const columnType = fnArgs.columnType as string;
@@ -4936,15 +5515,314 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "restart_application") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Application restart is disabled. Ask Woody to redeploy via Railway." } };
-    }
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const { execSync } = await import("child_process");
     try {
       execSync("kill -USR2 1 2>/dev/null || true", { timeout: 5000 });
       return { data: { success: true, message: "Application restart signal sent. The app will restart momentarily." } };
     } catch {
       return { data: { success: true, message: "Restart signal sent." } };
+    }
+  }
+
+  if (fnName === "list_chatbgp_branches") {
+    try {
+      const { isGitAvailable, listChatbgpBranches } = await import("./chatbgp-branch-mode");
+      if (!isGitAvailable()) {
+        return { data: { success: true, gitAvailable: false, branches: [], count: 0, message: "git is not available in this environment — no branches to list." } };
+      }
+      const branches = listChatbgpBranches();
+      return {
+        data: {
+          success: true,
+          branches,
+          count: branches.length,
+          message: branches.length === 0
+            ? "No pending ChatBGP branches."
+            : `${branches.length} ChatBGP branch(es) pending review.`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: err?.message } };
+    }
+  }
+
+  if (fnName === "merge_chatbgp_branch") {
+    const fail = await ensureAdmin();
+    if (fail) return fail;
+    const { isGitAvailable } = await import("./chatbgp-branch-mode");
+    if (!isGitAvailable()) {
+      return { data: { success: false, gitAvailable: false, error: "git is not available in this environment — can't merge here. ChatBGP edits in this env fall back to direct write automatically." } };
+    }
+    const branch = String(fnArgs.branch || "");
+    if (!branch.startsWith("chatbgp/")) {
+      return { data: { success: false, error: "Refusing to merge: only chatbgp/* branches accepted." } };
+    }
+    const { execSync } = await import("child_process");
+    try {
+      // Verify branch exists.
+      execSync(`git rev-parse --verify ${branch}`, { encoding: "utf-8" });
+    } catch {
+      return { data: { success: false, error: `Branch ${branch} not found.` } };
+    }
+    let mergeOutput = "";
+    try {
+      mergeOutput = execSync(
+        `git merge --ff-only ${branch}`,
+        { cwd: process.cwd(), encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "ChatBGP", GIT_AUTHOR_EMAIL: "chatbgp@brucegillinghampollard.com", GIT_COMMITTER_NAME: "ChatBGP", GIT_COMMITTER_EMAIL: "chatbgp@brucegillinghampollard.com" } },
+      );
+    } catch (err: any) {
+      // Fast-forward failed — likely diverged. Don't auto-resolve.
+      return { data: { success: false, error: `Merge failed (fast-forward only): ${err?.message?.substring(0, 500)}. Admin must resolve manually via terminal.` } };
+    }
+    if (fnArgs.restart === true) {
+      try {
+        execSync("kill -USR2 1 2>/dev/null || true", { timeout: 5000 });
+      } catch {}
+    }
+    return {
+      data: {
+        success: true,
+        branch,
+        mergeOutput: mergeOutput.substring(0, 1000),
+        restarted: fnArgs.restart === true,
+        message: `Merged ${branch}. ${fnArgs.restart === true ? "Restart signal sent." : "Run restart_application to load the changes."}`,
+      },
+    };
+  }
+
+  if (fnName === "grep_codebase") {
+    try {
+      const pattern = String(fnArgs.pattern || "");
+      if (!pattern) return { data: { success: false, error: "pattern required" } };
+      const glob = fnArgs.glob ? String(fnArgs.glob) : "";
+      const caseSensitive = fnArgs.caseSensitive === true;
+      const maxResults = Math.min(Math.max(Number(fnArgs.maxResults) || 50, 1), 200);
+
+      const { execFileSync } = await import("child_process");
+      const args: string[] = [
+        "-rn",                            // recursive, with line numbers
+        "--color=never",
+        "--exclude-dir=node_modules",
+        "--exclude-dir=.git",
+        "--exclude-dir=dist",
+        "--exclude-dir=build",
+        "--exclude-dir=.next",
+        "--exclude=*.lock",
+        "--exclude=*.map",
+      ];
+      if (!caseSensitive) args.push("-i");
+      args.push("-E");                     // ERE so the LLM can use ()|+? naturally
+      args.push("--", pattern);
+      // grep takes paths after the pattern. If glob given, pass as --include
+      // and search the repo root; otherwise just the repo root.
+      if (glob) {
+        // grep --include is a filename pattern, not a path glob. Translate
+        // common cases: "server/**/*.ts" → search server/ with --include='*.ts',
+        // "shared/schema.ts" → just that one file.
+        const m = glob.match(/^([^*?[\]]+?)\/(?:\*\*\/)?(\*[^/]*|[^/*]+)$/);
+        if (m && !m[2].includes("*") && !m[2].includes("?")) {
+          // Single-file shortcut.
+          args.push(m[1] + "/" + m[2]);
+        } else if (m) {
+          args.push(`--include=${m[2]}`);
+          args.push(m[1] || ".");
+        } else {
+          // Treat as a literal path or include pattern.
+          if (glob.includes("*") || glob.includes("?")) {
+            args.push(`--include=${glob}`);
+            args.push(".");
+          } else {
+            args.push(glob);
+          }
+        }
+      } else {
+        args.push(".");
+      }
+
+      let raw = "";
+      try {
+        raw = execFileSync("grep", args, { cwd: process.cwd(), encoding: "utf-8", maxBuffer: 1024 * 1024 }).toString();
+      } catch (err: any) {
+        // grep exits 1 on no matches — that's not an error for us.
+        if (err?.status === 1) return { data: { success: true, pattern, matches: [], count: 0, message: "No matches." } };
+        return { data: { success: false, error: `grep failed: ${err?.message?.substring(0, 500)}` } };
+      }
+
+      const lines = raw.split("\n").filter(Boolean);
+      const matches = lines.slice(0, maxResults).map(line => {
+        const m = line.match(/^([^:]+):(\d+):(.*)$/);
+        if (!m) return { file: "", lineNumber: 0, snippet: line.substring(0, 200) };
+        return {
+          file: m[1].replace(/^\.\//, ""),
+          lineNumber: parseInt(m[2], 10),
+          snippet: m[3].substring(0, 200),
+        };
+      });
+
+      return {
+        data: {
+          success: true,
+          pattern,
+          matches,
+          count: matches.length,
+          truncated: lines.length > maxResults,
+          totalUntruncated: lines.length,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `grep_codebase failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "git_status") {
+    try {
+      const { isGitAvailable } = await import("./chatbgp-branch-mode");
+      if (!isGitAvailable()) {
+        return { data: { success: false, gitAvailable: false, error: "git is not available in this environment (Railway / nixpacks usually strips .git). Branch-mode tools fall back to direct write automatically; the read-only git_* tools have nothing to report here." } };
+      }
+      const { execSync } = await import("child_process");
+      const exec = (cmd: string) => execSync(cmd, { cwd: process.cwd(), encoding: "utf-8" }).trim();
+
+      const branch = exec("git rev-parse --abbrev-ref HEAD");
+      let upstream = "";
+      let ahead = 0;
+      let behind = 0;
+      try {
+        upstream = exec("git rev-parse --abbrev-ref --symbolic-full-name @{u}");
+        const counts = exec(`git rev-list --left-right --count HEAD...${upstream}`);
+        const [a, b] = counts.split("\t").map(n => parseInt(n.trim(), 10) || 0);
+        ahead = a; behind = b;
+      } catch {} // no upstream is fine
+
+      const porcelain = exec("git status --porcelain=v1");
+      const dirty = porcelain.length > 0;
+      const changed = porcelain.split("\n").filter(Boolean).map(l => ({
+        flag: l.substring(0, 2).trim(),
+        file: l.substring(3),
+      }));
+
+      const log = exec("git log -10 --pretty=format:%H|%h|%s|%an|%ar")
+        .split("\n").filter(Boolean).map(l => {
+          const [hash, short, subject, author, when] = l.split("|");
+          return { hash, short, subject, author, when };
+        });
+
+      return {
+        data: {
+          success: true,
+          branch,
+          upstream: upstream || null,
+          ahead, behind,
+          dirty,
+          changedCount: changed.length,
+          changed: changed.slice(0, 30),
+          recentCommits: log,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `git_status failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "git_diff") {
+    try {
+      const { isGitAvailable } = await import("./chatbgp-branch-mode");
+      if (!isGitAvailable()) {
+        return { data: { success: false, gitAvailable: false, error: "git is not available in this environment — diff unavailable." } };
+      }
+      const { execSync } = await import("child_process");
+      const branch = fnArgs.branch ? String(fnArgs.branch) : "";
+      const file = fnArgs.file ? String(fnArgs.file) : "";
+
+      let cmd: string;
+      if (branch) {
+        // Diff branch against current HEAD (so review of a chatbgp branch
+        // shows what would be merged in).
+        cmd = `git diff HEAD..${branch}`;
+        if (file) cmd += ` -- ${file}`;
+      } else {
+        cmd = "git diff HEAD";
+        if (file) cmd += ` -- ${file}`;
+      }
+
+      let out: string;
+      try {
+        out = execSync(cmd, { cwd: process.cwd(), encoding: "utf-8", maxBuffer: 4 * 1024 * 1024 }).toString();
+      } catch (err: any) {
+        return { data: { success: false, error: `git diff failed: ${err?.message?.substring(0, 500)}` } };
+      }
+      const truncated = out.length > 8000;
+      return {
+        data: {
+          success: true,
+          mode: branch ? "branch" : "working-tree",
+          branch: branch || null,
+          file: file || null,
+          diff: out.substring(0, 8000),
+          truncated,
+          message: out.length === 0 ? "No changes." : `Diff (${out.length} bytes${truncated ? ", truncated" : ""}).`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `git_diff failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "revert_chatbgp_commit") {
+    const fail = await ensureAdmin();
+    if (fail) return fail;
+    const { isGitAvailable } = await import("./chatbgp-branch-mode");
+    if (!isGitAvailable()) {
+      return { data: { success: false, gitAvailable: false, error: "git is not available — nothing to revert in this environment." } };
+    }
+    const branch = String(fnArgs.branch || "");
+    if (!branch.startsWith("chatbgp/")) {
+      return { data: { success: false, error: "Refusing — only chatbgp/* branches can be reverted via this tool." } };
+    }
+    try {
+      const { execSync } = await import("child_process");
+      const exec = (cmd: string) => execSync(cmd, { cwd: process.cwd(), encoding: "utf-8" }).trim();
+      const refName = `refs/heads/${branch}`;
+
+      const tipHash = exec(`git rev-parse --verify ${refName}`);
+      // How many commits is this branch ahead of HEAD?
+      const aheadStr = exec(`git rev-list --count HEAD..${refName}`);
+      const ahead = parseInt(aheadStr, 10) || 0;
+      if (ahead === 0) {
+        return { data: { success: false, error: `${branch} has no commits ahead of HEAD — nothing to revert.` } };
+      }
+
+      if (ahead === 1) {
+        // Only one commit on the branch — delete the ref entirely.
+        execSync(`git update-ref -d ${refName}`, { cwd: process.cwd() });
+        return {
+          data: {
+            success: true,
+            branch,
+            droppedHash: tipHash,
+            action: "branch-deleted",
+            message: `Deleted ${branch} (was the only commit). Reflog still holds ${tipHash.slice(0, 8)} if you need it.`,
+          },
+        };
+      }
+
+      // Move the branch ref back by one commit.
+      const newTip = exec(`git rev-parse ${refName}~1`);
+      execSync(`git update-ref ${refName} ${newTip} ${tipHash}`, { cwd: process.cwd() });
+      return {
+        data: {
+          success: true,
+          branch,
+          droppedHash: tipHash,
+          newTipHash: newTip,
+          action: "ref-moved",
+          message: `${branch} backed up by one. Dropped ${tipHash.slice(0, 8)}; new tip is ${newTip.slice(0, 8)}. Reflog still holds the dropped commit.`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `revert failed: ${err?.message}` } };
     }
   }
 
@@ -4955,22 +5833,48 @@ async function executeCrmToolRaw(
         return { data: { success: false, error: "Please provide a more detailed image description." } };
       }
       const { GoogleGenAI, Modality } = await import("@google/genai");
-      const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+      // Match the fallback chain used by server/image-studio.ts so this
+      // tool works whenever any of the standard Gemini keys is set —
+      // previously this only checked AI_INTEGRATIONS_GEMINI_API_KEY,
+      // so it 503'd on environments that only had GEMINI_API_KEY or
+      // GOOGLE_API_KEY configured. base_url is optional (the SDK
+      // defaults to Google's public endpoint).
+      const apiKey =
+        process.env.GEMINI_API_KEY ||
+        process.env.AI_INTEGRATIONS_GEMINI_API_KEY ||
+        process.env.GOOGLE_AI_API_KEY ||
+        process.env.GOOGLE_API_KEY;
       const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-      if (!apiKey || !baseUrl) {
-        return { data: { success: false, error: "Image generation not configured" } };
+      if (!apiKey) {
+        return { data: { success: false, error: "Image generation not configured — no Gemini key set" } };
       }
-      const ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
+      const ai = baseUrl
+        ? new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } })
+        : new GoogleGenAI({ apiKey });
       const styleHint = fnArgs.style === "illustration" ? "digital illustration style, " :
                         fnArgs.style === "architectural" ? "architectural rendering style, " :
                         "photorealistic, professional photography, ";
       const fullPrompt = `${styleHint}${prompt}. High quality, professional, suitable for property marketing materials.`;
       console.log("[chatbgp] Generating image with Nano Banana:", fullPrompt.substring(0, 100));
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-image",
-        contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-        config: { responseModalities: [Modality.TEXT, Modality.IMAGE] },
-      });
+      // Same model-fallback chain as image-studio.ts — try the current
+      // preview model first, then fall back if the API rejects it.
+      const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+      let response: any = null;
+      let lastErr: any = null;
+      for (const model of MODELS) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+            config: { responseModalities: [Modality.TEXT, Modality.IMAGE] },
+          });
+          if (response) break;
+        } catch (err: any) {
+          lastErr = err;
+          if (!/not found|unsupported|invalid model/i.test(err?.message || "")) throw err;
+        }
+      }
+      if (!response) throw lastErr || new Error("All Gemini image models rejected the request");
       const candidate = response.candidates?.[0];
       const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
       if (!imagePart?.inlineData?.data) {
@@ -5178,6 +6082,180 @@ async function executeCrmToolRaw(
     }
   }
 
+  if (fnName === "vision_describe_image") {
+    try {
+      const task = String(fnArgs.task || "structured");
+      const applyToImageStudio = fnArgs.applyToImageStudio === true;
+      const customPrompt = fnArgs.customPrompt ? String(fnArgs.customPrompt) : "";
+      let mimeType = String(fnArgs.mimeType || "image/jpeg") as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+      let base64: string | null = null;
+      let imageStudioId: string | null = fnArgs.imageStudioId ? String(fnArgs.imageStudioId) : null;
+
+      // ── Source the image bytes ────────────────────────────────────────
+      if (imageStudioId) {
+        const r = await pool.query(
+          "SELECT local_path, mime_type, sharepoint_drive_id, sharepoint_item_id, thumbnail_data FROM image_studio_images WHERE id = $1",
+          [imageStudioId],
+        );
+        if (r.rows.length === 0) return { data: { success: false, error: "Image not found in image_studio_images." } };
+        const row = r.rows[0];
+        mimeType = (row.mime_type || "image/jpeg") as any;
+        const fs = await import("fs");
+        if (row.local_path && fs.existsSync(row.local_path)) {
+          base64 = fs.readFileSync(row.local_path).toString("base64");
+        } else if (row.sharepoint_drive_id && row.sharepoint_item_id) {
+          const token = await getValidMsToken(req);
+          if (!token) return { data: { success: false, error: "Local file missing and not signed into Microsoft to fetch from SharePoint." } };
+          const cr = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${row.sharepoint_drive_id}/items/${row.sharepoint_item_id}/content`,
+            { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" },
+          );
+          if (!cr.ok) return { data: { success: false, error: `SharePoint fetch failed: HTTP ${cr.status}` } };
+          base64 = Buffer.from(await cr.arrayBuffer()).toString("base64");
+        } else if (row.thumbnail_data) {
+          // Last resort — thumbnail is small but classification still works.
+          base64 = String(row.thumbnail_data).replace(/^data:image\/\w+;base64,/, "");
+          mimeType = "image/jpeg";
+        } else {
+          return { data: { success: false, error: "Image bytes unavailable (no local file, no SharePoint refs, no thumbnail)." } };
+        }
+      } else if (fnArgs.imageUrl) {
+        const url = String(fnArgs.imageUrl);
+        // Accept chat-media paths (images dragged into ChatBGP) the same
+        // way save_to_image_studio does — they live in file-storage under
+        // chat-media/<filename> and never get an https URL. Without this
+        // branch, vision can't see anything the user has just pasted.
+        if (url.startsWith("/api/chat-media/") || url.startsWith("chat-media/")) {
+          const mediaName = url.replace(/^\/?api\/chat-media\//, "").replace(/^chat-media\//, "");
+          const { getFile } = await import("./file-storage");
+          const file = await getFile(`chat-media/${mediaName}`);
+          if (!file) return { data: { success: false, error: `chat-media file not found: ${mediaName}` } };
+          mimeType = (file.contentType?.split(";")[0].trim() || (mediaName.match(/\.(png|jpe?g|gif|webp)$/i)?.[1] === "png" ? "image/png" : "image/jpeg")) as any;
+          base64 = Buffer.from(file.data).toString("base64");
+        } else if (!url.startsWith("https://")) {
+          return { data: { success: false, error: "imageUrl must be https:// or a chat-media path" } };
+        } else {
+          const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+          if (!resp.ok) return { data: { success: false, error: `Image fetch failed: HTTP ${resp.status}` } };
+          const ctype = resp.headers.get("content-type") || "image/jpeg";
+          if (!ctype.startsWith("image/")) return { data: { success: false, error: `URL did not return an image (${ctype})` } };
+          mimeType = (ctype.split(";")[0].trim() as any);
+          base64 = Buffer.from(await resp.arrayBuffer()).toString("base64");
+        }
+      } else if (fnArgs.base64Data) {
+        base64 = String(fnArgs.base64Data).replace(/^data:image\/\w+;base64,/, "");
+      } else {
+        return { data: { success: false, error: "Provide imageStudioId, imageUrl, or base64Data." } };
+      }
+
+      // ── Build the prompt for the chosen task ──────────────────────────
+      const CATEGORIES = ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Headshots", "Other"];
+      const taskPrompts: Record<string, string> = {
+        describe: "Write a single-paragraph factual description of this image — what it shows, key visible details, mood/condition. No flowery language.",
+        classify: `Classify this image into ONE of these categories: ${CATEGORIES.join(", ")}. Respond ONLY with the category name, nothing else.`,
+        ocr: "Extract all readable text from this image. Preserve line breaks and structure. If there is no text, respond with 'NO_TEXT'.",
+        tag: "Generate 3 to 8 short, lower-case tags describing this image (subject matter, location type, brand if visible, condition, style). Respond as a JSON array of strings, e.g. [\"shopfront\",\"belgravia\",\"luxury-retail\"].",
+        structured: `Analyse this image and respond ONLY with valid minified JSON, no other text, in this exact shape: {"description": "single paragraph factual description", "category": "ONE OF: ${CATEGORIES.join("|")}", "tags": ["tag1","tag2",...], "ocr": "all readable text or empty string"}. Tags 3-8, lower-case, hyphen-separated. OCR preserves line breaks with \\n.`,
+      };
+      const prompt = taskPrompts[task] + (customPrompt ? `\n\nAdditional context: ${customPrompt}` : "");
+
+      // ── Call Claude vision ────────────────────────────────────────────
+      const anthropic = getAnthropicClient(false);
+      const visionResp = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1500,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+            { type: "text", text: prompt },
+          ],
+        }],
+      });
+      const textBlock = visionResp.content.find(b => b.type === "text") as { type: "text"; text: string } | undefined;
+      const raw = textBlock?.text?.trim() || "";
+
+      // ── Parse the response ────────────────────────────────────────────
+      let parsed: any = { raw };
+      if (task === "structured") {
+        try {
+          const cleaned = raw.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+          parsed = JSON.parse(cleaned);
+        } catch (e: any) {
+          return { data: { success: false, error: `Couldn't parse structured response: ${e?.message}`, raw } };
+        }
+      } else if (task === "tag") {
+        try {
+          const cleaned = raw.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+          parsed = { tags: JSON.parse(cleaned) };
+        } catch {
+          parsed = { tags: raw.split(/[,\n]/).map(t => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean) };
+        }
+      } else if (task === "classify") {
+        const cat = CATEGORIES.find(c => c.toLowerCase() === raw.toLowerCase()) || raw;
+        parsed = { category: cat };
+      } else if (task === "ocr") {
+        parsed = { text: raw === "NO_TEXT" ? "" : raw };
+      } else {
+        parsed = { description: raw };
+      }
+
+      // ── Optionally write back to the image_studio_images row ─────────
+      let applied: string[] = [];
+      if (applyToImageStudio && imageStudioId) {
+        const sets: string[] = [];
+        const params: any[] = [];
+        if (parsed.description) { params.push(parsed.description); sets.push(`description = $${params.length}`); applied.push("description"); }
+        if (parsed.category && CATEGORIES.includes(parsed.category)) { params.push(parsed.category); sets.push(`category = $${params.length}`); applied.push("category"); }
+        if (Array.isArray(parsed.tags) && parsed.tags.length) { params.push(parsed.tags); sets.push(`tags = $${params.length}::text[]`); applied.push("tags"); }
+        if (task === "ocr" && parsed.text) { params.push(parsed.text); sets.push(`description = $${params.length}`); applied.push("description (OCR)"); }
+        if (sets.length) {
+          params.push(imageStudioId);
+          await pool.query(`UPDATE image_studio_images SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
+        }
+      }
+
+      return {
+        data: { success: true, task, ...parsed, applied: applied.length ? applied : undefined },
+        ...(applied.length ? { action: { type: "image_studio_changed" as const } } : {}),
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] vision_describe_image error:", err?.message);
+      return { data: { success: false, error: `Vision failed: ${err?.message}` } };
+    }
+  }
+
+  // ─── General-purpose database tools ─────────────────────────────────────
+  if (fnName === "describe_schema") {
+    const { executeDescribeSchema } = await import("./sql-tools");
+    return { data: executeDescribeSchema(fnArgs.table as string | undefined) };
+  }
+
+  if (fnName === "sql_query") {
+    const { executeSqlQuery } = await import("./sql-tools");
+    return { data: await executeSqlQuery(String(fnArgs.query || "")) };
+  }
+
+  if (fnName === "sql_write") {
+    const { executeSqlWrite } = await import("./sql-tools");
+    const userId = req.session?.userId || (req as any).tokenUserId || undefined;
+    const result = await executeSqlWrite(
+      {
+        table: String(fnArgs.table || ""),
+        op: fnArgs.op as "insert" | "update" | "delete",
+        data: fnArgs.data as Record<string, any> | undefined,
+        rows: fnArgs.rows as Array<Record<string, any>> | undefined,
+        where: fnArgs.where as Record<string, any> | undefined,
+        returning: fnArgs.returning !== false,
+      },
+      { userId, threadId: (req.body?.threadId as string) || undefined },
+    );
+    const action = result.success
+      ? { type: "db_changed" as const, table: String(fnArgs.table || ""), op: fnArgs.op }
+      : undefined;
+    return { data: result, ...(action ? { action } : {}) };
+  }
+
   if (fnName === "web_search") {
     const searchQuery = fnArgs.query as string;
     try {
@@ -5244,6 +6322,32 @@ async function executeCrmToolRaw(
     }
   }
 
+  if (fnName === "follow_url") {
+    const targetUrl = (fnArgs.url as string || "").trim();
+    if (!targetUrl) return { data: { error: "url is required" } };
+    try {
+      const { newsSources } = await import("@shared/schema");
+      const { createRssAppFeed } = await import("./rssapp");
+      const existing = await db.select().from(newsSources).where(eq(newsSources.url, targetUrl)).limit(1);
+      if (existing.length > 0) {
+        return { data: { success: true, action: "already_following", source: existing[0], message: `Already tracking ${existing[0].name}.` } };
+      }
+      const feed = await createRssAppFeed(targetUrl);
+      const [source] = await db.insert(newsSources).values({
+        name: (fnArgs.name as string) || feed.title || new URL(targetUrl).hostname.replace("www.", ""),
+        url: targetUrl,
+        feedUrl: feed.rss_feed_url,
+        type: "rssapp",
+        category: (fnArgs.category as string) || "general",
+        active: true,
+      }).returning();
+      console.log(`[ChatBGP] follow_url: registered "${source.name}" (${targetUrl}) via RSS.app`);
+      return { data: { success: true, action: "now_following", source, message: `Now tracking ${source.name}. New articles will appear in your news feed on the next poll.` } };
+    } catch (err: any) {
+      return { data: { error: `Failed to follow URL: ${err?.message || err}` } };
+    }
+  }
+
   if (fnName === "search_news") {
     const { newsArticles } = await import("@shared/schema");
     const { ilike, or, desc: descOrder } = await import("drizzle-orm");
@@ -5276,9 +6380,14 @@ async function executeCrmToolRaw(
   if (fnName === "property_data_lookup") {
     const apiKey = process.env.PROPERTYDATA_API_KEY;
     if (!apiKey) return { data: { error: "PropertyData API key not configured. Add PROPERTYDATA_API_KEY to environment secrets." } };
-    const ALLOWED_ENDPOINTS = new Set(["sold-prices", "prices", "prices-per-sqf", "sold-prices-per-sqf", "rents", "rents-commercial", "rents-hmo", "yields", "growth", "growth-psf", "planning-applications", "valuation-commercial-sale", "valuation-commercial-rent", "valuation-sale", "valuation-rent", "demand", "demand-rent", "demographics", "flood-risk", "floor-areas", "postcode-key-stats", "uprns", "energy-efficiency", "address-match-uprn", "uprn", "uprn-title", "analyse-buildings", "rebuild-cost", "ptal", "crime", "schools", "internet-speed", "restaurants", "conservation-area", "green-belt", "aonb", "national-park", "listed-buildings", "household-income", "population", "tenure-types", "property-types", "council-tax", "national-hmo-register", "freeholds", "politics", "agents", "area-type", "land-registry-documents"]);
+    // No allowlist — PropertyData ship new endpoints regularly and a
+    // hardcoded list goes stale. Validate the SHAPE of the endpoint
+    // name only: lowercase letters, digits, hyphens, no path-escape
+    // characters. That blocks SSRF / injection while letting any
+    // legitimate PropertyData endpoint through.
+    const VALID_ENDPOINT = /^[a-z0-9][a-z0-9-]{1,60}$/;
     const endpoint = fnArgs.endpoint as string;
-    if (!endpoint || !ALLOWED_ENDPOINTS.has(endpoint)) return { data: { error: `Invalid endpoint "${endpoint}". Allowed: ${[...ALLOWED_ENDPOINTS].join(", ")}` } };
+    if (!endpoint || !VALID_ENDPOINT.test(endpoint)) return { data: { error: `Invalid endpoint name "${endpoint}". Endpoint names must be lowercase letters/digits/hyphens only (e.g. "sold-prices", "freeholds", "valuation-commercial-sale").` } };
     const postcode = (fnArgs.postcode as string || "").trim().replace(/\s{2,}/g, " ");
     const needsPostcode = !["uprn", "uprn-title", "analyse-buildings", "land-registry-documents"].includes(endpoint);
     if (needsPostcode && !postcode) return { data: { error: "Postcode is required." } };
@@ -5390,7 +6499,7 @@ async function executeCrmToolRaw(
     const totalPipeline = deals.reduce((sum: number, d: any) => sum + (parseFloat(d.pricing) || 0), 0);
     const totalFees = deals.reduce((sum: number, d: any) => sum + (parseFloat(d.fee) || 0), 0);
     const byStage: Record<string, number> = {};
-    for (const d of deals) byStage[d.groupName || "Unknown"] = (byStage[d.groupName || "Unknown"] || 0) + 1;
+    for (const d of deals) byStage[d.status || "Unknown"] = (byStage[d.status || "Unknown"] || 0) + 1;
     const summary = { totalDeals: deals.length, totalPipeline, totalFees, byStage };
     return { data: fnArgs.summaryOnly ? { success: true, summary } : { success: true, summary, deals: deals.slice(0, 50) } };
   }
@@ -5450,23 +6559,15 @@ async function executeCrmToolRaw(
     return { data: { success: true, navigatedTo: fnArgs.page }, action: { type: "navigate", path } };
   }
 
-  if (fnName === "generate_pdf") {
-    try {
-      return await generatePdfFromHtml(fnArgs);
-    } catch (pdfErr: any) {
-      console.error("[chatbgp] PDF generation error:", pdfErr?.message);
-      return { data: { error: `Failed to generate PDF: ${pdfErr?.message || "Unknown error"}` } };
-    }
-  }
 
-  if (fnName === "generate_designed_deck") {
+  if (fnName === "generate_claude_designed_pdf") {
     try {
-      const { generateDesignedDeck } = await import("./chatbgp-design-tools");
-      const result = await generateDesignedDeck(fnArgs);
+      const { generateClaudeDesignedPdf } = await import("./claude-designed-pdf");
+      const result = await generateClaudeDesignedPdf(fnArgs);
       return { data: result };
     } catch (err: any) {
-      console.error("[chatbgp] generate_designed_deck error:", err?.message);
-      return { data: { error: `Gamma deck generation failed: ${err?.message}` } };
+      console.error("[chatbgp] generate_claude_designed_pdf error:", err?.message);
+      return { data: { error: `Claude-designed PDF failed: ${err?.message}` } };
     }
   }
 
@@ -5663,13 +6764,24 @@ async function executeCrmToolRaw(
   if (fnName === "send_email") {
     try {
       const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
       await sendSharedMailboxEmail({
         to: fnArgs.to,
         subject: fnArgs.subject,
         body: fnArgs.body,
         cc: fnArgs.cc,
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
-      return { data: { success: true, action: "email_sent", to: fnArgs.to, subject: fnArgs.subject }, action: { type: "email_sent", to: fnArgs.to } };
+      return {
+        data: {
+          success: true,
+          action: "email_sent",
+          to: fnArgs.to,
+          subject: fnArgs.subject,
+          attachmentCount: attachments.length,
+        },
+        action: { type: "email_sent", to: fnArgs.to },
+      };
     } catch (emailErr: any) {
       return { data: { error: `Failed to send email: ${emailErr?.message || "Unknown error"}` } };
     }
@@ -5679,8 +6791,22 @@ async function executeCrmToolRaw(
     try {
       const { replyToSharedMailboxMessage } = await import("./shared-mailbox");
       const ccList = fnArgs.cc ? [fnArgs.cc] : undefined;
-      await replyToSharedMailboxMessage(fnArgs.messageId, fnArgs.body, ccList);
-      return { data: { success: true, action: "email_replied", messageId: fnArgs.messageId }, action: { type: "email_sent" } };
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
+      await replyToSharedMailboxMessage(
+        fnArgs.messageId,
+        fnArgs.body,
+        ccList,
+        attachments.length > 0 ? attachments : undefined,
+      );
+      return {
+        data: {
+          success: true,
+          action: "email_replied",
+          messageId: fnArgs.messageId,
+          attachmentCount: attachments.length,
+        },
+        action: { type: "email_sent" },
+      };
     } catch (replyErr: any) {
       return { data: { error: `Failed to reply to email: ${replyErr?.message || "Unknown error"}` } };
     }
@@ -5689,13 +6815,33 @@ async function executeCrmToolRaw(
   if (fnName === "search_emails") {
     try {
       const searchQuery = fnArgs.query;
-      const top = Math.min(fnArgs.top || 25, 50);
+      const top = Math.min(fnArgs.top || 50, 500);
       const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
       const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
       if ("error" in results) return { data: { error: results.error } };
       return { data: { results: results.messages, count: results.messages.length, query: searchQuery, scope: results.scope } };
     } catch (searchErr: any) {
       return { data: { error: `Email search error: ${searchErr?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "search_calendar") {
+    try {
+      const searchQuery = fnArgs.query;
+      const top = Math.min(fnArgs.top || 50, 500);
+      const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
+      const results = await runSearchCalendarTool({
+        query: searchQuery,
+        top,
+        mailbox: mailboxArg,
+        startDateTime: fnArgs.startDateTime,
+        endDateTime: fnArgs.endDateTime,
+        req,
+      });
+      if ("error" in results) return { data: { error: results.error } };
+      return { data: { results: results.events, count: results.events.length, query: searchQuery, scope: results.scope } };
+    } catch (searchErr: any) {
+      return { data: { error: `Calendar search error: ${searchErr?.message || "Unknown error"}` } };
     }
   }
 
@@ -5977,38 +7123,158 @@ async function executeCrmToolRaw(
       const fileUrl = fnArgs.fileUrl as string;
       const language = (fnArgs.language as string) || "en";
 
-      if (!fileUrl.startsWith("/api/chat-media/")) {
-        return { data: { error: "Only uploaded chat-media files are supported. Please upload the file via the chat attachment button." } };
-      }
-
       const tmpDir = path.join(process.cwd(), "ChatBGP", "transcribe-tmp");
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
       const tmpId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-      const filename = fileUrl.replace("/api/chat-media/", "");
-      const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const file = await getFile(`chat-media/${filename}`);
-      if (!file) return { data: { error: "File not found in chat media" } };
       const allowedExts = [".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac", ".wma", ".mov", ".avi", ".mkv", ".wmv", ".flv"];
-      const ext = path.extname(safeFilename).toLowerCase() || ".mp4";
-      if (!allowedExts.includes(ext)) return { data: { error: `Unsupported file type: ${ext}` } };
-      const audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
-      fs.writeFileSync(audioFilePath, file.data);
-      tmpFiles.push(audioFilePath);
+
+      let audioFilePath: string;
+      let ext: string;
+
+      if (fileUrl.startsWith("/api/chat-media/")) {
+        // Existing path — file uploaded via the chat attachment button.
+        const filename = fileUrl.replace("/api/chat-media/", "");
+        const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const file = await getFile(`chat-media/${filename}`);
+        if (!file) return { data: { error: "File not found in chat media" } };
+        ext = path.extname(safeFilename).toLowerCase() || ".mp4";
+        if (!allowedExts.includes(ext)) {
+          // Don't reject upfront — Whisper + ffmpeg between them accept
+          // basically anything with audio. Log a warning but let it try.
+          console.warn(`[transcribe_audio] unfamiliar extension ${ext}, attempting anyway`);
+        }
+        audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
+        fs.writeFileSync(audioFilePath, file.data);
+        tmpFiles.push(audioFilePath);
+      } else if (/^https?:\/\/.*sharepoint\.com\//i.test(fileUrl) || /^https?:\/\/.*-my\.sharepoint\.com\//i.test(fileUrl)) {
+        // SharePoint / OneDrive share link — resolve via Microsoft Graph
+        // and stream directly to disk so big meeting recordings (often
+        // ~100-500 MB) don't buffer in memory. Same resolver + streamer
+        // we use for HMLR data.
+        const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
+        let meta;
+        try {
+          meta = await resolveSharePointShareLinkMetadata(fileUrl);
+        } catch (resErr: any) {
+          return { data: { error: `Failed to resolve SharePoint link: ${resErr?.message || resErr}` } };
+        }
+        if (meta.isFolder) {
+          return { data: { error: "SharePoint link points to a folder, not a single audio/video file. Share the specific recording, not the folder." } };
+        }
+        if (!meta.downloadUrl) {
+          return { data: { error: "SharePoint link resolved but no download URL returned. The file may be permission-locked." } };
+        }
+        const safeFilename = (meta.name || "recording.mp4").replace(/[^a-zA-Z0-9._-]/g, "_");
+        ext = path.extname(safeFilename).toLowerCase() || ".mp4";
+        if (!allowedExts.includes(ext)) {
+          // Don't reject upfront — Whisper + ffmpeg between them accept
+          // basically anything with audio. Log a warning but let it try.
+          console.warn(`[transcribe_audio] unfamiliar extension ${ext}, attempting anyway`);
+        }
+        audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
+        try {
+          await streamUrlToFile(meta.downloadUrl, audioFilePath);
+        } catch (dlErr: any) {
+          return { data: { error: `Failed to download from SharePoint: ${dlErr?.message || dlErr}` } };
+        }
+        tmpFiles.push(audioFilePath);
+      } else if (/^https?:\/\//i.test(fileUrl)) {
+        // Generic public URL fallback — just fetch and write to disk.
+        const resp = await fetch(fileUrl, { redirect: "follow" });
+        if (!resp.ok) return { data: { error: `Public URL fetch failed: HTTP ${resp.status}` } };
+        const ctype = resp.headers.get("content-type") || "";
+        const guessExt = (() => {
+          if (ctype.includes("mp4") || ctype.includes("mpeg")) return ".mp4";
+          if (ctype.includes("wav")) return ".wav";
+          if (ctype.includes("webm")) return ".webm";
+          return ".mp4";
+        })();
+        const lastSeg = (new URL(fileUrl)).pathname.split("/").pop() || "audio";
+        const safeFilename = lastSeg.replace(/[^a-zA-Z0-9._-]/g, "_");
+        ext = path.extname(safeFilename).toLowerCase() || guessExt;
+        if (!allowedExts.includes(ext)) {
+          // Don't reject upfront — Whisper + ffmpeg between them accept
+          // basically anything with audio. Log a warning but let it try.
+          console.warn(`[transcribe_audio] unfamiliar extension ${ext}, attempting anyway`);
+        }
+        audioFilePath = path.join(tmpDir, `${tmpId}-source${ext}`);
+        const fsStream = fs.createWriteStream(audioFilePath);
+        const { pipeline } = await import("stream/promises");
+        if (!resp.body) return { data: { error: "Response had no body" } };
+        await pipeline(resp.body as any, fsStream);
+        tmpFiles.push(audioFilePath);
+      } else {
+        return { data: { error: "fileUrl must be a chat-media path (/api/chat-media/...), a SharePoint/OneDrive share link, or a public https URL." } };
+      }
+
+      // Use bundled ffmpeg / ffprobe binaries via npm packages
+      // (ffmpeg-static, ffprobe-static). Ships the binaries with the
+      // deploy so there's no dependency on the OS having ffmpeg
+      // installed — the previous nixpacks attempt was unreliable on
+      // Railway. Falls back to "ffmpeg"/"ffprobe" on PATH if the
+      // packages aren't loadable for some reason.
+      let ffmpegBin = "ffmpeg";
+      let ffprobeBin = "ffprobe";
+      try {
+        const ffmpegStatic = (await import("ffmpeg-static")).default;
+        if (ffmpegStatic && typeof ffmpegStatic === "string") ffmpegBin = ffmpegStatic;
+      } catch { /* keep PATH fallback */ }
+      try {
+        const ffprobeStatic = (await import("ffprobe-static")).default;
+        if (ffprobeStatic?.path) ffprobeBin = ffprobeStatic.path;
+      } catch { /* keep PATH fallback */ }
+
+      // Diagnostic: log actual on-disk size right before ffmpeg. If the
+      // SharePoint stream dropped chunks silently this is where we'll
+      // see it (file much smaller than expected).
+      const sourceStat = fs.statSync(audioFilePath);
+      console.log(`[transcribe_audio] source: ${audioFilePath} size=${sourceStat.size}B (${(sourceStat.size / 1024 / 1024).toFixed(1)} MB)`);
 
       const videoExts = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"];
       let whisperInputPath = audioFilePath;
 
-      if (videoExts.includes(ext)) {
+      // Whisper API accepts MP4 / M4A / MP3 / WAV / WebM / etc.
+      // directly. If the file is small enough, skip ffmpeg entirely —
+      // no point re-encoding to MP3 just to upload. This also dodges
+      // ffmpeg's pickiness about Teams' weird container quirks. Only
+      // need to invoke ffmpeg for >25MB files where we have to
+      // segment for Whisper's per-request size cap.
+      if (sourceStat.size <= 25 * 1024 * 1024) {
+        whisperInputPath = audioFilePath;
+      } else if (videoExts.includes(ext)) {
         const audioOutPath = path.join(tmpDir, `${tmpId}-audio.mp3`);
         tmpFiles.push(audioOutPath);
-        try {
-          execFileSync("ffmpeg", ["-i", audioFilePath, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", audioOutPath], { timeout: 120000, stdio: "pipe" });
-          whisperInputPath = audioOutPath;
-        } catch (ffErr: any) {
+        const { spawnSync } = await import("child_process");
+        // Capture full stderr so we can diagnose if it fails. The old
+        // execFileSync threw with .message truncated to a useless
+        // prefix — we'd never see the actual ffmpeg error.
+        // -err_detect ignore_err: tolerate Teams MP4 quirks
+        // -fflags +genpts+igndts: regenerate timestamps if Teams' are weird
+        const ff = spawnSync(ffmpegBin, [
+          "-err_detect", "ignore_err",
+          "-fflags", "+genpts+igndts",
+          "-i", audioFilePath,
+          "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y",
+          audioOutPath,
+        ], { timeout: 240000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+        if (ff.status !== 0) {
+          const stderr = ff.stderr || "";
+          const stdout = ff.stdout || "";
+          // Last ~3000 chars of stderr is usually where the actual fatal error lives.
+          const tail = stderr.slice(-3000);
+          console.error("[transcribe_audio] ffmpeg FAILED. stdout-tail:", stdout.slice(-500), "stderr-tail:", tail);
           cleanupTmp();
-          return { data: { error: `Failed to extract audio from video: ${ffErr?.message?.substring(0, 200)}` } };
+          return { data: {
+            error: "Audio extraction failed",
+            ffmpegPath: ffmpegBin,
+            exitCode: ff.status,
+            signal: ff.signal,
+            sourceFile: audioFilePath,
+            sourceSize: sourceStat.size,
+            stderr: tail,
+          } };
         }
+        whisperInputPath = audioOutPath;
       }
 
       const fileStat = fs.statSync(whisperInputPath);
@@ -6016,10 +7282,10 @@ async function executeCrmToolRaw(
       if (fileStat.size > maxSize) {
         let durationOutput: string;
         try {
-          durationOutput = execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", whisperInputPath], { timeout: 30000, stdio: "pipe" }).toString().trim();
+          durationOutput = execFileSync(ffprobeBin, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", whisperInputPath], { timeout: 30000, stdio: "pipe" }).toString().trim();
         } catch {
           cleanupTmp();
-          return { data: { error: "Could not determine audio duration" } };
+          return { data: { error: `Could not determine audio duration (ffprobe=${ffprobeBin})` } };
         }
         const totalDuration = parseFloat(durationOutput) || 0;
         if (totalDuration === 0) { cleanupTmp(); return { data: { error: "Could not determine audio duration" } }; }
@@ -6031,7 +7297,7 @@ async function executeCrmToolRaw(
           tmpFiles.push(segPath);
           const start = i * segmentDuration;
           try {
-            execFileSync("ffmpeg", ["-i", whisperInputPath, "-ss", String(start), "-t", String(segmentDuration), "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", segPath], { timeout: 60000, stdio: "pipe" });
+            execFileSync(ffmpegBin, ["-i", whisperInputPath, "-ss", String(start), "-t", String(segmentDuration), "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1", "-y", segPath], { timeout: 120000, stdio: "pipe" });
             segPaths.push(segPath);
           } catch { /* skip failed segment */ }
         }
@@ -6142,6 +7408,426 @@ async function executeCrmToolRaw(
       };
     } catch (err: any) {
       return { data: { error: `Leasing schedule query failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "list_my_uploads") {
+    try {
+      const search = String(fnArgs.search || "").trim();
+      const limit = Math.min(Math.max(Number(fnArgs.limit) || 20, 1), 50);
+      const currentUserId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      // Prefer the user-scoped history table (populated on every upload).
+      // Fall back to a global chat-media search when the per-user table has
+      // gaps (older uploads predating the recordUserUpload fix).
+      let items: Array<{ storageKey: string; originalName: string; mimeType: string; size: number; uploadedAt: string }> = [];
+      if (currentUserId) {
+        const recent = await getRecentUserUploads(currentUserId, limit * 2);
+        items = recent
+          .filter(r => !search || r.originalName.toLowerCase().includes(search.toLowerCase()))
+          .slice(0, limit)
+          .map(r => ({ storageKey: r.storageKey, originalName: r.originalName, mimeType: r.mimeType, size: r.size, uploadedAt: r.uploadedAt }));
+      }
+      if (items.length === 0) {
+        const global = await searchChatMedia(search, limit);
+        items = global.map(g => ({ storageKey: g.storageKey, originalName: g.originalName, mimeType: g.contentType, size: g.size, uploadedAt: "" }));
+      }
+      return {
+        data: {
+          count: items.length,
+          files: items.map(it => ({
+            chat_media_filename: it.storageKey.replace(/^chat-media\//, ""),
+            original_name: it.originalName,
+            mime_type: it.mimeType,
+            size_kb: Math.round((it.size || 0) / 1024),
+            uploaded_at: it.uploadedAt || null,
+          })),
+          hint: items.length === 0
+            ? "No matching files. Ask the user to drag/drop the file into chat."
+            : `Pass any \`chat_media_filename\` above (or the \`original_name\`) to import tools — both resolve to the same file.`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: err?.message || "list_my_uploads failed" } };
+    }
+  }
+
+  if (fnName === "import_leasing_schedule") {
+    try {
+      const mediaFilename = String(fnArgs.mediaFilename || "").trim();
+      const mode = (fnArgs.mode === "import" ? "import" : "preview") as "preview" | "import";
+      const propertyFilter = fnArgs.propertyFilter ? String(fnArgs.propertyFilter).toLowerCase() : null;
+
+      if (!mediaFilename) {
+        return { data: { error: "mediaFilename is required. The user must upload an Excel file to chat first." } };
+      }
+      if (mediaFilename.includes("..") || mediaFilename.includes("/") || mediaFilename.includes("\\")) {
+        return { data: { error: "Invalid filename" } };
+      }
+
+      const mediaPath = path.join(process.cwd(), "ChatBGP", "chat-media", mediaFilename);
+      if (!fs.existsSync(mediaPath)) {
+        const dbFile = await getFile(`chat-media/${mediaFilename}`);
+        if (dbFile?.data) {
+          const dir = path.dirname(mediaPath);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(mediaPath, dbFile.data);
+        } else {
+          const byName = await findChatMediaByOriginalName(mediaFilename);
+          if (byName?.data) {
+            const dir = path.dirname(mediaPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(mediaPath, byName.data);
+          } else {
+            return { data: { error: `Chat file not found: ${mediaFilename}. Ask the user to re-upload the file.` } };
+          }
+        }
+      }
+
+      const origName = mediaFilename.replace(/^\d+-/, "");
+      const ext = path.extname(origName).toLowerCase();
+      if (ext !== ".xlsx" && ext !== ".xls" && ext !== ".csv") {
+        return { data: { error: `Only .xlsx, .xls, or .csv files are supported. Got: ${ext}` } };
+      }
+
+      const rawText = await extractTextFromFile(mediaPath, origName);
+      if (!rawText || rawText.length < 50) {
+        return { data: { error: "Could not read any content from the file — it may be empty, password-protected, or corrupted." } };
+      }
+
+      const MAX_CHARS = 150000;
+      const sheetText = rawText.length > MAX_CHARS ? rawText.slice(0, MAX_CHARS) + "\n[...truncated]" : rawText;
+
+      const extractionSystem = `You are extracting leasing schedule data from a BGP Dashboard Excel workbook for insertion into the leasing_schedule_units database table.
+
+The workbook contains one or more PROPERTY SECTIONS. Each property section starts with a header block naming the property (often on its own row or in a merged cell), sometimes with a "Cluster:" line and "Asset Lead:" line. After the header, the property section has these columns:
+  Zone | Positioning | Existing | Targets | Optimum Targets | Financial Performance | Top 10 Priority? | Updates
+
+Then multiple unit rows. Some rows are zone-group headers (Zone column populated, everything else empty) — skip those. Some rows are blank — skip. Some rows at the end of the workbook contain strategy principles, key definitions (GREEN/AMBER/RED), rules — all should be skipped.
+
+For each UNIT ROW, extract:
+- property_name: from the nearest preceding property header
+- zone: the last non-empty Zone value above this row (e.g. "1. Westgate Social")
+- positioning: from Positioning column (e.g. "Social Dining"). If it has "(XX)" at the end, extract those initials as agent_initials and strip from positioning.
+- agent_initials: the "(XX)" part, 2-3 letter initials like "JR", "HK", "TG", "GOH"
+- unit_name: from Existing column. Strip surrounding parens/dates. E.g. "Benito's (JR) (Exp. 10/9/26)" → "Benito's". For empty/void units like "[L13 - Loake]", "Neal's Yard Unit L40", keep as-is.
+- tenant_name: same as unit_name unless explicitly different
+- lease_expiry: parse "(Exp. DD/M/YY)" → YYYY-MM-DD (assume 20YY for 2-digit years). "TaW" or missing → null
+- lease_break: parse "(TB DD/M/YY)" → YYYY-MM-DD. null if missing.
+- landlord_break: parse "(LB DD/M/YY)" → YYYY-MM-DD
+- rent_review: parse "(RR DD/M/YY)" → YYYY-MM-DD
+- target_brands: array of strings parsed from the Targets column. If column has a numbered list "1. X 2. Y", return ["X", "Y"]. Ignore leading category labels like "Grab & Go" or "Premium Casual Dining".
+- optimum_target: from Optimum Targets column. Single string (may be multi-word).
+- lfl_percent: parse from "X% LFL" or "-X% LFL" → number (null if absent or "-")
+- mat_psqft: parse from "£X MAT/sqft" → integer (null if absent)
+- occ_cost_percent: parse from "X% Occ Costs" → number (null if absent or "?")
+- priority: if Priority column says "Top 10 25/26 LS Portfolio Priority" or similar → store that string. "-" or empty → null.
+- updates: full text from Updates column (keep line breaks as \\n). Empty or "-" → null.
+- status: "Occupied" by default. If unit_name is wrapped in "[...]" or the Existing cell suggests void (e.g. "VOID", "[L13 - ...]", "Neal's Yard Unit L40") → "Vacant".
+
+Output STRICT JSON ONLY, no markdown fences:
+{
+  "properties": [
+    {
+      "property_name": "Westgate Oxford",
+      "cluster": "Major Retail - Engine Room",
+      "asset_lead": "JR",
+      "units": [ { ...all fields above... } ]
+    }
+  ],
+  "skipped_rows_count": 0,
+  "notes": "brief notes on any ambiguities"
+}
+
+Be thorough — include every unit row you can classify, across all properties in the workbook.`;
+
+      const response = await callClaude({
+        model: CHATBGP_MODEL,
+        messages: [
+          { role: "system", content: extractionSystem },
+          { role: "user", content: `Workbook content (CSV-style, one sheet per "=== Sheet:" block):\n\n${sheetText}` },
+        ],
+        max_completion_tokens: 16000,
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content?.trim() || "";
+      if (!content) return { data: { error: "AI extraction returned empty response" } };
+
+      let parsed: any;
+      try {
+        const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        parsed = JSON.parse(cleaned);
+      } catch (parseErr: any) {
+        return { data: { error: `Could not parse AI response as JSON: ${parseErr?.message}. Raw response started with: ${content.slice(0, 200)}` } };
+      }
+
+      const allProperties = Array.isArray(parsed?.properties) ? parsed.properties : [];
+      const properties = propertyFilter
+        ? allProperties.filter((p: any) => String(p.property_name || "").toLowerCase().includes(propertyFilter))
+        : allProperties;
+
+      if (properties.length === 0) {
+        return { data: { error: propertyFilter ? `No property matching "${fnArgs.propertyFilter}" found in file.` : "No properties could be extracted from the file." } };
+      }
+
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      const userRes = userId
+        ? await pool.query("SELECT id, username FROM users WHERE id = $1 LIMIT 1", [userId])
+        : { rows: [] as Array<{ id: string; username: string }> };
+      const user = userRes.rows[0];
+
+      const results: any[] = [];
+      for (const prop of properties) {
+        const propName = String(prop.property_name || "").trim();
+        const units = Array.isArray(prop.units) ? prop.units : [];
+
+        const matchRes = await pool.query(
+          "SELECT id, name FROM crm_properties WHERE name ILIKE $1 ORDER BY length(name) ASC LIMIT 1",
+          [`%${propName}%`]
+        );
+        const matched = matchRes.rows[0];
+
+        if (!matched) {
+          results.push({ property: propName, status: "property_not_found_in_crm", units_parsed: units.length, inserted: 0 });
+          continue;
+        }
+
+        if (mode === "preview") {
+          results.push({
+            property: propName,
+            matched_crm_property: matched.name,
+            matched_crm_id: matched.id,
+            units_parsed: units.length,
+            sample_unit: units[0] || null,
+            vacant_count: units.filter((u: any) => u.status === "Vacant").length,
+          });
+          continue;
+        }
+
+        let inserted = 0;
+        let order = 0;
+        for (const u of units) {
+          try {
+            await pool.query(`
+              INSERT INTO leasing_schedule_units
+                (property_id, zone, positioning, unit_name, tenant_name, agent_initials,
+                 lease_expiry, lease_break, rent_review, landlord_break,
+                 rent_pa, sqft, mat_psqft, lfl_percent, occ_cost_percent, financial_notes,
+                 target_brands, optimum_target, priority, status, updates, sort_order)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+            `, [
+              matched.id,
+              u.zone || null,
+              u.positioning || null,
+              u.unit_name || "(unnamed)",
+              u.tenant_name || u.unit_name || "(unnamed)",
+              u.agent_initials || null,
+              u.lease_expiry || null,
+              u.lease_break || null,
+              u.rent_review || null,
+              u.landlord_break || null,
+              u.rent_pa ?? null,
+              u.sqft ?? null,
+              u.mat_psqft ?? null,
+              u.lfl_percent ?? null,
+              u.occ_cost_percent ?? null,
+              u.financial_notes || null,
+              Array.isArray(u.target_brands) && u.target_brands.length > 0
+                ? u.target_brands.map((b: string, i: number) => `${i + 1}. ${b}`).join("\n")
+                : (typeof u.target_brands === "string" ? u.target_brands : null),
+              u.optimum_target || null,
+              u.priority || null,
+              u.status || "Occupied",
+              u.updates || null,
+              order++,
+            ]);
+            inserted++;
+          } catch (insErr: any) {
+            console.error(`[import_leasing_schedule] Insert failed for ${propName} / ${u.unit_name}:`, insErr?.message);
+          }
+        }
+
+        if (inserted > 0 && user) {
+          await pool.query(`
+            INSERT INTO leasing_schedule_audit (property_id, user_id, user_name, action, new_value, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+          `, [matched.id, user.id, user.username, "import_via_chatbgp", `${inserted} units imported from ${origName}`]);
+        }
+
+        results.push({ property: propName, matched_crm_property: matched.name, units_parsed: units.length, inserted });
+      }
+
+      const totalParsed = results.reduce((s, r) => s + (r.units_parsed || 0), 0);
+      const totalInserted = results.reduce((s, r) => s + (r.inserted || 0), 0);
+      const notMatched = results.filter(r => r.status === "property_not_found_in_crm").map(r => r.property);
+
+      return {
+        data: {
+          mode,
+          file: origName,
+          properties_in_file: allProperties.length,
+          properties_processed: properties.length,
+          total_units_parsed: totalParsed,
+          total_units_inserted: mode === "import" ? totalInserted : 0,
+          properties_not_found_in_crm: notMatched,
+          results,
+          ai_notes: parsed?.notes || null,
+          next_step: mode === "preview"
+            ? "Review the summary. If it looks correct, call import_leasing_schedule again with mode='import'."
+            : "Import complete. Check /leasing-schedule to verify.",
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: `Leasing schedule import failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "import_wip_excel") {
+    try {
+      const chatMediaFilename = String(fnArgs.chatMediaFilename || "").trim();
+      const sharepointUrl = String(fnArgs.sharepointUrl || "").trim();
+      const mode = (fnArgs.mode === "append" ? "append" : "replace") as "replace" | "append";
+      if (!chatMediaFilename && !sharepointUrl) {
+        return { data: { error: "Either chatMediaFilename or sharepointUrl must be provided. Ask the user to drag the WIP Excel into chat or paste a SharePoint share link." } };
+      }
+
+      let buffer: Buffer | null = null;
+      let resolvedName = chatMediaFilename;
+
+      if (sharepointUrl) {
+        // SharePoint share-link path — resolve via Graph /shares/{token}/driveItem
+        // and download the binary content.
+        const { getValidMsToken } = await import("./microsoft");
+        const token = await getValidMsToken(req);
+        if (!token) {
+          return { data: { error: "Microsoft 365 is not connected. Please connect via the SharePoint page first." } };
+        }
+        const inputUrl = (await resolveOneDriveShortLink(sharepointUrl)).trim();
+        const encodedUrl = Buffer.from(inputUrl).toString("base64")
+          .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const sharingUrl = `u!${encodedUrl}`;
+        const driveItemRes = await fetch(
+          `https://graph.microsoft.com/v1.0/shares/${sharingUrl}/driveItem`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!driveItemRes.ok) {
+          const errText = await driveItemRes.text();
+          return { data: { error: `Could not access SharePoint file (${driveItemRes.status}): ${errText.slice(0, 200)}` } };
+        }
+        const driveItem = await driveItemRes.json();
+        resolvedName = driveItem.name || "wip.xlsx";
+        let downloadUrl: string | null = driveItem["@microsoft.graph.downloadUrl"] || null;
+        if (!downloadUrl && driveItem.parentReference?.driveId && driveItem.id) {
+          const contentRes = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${driveItem.parentReference.driveId}/items/${driveItem.id}/content`,
+            { headers: { Authorization: `Bearer ${token}` }, redirect: "manual" },
+          );
+          if (contentRes.status === 302) {
+            downloadUrl = contentRes.headers.get("location");
+          }
+        }
+        if (!downloadUrl) {
+          return { data: { error: `Could not get a download URL for ${resolvedName}.` } };
+        }
+        const fileRes = await fetch(downloadUrl);
+        if (!fileRes.ok) {
+          return { data: { error: `SharePoint download failed (${fileRes.status}).` } };
+        }
+        buffer = Buffer.from(await fileRes.arrayBuffer());
+      } else {
+        if (chatMediaFilename.includes("..") || chatMediaFilename.includes("/") || chatMediaFilename.includes("\\")) {
+          return { data: { error: "Invalid filename" } };
+        }
+        // Resolve the file: try disk first (multer-saved), then DB-backed
+        // chat-media storage, then a fallback by originalName lookup. Same
+        // pattern import_leasing_schedule uses.
+        const diskPath = path.join(process.cwd(), "ChatBGP", "chat-media", chatMediaFilename);
+        if (fs.existsSync(diskPath)) {
+          buffer = fs.readFileSync(diskPath);
+        } else {
+          const dbFile = await getFile(`chat-media/${chatMediaFilename}`);
+          if (dbFile?.data) {
+            buffer = dbFile.data;
+          } else {
+            const byName = await findChatMediaByOriginalName(chatMediaFilename);
+            if (byName?.data) buffer = byName.data;
+          }
+        }
+        if (!buffer) {
+          return { data: { error: `Chat file not found: ${chatMediaFilename}. Ask the user to re-upload the file.` } };
+        }
+      }
+
+      const ext = path.extname(resolvedName).toLowerCase();
+      if (ext !== ".xlsx" && ext !== ".xls") {
+        return { data: { error: `WIP import expects an Excel file (.xlsx / .xls). Got ${ext || "<no ext>"}.` } };
+      }
+
+      const { importWipFromBuffer } = await import("./crm");
+      const archiveOrphans = mode === "replace" && fnArgs.sourceOfTruth === true;
+      const result = await importWipFromBuffer(buffer, { append: mode === "append", archiveOrphans });
+
+      // Trim the sync result for the chat reply — the agent only needs
+      // headline numbers, not the full row-level breakdown. `layout`
+      // exposes which Sage export format was detected, useful for the
+      // analyst to know we're parsing what they uploaded.
+      const sync = result.sync || {};
+      const enrich = result.enrichment || {};
+      return {
+        data: {
+          success: true,
+          imported: result.imported,
+          layout: result.layout,
+          mode,
+          syncSummary: {
+            dealsCreated: sync.created ?? sync.dealsCreated ?? null,
+            dealsUpdated: sync.updated ?? sync.dealsUpdated ?? null,
+            propertiesCreated: sync.propertiesCreated ?? null,
+            companiesCreated: sync.companiesCreated ?? null,
+          },
+          enrichment: {
+            dealsEnriched: enrich.dealsEnriched ?? null,
+            billingEntitiesCreated: enrich.billingEntitiesCreated ?? null,
+            billingEntitiesLinked: enrich.billingEntitiesLinked ?? null,
+            allocationsCreated: enrich.allocationsCreated ?? null,
+            tenantRepSearchesCreated: enrich.tenantRepSearchesCreated ?? null,
+            skipped: enrich.skipped ?? null,
+          },
+          orphans: result.orphans
+            ? {
+                archived: result.orphans.archived,
+                deals: result.orphans.deals.slice(0, 50),
+                truncated: result.orphans.deals.length > 50,
+              }
+            : null,
+        },
+        action: { type: "wip_imported", imported: result.imported, layout: result.layout },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] import_wip_excel error:", err?.message, err?.stack);
+      return { data: { error: `WIP import failed: ${err?.message || "unknown error"}` } };
+    }
+  }
+
+  if (fnName === "wipe_crm_deals") {
+    try {
+      const { confirm } = fnArgs as { confirm?: boolean };
+      if (!confirm) return { data: { error: "Wipe not confirmed. Set confirm: true to proceed." } };
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+      const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
+      const baseUrl = `${protocol}://${host}`;
+      const resp = await fetch(`${baseUrl}/api/admin/wipe-deals`, {
+        method: "POST",
+        headers: { cookie: req.headers.cookie || "", authorization: req.headers.authorization || "" },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        return { data: { error: (err as any).message || `Wipe failed (${resp.status})` } };
+      }
+      const result = await resp.json();
+      return { data: result };
+    } catch (err: any) {
+      return { data: { error: `wipe_crm_deals failed: ${err?.message}` } };
     }
   }
 
@@ -6762,7 +8448,7 @@ async function executeCrmToolRaw(
         clearTimeout(timeout);
         if (!downloadRes.ok) return { data: { error: `Could not download file` } };
         const buffer = Buffer.from(await downloadRes.arrayBuffer());
-        const fileName = filePath.split("/").pop() || "file";
+        const fileName = (filePath.split("/").pop() || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
         try {
           const { extractTextFromFile } = await import("./utils/file-extractor");
           const tempDir = require("path").join(process.cwd(), "ChatBGP", "archivist-temp");
@@ -7677,6 +9363,8 @@ async function executeCrmToolRaw(
       return { data: { success: true, alreadyKnown: true, message: "I already know this — no need to save again." }, action: { type: "learning_already_known" } };
     }
     
+    const subjectPropertyId = typeof fnArgs.subjectPropertyId === "string" ? fnArgs.subjectPropertyId.trim() || null : null;
+    const subjectCompanyNumber = typeof fnArgs.subjectCompanyNumber === "string" ? fnArgs.subjectCompanyNumber.trim().toUpperCase() || null : null;
     await db.insert(chatbgpLearnings).values({
       category: fnArgs.category || "general",
       learning: learningText,
@@ -7684,6 +9372,8 @@ async function executeCrmToolRaw(
       sourceUserName: userName,
       confidence: "confirmed",
       active: true,
+      subjectPropertyId,
+      subjectCompanyNumber,
     });
     return { data: { success: true, saved: learningText }, action: { type: "learning_saved" } };
   }
@@ -7878,15 +9568,15 @@ export async function handleCrmToolCall(
     };
 
     if (entityType === "all" || entityType === "deals") {
-      const deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(15);
+      const deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
       results.deals = deals;
     }
     if (entityType === "all" || entityType === "contacts") {
-      const contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(15);
+      const contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
       results.contacts = contacts;
     }
     if (entityType === "all" || entityType === "companies") {
-      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(buildOr([crmCompanies.name])).limit(15);
+      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(buildOr([crmCompanies.name])).limit(100);
       results.companies = companies;
     }
     if (entityType === "all" || entityType === "properties") {
@@ -7897,27 +9587,27 @@ export async function handleCrmToolCall(
       for (const wp of wordPatterns) propConditions.push(ilike(crmProperties.name, wp));
       propConditions.push(sqlTag`${addressText} ILIKE ${exactQ}`);
       for (const wp of wordPatterns) propConditions.push(sqlTag`${addressText} ILIKE ${wp}`);
-      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(15);
+      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(100);
       results.properties = properties;
     }
     if (entityType === "all" || entityType === "investment") {
-      const investments = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(15);
+      const investments = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
       results.investmentTracker = investments;
     }
     if (entityType === "all" || entityType === "units") {
-      const units = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(15);
+      const units = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
       results.availableUnits = units;
     }
     if (entityType === "all" || entityType === "requirements") {
       const { pool } = await import("./db");
       const reqConds = [exactQ, ...wordPatterns].map((p: string, i: number) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
       const reqParams = [exactQ, ...wordPatterns];
-      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 15`, reqParams);
+      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 100`, reqParams);
       results.requirements = reqResult.rows;
     }
     if (entityType === "all" || entityType === "comps") {
       const { crmComps } = await import("@shared/schema");
-      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(15);
+      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(100);
     }
 
     const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
@@ -8292,6 +9982,32 @@ export async function handleCrmToolCall(
     }
   }
 
+  if (fnName === "follow_url") {
+    const targetUrl = (fnArgs.url as string || "").trim();
+    if (!targetUrl) return { handled: true, response: { reply: "I need a URL to follow." } };
+    try {
+      const { newsSources } = await import("@shared/schema");
+      const { createRssAppFeed } = await import("./rssapp");
+      const existing = await db.select().from(newsSources).where(eq(newsSources.url, targetUrl)).limit(1);
+      if (existing.length > 0) {
+        return { handled: true, response: { reply: `Already tracking **${existing[0].name}** — new articles flow into your news feed automatically.` } };
+      }
+      const feed = await createRssAppFeed(targetUrl);
+      const [source] = await db.insert(newsSources).values({
+        name: (fnArgs.name as string) || feed.title || new URL(targetUrl).hostname.replace("www.", ""),
+        url: targetUrl,
+        feedUrl: feed.rss_feed_url,
+        type: "rssapp",
+        category: (fnArgs.category as string) || "general",
+        active: true,
+      }).returning();
+      console.log(`[ChatBGP] follow_url: registered "${source.name}" (${targetUrl}) via RSS.app`);
+      return { handled: true, response: { reply: `Now tracking **${source.name}**. New posts will land in your news feed on the next poll.` } };
+    } catch (err: any) {
+      return { handled: true, response: { reply: `Couldn't start following that URL: ${err?.message || err}` } };
+    }
+  }
+
   if (fnName === "search_news") {
     const { newsArticles } = await import("@shared/schema");
     const { ilike, or, desc: descOrder } = await import("drizzle-orm");
@@ -8334,9 +10050,14 @@ export async function handleCrmToolCall(
   if (fnName === "property_data_lookup") {
     const apiKey = process.env.PROPERTYDATA_API_KEY;
     if (!apiKey) return { handled: true, response: { reply: "PropertyData API key not configured." } };
-    const ALLOWED_ENDPOINTS = new Set(["sold-prices", "prices", "prices-per-sqf", "sold-prices-per-sqf", "rents", "rents-commercial", "rents-hmo", "yields", "growth", "growth-psf", "planning-applications", "valuation-commercial-sale", "valuation-commercial-rent", "valuation-sale", "valuation-rent", "demand", "demand-rent", "demographics", "flood-risk", "floor-areas", "postcode-key-stats", "uprns", "energy-efficiency", "address-match-uprn", "uprn", "uprn-title", "analyse-buildings", "rebuild-cost", "ptal", "crime", "schools", "internet-speed", "restaurants", "conservation-area", "green-belt", "aonb", "national-park", "listed-buildings", "household-income", "population", "tenure-types", "property-types", "council-tax", "national-hmo-register", "freeholds", "politics", "agents", "area-type", "land-registry-documents"]);
+    // No allowlist — PropertyData ship new endpoints regularly and a
+    // hardcoded list goes stale. Validate the SHAPE of the endpoint
+    // name only: lowercase letters, digits, hyphens, no path-escape
+    // characters. That blocks SSRF / injection while letting any
+    // legitimate PropertyData endpoint through.
+    const VALID_ENDPOINT = /^[a-z0-9][a-z0-9-]{1,60}$/;
     const endpoint = fnArgs.endpoint as string;
-    if (!endpoint || !ALLOWED_ENDPOINTS.has(endpoint)) return { handled: true, response: { reply: `Invalid endpoint "${endpoint}". Allowed: ${[...ALLOWED_ENDPOINTS].join(", ")}` } };
+    if (!endpoint || !VALID_ENDPOINT.test(endpoint)) return { handled: true, response: { reply: `Invalid endpoint name "${endpoint}". Endpoint names must be lowercase letters/digits/hyphens only.` } };
     const postcode = (fnArgs.postcode as string || "").trim().replace(/\s{2,}/g, " ");
     const needsPostcode = !["uprn", "uprn-title", "analyse-buildings", "land-registry-documents"].includes(endpoint);
     if (needsPostcode && !postcode) return { handled: true, response: { reply: "Postcode is required." } };
@@ -8438,7 +10159,7 @@ export async function handleCrmToolCall(
     const totalFees = deals.reduce((sum: number, d: any) => sum + (parseFloat(d.fee) || 0), 0);
     const byStage: Record<string, number> = {};
     for (const d of deals) {
-      byStage[d.groupName || "Unknown"] = (byStage[d.groupName || "Unknown"] || 0) + 1;
+      byStage[d.status || "Unknown"] = (byStage[d.status || "Unknown"] || 0) + 1;
     }
     const summary = { totalDeals: deals.length, totalPipeline, totalFees, byStage };
     const responseData = fnArgs.summaryOnly ? { success: true, summary } : { success: true, summary, deals: deals.slice(0, 50) };
@@ -8520,22 +10241,6 @@ export async function handleCrmToolCall(
     }
     const reply = fnArgs.message || `Navigating you to ${fnArgs.page}.`;
     return { handled: true, response: { reply, action: { type: "navigate", path } } };
-  }
-
-  if (fnName === "generate_pdf") {
-    try {
-      const result = await generatePdfFromHtml(fnArgs);
-      const downloadUrl = result.data.downloadUrl;
-      const safeName = result.data.filename;
-      const downloadLink = `[Download ${safeName}](${downloadUrl})`;
-      let reply = await summaryHelper({ success: true, downloadUrl, filename: safeName, pages: result.data.pages, action: "pdf_generated" });
-      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your PDF has been generated.\n\n${downloadLink}`;
-      else if (!reply.includes(downloadUrl)) reply += `\n\n${downloadLink}`;
-      return { handled: true, response: { reply, action: result.action } };
-    } catch (pdfErr: any) {
-      console.error("[chatbgp] PDF generation error:", pdfErr?.message);
-      return { handled: true, response: { reply: `Failed to generate PDF: ${pdfErr?.message || "Unknown error"}` } };
-    }
   }
 
   if (fnName === "generate_word") {
@@ -8703,14 +10408,22 @@ export async function handleCrmToolCall(
   if (fnName === "send_email") {
     try {
       const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
       await sendSharedMailboxEmail({
         to: fnArgs.to,
         subject: fnArgs.subject,
         body: fnArgs.body,
         cc: fnArgs.cc,
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
-      const reply = await summaryHelper({ success: true, action: "email_sent", to: fnArgs.to, subject: fnArgs.subject });
-      return { handled: true, response: { reply: reply || `Email sent to ${fnArgs.to}.`, action: { type: "email_sent", to: fnArgs.to } } };
+      const reply = await summaryHelper({
+        success: true,
+        action: "email_sent",
+        to: fnArgs.to,
+        subject: fnArgs.subject,
+        attachmentCount: attachments.length,
+      });
+      return { handled: true, response: { reply: reply || `Email sent to ${fnArgs.to}${attachments.length ? ` with ${attachments.length} attachment${attachments.length === 1 ? "" : "s"}` : ""}.`, action: { type: "email_sent", to: fnArgs.to } } };
     } catch (emailErr: any) {
       return { handled: true, response: { reply: `Failed to send email: ${emailErr?.message || "Unknown error"}` } };
     }
@@ -8720,8 +10433,19 @@ export async function handleCrmToolCall(
     try {
       const { replyToSharedMailboxMessage } = await import("./shared-mailbox");
       const ccList = fnArgs.cc ? [fnArgs.cc] : undefined;
-      await replyToSharedMailboxMessage(fnArgs.messageId, fnArgs.body, ccList);
-      const reply = await summaryHelper({ success: true, action: "email_replied", messageId: fnArgs.messageId });
+      const attachments = await resolveChatMediaAttachments(fnArgs.chatMediaAttachments);
+      await replyToSharedMailboxMessage(
+        fnArgs.messageId,
+        fnArgs.body,
+        ccList,
+        attachments.length > 0 ? attachments : undefined,
+      );
+      const reply = await summaryHelper({
+        success: true,
+        action: "email_replied",
+        messageId: fnArgs.messageId,
+        attachmentCount: attachments.length,
+      });
       return { handled: true, response: { reply: reply || "Reply sent successfully, threaded with the original email.", action: { type: "email_sent" } } };
     } catch (replyErr: any) {
       return { handled: true, response: { reply: `Failed to reply to email: ${replyErr?.message || "Unknown error"}` } };
@@ -8731,7 +10455,7 @@ export async function handleCrmToolCall(
   if (fnName === "search_emails") {
     try {
       const searchQuery = fnArgs.query;
-      const top = Math.min(fnArgs.top || 25, 50);
+      const top = Math.min(fnArgs.top || 50, 500);
       const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
       const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
       if ("error" in results) return { handled: true, response: { reply: results.error } };
@@ -8935,6 +10659,8 @@ export async function handleCrmToolCall(
       return { handled: true, response: { reply: reply || "I already know that — no need to save again.", action: { type: "learning_already_known" } } };
     }
     
+    const subjectPropertyId = typeof fnArgs.subjectPropertyId === "string" ? fnArgs.subjectPropertyId.trim() || null : null;
+    const subjectCompanyNumber = typeof fnArgs.subjectCompanyNumber === "string" ? fnArgs.subjectCompanyNumber.trim().toUpperCase() || null : null;
     await db.insert(chatbgpLearnings).values({
       category: fnArgs.category || "general",
       learning: learningText,
@@ -8942,6 +10668,8 @@ export async function handleCrmToolCall(
       sourceUserName: userName,
       confidence: "confirmed",
       active: true,
+      subjectPropertyId,
+      subjectCompanyNumber,
     });
     const reply = await summaryHelper({ success: true, saved: learningText });
     return { handled: true, response: { reply: reply || "Got it — I've noted that down.", action: { type: "learning_saved" } } };
@@ -9055,11 +10783,15 @@ export function setupChatBGPRoutes(app: Express) {
 
           if (isImage) {
             try {
-              const base64 = fileData.toString("base64");
-              const mimeType = file.mimetype || "image/png";
+              // Normalise HEIC / oversize iPhone photos to ≤1600px JPEG
+              // before sending to Claude — Anthropic rejects HEIC
+              // (400) and chains of unresized photos blow the 32MB
+              // request cap (413). Defaults to original on failure.
+              const normalised = await normaliseImageForClaude(fileData, file.mimetype, file.originalname);
+              const base64 = normalised.buffer.toString("base64");
               imageContentParts.push({
                 type: "image_url",
-                image_url: { url: `data:${mimeType};base64,${base64}`, detail: "auto" },
+                image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" },
               });
             } catch (err: any) {
               console.error(`Chat image read error (${file.originalname}):`, err?.message);
@@ -9069,7 +10801,19 @@ export function setupChatBGPRoutes(app: Express) {
           } else {
             try {
               const text = await extractTextFromFile(file.path, file.originalname);
-              documentTexts.push(`=== FILE: ${file.originalname} ===\n${text.slice(0, 15000)}`);
+              // Include the chat-media filename so the agent can pass it to
+              // upload_to_sharepoint when the user asks to save the dropped
+              // file. Without this hint the agent only sees the extracted
+              // text and has no way to reference the underlying binary —
+              // it would say things like "the binary isn't reachable via
+              // the chat-media filename pattern" because it never learned
+              // the filename in the first place.
+              documentTexts.push(
+                `=== FILE: ${file.originalname} ===\n` +
+                `chat-media filename: ${chatMediaName}\n` +
+                `(If the user asks to save this file to SharePoint, call upload_to_sharepoint with chatMediaFilename="${chatMediaName}" and the destinationFolderPath they specify.)\n\n` +
+                `--- Extracted text ---\n${text.slice(0, 15000)}`
+              );
             } catch (err: any) {
               console.error(`Chat file extract error (${file.originalname}):`, err?.message);
             }
@@ -9092,15 +10836,19 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
 
-      const { tools } = await getAvailableTools();
+      let tools: any[] = [];
+      try { ({ tools } = await getAvailableTools()); } catch (e: any) {
+        console.error("[ChatBGP file-chat] getAvailableTools failed:", e?.message);
+      }
 
-      const fileUserId = req.session.userId!;
-      const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings] = await Promise.all([
+      const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
+      const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings, personalisation] = await Promise.all([
         withTimeout(getKnowledgeContext(), 8000, ""),
         withTimeout(getMemoryContext(fileUserId), 8000, ""),
         withTimeout(getEmailAndCalendarContext(req), 8000, ""),
         withTimeout(getCrmContext(), 8000, ""),
         withTimeout(getBusinessLearningsContext(), 8000, ""),
+        withTimeout(getUserPersonalisationContext(fileUserId), 2000, ""),
       ]);
       let systemPrompt: string;
       try {
@@ -9108,7 +10856,7 @@ export function setupChatBGPRoutes(app: Express) {
       } catch {
         systemPrompt = SYSTEM_PROMPT_FALLBACK;
       }
-      const systemContent = systemPrompt + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
+      const systemContent = systemPrompt + personalisation + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
 
       const completionOptions: any = {
         model: CHATBGP_MODEL,
@@ -9147,14 +10895,27 @@ export function setupChatBGPRoutes(app: Express) {
           model: CHATBGP_MODEL,
           messages: convMessages,
           max_completion_tokens: 8192,
-          thinking: true, // extended thinking for quality
+          thinking: true,
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
           loopOpts.tool_choice = "auto";
         }
 
-        const completion = await callClaude(loopOpts);
+        let completion: any;
+        try {
+          completion = await callClaude(loopOpts);
+        } catch (thinkErr: any) {
+          // If thinking mode is rejected (e.g. proxy doesn't support it), retry plain
+          const isModelErr = thinkErr?.status === 400 || thinkErr?.status === 422;
+          if (isModelErr && loopCountFile === 1) {
+            console.warn("[ChatBGP file-chat] thinking mode failed, retrying plain:", thinkErr?.message);
+            const plainOpts = { ...loopOpts, thinking: false };
+            completion = await callClaude(plainOpts);
+          } else {
+            throw thinkErr;
+          }
+        }
         const message = completion.choices[0]?.message;
         if (!message) break;
 
@@ -9180,7 +10941,7 @@ export function setupChatBGPRoutes(app: Express) {
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 12000 ? resultStr.slice(0, 12000) + "\n...[truncated]" : resultStr,
+                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -9204,7 +10965,7 @@ export function setupChatBGPRoutes(app: Express) {
       const lastAMsg = convMessages.filter((m: any) => m.role === "assistant" && m.content).pop();
       res.json({ reply: lastAMsg?.content || "I've processed your request. Please ask a follow-up for more details.", ...(lastActionFile ? { action: lastActionFile } : {}) });
     } catch (err: any) {
-      console.error("ChatBGP file chat error:", err?.message || err);
+      console.error("ChatBGP file chat error:", err?.status, err?.message || err, err?.error || "");
       const errMsg = String(err?.message || err || "");
       if (errMsg.includes("Could not process image")) {
         try {
@@ -9287,9 +11048,19 @@ export function setupChatBGPRoutes(app: Express) {
             if (dbFile.originalName) originalName = tcArgs.fileName || dbFile.originalName;
           }
         }
-        if (!fileBuffer) return { data: { error: `File not found: ${chatMediaFilename}. It may have expired. Please regenerate the file and try again.` } };
+        if (!fileBuffer) {
+          // Detect the most common misuse: someone passing an email attachment
+          // filename (which doesn't follow the chat-media `<timestamp>-<hash>-`
+          // pattern) and direct the agent to the correct tool. Same for
+          // SharePoint paths or arbitrary filenames.
+          const looksLikeChatMedia = /^\d+-[a-f0-9]+-/.test(chatMediaFilename);
+          const hint = looksLikeChatMedia
+            ? "It may have expired. Please regenerate the file and try again."
+            : `That filename doesn't look like a chat-media file. If this is an email attachment, use \`download_email_attachment\` with \`action: 'save_to_sharepoint'\` and the folderPath instead — that tool pulls the binary from Graph and uploads it in one step. \`upload_to_sharepoint\` only handles files already in chat-media storage (generated docs, files dragged into the chat).`;
+          return { data: { error: `File not found in chat-media: ${chatMediaFilename}. ${hint}` } };
+        }
 
-        const spSiteRes = await fetch("https://graph.microsoft.com/v1.0/sites/brucegillinghampollard.sharepoint.com:/sites/BGPsharedrive", {
+        const spSiteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, {
           headers: { Authorization: `Bearer ${msToken}` },
         });
         if (!spSiteRes.ok) return { data: { error: "Could not access SharePoint site" } };
@@ -9516,7 +11287,7 @@ export function setupChatBGPRoutes(app: Express) {
           postcode: propertyPathwayRuns.postcode,
           currentStage: propertyPathwayRuns.currentStage,
           stageStatus: propertyPathwayRuns.stageStatus,
-          createdAt: propertyPathwayRuns.createdAt,
+          startedAt: propertyPathwayRuns.startedAt,
           updatedAt: propertyPathwayRuns.updatedAt,
         }).from(propertyPathwayRuns);
         const rows = q
@@ -9525,6 +11296,69 @@ export function setupChatBGPRoutes(app: Express) {
         return { data: { count: rows.length, runs: rows } };
       } catch (err: any) {
         return { data: { error: `Failed to list pathway runs: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "attach_workbook_to_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns, excelModelRuns, excelModelRunVersions } = await import("@shared/schema");
+        const { eq, desc, and } = await import("drizzle-orm");
+        const runId = String(tcArgs.runId || "");
+        const modelRunId = String(tcArgs.modelRunId || "");
+        if (!runId || !modelRunId) return { data: { error: "runId and modelRunId required" } };
+
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+
+        const [modelRun] = await db.select().from(excelModelRuns).where(eq(excelModelRuns.id, modelRunId)).limit(1);
+        if (!modelRun) return { data: { error: "Model run not found" } };
+
+        const versionId = tcArgs.modelVersionId ? String(tcArgs.modelVersionId) : null;
+        const [version] = versionId
+          ? await db.select().from(excelModelRunVersions).where(and(eq(excelModelRunVersions.id, versionId), eq(excelModelRunVersions.modelRunId, modelRunId))).limit(1)
+          : await db.select().from(excelModelRunVersions).where(eq(excelModelRunVersions.modelRunId, modelRunId)).orderBy(desc(excelModelRunVersions.version)).limit(1);
+        if (versionId && !version) return { data: { error: "Specified modelVersionId not found on this model run" } };
+
+        const sr: any = run.stageResults || {};
+        const existingStage7: any = sr.stage7 || {};
+        const nextStage7 = {
+          ...existingStage7,
+          modelRunId,
+          modelVersionId: version?.id,
+          modelRunName: modelRun.name,
+          modelVersionLabel: version?.notes || (version ? `v${version.version}` : undefined),
+          workbookUrl: `/api/models/runs/${modelRunId}/download`,
+          // Re-attaching a workbook un-agrees Stage 7 — the user must review the
+          // new model and click Agree again.
+          agreed: false,
+          agreedAt: undefined,
+          agreedBy: undefined,
+        };
+
+        await db.update(propertyPathwayRuns).set({
+          modelRunId,
+          stageResults: { ...sr, stage7: nextStage7 },
+          stageStatus: { ...((run.stageStatus as any) || {}), stage7: "running" },
+          currentStage: Math.max(run.currentStage || 7, 7),
+          updatedAt: new Date(),
+        }).where(eq(propertyPathwayRuns.id, runId));
+
+        return {
+          data: {
+            ok: true,
+            runId,
+            modelRunId,
+            modelVersionId: version?.id,
+            modelRunName: modelRun.name,
+            modelVersionLabel: nextStage7.modelVersionLabel,
+            workbookUrl: nextStage7.workbookUrl,
+            note: "Stage 7 marked as running. The user still needs to Agree on the model from the pathway card to lock it and unlock Stage 8.",
+          },
+          action: { type: "navigate", path: `/property-pathway?runId=${runId}` },
+        };
+      } catch (err: any) {
+        return { data: { error: `Failed to attach workbook to pathway: ${err?.message}` } };
       }
     }
 
@@ -9540,6 +11374,12 @@ export function setupChatBGPRoutes(app: Express) {
       const lookupResult = await performPropertyLookup({ ...args, layers: ["core", "extended"], propertyDataLayers: ["core", "market", "area", "planning", "residential"] });
       return { data: formatPropertyReport(lookupResult) };
     }
+    if (tcName === "get_property_planning") {
+      if (!tcArgs.propertyId) return { data: { error: "propertyId is required" } };
+      const { getPlanningSummary, planningSummaryToMarkdown } = await import("./planning-summary");
+      const summary = await getPlanningSummary(String(tcArgs.propertyId));
+      return { data: planningSummaryToMarkdown(summary) };
+    }
     // Financial model
     if (tcName === "run_model") {
       const modelResult = await executeModelRun(tcArgs);
@@ -9549,6 +11389,49 @@ export function setupChatBGPRoutes(app: Express) {
     if (tcName === "generate_document") {
       const docResult = await executeDocumentGenerate(tcArgs);
       return { data: { templateName: docResult.templateName, fieldsUsed: docResult.fieldsUsed, totalFields: docResult.totalFields }, action: { type: "document_generate", templateName: docResult.templateName, content: docResult.content, fieldsUsed: docResult.fieldsUsed, totalFields: docResult.totalFields } };
+    }
+    // Brief-based document generation (new Document Studio convergence path)
+    if (tcName === "generate_brief_document") {
+      try {
+        if (!tcArgs.briefId || !tcArgs.propertyId) {
+          return { data: { error: "briefId and propertyId are required" } };
+        }
+        const briefMod: any = await import("./document-briefs");
+        if (!briefMod.BRIEF_REGISTRY[tcArgs.briefId]) {
+          return { data: { error: `Unknown briefId: ${tcArgs.briefId}. Valid: ${Object.keys(briefMod.BRIEF_REGISTRY).join(", ")}` } };
+        }
+        const ctx = {
+          propertyId: String(tcArgs.propertyId),
+          matterId: tcArgs.matterId,
+          pathwayRunId: tcArgs.pathwayRunId,
+          userId: undefined,
+        };
+        const brief = await briefMod.runBrief(tcArgs.briefId, ctx);
+        const result: any = {
+          briefId: brief.briefId,
+          briefName: brief.briefName,
+          title: brief.title,
+          sectionCount: brief.sections.length,
+          imageryResolved: Object.keys(brief.imagery).length,
+          imageryProvenance: brief.imageryProvenance,
+          summary: `Brief built. ${brief.sections.length} sections, imagery: ${Object.entries(brief.imageryProvenance).map(([k, p]) => `${k} (${p})`).join(", ")}.`,
+        };
+        // For chat, the brief output JSON is the deliverable — the user can
+        // jump to /document-briefs to render with Claude design and save to
+        // SharePoint via the picker. Keeps the chat call lean (Claude render
+        // takes ~10-30s and the client iframe preview is the better UX for
+        // iteration).
+        result.nextStep = "Open /document-briefs and click Render on this brief to produce the styled HTML, then Save to SharePoint.";
+        return {
+          data: result,
+          action: {
+            type: "navigate",
+            path: tcArgs.matterId ? `/pla/matters/${tcArgs.matterId}` : `/document-briefs`,
+          },
+        };
+      } catch (err: any) {
+        return { data: { error: err?.message || "brief document generation failed" } };
+      }
     }
     // Template creation
     if (tcName === "create_document_template") {
@@ -9664,7 +11547,11 @@ export function setupChatBGPRoutes(app: Express) {
     };
 
     const requestStart = Date.now();
-    const REQUEST_DEADLINE_MS = 480000; // 8 minutes — complex multi-tool flows need room to breathe
+    // Hard deadline = 10 minutes, matching the client's fetch abort.
+    // Beyond this the SSE connection is going to be torn down anyway,
+    // so cutting the loop is the honest move. Inside the deadline,
+    // Claude is free to run as long as it needs.
+    const REQUEST_DEADLINE_MS = 10 * 60 * 1000;
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
@@ -9692,12 +11579,16 @@ export function setupChatBGPRoutes(app: Express) {
           withTimeout(getCrmContext(), 3000, ""),
           withTimeout(getKnowledgeContext(), 3000, ""),
           withTimeout(getEmailAndCalendarContext(req), 3000, ""),
+          withTimeout(getUserPersonalisationContext(userId), 1500, ""),
         ]);
         memoryContext = contextResults[0];
         businessLearnings2 = contextResults[1];
         crmCtx = contextResults[2];
         knowledgeContext2 = contextResults[3];
         emailCalContext = contextResults[4];
+        // Per-user personalisation prepends so role/department defaults are
+        // the first thing Claude sees after the static system prompt.
+        memoryContext = (contextResults[5] || "") + memoryContext;
         // Trim to stay under 120KB total context
         const totalLen = memoryContext.length + businessLearnings2.length + crmCtx.length + knowledgeContext2.length + emailCalContext.length;
         if (totalLen > 120000) {
@@ -9829,8 +11720,12 @@ export function setupChatBGPRoutes(app: Express) {
               }
             }
             if (imageData) {
-              const base64 = imageData.toString("base64");
-              contentParts.push({ type: "image_url", image_url: { url: `data:${mime};base64,${base64}`, detail: "auto" } });
+              // Same normalisation as the live upload paths — HEIC
+              // files persisted to chat-media still need converting
+              // before they hit Claude on a later thread reload.
+              const normalised = await normaliseImageForClaude(imageData, mime, filename);
+              const base64 = normalised.buffer.toString("base64");
+              contentParts.push({ type: "image_url", image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" } });
             }
           } catch (err: any) {
             console.error(`[ChatBGP] Failed to load pasted image ${filename}:`, err?.message);
@@ -9861,7 +11756,13 @@ export function setupChatBGPRoutes(app: Express) {
       conversationMessages = [...completionOptions.messages];
       let lastAction: any = null;
       let loopCount = 0;
-      const maxLoops = 20;
+      // Soft cap to prevent a genuinely-stuck Claude looping forever
+      // (e.g. tool keeps erroring, Claude keeps retrying it). Set
+      // high enough that no legitimate multi-step task hits it —
+      // Anthropic's API itself has no per-turn iteration cap, this
+      // is purely a runaway guard. The real cap is the 10-min
+      // deadline above.
+      const maxLoops = 100;
 
       while (loopCount < maxLoops) {
         if (isOverDeadline()) {
@@ -9896,12 +11797,44 @@ export function setupChatBGPRoutes(app: Express) {
         if (useStreaming) {
           // Stream with deltas — if tool_calls come back, deltas were just partial text (rare)
           sendProgress("Composing response...");
-          completion = await callClaudeStreaming(loopOpts, (token) => {
-            sendDelta(token);
-          });
+          try {
+            completion = await callClaudeStreaming(loopOpts, (token) => {
+              sendDelta(token);
+            });
+          } catch (streamErr: any) {
+            // Context-length error mid-loop: trim oldest non-system messages and retry once
+            const errStr = JSON.stringify(streamErr?.error || streamErr?.body || streamErr?.message || "").toLowerCase();
+            const isContextErr = streamErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
+            if (isContextErr && conversationMessages.length > 4) {
+              console.warn("[ChatBGP] Context too long mid-stream — trimming history and retrying");
+              // Keep system + first user message + last 6 messages
+              const sys = conversationMessages.filter((m: any) => m.role === "system");
+              const rest = conversationMessages.filter((m: any) => m.role !== "system");
+              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              loopOpts.messages = conversationMessages;
+              completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); });
+            } else {
+              throw streamErr;
+            }
+          }
           streamedFinal = true;
         } else {
-          completion = await callClaude(loopOpts);
+          try {
+            completion = await callClaude(loopOpts);
+          } catch (callErr: any) {
+            const errStr = JSON.stringify(callErr?.error || callErr?.body || callErr?.message || "").toLowerCase();
+            const isContextErr = callErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
+            if (isContextErr && conversationMessages.length > 4) {
+              console.warn("[ChatBGP] Context too long in tool loop — trimming history and retrying");
+              const sys = conversationMessages.filter((m: any) => m.role === "system");
+              const rest = conversationMessages.filter((m: any) => m.role !== "system");
+              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              loopOpts.messages = conversationMessages;
+              completion = await callClaude(loopOpts);
+            } else {
+              throw callErr;
+            }
+          }
         }
 
         const message = completion.choices[0]?.message;
@@ -9930,21 +11863,26 @@ export function setupChatBGPRoutes(app: Express) {
             console.log(`[ChatBGP] Loop ${loopCount}: tool=${tcName}${tcArgs?.command ? ' cmd=' + tcArgs.command.substring(0, 80) : ''}`);
 
             try {
-              const toolTimeoutMs =
-                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
-                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
-                15000;
+              // No artificial per-tool timeout. Normal Claude tool use
+              // doesn't impose one — the tool either succeeds or fails
+              // on its own merits. We keep ONE generous hard cap (10
+              // min, matching the client) purely as a safety net for a
+              // genuinely-hung tool (deadlocked query etc.); every
+              // tool worth caring about has its own internal fetch /
+              // abort handling well inside this. The previous 60s
+              // default was clipping legitimate long-running work like
+              // designed PDF generation and big SharePoint fetches.
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
-                toolTimeoutMs,
-                { data: { error: `Tool timed out after ${toolTimeoutMs / 1000}s` } }
+                10 * 60 * 1000,
+                { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
               const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               conversationMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 12000 ? resultStr.slice(0, 12000) + "\n...[truncated]" : resultStr,
+                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -9983,12 +11921,13 @@ export function setupChatBGPRoutes(app: Express) {
       else if (err?.status === 429) errorMsg = "Hit the API rate limit. Please wait a minute and try again.";
       else if (err?.status === 400) {
         const errBody = errBodyRaw.toLowerCase();
-        if (errBody.includes("too long") || errBody.includes("token") || errBody.includes("max_tokens") || errBody.includes("context")) {
+        const isContextLen = errBody.includes("too long") || errBody.includes("context_length") || errBody.includes("prompt is too long") || errBody.includes("max_tokens_to_sample");
+        const isThinkingMode = errBody.includes("thinking.type") || errBody.includes("thinking type") || errBody.includes("budget_tokens") || errBody.includes("output_config");
+        if (isContextLen && !isThinkingMode) {
           errorMsg = "That conversation got too long for me to process. Try starting a new thread or asking a simpler question.";
         } else if (errBody.includes("image") || errBody.includes("media")) {
           errorMsg = "Problem with an attached image or file. Try removing it or sending a different format.";
         } else {
-          // Don't pretend the assistant is confused — surface that it was a technical error and include a hint if we can
           errorMsg = `Technical error from the AI API (400). Server logs have the full details. ${errBodyRaw.slice(0, 180)}`;
         }
       } else if (err?.status === 500 || err?.status === 502 || err?.status === 503 || err?.status === 504) {
@@ -10088,11 +12027,13 @@ export function setupChatBGPRoutes(app: Express) {
           }
           if (isImage) {
             try {
-              const base64 = fileData.toString("base64");
-              const mimeType = file.mimetype || "image/png";
+              // HEIC / oversize photos rejected by Claude — normalise
+              // to JPEG ≤1600px first. See normaliseImageForClaude.
+              const normalised = await normaliseImageForClaude(fileData, file.mimetype, file.originalname);
+              const base64 = normalised.buffer.toString("base64");
               imageContentParts.push({
                 type: "image_url",
-                image_url: { url: `data:${mimeType};base64,${base64}`, detail: "auto" },
+                image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" },
               });
             } catch (err: any) {
               console.error(`[ChatBGP Excel] Image read error (${file.originalname}):`, err?.message);
@@ -10133,13 +12074,15 @@ export function setupChatBGPRoutes(app: Express) {
       // Load full contexts (same as main ChatBGP) so Excel add-in has the same reach
       sendProgress("Gathering intelligence...");
       const userId = req.session.userId!;
-      const [memoryContext, businessLearnings, crmCtx, knowledgeContext, emailCalContext] = await Promise.all([
+      const [memoryContextRaw, businessLearnings, crmCtx, knowledgeContext, emailCalContext, personalisation] = await Promise.all([
         withTimeout(getMemoryContext(userId), 5000, ""),
         withTimeout(getBusinessLearningsContext(), 5000, ""),
         withTimeout(getCrmContext(), 5000, ""),
         withTimeout(getKnowledgeContext(), 5000, ""),
         withTimeout(getEmailAndCalendarContext(req), 5000, ""),
+        withTimeout(getUserPersonalisationContext(userId), 1500, ""),
       ]);
+      const memoryContext = personalisation + memoryContextRaw;
 
       let baseSystemPrompt: string;
       try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
@@ -10166,6 +12109,13 @@ Whenever the user asks you to "build", "amend", "fill in", "add", "update", "put
 \`\`\`
 
 For a full model, emit dozens of action blocks in order (headers → assumptions → formulas → totals). The user can click "Apply" on each, or "Apply All" to write the entire model at once.
+
+### ⚠️ ONLY these two action types exist
+The add-in implements EXACTLY these two action verbs and nothing else:
+- \`writeValue\`  — write a literal value (string/number) into one cell
+- \`writeFormula\` — write a formula (must start with =) into one cell
+
+DO NOT emit \`highlightCell\`, \`setFormat\`, \`mergeCells\`, \`applyColour\`, \`addBorder\`, \`autoFit\`, \`createSheet\`, or any other invented verb. The add-in silently drops unrecognised actions, which leaves the user staring at Apply buttons that do nothing. If you need to draw the user's attention to columns or rows, write a label into an adjacent cell using \`writeValue\` (e.g. write "SKIP" / "→ unit_name" into Row 2 below each header).
 
 ### When to emit a downloadable file instead (export_to_excel)
 Only use the \`export_to_excel\` tool when the user explicitly asks for a **separate file** they can download — phrases like "send me an Excel file", "export this as xlsx", "give me a downloadable spreadsheet". Never use \`export_to_excel\` when the user wants changes in the workbook that's already open.
@@ -10200,8 +12150,10 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
       ];
       let lastAction: any = null;
       let loopCount = 0;
-      const maxLoops = 15;
-      const deadline = Date.now() + 180000; // 3 min
+      // Same permissive bounds as the main chat handler. Runaway-loop
+      // guard at 100 iterations; the real cap is the 10-min deadline.
+      const maxLoops = 100;
+      const deadline = Date.now() + 10 * 60 * 1000;
 
       while (loopCount < maxLoops) {
         if (clientClosed || Date.now() > deadline) {
@@ -10240,21 +12192,26 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
             let tcArgs: any;
             try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
             try {
-              const toolTimeoutMs =
-                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
-                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
-                15000;
+              // No artificial per-tool timeout. Normal Claude tool use
+              // doesn't impose one — the tool either succeeds or fails
+              // on its own merits. We keep ONE generous hard cap (10
+              // min, matching the client) purely as a safety net for a
+              // genuinely-hung tool (deadlocked query etc.); every
+              // tool worth caring about has its own internal fetch /
+              // abort handling well inside this. The previous 60s
+              // default was clipping legitimate long-running work like
+              // designed PDF generation and big SharePoint fetches.
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
-                toolTimeoutMs,
-                { data: { error: `Tool timed out after ${toolTimeoutMs / 1000}s` } }
+                10 * 60 * 1000,
+                { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
               const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 12000 ? resultStr.slice(0, 12000) + "\n...[truncated]" : resultStr,
+                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP Excel] Tool ${tcName} error:`, toolErr?.message);

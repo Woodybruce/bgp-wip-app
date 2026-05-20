@@ -20,6 +20,7 @@ export function ConnectionStatus() {
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
+    let reconnectedTimer: ReturnType<typeof setTimeout> | null = null;
 
     const checkSocket = () => {
       const socket = getSocket();
@@ -27,7 +28,8 @@ export function ConnectionStatus() {
       setSocketConnected(prev => {
         if (!prev && connected) {
           setShowReconnected(true);
-          setTimeout(() => setShowReconnected(false), 3000);
+          if (reconnectedTimer) clearTimeout(reconnectedTimer);
+          reconnectedTimer = setTimeout(() => setShowReconnected(false), 3000);
         }
         return connected;
       });
@@ -36,7 +38,10 @@ export function ConnectionStatus() {
     interval = setInterval(checkSocket, 2000);
     checkSocket();
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (reconnectedTimer) clearTimeout(reconnectedTimer);
+    };
   }, []);
 
   const disconnected = !isOnline || !socketConnected;

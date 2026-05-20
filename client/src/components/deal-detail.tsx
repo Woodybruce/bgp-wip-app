@@ -3,7 +3,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import {
   Dialog,
   DialogContent,
@@ -41,17 +44,30 @@ import {
   ExternalLink,
   Link2,
   Image as ImageIcon,
+  ChevronDown,
+  ChevronRight,
+  ShieldCheck,
+  History,
+  Mail,
+  Calendar as CalendarIcon,
+  TrendingUp,
+  Landmark,
+  FileText,
+  MessageSquare,
 } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useState, useMemo, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, invalidateDealCaches, getAuthHeaders } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { InlineLinkSelect } from "@/components/inline-edit";
 import {
   DEAL_STATUS_COLORS,
   DEAL_TYPE_COLORS,
@@ -71,13 +87,115 @@ import {
   DealRelatedEmails,
   DealRelatedMeetings,
 } from "@/pages/deals";
-// DealAmlStatusCard removed — KYC pack now consolidated on Compliance Board
+import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
+import { AIActivityCard } from "@/components/ai-activity-card";
+import { DealAmlStatusCard } from "@/components/deal-aml-status";
+
+// Collapsible card pattern reused across the deal page for heavy panels.
+function CollapsibleCard({
+  open,
+  onToggle,
+  icon: Icon,
+  title,
+  children,
+  testId,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <Card>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+        data-testid={testId}
+      >
+        <div className="flex items-center gap-2">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-semibold">{title}</span>
+        </div>
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {open && <div className="px-3 pb-3 pt-1">{children}</div>}
+    </Card>
+  );
+}
+
+// Right-sidebar collapsible row (different styling — borderless, full-width).
+function SidebarSection({
+  open,
+  onToggle,
+  icon: Icon,
+  title,
+  children,
+  testId,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <div className="border-b">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors"
+        data-testid={testId}
+      >
+        <div className="flex items-center gap-2">
+          <Icon className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">{title}</span>
+        </div>
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {open && <div className="px-4 pb-3">{children}</div>}
+    </div>
+  );
+}
 
 export function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [unitEditOpen, setUnitEditOpen] = useState(false);
+  const [unitEditForm, setUnitEditForm] = useState({
+    switchToUnitId: "",
+    unitAddress: "",
+    unitPostcode: "",
+    unitUprn: "",
+    unitAddressFreeText: "",
+  });
+
+  // Heavy panels — collapsed by default to keep the page scannable.
+  const [mainSections, setMainSections] = useState<Record<string, boolean>>({
+    pathway: false,
+    planning: false,
+    kyc: false,
+    brands: false,
+    timeline: false,
+    audit: false,
+    emails: false,
+    meetings: false,
+  });
+  const toggleMain = (key: string) => setMainSections(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Right sidebar — linked records, files, contacts.
+  const [sidebarSections, setSidebarSections] = useState<Record<string, boolean>>({
+    files: true,
+    property: true,
+    contacts: true,
+    comments: true,
+  });
+  const toggleSidebar = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
   const { data: deal, isLoading } = useQuery<CrmDeal>({
     queryKey: ["/api/crm/deals", id],
@@ -98,6 +216,22 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({
     queryKey: ["/api/users"],
   });
+
+  // Look up units on this deal's property so we can show breadcrumb + power
+  // the "edit unit / address" overlay on the heading.
+  const { data: propertyUnits = [] } = useQuery<Array<{
+    id: string; unitName: string; propertyId: string;
+    unitAddress?: string | null; unitPostcode?: string | null;
+    unitUprn?: string | null; unitAddressFreeText?: string | null;
+  }>>({
+    queryKey: ["/api/property-units"],
+  });
+  const linkedUnit = (deal as any)?.unitId
+    ? propertyUnits.find((u) => u.id === (deal as any).unitId)
+    : null;
+  const unitsOnThisProperty = (deal as any)?.propertyId
+    ? propertyUnits.filter(u => u.propertyId === (deal as any).propertyId)
+    : [];
   const userColorMap = useMemo(() => buildUserColorMap(users as any), [users]);
 
   useEffect(() => {
@@ -107,18 +241,30 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   }, [deal?.id, deal?.name, (deal as any)?.propertyName]);
 
   useEffect(() => {
-    if (deal && window.location.search.includes("tab=invoice")) {
-      setTimeout(() => {
-        const el = document.querySelector('[data-testid="xero-invoice-section"]');
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 300);
-    }
+    if (!deal || !window.location.search.includes("tab=invoice")) return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector('[data-testid="xero-invoice-section"]');
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 300);
+    return () => clearTimeout(timer);
   }, [deal?.id]);
 
   const linkedProperty = deal?.propertyId ? properties.find((p) => p.id === deal.propertyId) : null;
+  const propertyPostcode = linkedProperty?.postcode || (linkedProperty?.address as any)?.postcode || null;
+
+  const { data: marketTone } = useQuery<any>({
+    queryKey: ["/api/market-tone", propertyPostcode],
+    queryFn: async () => {
+      const res = await fetch(`/api/market-tone?postcode=${encodeURIComponent(propertyPostcode!)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!propertyPostcode,
+    staleTime: 30 * 60 * 1000,
+  });
+
   const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
   const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;
-  const linkedInvoicingEntity = deal?.invoicingEntityId ? companies.find((c) => c.id === deal.invoicingEntityId) : null;
 
   const linkedContacts = useMemo(() => {
     if (!deal) return [];
@@ -126,18 +272,55 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     return contacts.filter((c) => ids.includes(c.id));
   }, [deal, contacts]);
 
+  // Open the unit-edit overlay, pre-filling from the currently linked unit.
+  const openUnitEdit = () => {
+    setUnitEditForm({
+      switchToUnitId: linkedUnit?.id || "",
+      unitAddress: linkedUnit?.unitAddress || "",
+      unitPostcode: linkedUnit?.unitPostcode || "",
+      unitUprn: linkedUnit?.unitUprn || "",
+      unitAddressFreeText: linkedUnit?.unitAddressFreeText || "",
+    });
+    setUnitEditOpen(true);
+  };
+
+  // Save handler: writes any address-field changes to property_units, and if
+  // the user picked a different unit, points the deal's unitId at it.
+  const saveUnitEdit = useMutation({
+    mutationFn: async () => {
+      if (linkedUnit?.id) {
+        await apiRequest("PATCH", `/api/property-units/${linkedUnit.id}`, {
+          unitAddress: unitEditForm.unitAddress || null,
+          unitPostcode: unitEditForm.unitPostcode || null,
+          unitUprn: unitEditForm.unitUprn || null,
+          unitAddressFreeText: unitEditForm.unitAddressFreeText || null,
+        });
+      }
+      if (unitEditForm.switchToUnitId && unitEditForm.switchToUnitId !== linkedUnit?.id) {
+        await apiRequest("PUT", `/api/crm/deals/${id}`, { unitId: unitEditForm.switchToUnitId });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+      setUnitEditOpen(false);
+    },
+  });
+
   const updateAgentsMutation = useMutation({
     mutationFn: async (agents: string[]) => {
       await apiRequest("PUT", `/api/crm/deals/${id}`, { internalAgent: agents });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
   });
 
   const [sharepointDialogOpen, setSharepointDialogOpen] = useState(false);
   const [sharepointUrlInput, setSharepointUrlInput] = useState("");
+  const [feeEditing, setFeeEditing] = useState(false);
+  const [feeInput, setFeeInput] = useState("");
 
   const updateSharepointMutation = useMutation({
     mutationFn: async (url: string | null) => {
@@ -146,7 +329,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     onSuccess: () => {
       toast({ title: "SharePoint link updated" });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setSharepointDialogOpen(false);
     },
     onError: (err: Error) => {
@@ -160,13 +343,42 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     },
     onSuccess: () => {
       toast({ title: "Deal deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       navigate(isComps ? "/comps" : "/deals");
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const handleFeeSave = async () => {
+    const val = parseFloat(feeInput.replace(/[^0-9.]/g, ""));
+    if (!isNaN(val)) {
+      await apiRequest("PUT", `/api/crm/deals/${id}`, { fee: val });
+      invalidateDealCaches(id);
+    }
+    setFeeEditing(false);
+  };
+
+  const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => {
+    await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+    invalidateDealCaches(id);
+    if (value) {
+      const co = companies.find(c => c.id === value);
+      toast({ title: "Running AML checks", description: `Screening ${co?.name || "party"}...` });
+      try {
+        await fetch(`/api/kyc/run-all-checks`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ dealId: id, bothSides: true }),
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      } catch (err: any) {
+        console.error("[AML] auto-run failed:", err.message);
+      }
+    }
+  };
 
   if (isLoading) {
     return (
@@ -191,18 +403,15 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     );
   }
 
+  const _areaBasis = deal.areaBasis || areaBasisFromAssetClass(deal.assetClass);
+  const _isRetail = isRetailAssetClass(deal.assetClass);
   const numericFields: { label: string; value: number | null | undefined; format?: "currency" | "number" | "percent" }[] = [
     { label: "Pricing", value: deal.pricing, format: "currency" },
     { label: "Rent PA", value: deal.rentPa, format: "currency" },
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
-    { label: "Fee", value: deal.fee, format: "currency" },
-    { label: "Total Area (sqft)", value: deal.totalAreaSqft, format: "number" },
-    { label: "GF Area (sqft)", value: deal.gfAreaSqft, format: "number" },
-    { label: "FF Area (sqft)", value: deal.ffAreaSqft, format: "number" },
-    { label: "Basement (sqft)", value: deal.basementAreaSqft, format: "number" },
-    { label: "ITZA (sqft)", value: deal.itzaAreaSqft, format: "number" },
+    { label: `${_areaBasis} Area (sqft)`, value: deal.totalAreaSqft, format: "number" },
     { label: "Price PSF", value: deal.pricePsf, format: "currency" },
-    { label: "Price ITZA", value: deal.priceItza, format: "currency" },
+    ...(_isRetail ? [{ label: "Price ITZA", value: deal.priceItza, format: "currency" as const }] : []),
     { label: "Capital Contribution", value: deal.capitalContribution, format: "currency" },
     { label: "Rent Free (months)", value: deal.rentFree, format: "number" },
     { label: "Lease Length (years)", value: deal.leaseLength, format: "number" },
@@ -214,34 +423,37 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const linkedTenantName = deal.tenantId ? companies.find(c => c.id === deal.tenantId)?.name : null;
   const linkedVendorName = deal.vendorId ? companies.find(c => c.id === deal.vendorId)?.name : null;
   const linkedPurchaserName = deal.purchaserId ? companies.find(c => c.id === deal.purchaserId)?.name : null;
-  const linkedBillingName = deal.invoicingEntityId ? companies.find(c => c.id === deal.invoicingEntityId)?.name : null;
+  const linkedBillingName = (deal as any).xeroContactName || null;
 
   const textFields: { label: string; value: string | null | undefined; colorMap?: Record<string, string>; href?: string }[] = [
     { label: "Deal Type", value: deal.dealType, colorMap: DEAL_TYPE_COLORS },
     { label: "Status", value: deal.status, colorMap: DEAL_STATUS_COLORS },
     { label: "Team", value: Array.isArray(deal.team) ? deal.team.join(", ") : deal.team, colorMap: DEAL_TEAM_COLORS },
     { label: "Asset Class", value: deal.assetClass, colorMap: DEAL_ASSET_CLASS_COLORS },
-    { label: "Landlord", value: linkedLandlordName, href: deal.landlordId ? `/companies/${deal.landlordId}` : undefined },
-    { label: "Tenant", value: linkedTenantName, href: deal.tenantId ? `/companies/${deal.tenantId}` : undefined },
-    { label: "Vendor", value: linkedVendorName, href: deal.vendorId ? `/companies/${deal.vendorId}` : undefined },
-    { label: "Purchaser", value: linkedPurchaserName, href: deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined },
-    { label: "Billing Entity", value: linkedBillingName, href: deal.invoicingEntityId ? `/companies/${deal.invoicingEntityId}` : undefined },
     { label: "Tenure", value: deal.tenureText },
     { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
-    { label: "AML Check", value: deal.amlCheckCompleted, colorMap: DEAL_AML_COLORS },
-    { label: "Completion Date", value: deal.completionDate ? formatDate(deal.completionDate) : null },
-    { label: "Timeline", value: deal.timelineStart && deal.timelineEnd ? `${formatDate(deal.timelineStart)} — ${formatDate(deal.timelineEnd)}` : deal.timelineStart || deal.timelineEnd },
+    { label: "Instructed", value: deal.instructedAt ? formatDate(deal.instructedAt) : null },
+    { label: "Target Date", value: deal.targetDate ? formatDate(deal.targetDate) : null },
+    { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
+    { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
+    { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
     { label: "Last Interaction", value: deal.lastInteraction },
   ];
 
   return (
-    <div className="p-4 sm:p-6 space-y-4" data-testid={`deal-detail-${id}`}>
-      <Breadcrumbs
-        items={[
-          { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
-          { label: linkedProperty?.name || deal.name },
-        ]}
-      />
+    <div className="h-[calc(100vh-48px)] flex flex-col" data-testid={`deal-detail-${id}`}>
+      <div className="px-4 sm:px-6 pt-4 sm:pt-5">
+        <Breadcrumbs
+          items={[
+            { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
+            { label: linkedProperty?.name || deal.name },
+          ]}
+        />
+      </div>
+
+      <div className="flex-1 flex min-h-0">
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-4 sm:p-6 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <Link href={isComps ? "/comps" : "/deals"}>
           <Button variant="ghost" size="icon" data-testid="button-back-deals">
@@ -249,12 +461,101 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </Button>
         </Link>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{linkedProperty?.name || deal.name}</h1>
-            {deal.status && (
-              <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{deal.status}</Badge>
-            )}
-          </div>
+          {(() => {
+            // Investment (Sale/Purchase) deals are about the whole property —
+            // heading = property name. Leasing deals are about a specific unit
+            // — heading = unit name, property as subtitle.
+            const isInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
+            const headingIsUnit = !isInvestment && !!linkedUnit;
+            const headingText = headingIsUnit
+              ? linkedUnit!.unitName
+              : (linkedProperty?.name || deal.name);
+            // Counterparty: Purchaser/Vendor for investment, Tenant for leasing.
+            let counterpartyId: string | null = null;
+            let counterpartyLabel = "";
+            if (isInvestment) {
+              if (deal.dealType === "Sale") { counterpartyId = (deal as any).purchaserId; counterpartyLabel = "Purchaser"; }
+              else { counterpartyId = (deal as any).vendorId; counterpartyLabel = "Vendor"; }
+            } else {
+              counterpartyId = (deal as any).tenantId;
+              counterpartyLabel = "Tenant";
+            }
+            const counterparty = counterpartyId ? companies.find((c) => c.id === counterpartyId) : null;
+            return (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {headingIsUnit ? (
+                    <button
+                      onClick={openUnitEdit}
+                      className="text-xl font-bold truncate hover:underline hover:text-primary transition-colors"
+                      data-testid="text-deal-name"
+                      title="Click to switch unit or edit unit address"
+                    >
+                      {headingText}
+                    </button>
+                  ) : (
+                    <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
+                  )}
+                  {deal.status && (
+                    <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
+                  {headingIsUnit && linkedProperty && (
+                    <Link href={`/properties/${linkedProperty.id}`}>
+                      <a className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
+                        <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
+                      </a>
+                    </Link>
+                  )}
+                  {counterparty && (
+                    <Link href={`/companies/${counterparty.id}`}>
+                      <a className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`}>
+                        <Users className="w-3.5 h-3.5" /> {counterpartyLabel}: {counterparty.name}
+                      </a>
+                    </Link>
+                  )}
+                  {!counterparty && (
+                    <span className="text-xs italic">{counterpartyLabel} not set</span>
+                  )}
+                  {headingIsUnit && (
+                    <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`}>
+                      <a className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">← Back to Letting Tracker</a>
+                    </Link>
+                  )}
+                  {/* Spine state — green chip when the deal is linked
+                      to the canonical tenancy unit, amber when it
+                      isn't yet (so the property page doesn't see this
+                      deal on a specific row). Clicking the green chip
+                      jumps to the unit on the property's tenancy
+                      schedule. */}
+                  {linkedProperty && !isInvestment && (
+                    (deal as any).tenancyUnitId ? (
+                      <Link href={`/properties/${linkedProperty.id}#tenancy-unit-${(deal as any).tenancyUnitId}`}>
+                        <a
+                          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                          title="Linked to the tenancy schedule (canonical spine)"
+                          data-testid="chip-on-tenancy-spine"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          On tenancy spine
+                        </a>
+                      </Link>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700"
+                        title="This deal isn't yet linked to a tenancy schedule row. Use Resolve on the property page to fix."
+                        data-testid="chip-off-tenancy-spine"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        Off tenancy spine
+                      </span>
+                    )
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
         <div className="flex items-center gap-2">
           <Link href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
@@ -293,6 +594,67 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 )}
               </div>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-3 space-y-2">
+          <p className="text-[10px] text-muted-foreground font-medium">Parties</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
+              <InlineLinkSelect
+                value={deal.landlordId}
+                options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
+                onSave={(v) => handlePartySave("landlordId", v || null)}
+                placeholder="Link landlord"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Tenant</p>
+              <InlineLinkSelect
+                value={deal.tenantId}
+                options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
+                onSave={(v) => handlePartySave("tenantId", v || null)}
+                placeholder="Link tenant"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Vendor</p>
+              <InlineLinkSelect
+                value={deal.vendorId}
+                options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
+                onSave={(v) => handlePartySave("vendorId", v || null)}
+                placeholder="Link vendor"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Purchaser</p>
+              <InlineLinkSelect
+                value={deal.purchaserId}
+                options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
+                onSave={(v) => handlePartySave("purchaserId", v || null)}
+                placeholder="Link purchaser"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Xero Contact</p>
+              {(deal as any).xeroContactName ? (
+                <div className="text-xs">
+                  <span className="font-medium">{(deal as any).xeroContactName}</span>
+                  {(deal as any).xeroAccountNumber && (
+                    <span className="text-muted-foreground"> · A/C {(deal as any).xeroAccountNumber}</span>
+                  )}
+                </div>
+              ) : (
+                <span className="text-[11px] text-muted-foreground italic">Set via Edit · Xero Contact</span>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -356,6 +718,61 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 </p>
               </div>
             ))}
+            {[
+              { label: "GF", value: deal.gfAreaSqft },
+              { label: "FF", value: deal.ffAreaSqft },
+              { label: "Bsmt", value: deal.basementAreaSqft },
+              ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
+            ].some(f => f.value != null) && (
+              <div className="flex flex-col py-1 col-span-2">
+                <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Floor Breakdown</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                  {[
+                    { label: "GF", value: deal.gfAreaSqft },
+                    { label: "FF", value: deal.ffAreaSqft },
+                    { label: "Bsmt", value: deal.basementAreaSqft },
+                    ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
+                  ].filter(f => f.value != null).map(f => (
+                    <span key={f.label} className="text-xs font-mono">
+                      <span className="text-[9px] text-muted-foreground/70 uppercase mr-0.5">{f.label}</span>
+                      {formatNumber(f.value)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] text-muted-foreground">Total Fee</p>
+            {feeEditing ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">£</span>
+                <Input
+                  autoFocus
+                  type="number"
+                  min="0"
+                  className="h-7 w-32 text-xs font-mono"
+                  value={feeInput}
+                  onChange={(e) => setFeeInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleFeeSave(); if (e.key === "Escape") setFeeEditing(false); }}
+                />
+                <Button size="sm" className="h-7 px-2 text-xs" onClick={handleFeeSave}>Save</Button>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setFeeEditing(false)}>Cancel</Button>
+              </div>
+            ) : (
+              <button
+                className="text-sm font-mono font-semibold hover:underline cursor-pointer"
+                onClick={() => { setFeeInput(deal.fee != null ? String(deal.fee) : ""); setFeeEditing(true); }}
+                data-testid="button-edit-fee"
+              >
+                {deal.fee != null ? formatCurrency(deal.fee) : <span className="text-muted-foreground text-xs">Set fee…</span>}
+              </button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -368,71 +785,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       />
 
       <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />
-
-      {deal.comments && (
-        <Card>
-          <CardContent className="p-3 space-y-1">
-            <p className="text-[10px] text-muted-foreground font-medium">Comments</p>
-            <p className="text-xs whitespace-pre-wrap" data-testid="text-deal-comments">{deal.comments}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card data-testid="deal-files-section">
-        <CardContent className="p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] text-muted-foreground font-medium">Files</p>
-          </div>
-          {deal.sharepointLink ? (
-            <div className="flex items-center gap-2">
-              <a
-                href={deal.sharepointLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 text-sm text-primary hover:underline"
-                data-testid="link-deal-sharepoint-folder"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                Open in SharePoint
-              </a>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[10px] text-muted-foreground"
-                onClick={() => {
-                  setSharepointUrlInput(deal.sharepointLink || "");
-                  setSharepointDialogOpen(true);
-                }}
-                data-testid="button-edit-sharepoint-link"
-              >
-                <Pencil className="w-3 h-3" />
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs"
-              onClick={() => {
-                setSharepointUrlInput("");
-                setSharepointDialogOpen(true);
-              }}
-              data-testid="button-link-sharepoint-folder"
-            >
-              <Link2 className="w-3.5 h-3.5 mr-1.5" />
-              Link SharePoint Folder
-            </Button>
-          )}
-          {deal.propertyId && (
-            <Link href={`/properties/${deal.propertyId}`}>
-              <span className="text-sm text-muted-foreground hover:text-primary flex items-center gap-1 cursor-pointer" data-testid="link-deal-sharepoint">
-                <Building2 className="w-3.5 h-3.5" />
-                View property folder — {linkedProperty?.name || "Property"}
-              </span>
-            </Link>
-          )}
-        </CardContent>
-      </Card>
 
       <Dialog open={sharepointDialogOpen} onOpenChange={setSharepointDialogOpen}>
         <DialogContent className="max-w-md">
@@ -483,86 +835,79 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
-      <PathwayIntelStrip
-        propertyId={(deal as any).propertyId || undefined}
-        address={(deal as any).propertyAddress || (deal as any).address || deal.name}
-        postcode={(deal as any).postcode}
-      />
+      <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-deal-pathway">
+        <PathwayIntelStrip
+          propertyId={(deal as any).propertyId || undefined}
+          address={(deal as any).propertyAddress || (deal as any).address || deal.name}
+          postcode={(deal as any).postcode}
+        />
+      </CollapsibleCard>
 
-      <DealKYCPanel deal={deal} companies={companies} />
+      {(deal as any).propertyId && (
+        <CollapsibleCard open={mainSections.planning} onToggle={() => toggleMain("planning")} icon={Landmark} title="Planning" testId="toggle-deal-planning">
+          <PropertyPlanningCard propertyId={(deal as any).propertyId} className="border-0 shadow-none" />
+        </CollapsibleCard>
+      )}
 
-      {/* Brand profiles for counterparties on this deal */}
+      <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
+        <div className="space-y-3">
+          <DealKYCPanel deal={deal} companies={companies} />
+          {/* AML AI augments — MLR scope, AI triage, SoF analyser, MLRO PDF.
+              Sits below the existing per-counterparty KYC pack so MLRO has the
+              full toolset on one screen. Renders even with <2 counterparties. */}
+          <DealAmlStatusCard dealId={id} />
+        </div>
+      </CollapsibleCard>
+
       {[
         { company: linkedTenant, role: "Tenant" },
         { company: linkedLandlord, role: "Landlord" },
       ]
         .filter(({ company }) => !!company)
-        .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i)
-        .map(({ company, role }) => (
-          <div key={company!.id} data-testid={`deal-brand-${role.toLowerCase()}`}>
-            <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
-              <Building2 className="w-3 h-3" /> {role}: {company!.name}
-            </p>
-            <BrandProfilePanel companyId={company!.id} />
-          </div>
-        ))}
-
-      <DealTimeline dealId={id} />
-
-      <DealAuditLog dealId={id} />
-
-      <DealRelatedEmails dealId={id} />
-      <DealRelatedMeetings dealId={id} />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {linkedProperty && (
-          <Card data-testid="linked-property-panel">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Building2 className="w-3.5 h-3.5" />
-                <h3 className="text-xs font-semibold">Linked Property</h3>
-              </div>
-              <Link href={`/properties/${linkedProperty.id}`}>
-                <div className="p-2 rounded-md border hover-elevate cursor-pointer">
-                  <p className="text-xs font-medium">{linkedProperty.name}</p>
-                  {linkedProperty.status && (
-                    <Badge variant="outline" className="mt-0.5 text-[9px]">{linkedProperty.status}</Badge>
-                  )}
+        .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i).length > 0 && (
+        <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Profiles" testId="toggle-deal-brands">
+          <div className="space-y-3">
+            {[
+              { company: linkedTenant, role: "Tenant" },
+              { company: linkedLandlord, role: "Landlord" },
+            ]
+              .filter(({ company }) => !!company)
+              .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i)
+              .map(({ company, role }) => (
+                <div key={company!.id} data-testid={`deal-brand-${role.toLowerCase()}`}>
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
+                    <Building2 className="w-3 h-3" /> {role}: {company!.name}
+                  </p>
+                  <BrandProfilePanel companyId={company!.id} />
                 </div>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
+              ))}
+          </div>
+        </CollapsibleCard>
+      )}
 
-        {linkedContacts.length > 0 && (
-          <Card data-testid="linked-contacts-panel">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Users className="w-3.5 h-3.5" />
-                <h3 className="text-xs font-semibold">Linked Contacts</h3>
-                <Badge variant="secondary" className="text-[9px]">{linkedContacts.length}</Badge>
-              </div>
-              <div className="space-y-1">
-                {linkedContacts.map((contact) => (
-                  <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                    <div className="p-2 rounded-md border hover-elevate cursor-pointer">
-                      <p className="text-xs font-medium">{contact.name}</p>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {contact.role && (
-                          <span className="text-[9px] text-muted-foreground">{contact.role}</span>
-                        )}
-                        {contact.companyName && (
-                          <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
-                        )}
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+      {/* AI-curated activity — single panel that combines emails + calendar
+          invites across the deal, tenant, landlord, property and contacts.
+          ChatBGP filters aggressively and groups by topic, so this replaces
+          the noise of dumping every related email/meeting in raw form.
+          Old Related Emails / Related Meetings panels are kept below for
+          parity while we compare output in production. */}
+      <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
+
+      <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
+        <DealTimeline dealId={id} />
+      </CollapsibleCard>
+
+      <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit Log" testId="toggle-deal-audit">
+        <DealAuditLog dealId={id} />
+      </CollapsibleCard>
+
+      <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related Emails (raw)" testId="toggle-deal-emails">
+        <DealRelatedEmails dealId={id} />
+      </CollapsibleCard>
+
+      <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related Meetings (raw)" testId="toggle-deal-meetings">
+        <DealRelatedMeetings dealId={id} />
+      </CollapsibleCard>
 
       {deal.updatedAt && (
         <p className="text-xs text-muted-foreground flex items-center gap-1">
@@ -580,7 +925,80 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         users={users}
       />
 
-      <div className="flex justify-start mt-8 pt-4 border-t">
+      {/* Unit pick + unit-level address editor — opened from the heading. */}
+      <Dialog open={unitEditOpen} onOpenChange={setUnitEditOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Unit</DialogTitle>
+            <DialogDescription>
+              Switch to a different unit on this property, or edit this unit's address details. The address feeds business-rates and EPC lookups.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs">Switch unit</Label>
+              <Select
+                value={unitEditForm.switchToUnitId || undefined}
+                onValueChange={(v) => setUnitEditForm(f => ({ ...f, switchToUnitId: v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Pick a unit on this property" /></SelectTrigger>
+                <SelectContent>
+                  {unitsOnThisProperty.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="border-t pt-3 space-y-3">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Unit address — for "{linkedUnit?.unitName || "this unit"}"
+              </div>
+              <div>
+                <Label className="text-xs">Address line</Label>
+                <Input
+                  value={unitEditForm.unitAddress}
+                  onChange={e => setUnitEditForm(f => ({ ...f, unitAddress: e.target.value }))}
+                  placeholder="e.g. Unit 4A, Grand Central, Birmingham"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Postcode</Label>
+                  <Input
+                    value={unitEditForm.unitPostcode}
+                    onChange={e => setUnitEditForm(f => ({ ...f, unitPostcode: e.target.value }))}
+                    placeholder="B2 4AB"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">UPRN</Label>
+                  <Input
+                    value={unitEditForm.unitUprn}
+                    onChange={e => setUnitEditForm(f => ({ ...f, unitUprn: e.target.value }))}
+                    placeholder="200012345678"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Free-text fallback <span className="text-muted-foreground">(if not on PAF)</span></Label>
+                <Input
+                  value={unitEditForm.unitAddressFreeText}
+                  onChange={e => setUnitEditForm(f => ({ ...f, unitAddressFreeText: e.target.value }))}
+                  placeholder="Kiosk 12, Market Hall ground floor"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUnitEditOpen(false)}>Cancel</Button>
+            <Button onClick={() => saveUnitEdit.mutate()} disabled={saveUnitEdit.isPending}>
+              {saveUnitEdit.isPending ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <div className="flex justify-start mt-6 pt-3 border-t">
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
           <Trash2 className="w-4 h-4 mr-2" />
           Delete Deal
@@ -607,6 +1025,155 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+          </div>
+        </div>
+
+        {/* Right sidebar — linked records, files, comments */}
+        <div className="w-[500px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+          <ScrollArea className="flex-1">
+            <div className="px-4 pt-4 pb-3 border-b">
+              <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{linkedProperty?.name || deal.name}</h3>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {deal.status && (
+                  <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`}>
+                    {(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}
+                  </Badge>
+                )}
+                {deal.dealType && (
+                  <Badge variant="outline" className="text-[10px]">{deal.dealType}</Badge>
+                )}
+                {deal.fee != null && (
+                  <Badge variant="outline" className="text-[10px] font-mono">{formatCurrency(deal.fee)}</Badge>
+                )}
+              </div>
+            </div>
+
+            <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
+              <div className="space-y-2" data-testid="deal-files-section">
+                {deal.sharepointLink ? (
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={deal.sharepointLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                      data-testid="link-deal-sharepoint-folder"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Open in SharePoint
+                    </a>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px] text-muted-foreground"
+                      onClick={() => {
+                        setSharepointUrlInput(deal.sharepointLink || "");
+                        setSharepointDialogOpen(true);
+                      }}
+                      data-testid="button-edit-sharepoint-link"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-7 w-full justify-start"
+                    onClick={() => {
+                      setSharepointUrlInput("");
+                      setSharepointDialogOpen(true);
+                    }}
+                    data-testid="button-link-sharepoint-folder"
+                  >
+                    <Link2 className="w-3 h-3 mr-1.5" />
+                    Link SharePoint Folder
+                  </Button>
+                )}
+                {deal.propertyId && (
+                  <Link href={`/properties/${deal.propertyId}`}>
+                    <span className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 cursor-pointer" data-testid="link-deal-sharepoint">
+                      <Building2 className="w-3 h-3" />
+                      Property folder
+                    </span>
+                  </Link>
+                )}
+              </div>
+            </SidebarSection>
+
+            {linkedProperty && (
+              <SidebarSection open={sidebarSections.property} onToggle={() => toggleSidebar("property")} icon={Building2} title="Linked Property" testId="toggle-sidebar-property">
+                <Link href={`/properties/${linkedProperty.id}`}>
+                  <div className="p-2 rounded-md border hover-elevate cursor-pointer" data-testid="linked-property-panel">
+                    <p className="text-xs font-medium">{linkedProperty.name}</p>
+                    {linkedProperty.status && (
+                      <Badge variant="outline" className="mt-1 text-[9px]">{linkedProperty.status}</Badge>
+                    )}
+                  </div>
+                </Link>
+              </SidebarSection>
+            )}
+
+            {marketTone && (
+              <SidebarSection open={sidebarSections.market ?? true} onToggle={() => toggleSidebar("market")} icon={TrendingUp} title="Local Market Tone" testId="toggle-sidebar-market">
+                <div className="space-y-1.5 text-xs">
+                  {[
+                    { key: "retail", label: "Retail" },
+                    { key: "offices", label: "Offices" },
+                    { key: "restaurants", label: "F&B" },
+                  ].map(({ key, label }) => {
+                    const rents = marketTone.commercial?.[key];
+                    const val = key === "offices" ? marketTone.commercial?.officesValuation : marketTone.commercial?.retailValuation;
+                    if (!rents && !val) return null;
+                    return (
+                      <div key={key} className="flex items-start justify-between gap-2 py-0.5">
+                        <span className="text-muted-foreground shrink-0">{label}</span>
+                        <div className="text-right">
+                          {rents?.avgQuotingRentPerSqft != null && (
+                            <span className="font-medium">£{rents.avgQuotingRentPerSqft.toFixed(2)}<span className="text-muted-foreground font-normal">/sqft</span></span>
+                          )}
+                          {val?.rentEstimate?.low != null && val?.rentEstimate?.high != null && (
+                            <span className="text-muted-foreground"> (£{val.rentEstimate.low.toFixed(2)}–{val.rentEstimate.high.toFixed(2)})</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[10px] text-muted-foreground pt-0.5">{propertyPostcode} · PropertyData</p>
+                </div>
+              </SidebarSection>
+            )}
+
+            {linkedContacts.length > 0 && (
+              <SidebarSection open={sidebarSections.contacts} onToggle={() => toggleSidebar("contacts")} icon={Users} title={`Linked Contacts (${linkedContacts.length})`} testId="toggle-sidebar-contacts">
+                <div className="space-y-1.5" data-testid="linked-contacts-panel">
+                  {linkedContacts.map((contact) => (
+                    <Link key={contact.id} href={`/contacts/${contact.id}`}>
+                      <div className="p-2 rounded-md border hover-elevate cursor-pointer">
+                        <p className="text-xs font-medium">{contact.name}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {contact.role && (
+                            <span className="text-[9px] text-muted-foreground">{contact.role}</span>
+                          )}
+                          {contact.companyName && (
+                            <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
+                          )}
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </SidebarSection>
+            )}
+
+            {deal.comments && (
+              <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
+                <p className="text-xs whitespace-pre-wrap text-muted-foreground" data-testid="text-deal-comments">{deal.comments}</p>
+              </SidebarSection>
+            )}
+          </ScrollArea>
+        </div>
+      </div>
     </div>
   );
 }

@@ -2,13 +2,16 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
-import { requireAuth, getUserIdFromToken } from "./auth";
+import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
+import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import crypto from "crypto";
 import { saveFile, getFile } from "./file-storage";
+import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
@@ -36,6 +39,12 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
+import { registerIngestRoutes } from "./ingest-routes";
+import { registerGenericCrmRoutes } from "./generic-crm-routes";
+import { setupStripeIssuingRoutes } from "./stripe-issuing";
+import { setupHrRoutes } from "./hr-routes";
+import { setupWhyBuyDesignRoutes } from "./why-buy-design";
+import { setupDocumentPreferencesRoutes } from "./document-preferences";
 import { importTrlRequirement } from "./trl";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
@@ -285,6 +294,15 @@ export async function registerRoutes(
   const { registerLeaseEventRoutes } = await import("./lease-events");
   registerLeaseEventRoutes(app);
 
+  const { registerLandlordHunterRoutes } = await import("./landlord-hunter");
+  registerLandlordHunterRoutes(app);
+
+  const { registerLenderRoutes } = await import("./lender-routes");
+  registerLenderRoutes(app);
+
+  const { registerAdminRoutes } = await import("./admin-routes");
+  registerAdminRoutes(app);
+
   const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
   registerIntegrationsStatusRoutes(app);
 
@@ -361,16 +379,20 @@ export async function registerRoutes(
       if (!files || files.length === 0) {
         return res.status(400).json({ message: "No files uploaded" });
       }
+      const userId = (req as any).userId || req.session?.userId || null;
       const uploaded = await Promise.all(files.map(async (f) => {
         const ext = path.extname(f.originalname).toLowerCase();
         const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
-        await saveFile(`chat-media/${uniqueName}`, f.buffer, f.mimetype, f.originalname);
-        return {
-          url: `/api/chat-media/${uniqueName}`,
-          name: f.originalname,
-          size: f.size,
-          type: f.mimetype,
-        };
+        const storageKey = `chat-media/${uniqueName}`;
+        await saveFile(storageKey, f.buffer, f.mimetype, f.originalname);
+        const url = `/api/chat-media/${uniqueName}`;
+        // Track per-user so ChatBGP can list "what has Woody uploaded
+        // recently" without needing the exact filename — fixes the "file
+        // vanished" complaint when the user comes back in a new session.
+        if (userId) {
+          recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
+        }
+        return { url, name: f.originalname, size: f.size, type: f.mimetype };
       }));
       res.json({ files: uploaded });
     } catch (err: any) {
@@ -707,14 +729,18 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/team-members/:id/team", requireAuth, async (req, res) => {
+  app.patch("/api/team-members/:id/team", requireAuth, async (req: any, res) => {
     try {
+      const adminId = req.session.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+
       const { id } = req.params;
       const { team } = req.body;
       if (!team || typeof team !== "string") {
         return res.status(400).json({ message: "Team is required" });
       }
-      const validTeams = ["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"];
+      const validTeams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"];
       if (!validTeams.includes(team)) {
         return res.status(400).json({ message: "Invalid team" });
       }
@@ -722,6 +748,186 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update team" });
+    }
+  });
+
+  // ============================================================
+  // People & HR — org chart, profiles, birthdays
+  // ============================================================
+  // Public-tier fields visible to the whole team (everyone authenticated).
+  // Sensitive fields (address, dob, personal_email, employment_type, salary
+  // history, etc.) are restricted to the user themselves + admins.
+  const HR_PUBLIC_COLUMNS = `
+    id, username, name, email, phone, role, department, team, additional_teams,
+    profile_pic_url, manager_id, board_member, management_team, display_order,
+    wfh_days, bio, cv_url, is_active
+  `;
+  const HR_PRIVATE_COLUMNS = `
+    dob, address, personal_email, employment_type, start_date
+  `;
+
+  app.get("/api/hr/team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      const isAdmin = adminCheck.rows[0]?.is_admin === true;
+
+      // Admins get the full HR record for everyone; non-admins get the public
+      // tier for everyone plus the private tier for themselves only.
+      const sql = isAdmin
+        ? `SELECT ${HR_PUBLIC_COLUMNS}, ${HR_PRIVATE_COLUMNS} FROM users WHERE is_active = true ORDER BY display_order, name`
+        : `SELECT ${HR_PUBLIC_COLUMNS},
+              CASE WHEN id = $1 THEN dob ELSE NULL END AS dob,
+              CASE WHEN id = $1 THEN address ELSE NULL END AS address,
+              CASE WHEN id = $1 THEN personal_email ELSE NULL END AS personal_email,
+              CASE WHEN id = $1 THEN employment_type ELSE NULL END AS employment_type,
+              CASE WHEN id = $1 THEN start_date ELSE NULL END AS start_date
+            FROM users WHERE is_active = true ORDER BY display_order, name`;
+      const params = isAdmin ? [] : [userId];
+      const { rows } = await pool.query(sql, params);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch team" });
+    }
+  });
+
+  app.get("/api/hr/birthdays", requireAuth, async (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(60, parseInt(String(req.query.days || "14"), 10) || 14));
+      // Birthdays are stored as ISO YYYY-MM-DD strings. Match on month/day so
+      // age is irrelevant; window crosses the year boundary if needed.
+      const { rows } = await pool.query(
+        `SELECT id, name, role, team, profile_pic_url, dob FROM users
+         WHERE is_active = true AND dob IS NOT NULL`
+      );
+      const today = new Date();
+      const upcoming = rows
+        .map((r: any) => {
+          const dob = String(r.dob);
+          const m = dob.match(/-(\d{2})-(\d{2})$/);
+          if (!m) return null;
+          const month = parseInt(m[1], 10) - 1;
+          const day = parseInt(m[2], 10);
+          const next = new Date(today.getFullYear(), month, day);
+          if (next < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
+            next.setFullYear(today.getFullYear() + 1);
+          }
+          const diffDays = Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays >= 0 && diffDays <= days
+            ? { id: r.id, name: r.name, role: r.role, team: r.team, profilePicUrl: r.profile_pic_url, date: next.toISOString().slice(0, 10), daysUntil: diffDays }
+            : null;
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.daysUntil - b.daysUntil);
+      res.json(upcoming);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch birthdays" });
+    }
+  });
+
+  // Updates: admins can edit anyone's full record; non-admins can edit only
+  // their own personal-tier fields (no role, team, manager, admin flags).
+  app.patch("/api/hr/team/:id", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const targetId = req.params.id;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      const isAdmin = adminCheck.rows[0]?.is_admin === true;
+      const isSelf = String(userId) === String(targetId);
+      if (!isAdmin && !isSelf) return res.status(403).json({ message: "You can only edit your own profile" });
+
+      const allowed = isAdmin
+        ? new Set([
+            "name", "email", "phone", "role", "department", "team", "additionalTeams",
+            "managerId", "boardMember", "managementTeam", "displayOrder",
+            "dob", "address", "personalEmail", "wfhDays", "employmentType",
+            "startDate", "cvUrl", "bio", "isActive",
+          ])
+        : new Set([
+            "phone", "dob", "address", "personalEmail", "wfhDays",
+            "cvUrl", "bio",
+          ]);
+
+      const camelToSnake = (s: string) => s.replace(/[A-Z]/g, c => "_" + c.toLowerCase());
+      const sets: string[] = [];
+      const params: any[] = [];
+      let p = 1;
+      for (const [key, value] of Object.entries(req.body || {})) {
+        if (!allowed.has(key)) continue;
+        sets.push(`${camelToSnake(key)} = $${p++}`);
+        params.push(value);
+      }
+      if (sets.length === 0) return res.status(400).json({ message: "No editable fields supplied" });
+      params.push(targetId);
+      await pool.query(`UPDATE users SET ${sets.join(", ")} WHERE id = $${p}`, params);
+
+      const { rows } = await pool.query(`SELECT ${HR_PUBLIC_COLUMNS}, ${HR_PRIVATE_COLUMNS} FROM users WHERE id = $1`, [targetId]);
+      res.json(rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to update profile" });
+    }
+  });
+
+  // Admin: create a new person on the org chart.
+  app.post("/api/hr/team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+
+      const { name, role, team, managerId, email, additionalTeams, boardMember, managementTeam } = req.body || {};
+      if (!name || typeof name !== "string") return res.status(400).json({ message: "Name is required" });
+
+      const username = name.toLowerCase().replace(/['']/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+      const bcrypt = await import("bcrypt");
+      const placeholderHash = await bcrypt.default.hash(`bgp-placeholder-${Date.now()}`, 10);
+
+      const { rows } = await pool.query(
+        `INSERT INTO users (
+          username, password, name, role, team, additional_teams, manager_id,
+          board_member, management_team, email, is_admin, is_active
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,true)
+         RETURNING ${HR_PUBLIC_COLUMNS}`,
+        [
+          username, placeholderHash, name.trim(), role || null, team || null,
+          additionalTeams || [], managerId || null,
+          boardMember === true, managementTeam === true, email || null,
+        ]
+      );
+      res.json(rows[0]);
+    } catch (err: any) {
+      if (err?.code === "23505") return res.status(409).json({ message: "Username already exists — try a different name" });
+      res.status(500).json({ message: err?.message || "Failed to create person" });
+    }
+  });
+
+  // Admin: deactivate (soft-delete) a person from the org chart. Their direct
+  // reports become orphaned; the page surfaces these for re-assignment.
+  app.delete("/api/hr/team/:id", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+      if (String(userId) === String(req.params.id)) return res.status(400).json({ message: "You cannot remove yourself" });
+      await pool.query(`UPDATE users SET is_active = false WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to remove person" });
+    }
+  });
+
+  // Admin: one-shot seed of the BGP org chart (idempotent — safe to re-run).
+  app.post("/api/admin/seed-team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+      const { seedBgpOrgChart } = await import("./seed-team");
+      const result = await seedBgpOrgChart();
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("[seed-team]", err);
+      res.status(500).json({ message: err?.message || "Failed to seed team" });
     }
   });
 
@@ -1390,6 +1596,297 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/market-tone", requireAuth, async (req, res) => {
+    try {
+      const postcode = (req.query.postcode as string || "").trim();
+      if (!postcode) return res.status(400).json({ error: "postcode required" });
+      const { fetchPropertyDataMarketTone } = await import("./propertydata-market");
+      const tone = await fetchPropertyDataMarketTone(postcode);
+      if (!tone) return res.status(503).json({ error: "PropertyData not configured or no data for this postcode" });
+      res.json(tone);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── HM Land Registry CCOD / UCOD ingestion ─────────────────────────────
+  // Three operating modes:
+  //   POST { latest: true, source: "CCOD" }              fetch + ingest the
+  //                                                       most recent FULL
+  //                                                       monthly file via
+  //                                                       the HMLR API (uses
+  //                                                       HMLR_API_KEY).
+  //   POST { filename, source }                           same, but for a
+  //                                                       specific filename.
+  //   POST { url, source, filename? }                     ingest directly from
+  //                                                       a pre-resolved URL
+  //                                                       (e.g. a manually-
+  //                                                       downloaded mirror).
+  // Always runs in the background; poll /status. CCOD file is ~150MB so
+  // expect 10-30 min depending on instance size.
+  app.post("/api/admin/ingest-ccod", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { ingestCcodFromUrl, ingestLatestFor, resolveHmlrDownloadUrl, getIngestProgress } = await import("./land-registry-ccod");
+      const progress = getIngestProgress();
+      if (progress.state === "downloading" || progress.state === "parsing") {
+        return res.status(202).json({ accepted: true, alreadyRunning: true, progress });
+      }
+      const body = req.body || {};
+      const source = (String(body.source || "CCOD").toUpperCase() === "UCOD" ? "UCOD" : "CCOD") as "CCOD" | "UCOD";
+
+      // Kick off in the background; respond 202 immediately so Railway's
+      // edge proxy doesn't time out on the 10-30 min ingest.
+      if (body.latest) {
+        ingestLatestFor(source).catch(err => console.error("[ccod] ingestLatestFor failed:", err?.message));
+      } else if (body.filename) {
+        (async () => {
+          try {
+            const url = await resolveHmlrDownloadUrl(source, body.filename);
+            await ingestCcodFromUrl(url, source, body.filename);
+          } catch (err: any) { console.error("[ccod] filename ingest failed:", err?.message); }
+        })();
+      } else if (body.url) {
+        ingestCcodFromUrl(body.url, source, body.filename || "manual-upload.csv")
+          .catch(err => console.error("[ccod] url ingest failed:", err?.message));
+      } else {
+        return res.status(400).json({ error: "pass { latest: true } | { filename } | { url }" });
+      }
+      res.status(202).json({ accepted: true, message: `Started ${source} ingest. Poll /api/admin/ingest-ccod/status for progress.` });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "ingest failed" });
+    }
+  });
+
+  app.get("/api/admin/ingest-ccod/status", requireAuth, requireAdmin, async (_req, res) => {
+    const { getIngestProgress } = await import("./land-registry-ccod");
+    res.json(getIngestProgress());
+  });
+
+  app.get("/api/admin/ingest-ccod/files", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { listHmlrFiles } = await import("./land-registry-ccod");
+      const source = (String(req.query.source || "CCOD").toUpperCase() === "UCOD" ? "UCOD" : "CCOD") as "CCOD" | "UCOD";
+      const files = await listHmlrFiles(source);
+      res.json({ source, files });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "list failed" });
+    }
+  });
+
+  // Land Registry titles for a given company, matched by CH number.
+  // Used by the Ownership block on the landlord profile.
+  app.get("/api/landlord/:companyId/land-registry-titles", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const { rows } = await pool.query(
+        `SELECT companies_house_number FROM crm_companies WHERE id = $1`,
+        [companyId]
+      );
+      const ch = rows[0]?.companies_house_number;
+      if (!ch) return res.json({ chNumber: null, count: 0, titles: [] });
+
+      const { getTitlesForCompany, countTitlesForCompany } = await import("./land-registry-ccod");
+      const [titles, count] = await Promise.all([
+        getTitlesForCompany(ch, 500),
+        countTitlesForCompany(ch),
+      ]);
+      res.json({ chNumber: ch, count, titles });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "lookup failed" });
+    }
+  });
+
+  // Scrape a landlord's website — drills portfolio / investor / board
+  // pages with JS rendering on, extracts structured intel via Haiku.
+  // Returns 202 + a job state — poll /status for results.
+  app.post("/api/landlord/:companyId/scrape-portfolio", requireAuth, async (req, res) => {
+    const { companyId } = req.params;
+    try {
+      const { scrapeLandlordWebsite, getLandlordScrapeProgress } = await import("./landlord-scraper");
+      const current = getLandlordScrapeProgress(companyId);
+      if (current.state === "fetching" || current.state === "extracting") {
+        return res.status(202).json({ accepted: true, alreadyRunning: true, progress: current });
+      }
+      // Fire and forget; the scraper writes to landlord_website_findings
+      // when done. Avoids Railway edge timeout on the ~60s render fan-out.
+      scrapeLandlordWebsite(companyId).catch(err =>
+        console.error(`[landlord-scrape ${companyId}] failed:`, err?.message || err)
+      );
+      res.status(202).json({ accepted: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "kick-off failed" });
+    }
+  });
+
+  app.get("/api/landlord/:companyId/scrape-portfolio/status", requireAuth, async (req, res) => {
+    try {
+      const { getLandlordScrapeProgress, getLandlordFindings } = await import("./landlord-scraper");
+      const progress = getLandlordScrapeProgress(req.params.companyId);
+      const findings = await getLandlordFindings(req.params.companyId);
+      res.json({ progress, findings });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "status failed" });
+    }
+  });
+
+  // Stream the cached annual report PDF for a landlord. Same pattern
+  // as the CH accounts streaming endpoint — 404 if we haven't fetched
+  // one yet (the scraper does this automatically).
+  app.get("/api/landlord/:companyId/annual-report.pdf", requireAuth, async (req, res) => {
+    try {
+      const { rows } = await pool.query<{ annual_report_storage_key: string | null; name: string }>(
+        `SELECT annual_report_storage_key, name FROM crm_companies WHERE id = $1`,
+        [req.params.companyId]
+      );
+      const row = rows[0];
+      if (!row?.annual_report_storage_key) return res.status(404).json({ error: "no annual report on file" });
+      const { getFile } = await import("./file-storage");
+      const file = await getFile(row.annual_report_storage_key);
+      if (!file) return res.status(404).json({ error: "stored file missing" });
+      const safeName = (row.name || "landlord").replace(/[^A-Za-z0-9._-]/g, "_");
+      res.setHeader("Content-Type", file.contentType || "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}-annual-report.pdf"`);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.end(file.data);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "stream failed" });
+    }
+  });
+
+  // Why-didn't-it-link diagnostic. Returns the most recent link report
+  // produced by autoLinkScrapedProperties so the user can see, per
+  // scraped property: did it match a CRM row? Was the row already
+  // owned by another landlord? Is it a totally new asset? Used by
+  // ChatBGP + the Ownership block to debug "Bluewater isn't showing".
+  app.get("/api/landlord/:companyId/link-diagnostic", requireAuth, async (req, res) => {
+    try {
+      const { getLandlordScrapeProgress } = await import("./landlord-scraper");
+      const progress = getLandlordScrapeProgress(req.params.companyId);
+      const linkReport = (progress as any)?.result?.link_report || null;
+      res.json({ progress: progress.state, linkReport });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "diagnostic failed" });
+    }
+  });
+
+  // Per-account BGP staff role. POST { userId, role } upserts a row
+  // in crm_company_bgp_roles so the coverer chip on the panel can show
+  // "Charlotte — Investment lead". Empty role string removes the row.
+  app.post("/api/brand/:companyId/bgp-role", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const userId = String(req.body?.userId || "").trim();
+      const role = String(req.body?.role || "").trim();
+      if (!userId) return res.status(400).json({ error: "userId required" });
+      if (!role) {
+        await pool.query(`DELETE FROM crm_company_bgp_roles WHERE company_id = $1 AND user_id = $2`, [companyId, userId]);
+        return res.json({ ok: true, cleared: true });
+      }
+      await pool.query(
+        `INSERT INTO crm_company_bgp_roles (company_id, user_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (company_id, user_id) DO UPDATE SET role = $3, updated_at = NOW()`,
+        [companyId, userId, role]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "save failed" });
+    }
+  });
+
+  // Promote a pending email-sender suggestion into a CRM contact.
+  // Body: { email, name? } — name parsed from the email local part
+  // if not supplied. Returns the new contact id.
+  app.post("/api/brand/:companyId/promote-sender", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      if (!email || !email.includes("@")) return res.status(400).json({ error: "valid email required" });
+      // Derive a name from the local part if the caller didn't pass one
+      // ("sara.ciullaserino@hm.com" → "Sara Ciullaserino"). Cheap, and
+      // the user can fix it inline via the existing role-edit flow.
+      const localPart = email.split("@")[0];
+      const derived = localPart
+        .replace(/[._-]+/g, " ")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+      const name = (req.body?.name && String(req.body.name).trim()) || derived || email;
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO crm_contacts (name, email, company_id, enrichment_source)
+         VALUES ($1, $2, $3, 'promoted-from-email')
+         RETURNING id`,
+        [name, email, companyId]
+      );
+      res.json({ id: rows[0].id, name, email });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
+  // Create a crm_properties row from a scraped item and link it to this
+  // landlord. Used by the per-row "Create CRM property" button in the
+  // Ownership block. Returns the new property id so the client can
+  // jump to it.
+  app.post("/api/landlord/:companyId/create-property", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const { name, address, postcode, sector } = req.body || {};
+      if (!name || !String(name).trim()) return res.status(400).json({ error: "name is required" });
+      const { createPropertyFromScraped } = await import("./landlord-scraper");
+      const out = await createPropertyFromScraped(companyId, { name: String(name).trim(), address, postcode, sector });
+      res.json(out);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
+  app.get("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const status = await getPipnetCredsStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to read PIPnet credentials" });
+    }
+  });
+
+  app.post("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { username, email, password } = req.body || {};
+      if (!username || !email || !password) {
+        return res.status(400).json({ message: "username, email and password are all required" });
+      }
+      await setPipnetCreds({ username, email, password });
+      const { resetSession } = await import("./pipnet");
+      resetSession();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to save PIPnet credentials" });
+    }
+  });
+
+  app.post("/api/admin/integrations/pipnet/test", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { testPipnetLogin } = await import("./pipnet");
+      const result = await testPipnetLogin();
+      res.status(result.ok ? 200 : 400).json(result);
+    } catch (err: any) {
+      res.status(500).json({ ok: false, message: err?.message || "PIPnet test failed" });
+    }
+  });
+
+  app.delete("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      await clearPipnetCreds();
+      const { resetSession } = await import("./pipnet");
+      resetSession();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to clear PIPnet credentials" });
+    }
+  });
+
   app.post("/api/external-requirements/search-pipnet", requireAuth, async (req, res) => {
     try {
       const { type, location, minSize, maxSize, client } = req.body;
@@ -1407,11 +1904,199 @@ export async function registerRoutes(
 
   app.post("/api/external-requirements/import-pipnet", requireAuth, async (req, res) => {
     try {
-      const { location, minSize, maxSize, client, documentDate, allPages } = req.body;
-      const result = await importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages });
-      res.json(result);
+      const { location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote } = req.body;
+      const result = await importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote });
+      if (!res.headersSent) res.json(result);
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "PIPnet import failed" });
+      console.error("[import-pipnet] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet import failed" });
+    }
+  });
+
+  // Debug: fetch one requirement's detail page from PIPnet and dump every
+  // label/value pair we can find. Lets us see exactly what extra fields are
+  // available behind the click-through.
+  app.get("/api/external-requirements/pipnet-inspect-detail", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { inspectPipnetDetail } = await import("./pipnet");
+      const result = await inspectPipnetDetail();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[pipnet-inspect-detail] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet detail inspect failed" });
+    }
+  });
+
+  // Debug: return the actual column headers PIPnet is using on already-imported
+  // rows, plus a small sample of values per column. Lets us see field names
+  // without re-scraping.
+  app.get("/api/external-requirements/pipnet-headers", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq } = await import("@shared/schema");
+      const rows = await db
+        .select({ rawData: extReq.rawData })
+        .from(extReq)
+        .where(eq(extReq.source, "PIPnet"))
+        .limit(20);
+      const headerCounts: Record<string, number> = {};
+      const samples: Record<string, string[]> = {};
+      for (const r of rows) {
+        const raw = (r.rawData ?? {}) as Record<string, any>;
+        for (const [k, v] of Object.entries(raw)) {
+          if (k.startsWith("_")) continue;
+          headerCounts[k] = (headerCounts[k] ?? 0) + 1;
+          const val = String(v ?? "").trim();
+          if (val && (samples[k]?.length ?? 0) < 3) {
+            (samples[k] ??= []).push(val.length > 80 ? val.slice(0, 80) + "…" : val);
+          }
+        }
+      }
+      const headers = Object.entries(headerCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => ({ name, presentIn: count, samples: samples[name] ?? [] }));
+      if (!res.headersSent) res.json({ rowsInspected: rows.length, headers });
+    } catch (err: any) {
+      console.error("[pipnet-headers] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "Failed to read PIPnet headers" });
+    }
+  });
+
+  // Admin: wipe the leasing requirements that previously came from PIPnet
+  // (using the wrong contact mapping) and re-run the sync with the corrected
+  // promote logic. Only removes rows whose name matches a PIPnet-sourced
+  // external_requirements row. CRM companies/contacts are left in place
+  // (re-sync will reuse or update them).
+  app.post("/api/external-requirements/resync-pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
+      const { inArray, sql: drizzleSql } = await import("drizzle-orm");
+      const pipnetRows = await db
+        .select({ id: extReq.id, companyName: extReq.companyName })
+        .from(extReq)
+        .where(eq(extReq.source, "PIPnet"));
+      const clientNames = Array.from(new Set(pipnetRows.map(r => r.companyName).filter((n): n is string => !!n)));
+      let deletedReqs = 0;
+      if (clientNames.length > 0) {
+        const deleted = await db
+          .delete(crmReqL)
+          .where(inArray(crmReqL.name, clientNames))
+          .returning({ id: crmReqL.id });
+        deletedReqs = deleted.length;
+      }
+      // Reset status so promoteToCrmRequirement re-runs for every PIPnet row.
+      await db.update(extReq).set({ status: drizzleSql`'active'` }).where(eq(extReq.source, "PIPnet"));
+
+      const result = await importPipnetRequirements({ allPages: true, monthsBack: 3, autoPromote: true });
+      if (!res.headersSent) res.json({ deletedReqs, clientNames: clientNames.length, ...result });
+    } catch (err: any) {
+      console.error("[resync-pipnet] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet resync failed" });
+    }
+  });
+
+  // ComplyAdvantage diagnostic — probes several candidate search-endpoint
+  // URLs and reports which return non-405 responses. The current `/v2/searches`
+  // path 405s every time at nginx level; this helps pinpoint the new path
+  // without guessing.
+  app.get("/api/comply-advantage/probe", requireAuth, async (req, res) => {
+    try {
+      const { probeComplyAdvantage } = await import("./comply-advantage");
+      const testName = String(req.query.name || "John Smith");
+      const results = await probeComplyAdvantage(testName);
+      res.json({ probed: results.length, results });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Re-run Claude vision over an already-imported external requirement's
+  // brochure and merge the extracted fields back into the row. Useful when:
+  // - the requirement was imported BEFORE the vision parser was wired (older
+  //   PIPnet rows have only the noisy tabular metadata)
+  // - the prompt has been tuned and we want to re-extract
+  // - the original parse was low-confidence
+  //
+  // POST /api/external-requirements/:id/reparse-vision
+  app.post("/api/external-requirements/:id/reparse-vision", requireAuth, async (req, res) => {
+    try {
+      const id = req.params.id;
+      const { externalRequirements: extReq } = await import("@shared/schema");
+      const { getFile } = await import("./file-storage");
+      const { parseRequirementBrochure, mergeVisionIntoRecord } = await import("./requirement-vision-parser");
+      const [row] = await db.select().from(extReq).where(eq(extReq.id, id)).limit(1);
+      if (!row) return res.status(404).json({ message: "Requirement not found" });
+      const brochure = (row.rawData as any)?._brochurePack;
+      if (!brochure?.url) {
+        return res.status(400).json({ message: "No brochure pack on this row — vision needs a PDF" });
+      }
+      // The URL is /api/crm/landlord-packs/<filename>. Reconstruct the storage key.
+      const filename = String(brochure.url).split("/").pop();
+      if (!filename) return res.status(400).json({ message: "Couldn't parse brochure URL" });
+      const file = await getFile(`landlord-packs/${filename}`);
+      if (!file) return res.status(404).json({ message: "Brochure file missing from storage" });
+      const vision = await parseRequirementBrochure({ pdfBuffer: file.data });
+      if (!vision) return res.status(502).json({ message: "Vision parse failed or returned nothing" });
+      const updated: any = {
+        sizeRange: row.sizeRange,
+        useClass: row.useClass,
+        locations: row.locations,
+        tenure: row.tenure,
+        description: row.description,
+        contactName: row.contactName,
+        contactEmail: row.contactEmail,
+        contactPhone: row.contactPhone,
+      };
+      mergeVisionIntoRecord(updated, vision);
+      await db.update(extReq)
+        .set({ ...updated, rawData: { ...(row.rawData as any || {}), _visionParse: vision }, updatedAt: new Date() })
+        .where(eq(extReq.id, id));
+      res.json({ ok: true, confidence: vision.confidence, fields: updated, vision });
+    } catch (err: any) {
+      console.error("[reparse-vision] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Vision reparse failed" });
+    }
+  });
+
+  // TRL: full sync — discovers every requirement URL via TRL's search and
+  // imports + auto-promotes each into crm_requirements_leasing.
+  app.post("/api/external-requirements/sync-trl", requireAuth, async (_req, res) => {
+    try {
+      const { syncAllTrlRequirements } = await import("./trl");
+      const result = await syncAllTrlRequirements();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[sync-trl] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "TRL sync failed" });
+    }
+  });
+
+  // TRL: wipe every TRL-sourced leasing requirement and re-sync. Mirror of
+  // resync-pipnet — only removes crm rows whose name matches a TRL-sourced
+  // external_requirements row, leaving manual entries untouched.
+  app.post("/api/external-requirements/resync-trl", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
+      const { inArray, sql: drizzleSql } = await import("drizzle-orm");
+      const { syncAllTrlRequirements } = await import("./trl");
+      const trlRows = await db
+        .select({ id: extReq.id, companyName: extReq.companyName })
+        .from(extReq)
+        .where(eq(extReq.source, "TRL"));
+      const clientNames = Array.from(new Set(trlRows.map(r => r.companyName).filter((n): n is string => !!n)));
+      let deletedReqs = 0;
+      if (clientNames.length > 0) {
+        const deleted = await db
+          .delete(crmReqL)
+          .where(inArray(crmReqL.name, clientNames))
+          .returning({ id: crmReqL.id });
+        deletedReqs = deleted.length;
+      }
+      await db.update(extReq).set({ status: drizzleSql`'active'` }).where(eq(extReq.source, "TRL"));
+      const result = await syncAllTrlRequirements();
+      if (!res.headersSent) res.json({ deletedReqs, clientNames: clientNames.length, ...result });
+    } catch (err: any) {
+      console.error("[resync-trl] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "TRL resync failed" });
     }
   });
 
@@ -1783,44 +2468,55 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
-      const { availableUnits, crmProperties } = await import("@shared/schema");
-      const conditions: any[] = [];
-      if (req.query.propertyId) conditions.push(eq(availableUnits.propertyId, req.query.propertyId as string));
-      if (req.query.marketingStatus) conditions.push(eq(availableUnits.marketingStatus, req.query.marketingStatus as string));
-      const where = conditions.length > 0 ? and(...conditions) : undefined;
-      const rows = await db
-        .select({
-          id: availableUnits.id,
-          propertyId: availableUnits.propertyId,
-          unitName: availableUnits.unitName,
-          floor: availableUnits.floor,
-          sqft: availableUnits.sqft,
-          askingRent: availableUnits.askingRent,
-          ratesPa: availableUnits.ratesPa,
-          serviceChargePa: availableUnits.serviceChargePa,
-          useClass: availableUnits.useClass,
-          condition: availableUnits.condition,
-          availableDate: availableUnits.availableDate,
-          marketingStatus: availableUnits.marketingStatus,
-          epcRating: availableUnits.epcRating,
-          notes: availableUnits.notes,
-          restrictions: availableUnits.restrictions,
-          fee: availableUnits.fee,
-          dealId: availableUnits.dealId,
-          agentUserIds: availableUnits.agentUserIds,
-          viewingsCount: availableUnits.viewingsCount,
-          lastViewingDate: availableUnits.lastViewingDate,
-          marketingStartDate: availableUnits.marketingStartDate,
-          createdAt: availableUnits.createdAt,
-          updatedAt: availableUnits.updatedAt,
-          propertyName: crmProperties.name,
-          propertyAddress: crmProperties.address,
-        })
-        .from(availableUnits)
-        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
-        .where(where)
-        .orderBy(desc(availableUnits.createdAt));
-      res.json(rows);
+      // Master physical attributes live on property_units; the listing's columns
+      // are kept as a backwards-compat cache. We COALESCE master over listing so
+      // every reader sees the source-of-truth values.
+      const params: any[] = [];
+      const filters: string[] = [];
+      if (req.query.propertyId) {
+        params.push(req.query.propertyId);
+        filters.push(`au.property_id = $${params.length}`);
+      }
+      if (req.query.marketingStatus) {
+        params.push(req.query.marketingStatus);
+        filters.push(`au.marketing_status = $${params.length}`);
+      }
+      const whereClause = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+      const result = await pool.query(`
+        SELECT
+          au.id,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.notes,
+          au.restrictions,
+          au.fee,
+          au.deal_id AS "dealId",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt",
+          p.name AS "propertyName",
+          p.address AS "propertyAddress"
+        FROM available_units au
+        LEFT JOIN crm_properties p ON p.id = au.property_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        ${whereClause}
+        ORDER BY au.created_at DESC
+      `, params);
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch available units" });
     }
@@ -1828,24 +2524,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-files", requireAuth, async (req, res) => {
     try {
-      const { unitMarketingFiles, availableUnits } = await import("@shared/schema");
-      const rows = await db
-        .select({
-          id: unitMarketingFiles.id,
-          unitId: unitMarketingFiles.unitId,
-          fileName: unitMarketingFiles.fileName,
-          filePath: unitMarketingFiles.filePath,
-          fileType: unitMarketingFiles.fileType,
-          fileSize: unitMarketingFiles.fileSize,
-          mimeType: unitMarketingFiles.mimeType,
-          createdAt: unitMarketingFiles.createdAt,
-          unitName: availableUnits.unitName,
-          propertyId: availableUnits.propertyId,
-        })
-        .from(unitMarketingFiles)
-        .leftJoin(availableUnits, eq(unitMarketingFiles.unitId, availableUnits.id))
-        .orderBy(unitMarketingFiles.createdAt);
-      res.json(rows);
+      // unitName comes from property_units master with listing fallback
+      const result = await pool.query(`
+        SELECT
+          umf.id,
+          umf.unit_id AS "unitId",
+          umf.file_name AS "fileName",
+          umf.file_path AS "filePath",
+          umf.file_type AS "fileType",
+          umf.file_size AS "fileSize",
+          umf.mime_type AS "mimeType",
+          umf.created_at AS "createdAt",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          au.property_id AS "propertyId"
+        FROM unit_marketing_files umf
+        LEFT JOIN available_units au ON au.id = umf.unit_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        ORDER BY umf.created_at
+      `);
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch all files" });
     }
@@ -1895,11 +2592,148 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      res.json(unit);
+      // Master overrides cache for unitName/floor/sqft/useClass/condition/epcRating
+      const result = await pool.query(`
+        SELECT
+          au.*,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          au.deal_id AS "dealId",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt"
+        FROM available_units au
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        WHERE au.id = $1
+        LIMIT 1
+      `, [req.params.id]);
+      if (result.rows.length === 0) return res.status(404).json({ message: "Unit not found" });
+      res.json(result.rows[0]);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch unit" });
+    }
+  });
+
+  // ── Property Units (master record for the physical space) ──────────────
+  app.get("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const propertyId = (req.query.propertyId as string | undefined) || undefined;
+      const where = propertyId ? `WHERE property_id = $1` : "";
+      const params = propertyId ? [propertyId] : [];
+      const result = await pool.query(
+        `SELECT id, property_id, unit_name, floor, sqft, use_class, condition,
+                epc_rating, frontage, notes, created_at, updated_at
+         FROM property_units ${where}
+         ORDER BY unit_name`,
+        params
+      );
+      res.json(result.rows.map(r => ({
+        id: r.id,
+        propertyId: r.property_id,
+        unitName: r.unit_name,
+        floor: r.floor,
+        sqft: r.sqft,
+        useClass: r.use_class,
+        condition: r.condition,
+        epcRating: r.epc_rating,
+        frontage: r.frontage,
+        notes: r.notes,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to list units" });
+    }
+  });
+
+  app.post("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const { insertPropertyUnitSchema } = await import("@shared/schema");
+      const parsed = insertPropertyUnitSchema.parse(req.body);
+      if (!parsed.propertyId || !parsed.unitName?.trim()) {
+        return res.status(400).json({ message: "propertyId and unitName are required" });
+      }
+      const result = await pool.query(
+        `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating, frontage, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
+        [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+         parsed.useClass || null, parsed.condition || null, parsed.epcRating || null,
+         parsed.frontage || null, parsed.notes || null]
+      );
+      res.json({ id: result.rows[0].id, ...parsed });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to create unit" });
+    }
+  });
+
+  app.patch("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const allowed = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating", "frontage", "notes",
+        "unitAddress", "unitPostcode", "unitUprn", "unitAddressFreeText"];
+      const cols: Record<string, string> = {
+        unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+        condition: "condition", epcRating: "epc_rating", frontage: "frontage", notes: "notes",
+        unitAddress: "unit_address", unitPostcode: "unit_postcode",
+        unitUprn: "unit_uprn", unitAddressFreeText: "unit_address_free_text",
+      };
+      const sets: string[] = [];
+      const values: any[] = [];
+      let i = 1;
+      for (const k of allowed) {
+        if (k in req.body) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push((req.body as any)[k]);
+        }
+      }
+      if (sets.length === 0) return res.json({ success: true });
+      sets.push(`updated_at = NOW()`);
+      values.push(req.params.id);
+      await pool.query(
+        `UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`,
+        values
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      res.status(500).json({ message: err?.message || "Failed to update unit" });
+    }
+  });
+
+  app.delete("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const inUse = await pool.query(
+        `SELECT 1 FROM available_units WHERE unit_id = $1
+         UNION ALL SELECT 1 FROM crm_deals WHERE unit_id = $1 LIMIT 1`,
+        [req.params.id]
+      );
+      if (inUse.rows.length > 0) {
+        return res.status(409).json({ message: "Unit is referenced by listings or deals" });
+      }
+      await pool.query(`DELETE FROM property_units WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete unit" });
     }
   });
 
@@ -1907,7 +2741,100 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const parsed = insertAvailableUnitSchema.parse(req.body);
-      const unit = await storage.createAvailableUnit(parsed);
+
+      // Ensure a property_units master row exists for this (property, unit name).
+      // Create one if missing, then set unit_id on the listing.
+      let unitMasterId: string | null = (parsed as any).unitId || null;
+      if (!unitMasterId && parsed.propertyId && parsed.unitName?.trim()) {
+        const existing = await pool.query(
+          `SELECT id FROM property_units
+           WHERE property_id = $1 AND lower(trim(unit_name)) = lower(trim($2))`,
+          [parsed.propertyId, parsed.unitName]
+        );
+        if (existing.rows.length > 0) {
+          unitMasterId = existing.rows[0].id;
+        } else {
+          const created = await pool.query(
+            `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id`,
+            [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+             parsed.useClass || null, parsed.condition || null, parsed.epcRating || null]
+          );
+          unitMasterId = created.rows[0].id;
+        }
+      }
+
+      const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
+
+      // Also create a leasing_schedule_units row on the same property so the
+      // unit shows up on the property's Leasing Schedule view automatically.
+      // Pre-SOL units belong on the leasing schedule but NOT on the deal CRM
+      // — the deal row gets created later by the SOL promotion flow.
+      try {
+        const existingLs = await pool.query(
+          `SELECT id FROM leasing_schedule_units
+           WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = lower(trim($2))
+           LIMIT 1`,
+          [parsed.propertyId, parsed.unitName || ""]
+        );
+        if (existingLs.rows.length === 0) {
+          await pool.query(
+            `INSERT INTO leasing_schedule_units
+               (property_id, unit_name, sqft, rent_pa, status)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
+             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
+          );
+        }
+      } catch (e: any) {
+        console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
+      }
+
+      // Auto-create a backing CRM deal so every tracker row has a source of
+      // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
+      // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
+      if (!unit.dealId) {
+        try {
+          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
+              : unit.unitName,
+            propertyId: unit.propertyId || undefined,
+            unitId: unitMasterId || undefined,
+            status: unit.marketingStatus || "AVA",
+            dealType: (req.body as any).dealType || "New Letting",
+            internalAgent: unit.agentUserIds || [],
+            fee: unit.fee ?? undefined,
+            rentPa: unit.askingRent ?? undefined,
+            totalAreaSqft: unit.sqft ?? undefined,
+          } as any);
+          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
+          (unit as any).dealId = deal.id;
+          (unit as any).dealRef = deal.dealRef;
+        } catch (e: any) {
+          console.warn("[available-units POST] auto-create deal failed:", e.message);
+        }
+      }
+
+      // Canonical unit FK: stamp tenancy_unit_id when the new vacant
+      // unit's name matches a tenancy_schedule row on the property.
+      try {
+        await pool.query(
+          `UPDATE available_units au
+              SET tenancy_unit_id = (
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = au.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              )
+            WHERE au.id = $1 AND au.tenancy_unit_id IS NULL`,
+          [unit.id]
+        );
+      } catch (e: any) { console.warn("[available-units] tenancy_unit_id stamp failed:", e?.message); }
+
       res.json(unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
@@ -1921,7 +2848,58 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
+
+      // Master-managed fields: write to property_units (the source of truth).
+      // We still write the same value to the listing cache so direct DB queries
+      // outside our GET endpoints stay coherent until the columns are dropped.
+      const MASTER_FIELDS = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating"] as const;
+      const masterPatch: Record<string, any> = {};
+      for (const f of MASTER_FIELDS) {
+        if (f in partial) masterPatch[f] = (partial as any)[f];
+      }
+      if (existing.unitId && Object.keys(masterPatch).length > 0) {
+        const cols: Record<string, string> = {
+          unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+          condition: "condition", epcRating: "epc_rating",
+        };
+        const sets: string[] = [];
+        const values: any[] = [];
+        let i = 1;
+        for (const [k, v] of Object.entries(masterPatch)) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push(v);
+        }
+        sets.push(`updated_at = NOW()`);
+        values.push(existing.unitId);
+        try {
+          await pool.query(`UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`, values);
+        } catch (e: any) {
+          if (e?.code === "23505") {
+            return res.status(409).json({ message: "A unit with that name already exists on this property" });
+          }
+          throw e;
+        }
+      }
+
       const unit = await storage.updateAvailableUnit(req.params.id, partial);
+
+      // Re-stamp tenancy_unit_id when the unit name changes — keeps
+      // the canonical unit FK aligned with the new label.
+      if ("unitName" in partial) {
+        await pool.query(
+          `UPDATE available_units au
+              SET tenancy_unit_id = (
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = au.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              )
+            WHERE au.id = $1`,
+          [req.params.id]
+        ).catch((e: any) => console.warn("[available-units] tenancy_unit_id re-stamp failed:", e?.message));
+      }
+
       res.json(unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
@@ -1938,10 +2916,409 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // HMLR direct upload — fallback for when the gov.uk API is being
+  // stale about our licence (returning example.csv even after licence
+  // signing). User downloads the CCOD/OCOD .csv from the gov.uk
+  // dashboard and posts it here as multipart form-data. Same downstream
+  // ingest as the API-driven sync, just with a local file path instead
+  // of an HMLR download URL.
+  //
+  // 2 GB disk-streamed multer — CCOD's full file is 1.56 GB. Memory
+  // storage would OOM Railway; use disk and stream-parse from there.
+  const hmlrUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+      filename: (_req, file, cb) => cb(null, `hmlr-upload-${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`),
+    }),
+    limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB
+  });
+  app.post("/api/admin/hmlr/upload", requireAuth, hmlrUpload.single("file"), async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      if (!req.file) return res.status(400).json({ error: "no file uploaded (use multipart field 'file')" });
+
+      const localPath = req.file.path;
+      const filename = req.file.originalname;
+
+      // Auto-detect dataset from the filename so a caller can't
+      // accidentally mislabel — CCOD_FULL_*.zip is always CCOD, OCOD_FULL_*.zip
+      // always OCOD. Caller can still override via dataset form field
+      // if they really want, but if filename and override disagree we
+      // trust the filename and reject the call so we don't half-ingest
+      // junk under the wrong label.
+      const explicitDataset = (req.body?.dataset || req.query?.dataset) as "ccod" | "ocod" | undefined;
+      let detectedDataset: "ccod" | "ocod" | null = null;
+      if (/(^|[^a-z])ccod(_|\.|$)/i.test(filename)) detectedDataset = "ccod";
+      else if (/(^|[^a-z])ocod(_|\.|$)/i.test(filename)) detectedDataset = "ocod";
+      if (detectedDataset && explicitDataset && detectedDataset !== explicitDataset) {
+        try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+        return res.status(400).json({
+          error: `Filename suggests ${detectedDataset.toUpperCase()} but caller said ${explicitDataset.toUpperCase()}. Either rename the file or pass the correct dataset.`,
+        });
+      }
+      const dataset = detectedDataset || explicitDataset;
+      if (dataset !== "ccod" && dataset !== "ocod") {
+        try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+        return res.status(400).json({ error: "Cannot detect dataset from filename. Pass dataset='ccod' or 'ocod' explicitly." });
+      }
+      console.log(`[hmlr-upload] received ${filename} (${(req.file.size / 1024 / 1024).toFixed(1)} MB) → ${localPath}`);
+
+      // Background ingest — same pattern as the API sync, returns 202
+      // immediately and writes progress to hmlr_ingest_runs.
+      setImmediate(() => {
+        (async () => {
+          try {
+            const { ingestUploadedCsv } = await import("./hmlr-fetch");
+            await ingestUploadedCsv(localPath, dataset, filename);
+            try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+          } catch (err: any) {
+            console.error(`[hmlr-upload] ingest failed for ${filename}:`, err?.message);
+          }
+        })();
+      });
+      res.status(202).json({ ok: true, message: `${dataset.toUpperCase()} ingest started — poll /api/admin/hmlr/runs for progress`, dataset, sizeBytes: req.file.size });
+    } catch (e: any) {
+      console.error("[hmlr-upload] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Fetch CCOD / OCOD from a SharePoint share link and ingest server-
+  // side. Way better than browser upload for the 1.5 GB CCOD case
+  // because nothing crosses through Railway's edge proxy — server
+  // streams from Microsoft Graph straight to local /tmp, then runs
+  // the existing ingest path. Folder share links are walked
+  // automatically; the matcher picks up files named CCOD_FULL_*.zip
+  // / OCOD_FULL_*.zip / *.csv variants.
+  app.post("/api/admin/hmlr/fetch-from-sharepoint", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+      const shareUrl: string = req.body?.shareUrl;
+      if (!shareUrl) return res.status(400).json({ error: "shareUrl required in body" });
+
+      const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
+      const { ingestUploadedCsv } = await import("./hmlr-fetch");
+
+      const meta = await resolveSharePointShareLinkMetadata(shareUrl);
+      // Figure out the list of {filename, downloadUrl, size} to ingest.
+      // Folder share → all matching children. File share → just that file.
+      const candidates: { filename: string; downloadUrl: string; size: number }[] = meta.isFolder
+        ? (meta.children || [])
+        : meta.downloadUrl
+          ? [{ filename: meta.name, downloadUrl: meta.downloadUrl, size: meta.size || 0 }]
+          : [];
+      const hmlrFiles = candidates.filter((c) => /^(ccod|ocod)/i.test(c.filename) && /\.(zip|csv)$/i.test(c.filename));
+      if (hmlrFiles.length === 0) {
+        return res.status(400).json({
+          error: `No CCOD/OCOD files found at share link. Filtered children: ${candidates.map((c) => c.filename).join(", ") || "(empty)"}. Raw folder contents: ${meta.rawChildSummary ? `${meta.rawChildSummary.total} items, sample: ${meta.rawChildSummary.sample.join(", ")}` : "(no folder)"}. Expected names like CCOD_FULL_2026_05.zip or OCOD_FULL_2026_05.csv.`,
+          rawChildSummary: meta.rawChildSummary,
+          candidates: candidates.map((c) => c.filename),
+        });
+      }
+
+      // Fire-and-forget: stream each file to /tmp then ingest. Returns
+      // 202 immediately. Each file gets its own hmlr_ingest_runs row so
+      // /api/admin/hmlr/runs shows progress per dataset.
+      setImmediate(() => {
+        (async () => {
+          for (const f of hmlrFiles) {
+            const localPath = path.join(os.tmpdir(), `hmlr-sp-${Date.now()}-${f.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+            try {
+              console.log(`[hmlr-sp] streaming ${f.filename} (${(f.size / 1024 / 1024).toFixed(1)} MB) to ${localPath}`);
+              await streamUrlToFile(f.downloadUrl, localPath);
+              // ingestUploadedCsv autodetects the dataset from filename
+              const detected = /^ccod/i.test(f.filename) ? "ccod" : "ocod";
+              await ingestUploadedCsv(localPath, detected, f.filename);
+            } catch (err: any) {
+              console.error(`[hmlr-sp] failed for ${f.filename}:`, err?.message);
+            } finally {
+              try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+            }
+          }
+        })();
+      });
+
+      res.status(202).json({
+        ok: true,
+        message: `Started ingest for ${hmlrFiles.length} file(s) — poll /api/admin/hmlr/runs for progress`,
+        files: hmlrFiles.map((f) => ({ filename: f.filename, sizeMB: Math.round(f.size / 1024 / 1024) })),
+      });
+    } catch (e: any) {
+      console.error("[hmlr-sp] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Clear HMLR ingest data — useful when a mislabelled upload has put
+  // bad data into the table and you want to start fresh. Caller passes
+  // dataset='ccod' | 'ocod' | 'all' to scope the delete.
+  app.post("/api/admin/hmlr/reset", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const scope = (req.body?.dataset || "all") as "ccod" | "ocod" | "all";
+      if (scope !== "ccod" && scope !== "ocod" && scope !== "all") {
+        return res.status(400).json({ error: "dataset must be 'ccod', 'ocod', or 'all'" });
+      }
+      // TRUNCATE for the "all" path — DELETE on 4M+ rows can hit
+      // Railway's statement-timeout and 500. TRUNCATE is constant-
+      // time and bypasses MVCC scan. Doesn't give a rowCount back
+      // so we return null in that case.
+      let deletedProprietorRows: number | null;
+      let deletedRunRows: number | null;
+      if (scope === "all") {
+        await pool.query(`TRUNCATE TABLE hmlr_proprietors`);
+        await pool.query(`TRUNCATE TABLE hmlr_ingest_runs`);
+        deletedProprietorRows = null;
+        deletedRunRows = null;
+      } else {
+        const propsRes = await pool.query(`DELETE FROM hmlr_proprietors WHERE dataset = $1`, [scope]);
+        const runsRes = await pool.query(`DELETE FROM hmlr_ingest_runs WHERE dataset = $1`, [scope]);
+        deletedProprietorRows = propsRes.rowCount;
+        deletedRunRows = runsRes.rowCount;
+      }
+      res.json({
+        ok: true,
+        deletedProprietorRows,
+        deletedRunRows,
+        scope,
+        note: scope === "all" ? "TRUNCATE used; row counts not reported" : undefined,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // HMLR bulk sync — pulls the latest CCOD or OCOD monthly snapshot
+  // from gov.uk's "Use land and property data" service and ingests it
+  // into hmlr_proprietors. Long-running (1.5GB CCOD takes ~10-15 min);
+  // returns 202 immediately and runs in the background. Poll
+  // /api/admin/hmlr/runs to see progress.
+  app.post("/api/admin/hmlr/sync", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const dataset = (req.body?.dataset || "ccod") as "ccod" | "ocod";
+      if (dataset !== "ccod" && dataset !== "ocod") {
+        return res.status(400).json({ error: "dataset must be 'ccod' or 'ocod'" });
+      }
+      if (!process.env.HMLR_API_KEY) {
+        return res.status(400).json({ error: "HMLR_API_KEY not set in environment" });
+      }
+
+      // Fire and forget — the sync writes its own status to
+      // hmlr_ingest_runs, so the client polls that to follow along.
+      const { syncHmlrDataset } = await import("./hmlr-fetch");
+      setImmediate(() => {
+        syncHmlrDataset(dataset).catch((err) => {
+          console.error(`[hmlr-sync] ${dataset} background sync failed:`, err?.message);
+        });
+      });
+      res.status(202).json({ ok: true, message: `${dataset.toUpperCase()} sync started — poll /api/admin/hmlr/runs for progress`, dataset });
+    } catch (e: any) {
+      console.error("[hmlr-sync] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Recent HMLR sync runs, newest first. Used by the admin UI to poll
+  // sync progress (rows_processed updates every 10k rows mid-flight).
+  app.get("/api/admin/hmlr/runs", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const runs = await pool.query(
+        `SELECT id, dataset, status, source_filename, rows_processed, rows_inserted, rows_updated, rows_skipped, error, started_at, finished_at
+           FROM hmlr_ingest_runs
+          ORDER BY started_at DESC
+          LIMIT 20`,
+      );
+      const counts = await pool.query<{ dataset: string; count: string }>(
+        `SELECT dataset, COUNT(*)::text AS count FROM hmlr_proprietors GROUP BY dataset`,
+      );
+      res.json({
+        runs: runs.rows,
+        counts: Object.fromEntries(counts.rows.map((r) => [r.dataset, Number(r.count)])),
+        apiKeySet: !!process.env.HMLR_API_KEY,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Backfill: create CRM deals for any tracker rows that are still missing dealId.
+  // Safe to run multiple times — skips rows that already have a dealId.
+  app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
+    try {
+      const { availableUnits, investmentTracker: invTracker } = await import("@shared/schema");
+      let created = 0;
+      const skipped = 0;
+
+      // --- Letting Tracker ---
+      const unlinkedUnits = await db.select().from(availableUnits).where(sql`deal_id IS NULL`);
+      for (const unit of unlinkedUnits) {
+        try {
+          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
+              : unit.unitName,
+            propertyId: unit.propertyId || undefined,
+            unitId: unit.unitId || undefined,
+            status: unit.marketingStatus || "AVA",
+            dealType: "Leasing",
+            internalAgent: unit.agentUserIds || [],
+            fee: unit.fee ?? undefined,
+            rentPa: unit.askingRent ?? undefined,
+            totalAreaSqft: unit.sqft ?? undefined,
+          } as any);
+          await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
+          created++;
+        } catch (e: any) {
+          console.warn(`[backfill] unit ${unit.id} failed:`, e.message);
+        }
+      }
+
+      // --- Investment Tracker ---
+      const unlinkedInv = await db.select().from(invTracker).where(sql`deal_id IS NULL`);
+      for (const row of unlinkedInv) {
+        try {
+          const dealType = row.boardType === "Sales" ? "Investment Sale" : "Investment Acquisition";
+          const deal = await storage.createCrmDeal({
+            name: row.assetName,
+            propertyId: row.propertyId,
+            status: "REP",
+            dealType,
+            internalAgent: row.agentUserIds || [],
+            fee: row.fee ?? undefined,
+          });
+          await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
+          created++;
+        } catch (e: any) {
+          console.warn(`[backfill] inv-tracker ${row.id} failed:`, e.message);
+        }
+      }
+
+      res.json({ created, skipped, message: `Created ${created} deals for previously unlinked tracker rows` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Backfill failed" });
+    }
+  });
+
+  // Rename legacy long team names in crm_deals.team array
+  app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
+    try {
+      const renames: Record<string, string> = {
+        "London Leasing Hospitality": "London F&B",
+        "London Leasing Retail": "London Retail",
+      };
+      let updated = 0;
+      for (const [oldName, newName] of Object.entries(renames)) {
+        const result = await pool.query(
+          `UPDATE crm_deals
+           SET team = array_replace(team, $1, $2)
+           WHERE $1 = ANY(team)`,
+          [oldName, newName]
+        );
+        updated += result.rowCount ?? 0;
+      }
+      res.json({ updated, message: `Renamed team values in ${updated} deal(s)` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Rename failed" });
+    }
+  });
+
+  // Un-archive any WIP-tagged deals that are pointed to by the current
+  // wip_entries import — recovery for the orphan-archive false-positives
+  // that hit refs like 4697, 5097, 5144, 5173 after the May Sage reload.
+  app.post("/api/admin/restore-wrongly-archived-deals", requireAuth, async (req: any, res) => {
+    try {
+      const adminId = req.session?.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+
+      // Refs currently in wip_entries (the post-May-1-import view).
+      const { rows: liveRefs } = await pool.query(
+        `SELECT DISTINCT ref FROM wip_entries WHERE ref IS NOT NULL AND ref != ''`
+      );
+      const liveRefSet = new Set<string>(liveRefs.map((r: any) => String(r.ref)));
+
+      const { rows: archived } = await pool.query(
+        `SELECT id, name, comments
+           FROM crm_deals
+          WHERE status = 'ARCH'
+            AND comments LIKE '[ARCHIVED %'
+            AND comments LIKE '%WIP Ref:%'`
+      );
+
+      const restored: { id: string; name: string; ref: string }[] = [];
+      for (const d of archived) {
+        const m = (d.comments || "").match(/WIP Ref:\s*(\d+)/);
+        if (!m) continue;
+        const ref = m[1];
+        if (!liveRefSet.has(ref)) continue;
+        const cleaned = (d.comments || "").replace(/^\[ARCHIVED [^\]]+\]\s*/, "");
+        const newStatus = (d.comments || "").includes("Status: SOL") ? "SOL"
+          : (d.comments || "").includes("Status: EXC") ? "EXC"
+          : (d.comments || "").includes("Status: COM") ? "COM"
+          : (d.comments || "").includes("Status: INV") ? "INV"
+          : "NEG";
+        await pool.query(
+          `UPDATE crm_deals SET status = $1, comments = $2, updated_at = NOW() WHERE id = $3`,
+          [newStatus, cleaned, d.id]
+        );
+        restored.push({ id: d.id, name: d.name, ref });
+      }
+
+      res.json({ restored: restored.length, deals: restored });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Restore failed" });
+    }
+  });
+
+  app.post("/api/admin/wipe-deals", requireAuth, async (req: any, res) => {
+    try {
+      const adminId = req.session?.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+
+      // Wipe in FK-safe order: clear deal_id references, then delete deals
+      await pool.query("UPDATE wip_entries SET deal_id = NULL, property_id = NULL");
+      const result = await pool.query("DELETE FROM crm_deals");
+      const deleted = result.rowCount ?? 0;
+
+      res.json({ deleted, message: `Wiped ${deleted} deal(s). Ready for fresh WIP import.` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Wipe failed" });
+    }
+  });
+
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {
       const { crmDeals, availableUnits } = await import("@shared/schema");
-      const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
+      // Match both canonical and legacy strings — migration may not yet have run
+      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
       const negDeals = await db.select().from(crmDeals)
         .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
 
@@ -2001,6 +3378,403 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // One-off backfill: create a leasing_schedule_units row for every existing
+  // available_units that doesn't already have one on the same property. Safe
+  // to re-run — only creates rows where none exists (matched by
+  // property_id + unit_name). Returns the count created.
+  // Compliance audit — recorded when someone overrides the AML / fee-agreement
+  // gate when promoting a deal to SOL. PLA side calls this directly; Letting
+  // Tracker side writes inline from the promote endpoint above.
+  app.post("/api/deal-compliance-audit", requireAuth, async (req: any, res) => {
+    const { dealId, missingFields, targetStatus } = req.body || {};
+    if (!dealId || !Array.isArray(missingFields)) {
+      return res.status(400).json({ error: "dealId and missingFields[] required" });
+    }
+    try {
+      const userId = req.user?.id ?? null;
+      await pool.query(
+        `INSERT INTO deal_compliance_audit (deal_id, user_id, missing_fields, target_status)
+         VALUES ($1, $2, $3, $4)`,
+        [dealId, userId, missingFields, targetStatus || null]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Debug / test-data tool: rename every property's units to "Unit 1", "Unit 2"...
+  // sequentially. Useful for verifying the unit name shows up consistently across
+  // tracker / deal / property views. Cascades to available_units +
+  // leasing_schedule_units which carry their own copy of the name.
+  // Entity images — one set of endpoints serving property / unit / deal. Bytes
+  // live in file_blobs; metadata in uploaded_files (kind='entity_image') so the
+  // existing file-serving route can stream them via /api/hr/files/:id/file.
+  const entityImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (/^image\/(png|jpeg|jpg|webp|gif)$/i.test(file.mimetype)) cb(null, true);
+      else cb(new Error("PNG, JPEG, WebP or GIF only"));
+    },
+  });
+
+  app.get("/api/entity-images", requireAuth, async (req: any, res) => {
+    const { entityType, entityId } = req.query;
+    if (!entityType || !entityId) return res.status(400).json({ error: "entityType and entityId required" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT ei.id, ei.entity_type, ei.entity_id, ei.file_id, ei.image_studio_id, ei.kind, ei.title, ei.notes,
+                ei.created_at, ei.created_by_user_id, u.name AS created_by_name,
+                f.mime_type
+         FROM entity_images ei
+         LEFT JOIN users u ON u.id = ei.created_by_user_id
+         LEFT JOIN uploaded_files f ON f.id = ei.file_id
+         WHERE ei.entity_type = $1 AND ei.entity_id = $2
+         ORDER BY ei.created_at DESC`,
+        [entityType, entityId]
+      );
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  app.post("/api/entity-images", requireAuth, entityImageUpload.single("file"), async (req: any, res) => {
+    const { entityType, entityId, kind, title, notes } = req.body;
+    if (!entityType || !entityId) return res.status(400).json({ error: "entityType and entityId required" });
+    if (!req.file) return res.status(400).json({ error: "file required (multipart 'file')" });
+    try {
+      const userId = req.user?.id ?? null;
+      const fileMeta = await pool.query(
+        `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+         VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+        [userId, req.file.originalname, req.file.mimetype, req.file.size]
+      );
+      const fileId = fileMeta.rows[0].id;
+      await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, req.file.buffer]);
+
+      // When the image is attached to a property, also store it in Image
+      // Studio's library + property_imagery_assets so it appears in Image
+      // Studio search, the Property Pathway imagery picker, and the
+      // Property Intelligence imagery tab — not just the sidebar.
+      let imageStudioId: string | null = null;
+      if (entityType === "property") {
+        try {
+          const { storeImageFromBuffer } = await import("./image-studio");
+          const stored = await storeImageFromBuffer({
+            buffer: req.file.buffer,
+            fileName: req.file.originalname,
+            category: "Property",
+            tags: ["uploaded", "property"],
+            description: title || `Uploaded for property`,
+            source: "uploaded",
+            propertyId: entityId,
+            mimeType: req.file.mimetype,
+          });
+          imageStudioId = stored.id;
+          await pool.query(
+            `INSERT INTO property_imagery_assets (property_id, kind, source, image_studio_id, caption, generated_by)
+             VALUES ($1, 'secondary_external', 'uploaded', $2, $3, $4)`,
+            [entityId, stored.id, title || null, userId]
+          ).catch(() => {});
+        } catch (syncErr: any) {
+          console.warn("[entity-images POST] Image Studio sync failed:", syncErr?.message);
+        }
+      }
+
+      const ins = await pool.query(
+        `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, notes, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [entityType, entityId, fileId, imageStudioId, kind || null, title || null, notes || null, userId]
+      );
+      res.json({ id: ins.rows[0].id, fileId, imageStudioId });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Public-ish read for entity images — any signed-in BGP user. Mirrors the
+  // /api/hr/photo route's reasoning (these aren't sensitive personal data).
+  app.get("/api/entity-images/:id/file", requireAuth, async (req, res) => {
+    try {
+      const meta = await pool.query(
+        `SELECT f.id, f.mime_type FROM entity_images ei
+         JOIN uploaded_files f ON f.id = ei.file_id
+         WHERE ei.id = $1`,
+        [req.params.id]
+      );
+      if (!meta.rows[0]) return res.status(404).end();
+      const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [meta.rows[0].id]);
+      if (!blob.rows[0]) return res.status(404).end();
+      res.setHeader("Content-Type", meta.rows[0].mime_type || "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(blob.rows[0].data);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  app.delete("/api/entity-images/:id", requireAuth, async (req: any, res) => {
+    try {
+      const meta = await pool.query("SELECT file_id FROM entity_images WHERE id = $1", [req.params.id]);
+      if (!meta.rows[0]) return res.status(404).end();
+      await pool.query("DELETE FROM entity_images WHERE id = $1", [req.params.id]);
+      await pool.query("DELETE FROM file_blobs WHERE file_id = $1", [meta.rows[0].file_id]);
+      await pool.query("DELETE FROM uploaded_files WHERE id = $1", [meta.rows[0].file_id]);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Revert an entity image's last AI edit. Calls Image Studio's revert to
+  // restore the undo snapshot, then resyncs the file_blob bytes so the
+  // sidebar thumbnail reflects the reverted image.
+  app.post("/api/entity-images/:id/revert", requireAuth, async (req: any, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT image_studio_id, file_id FROM entity_images WHERE id = $1`,
+        [req.params.id]
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Image not found" });
+      if (!row.image_studio_id) return res.status(400).json({ error: "Revert only available for AI-edited images." });
+
+      const revertRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/revert`, {
+        method: "POST",
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (!revertRes.ok) {
+        const err = await revertRes.json().catch(() => ({}));
+        return res.status(revertRes.status).json(err);
+      }
+      const fullRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/full`, {
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (fullRes.ok) {
+        const buf = Buffer.from(await fullRes.arrayBuffer());
+        await pool.query("UPDATE file_blobs SET data = $1 WHERE file_id = $2", [buf, row.file_id]);
+        await pool.query(
+          `UPDATE uploaded_files SET mime_type = 'image/png', size_bytes = $1 WHERE id = $2`,
+          [buf.length, row.file_id]
+        );
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Revert failed" });
+    }
+  });
+
+  // Also loosen the Image Studio revert gate (was admin-only)
+  // see server/image-studio.ts
+
+  // AI-edit an entity image. Routes through Image Studio's ai-edit (in-place
+  // on the imageStudio image) and then refreshes the file_blob bytes so the
+  // entity image thumbnails pick up the new version automatically.
+  app.post("/api/entity-images/:id/ai-edit", requireAuth, async (req: any, res) => {
+    const { editPrompt } = req.body || {};
+    if (!editPrompt?.trim()) return res.status(400).json({ error: "editPrompt required" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT ei.id, ei.image_studio_id, ei.file_id FROM entity_images ei WHERE ei.id = $1`,
+        [req.params.id]
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Image not found" });
+      if (!row.image_studio_id) return res.status(400).json({ error: "AI edit only available for images captured via Street View / Image Studio. Drag-and-drop uploads don't carry the source link yet." });
+
+      // Forward to ai-edit — it'll fetch the source bytes from localPath, run
+      // Gemini, write the result back to the same imageStudio image record.
+      const editRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/ai-edit`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: req.headers.cookie || "" },
+        body: JSON.stringify({ imageId: row.image_studio_id, editPrompt }),
+      });
+      if (!editRes.ok) {
+        const err = await editRes.json().catch(() => ({}));
+        return res.status(editRes.status).json(err);
+      }
+
+      // Pull the now-edited bytes from /api/image-studio/:id/full and refresh
+      // the file_blob so the sidebar thumbnail re-renders with the new view.
+      const fullRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/full`, {
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (fullRes.ok) {
+        const buf = Buffer.from(await fullRes.arrayBuffer());
+        await pool.query("UPDATE file_blobs SET data = $1 WHERE file_id = $2", [buf, row.file_id]);
+        await pool.query(
+          `UPDATE uploaded_files SET mime_type = 'image/png', size_bytes = $1 WHERE id = $2`,
+          [buf.length, row.file_id]
+        );
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "AI edit failed" });
+    }
+  });
+
+  // List users by team — used by the "Split London Leasing" admin tool.
+  app.get("/api/admin/users-by-team", requireAuth, requireAdmin, async (req: any, res) => {
+    const team = (req.query.team as string) || "";
+    try {
+      const { rows } = await pool.query(
+        `SELECT u.id, u.name, u.email, u.team, u.profile_pic_url, sp.title
+         FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.is_active = true AND (
+           CASE WHEN $1 = '' OR $1 = '__unassigned__' THEN (u.team IS NULL OR u.team = '')
+                ELSE u.team = $1 END
+         )
+         ORDER BY u.name`,
+        [team]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Bulk reassign — body: { assignments: [{ userId, team }] }
+  app.post("/api/admin/users-bulk-reassign-team", requireAuth, requireAdmin, async (req: any, res) => {
+    const { assignments } = req.body || {};
+    if (!Array.isArray(assignments)) return res.status(400).json({ error: "assignments[] required" });
+    try {
+      let updated = 0;
+      for (const a of assignments) {
+        if (!a?.userId) continue;
+        await pool.query("UPDATE users SET team = $1 WHERE id = $2", [a.team || null, a.userId]);
+        updated++;
+      }
+      res.json({ ok: true, updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot tidy applied via a Settings button — May 2026 team reorg.
+  // Splits London Leasing into London Retail + London F&B, parks the 4
+  // unassigned users on Office / Corporate, renames the Accounts mailbox
+  // user to its actual person (Wendy), and marks Daisy + Emily Mitchell as
+  // Contract type so HR views skip them. Safe to re-run — uses name lookups
+  // so it does nothing on rows that already match.
+  app.post("/api/admin/apply-may-2026-team-tidy", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const remap: Array<{ names: string[]; team: string }> = [
+        { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cope", "Emily Cann"] },
+        { team: "London F&B",         names: ["Rupert Bentley-Smith", "Will Penfold", "Evie North"] },
+        { team: "Office / Corporate", names: ["Wendy McKenzie", "Accounts", "Johnny", "Daisy Driscoll", "Emily Mitchell"] },
+      ];
+      let teamUpdates = 0;
+      for (const r of remap) {
+        const result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND name = ANY($2)",
+          [r.team, r.names]
+        );
+        teamUpdates += result.rowCount ?? 0;
+      }
+
+      // Rename the shared mailbox alias to its actual person name.
+      await pool.query(
+        "UPDATE users SET name = 'Wendy McKenzie' WHERE is_active = true AND name = 'Accounts'"
+      );
+
+      // Mark consultants — HR sections (salary, holiday, pension) hide for
+      // anyone tagged Contract type via the client-side gate.
+      const consultants = ["Daisy Driscoll", "Emily Mitchell"];
+      const contractResult = await pool.query(
+        `UPDATE staff_profiles SET employment_type = 'Contract'
+         WHERE user_id IN (SELECT id FROM users WHERE name = ANY($1))`,
+        [consultants]
+      );
+
+      res.json({
+        ok: true,
+        teamUpdates,
+        contractUpdates: contractResult.rowCount ?? 0,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Move everyone currently on fromTeam → toTeam in one go. Empty/null fromTeam
+  // means "currently unassigned". Used for tidy-ups like splitting / merging
+  // teams without per-user clicking.
+  app.post("/api/admin/team-bulk-remap", requireAuth, requireAdmin, async (req: any, res) => {
+    const { fromTeam, toTeam } = req.body || {};
+    if (toTeam === undefined) return res.status(400).json({ error: "toTeam required" });
+    try {
+      let result;
+      if (!fromTeam || fromTeam === "__unassigned__") {
+        result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND (team IS NULL OR team = '')",
+          [toTeam || null]
+        );
+      } else {
+        result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND team = $2",
+          [toTeam || null, fromTeam]
+        );
+      }
+      res.json({ ok: true, updated: result.rowCount ?? 0 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);
+      let renamed = 0;
+      for (const p of props.rows) {
+        const units = await pool.query(
+          `SELECT id, unit_name FROM property_units WHERE property_id = $1 ORDER BY created_at ASC, id ASC`,
+          [p.property_id]
+        );
+        for (let i = 0; i < units.rows.length; i++) {
+          const newName = `Unit ${i + 1}`;
+          const oldName = units.rows[i].unit_name;
+          const unitId = units.rows[i].id;
+          if (oldName === newName) continue;
+          await pool.query(`UPDATE property_units SET unit_name = $1 WHERE id = $2`, [newName, unitId]);
+          await pool.query(`UPDATE available_units SET unit_name = $1 WHERE unit_id = $2`, [newName, unitId]);
+          await pool.query(
+            `UPDATE leasing_schedule_units SET unit_name = $1
+             WHERE property_id = $2 AND lower(trim(coalesce(unit_name, ''))) = lower(trim(coalesce($3, '')))`,
+            [newName, p.property_id, oldName]
+          );
+          renamed++;
+        }
+      }
+      res.json({ renamed });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Rename failed" });
+    }
+  });
+
+  app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `WITH inserted AS (
+           INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status)
+           SELECT au.property_id, au.unit_name, au.sqft, au.asking_rent, COALESCE(au.marketing_status, 'AVA')
+           FROM available_units au
+           WHERE NOT EXISTS (
+             SELECT 1 FROM leasing_schedule_units ls
+             WHERE ls.property_id = au.property_id
+               AND lower(trim(coalesce(ls.unit_name, ''))) = lower(trim(coalesce(au.unit_name, '')))
+           )
+           RETURNING id
+         )
+         SELECT COUNT(*)::int AS created FROM inserted`
+      );
+      res.json({ created: rows[0]?.created ?? 0 });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Backfill failed" });
+    }
+  });
+
   app.post("/api/available-units/:id/link-deal", requireAuth, async (req, res) => {
     try {
       const { dealId } = req.body;
@@ -2022,12 +3796,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const property = await storage.getCrmProperty(unit.propertyId);
       const body = req.body || {};
-      const deal = await storage.createCrmDeal({
-        name: `${property?.name || "Property"} - ${unit.unitName}`,
+
+      // Build the field set from the form. Used to either UPDATE an existing
+      // linked deal (the common case now that Add Unit auto-creates a deal)
+      // or CREATE a new one (only when the unit was somehow orphaned).
+      const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
-        status: "Under Offer",
+        unitId: unit.unitId || undefined,
+        status: "SOL",
         dealType: body.dealType || "Letting",
-        groupName: "Leasing - Active",
         team: body.team || [],
         internalAgent: body.agent ? [body.agent] : [],
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
@@ -2037,8 +3814,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         leaseLength: body.leaseLength ? parseFloat(body.leaseLength) : undefined,
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
         comments: body.comments || undefined,
-      });
-      if (body.tenantName) {
+        amlCheckCompleted: body.amlChecked || undefined,
+      };
+
+      let deal;
+      if (unit.dealId) {
+        // Promote: existing deal gets the SOL-handover fields applied and
+        // status flipped. Don't change the deal name (it might have been
+        // edited).
+        deal = await storage.updateCrmDeal(unit.dealId, dealFields as any);
+      } else {
+        // Orphan unit (no auto-create ran) — fresh deal.
+        deal = await storage.createCrmDeal({
+          name: `${property?.name || "Property"} - ${unit.unitName}`,
+          groupName: "Leasing - Active",
+          ...dealFields,
+        } as any);
+      }
+
+      if (body.tenantName && deal) {
         try {
           const { crmContacts } = await import("@shared/schema");
           const existing = await db.select().from(crmContacts).where(sql`LOWER(name) = LOWER(${body.tenantName})`).limit(1);
@@ -2047,10 +3841,35 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           }
         } catch (_) {}
       }
-      await storage.updateAvailableUnit(req.params.id, { dealId: deal.id, marketingStatus: "Under Offer" });
-      res.json({ deal, unit: { ...unit, dealId: deal.id, marketingStatus: "Under Offer" } });
+
+      await storage.updateAvailableUnit(req.params.id, {
+        dealId: deal?.id ?? unit.dealId,
+        marketingStatus: "SOL",
+      });
+
+      // If user ticked "Promote anyway" to bypass missing AML / fee-agreement,
+      // log it so a future compliance report can chase the gaps before exchange.
+      if (deal && body.overrideCompliance) {
+        const missing: string[] = [];
+        if (body.feeAgreement !== "YES") missing.push("fee_agreement_signed");
+        if (body.amlChecked !== "YES" && body.amlChecked !== "N-A") missing.push("aml_kyc_checked");
+        if (missing.length > 0) {
+          try {
+            const userId = (req as any).user?.id ?? null;
+            await pool.query(
+              `INSERT INTO deal_compliance_audit (deal_id, user_id, missing_fields, target_status)
+               VALUES ($1, $2, $3, $4)`,
+              [deal.id, userId, missing, "SOL"]
+            );
+          } catch (e: any) {
+            console.warn("[promote] compliance audit log failed:", e.message);
+          }
+        }
+      }
+
+      res.json({ deal, unit: { ...unit, dealId: deal?.id ?? unit.dealId, marketingStatus: "SOL" } });
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to create deal" });
+      res.status(500).json({ message: err?.message || "Failed to promote unit" });
     }
   });
 
@@ -2392,6 +4211,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const parsed = insertInvestmentTrackerSchema.parse(body);
       const [row] = await db.insert(investmentTracker).values(parsed).returning();
+
+      // Auto-create a backing CRM deal
+      if (!row.dealId) {
+        try {
+          const dealType = row.boardType === "Sales" ? "Investment Sale" : "Investment Acquisition";
+          const deal = await storage.createCrmDeal({
+            name: row.assetName,
+            propertyId: row.propertyId,
+            status: "REP",
+            dealType,
+            internalAgent: row.agentUserIds || [],
+            fee: row.fee ?? undefined,
+          });
+          await db.update(investmentTracker).set({ dealId: deal.id }).where(eq(investmentTracker.id, row.id));
+          (row as any).dealId = deal.id;
+          (row as any).dealRef = deal.dealRef;
+        } catch (e: any) {
+          console.warn("[investment-tracker POST] auto-create deal failed:", e.message);
+        }
+      }
+
       res.json(row);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -2404,7 +4244,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         "propertyId", "assetName", "assetType", "tenure", "guidePrice", "niy", "eqy", "sqft",
         "waultBreak", "waultExpiry", "currentRent", "ervPa", "occupancy", "capexRequired",
         "boardType", "status", "client", "clientContact", "vendor", "vendorAgent", "buyer",
-        "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline",
+        "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline", "completionDate",
       ]);
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const [key, value] of Object.entries(req.body)) {
@@ -2470,16 +4310,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
       if (!item) return res.status(404).json({ message: "Not found" });
+      // Idempotent — if already linked, return the existing deal
+      if (item.dealId) {
+        const existing = await storage.getCrmDeal(item.dealId);
+        if (existing) return res.json({ ...existing, alreadyLinked: true });
+      }
       const property = item.propertyId ? await storage.getCrmProperty(item.propertyId) : null;
+      // Sales board: client = landlord; Purchases board: vendor = the seller side
+      const landlordCompanyId = item.boardType === "Sales" ? item.clientId : null;
+      const vendorCompanyId   = item.boardType === "Sales" ? null          : item.vendorId;
       const deal = await storage.createCrmDeal({
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
-        status: "Under Offer",
+        status: item.status && ["REP","SPEC","LIVE","AVA","NEG","SOL","EXC","COM","WIT","INV"].includes(item.status) ? item.status : "REP",
         dealType: (item.boardType === "Sales") ? "Sale" : "Acquisition",
         groupName: "Investment - Active",
         team: ["Investment"],
+        landlordId: landlordCompanyId || undefined,
+        vendorId:   vendorCompanyId   || undefined,
+        internalAgent: item.agentUserIds || [],
         fee: item.fee || undefined,
-      });
+        comments: `Converted from investment tracker on ${new Date().toISOString().slice(0,10)}.`,
+      } as any);
       await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id));
       res.json(deal);
     } catch (e: any) {
@@ -2610,7 +4462,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   (async () => {
     try {
       const { crmDeals, availableUnits } = await import("@shared/schema");
-      const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
+      // Match both canonical and legacy strings — migration may not yet have run
+      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
       const negDeals = await db.select().from(crmDeals)
         .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
 
@@ -2661,504 +4514,33 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   })();
 
-  app.post("/api/apollo/enrich-contact", requireAuth, async (req, res) => {
-    try {
-      const { contactId, force = false } = req.body;
-      if (!contactId) return res.status(400).json({ error: "contactId required" });
 
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      const [contact] = await pool.query(`SELECT * FROM crm_contacts WHERE id = $1`, [contactId]).then(r => r.rows);
-      if (!contact) return res.status(404).json({ error: "Contact not found" });
-
-      const nameParts = (contact.name || "").trim().split(/\s+/);
-      const firstName = nameParts[0] || "";
-      const lastName = nameParts.slice(1).join(" ") || "";
-
-      let companyDomain: string | undefined;
-      let companyName: string | undefined;
-      if (contact.company_id) {
-        const [company] = await pool.query(`SELECT name, domain FROM crm_companies WHERE id = $1`, [contact.company_id]).then(r => r.rows);
-        if (company) {
-          companyName = company.name;
-          companyDomain = company.domain || undefined;
-        }
-      }
-      if (!companyDomain && contact.company_name) {
-        companyName = contact.company_name;
-      }
-
-      // Build mixed_people/api_search body (replaces deprecated people/match)
-      const body: Record<string, any> = {
-        page: 1,
-        per_page: 1,
-      };
-      if (contact.email) body.person_emails = [contact.email];
-      if (companyDomain) body.q_organization_domains_list = [companyDomain];
-      else if (companyName) body.organization_names = [companyName];
-      if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
-
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-          "X-Api-Key": apiKey,
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!apolloRes.ok) {
-        const errText = await apolloRes.text();
-        console.error("[apollo] API error:", apolloRes.status, errText);
-        return res.status(apolloRes.status).json({ error: `Apollo API error: ${apolloRes.status}` });
-      }
-
-      const data = await apolloRes.json() as any;
-      const person = (data.people || data.contacts || [])[0];
-
-      if (!person) {
-        return res.json({ success: false, message: "No match found in Apollo" });
-      }
-
-      const updates: Record<string, any> = {};
-      const updatedFields: string[] = [];
-
-      if (person.title && (force || !contact.role)) {
-        updates.role = person.title;
-        updatedFields.push("role");
-      }
-
-      if (person.linkedin_url && (force || !contact.linkedin_url)) {
-        updates.linkedin_url = person.linkedin_url;
-        updatedFields.push("linkedinUrl");
-      }
-
-      const phoneNumber = person.phone_numbers?.[0]?.sanitized_number ||
-        person.phone_numbers?.[0]?.raw_number ||
-        person.organization?.phone;
-      if (phoneNumber && (force || !contact.phone)) {
-        updates.phone = phoneNumber;
-        updatedFields.push("phone");
-      }
-
-      if (person.email && (force || !contact.email)) {
-        updates.email = person.email;
-        updatedFields.push("email");
-      }
-
-      if (person.photo_url && (force || !contact.avatar_url)) {
-        updates.avatar_url = person.photo_url;
-        updatedFields.push("avatarUrl");
-      }
-
-      updates.last_enriched_at = new Date();
-      updates.enrichment_source = "apollo";
-
-      if (Object.keys(updates).length > 0) {
-        const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
-        setClauses.push(`updated_at = NOW()`);
-        const vals = Object.values(updates);
-        await pool.query(
-          `UPDATE crm_contacts SET ${setClauses.join(", ")} WHERE id = $1`,
-          [contactId, ...vals]
-        );
-      }
-
-      res.json({
-        success: true,
-        updatedFields,
-        apolloData: {
-          name: person.name,
-          title: person.title,
-          email: person.email,
-          phone: phoneNumber || null,
-          linkedinUrl: person.linkedin_url,
-          photoUrl: person.photo_url,
-          city: person.city,
-          country: person.country,
-          organization: person.organization?.name,
-          organizationWebsite: person.organization?.website_url,
-          headline: person.headline,
-        },
-      });
-    } catch (err: any) {
-      console.error("[apollo] Enrich error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/apollo/enrich-company", requireAuth, async (req, res) => {
-    try {
-      const { companyId } = req.body;
-      if (!companyId) return res.status(400).json({ error: "companyId required" });
-
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      const [company] = await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId]).then(r => r.rows);
-      if (!company) return res.status(404).json({ error: "Company not found" });
-
-      let domain = company.domain || "";
-      if (!domain && company.domain_url) {
-        try {
-          const url = company.domain_url.startsWith("http") ? company.domain_url : `https://${company.domain_url}`;
-          domain = new URL(url).hostname.replace(/^www\./, "");
-        } catch {}
-      }
-
-      // Apollo's /organizations/enrich requires a domain — passing `name` alone
-      // returns 422. If we don't have a domain, try to discover one via the
-      // mixed_companies/api_search endpoint first, then enrich.
-      if (!domain) {
-        try {
-          const searchRes = await fetch(`https://api.apollo.io/api/v1/mixed_companies/api_search`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-cache",
-              "X-Api-Key": apiKey,
-            },
-            body: JSON.stringify({ q_organization_name: company.name, per_page: 1 }),
-          });
-          if (searchRes.ok) {
-            const searchData: any = await searchRes.json();
-            const first = searchData?.organizations?.[0] || searchData?.accounts?.[0];
-            if (first?.primary_domain) domain = first.primary_domain;
-            else if (first?.website_url) {
-              try { domain = new URL(first.website_url).hostname.replace(/^www\./, ""); } catch {}
-            }
-          }
-        } catch (err: any) {
-          console.warn("[apollo] Pre-enrich search failed:", err?.message);
-        }
-      }
-
-      if (!domain) {
-        return res.status(400).json({
-          error: `No domain available for "${company.name}". Apollo's enrich API requires a company website/domain. Add a domain to the company record and try again.`,
-        });
-      }
-
-      const params = new URLSearchParams({ domain });
-      const apolloRes = await fetch(`https://api.apollo.io/api/v1/organizations/enrich?${params.toString()}`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-          "X-Api-Key": apiKey,
-        },
-      });
-
-      if (!apolloRes.ok) {
-        const errText = await apolloRes.text();
-        console.error("[apollo] Company API error:", apolloRes.status, errText);
-        // Surface Apollo's own error message so the user understands what's wrong
-        let apolloMsg = "";
-        try { apolloMsg = JSON.parse(errText)?.error || JSON.parse(errText)?.errors?.[0] || ""; } catch {}
-        return res.status(apolloRes.status).json({
-          error: `Apollo ${apolloRes.status}: ${apolloMsg || errText.slice(0, 200) || "No details"}. Domain tried: ${domain}`,
-        });
-      }
-
-      const data = await apolloRes.json() as any;
-      const org = data.organization;
-
-      if (!org) {
-        return res.json({ success: false, message: "No match found in Apollo" });
-      }
-
-      const updates: Record<string, any> = {};
-      const updatedFields: string[] = [];
-
-      if (org.linkedin_url && !company.linkedin_url) {
-        updates.linkedin_url = org.linkedin_url;
-        updatedFields.push("linkedinUrl");
-      }
-      if (org.phone && !company.phone) {
-        updates.phone = org.phone;
-        updatedFields.push("phone");
-      }
-      if (org.industry && !company.industry) {
-        updates.industry = org.industry;
-        updatedFields.push("industry");
-      }
-      if (org.estimated_num_employees && !company.employee_count) {
-        updates.employee_count = String(org.estimated_num_employees);
-        updatedFields.push("employeeCount");
-      }
-      if (org.annual_revenue && !company.annual_revenue) {
-        updates.annual_revenue = String(org.annual_revenue);
-        updatedFields.push("annualRevenue");
-      }
-      if (org.founded_year && !company.founded_year) {
-        updates.founded_year = String(org.founded_year);
-        updatedFields.push("foundedYear");
-      }
-      if (org.website_url && !company.domain_url) {
-        updates.domain_url = org.website_url;
-        updatedFields.push("domainUrl");
-      }
-      if (org.short_description && !company.description) {
-        updates.description = org.short_description;
-        updatedFields.push("description");
-      }
-      let orgDomain = org.primary_domain || null;
-      if (!orgDomain && org.website_url) {
-        try {
-          const u = org.website_url.startsWith("http") ? org.website_url : `https://${org.website_url}`;
-          orgDomain = new URL(u).hostname.replace(/^www\./, "");
-        } catch {}
-      }
-      if (orgDomain && !company.domain) {
-        updates.domain = orgDomain;
-        updatedFields.push("domain");
-      }
-
-      updates.last_enriched_at = new Date();
-      updates.enrichment_source = "apollo";
-
-      if (Object.keys(updates).length > 0) {
-        const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
-        setClauses.push(`updated_at = NOW()`);
-        const vals = Object.values(updates);
-        await pool.query(
-          `UPDATE crm_companies SET ${setClauses.join(", ")} WHERE id = $1`,
-          [companyId, ...vals]
-        );
-      }
-
-      res.json({
-        success: true,
-        updatedFields,
-        apolloData: {
-          name: org.name,
-          domain: org.primary_domain,
-          website: org.website_url,
-          linkedinUrl: org.linkedin_url,
-          phone: org.phone,
-          industry: org.industry,
-          employeeCount: org.estimated_num_employees,
-          annualRevenue: org.annual_revenue,
-          foundedYear: org.founded_year,
-          description: org.short_description,
-          city: org.city,
-          country: org.country,
-          logoUrl: org.logo_url,
-        },
-      });
-    } catch (err: any) {
-      console.error("[apollo] Company enrich error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/apollo/search-person", requireAuth, async (req, res) => {
-    try {
-      const { firstName, lastName, email, companyName, domain } = req.body;
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      // Build mixed_people/api_search body (replaces deprecated people/match)
-      const body: Record<string, any> = {
-        page: 1,
-        per_page: 1,
-      };
-      if (email) body.person_emails = [email];
-      if (domain) body.q_organization_domains_list = [domain];
-      else if (companyName) body.organization_names = [companyName];
-      if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
-
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-          "X-Api-Key": apiKey,
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!apolloRes.ok) {
-        return res.status(apolloRes.status).json({ error: `Apollo API error: ${apolloRes.status}` });
-      }
-
-      const data = await apolloRes.json() as any;
-      res.json({ person: (data.people || data.contacts || [])[0] || null });
-    } catch (err: any) {
-      console.error("[apollo] Search error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Bulk Apollo enrichment — processes all contacts with an email, with rate limiting
-  app.post("/api/apollo/bulk-enrich", requireAuth, async (req, res) => {
-    try {
-      const { force = false, staleOnly = false, batchSize = 25, offset = 0 } = req.body || {};
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      const limit = Math.min(Math.max(1, Number(batchSize) || 25), 50);
-      const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
-
-      let whereClause = `c.email IS NOT NULL AND c.email != ''`;
-      if (staleOnly) {
-        whereClause += ` AND (c.last_enriched_at IS NULL OR c.last_enriched_at < NOW() - INTERVAL '6 months')`;
-      }
-
-      const totalResult = await pool.query(`SELECT COUNT(*) as cnt FROM crm_contacts c WHERE ${whereClause}`);
-      const totalEligible = parseInt(totalResult.rows[0].cnt);
-
-      const contacts = await pool.query(`
-        SELECT c.id, c.name, c.email, c.phone, c.role, c.linkedin_url, c.avatar_url, c.company_id, c.company_name
-        FROM crm_contacts c
-        WHERE ${whereClause}
-        ORDER BY c.last_enriched_at ASC NULLS FIRST, c.name ASC
-        LIMIT $1 OFFSET $2
-      `, [limit, safeOffset]).then(r => r.rows);
-
-      const total = contacts.length;
-      const results = {
-        total,
-        enriched: 0,
-        noMatch: 0,
-        errors: 0,
-        skipped: 0,
-        noMatchContacts: [] as { id: string; name: string; email: string }[],
-        enrichedContacts: [] as { id: string; name: string; fields: string[] }[],
-      };
-
-      for (const contact of contacts) {
-        try {
-          // Look up company domain for better matching
-          let companyDomain: string | undefined;
-          let companyName: string | undefined;
-          if (contact.company_id) {
-            const [company] = await pool.query(
-              `SELECT name, domain FROM crm_companies WHERE id = $1`,
-              [contact.company_id]
-            ).then(r => r.rows);
-            if (company) {
-              companyName = company.name;
-              companyDomain = company.domain || undefined;
-            }
-          }
-          if (!companyDomain && contact.company_name) {
-            companyName = contact.company_name;
-          }
-
-          const nameParts = (contact.name || "").trim().split(/\s+/);
-          const firstName = nameParts[0] || "";
-          const lastName = nameParts.slice(1).join(" ") || "";
-
-          // Build mixed_people/api_search body (replaces deprecated people/match)
-          const body: Record<string, any> = {
-            page: 1,
-            per_page: 1,
-          };
-          if (contact.email) body.person_emails = [contact.email];
-          if (companyDomain) body.q_organization_domains_list = [companyDomain];
-          else if (companyName) body.organization_names = [companyName];
-          if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
-
-          const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-cache",
-              "X-Api-Key": apiKey,
-            },
-            body: JSON.stringify(body),
-          });
-
-          if (!apolloRes.ok) {
-            results.errors++;
-            // Rate limit hit — pause and retry once
-            if (apolloRes.status === 429) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-            await new Promise(resolve => setTimeout(resolve, 300));
-            continue;
-          }
-
-          const data = await apolloRes.json() as any;
-          const person = (data.people || data.contacts || [])[0];
-
-          if (!person) {
-            results.noMatch++;
-            results.noMatchContacts.push({ id: contact.id, name: contact.name, email: contact.email });
-            await new Promise(resolve => setTimeout(resolve, 250));
-            continue;
-          }
-
-          const ALLOWED_CONTACT_COLUMNS = new Set(["role", "linkedin_url", "phone", "avatar_url"]);
-          const updates: Record<string, any> = {};
-          const updatedFields: string[] = [];
-
-          if (person.title && (force || !contact.role)) {
-            updates.role = person.title;
-            updatedFields.push("role");
-          }
-          if (person.linkedin_url && (force || !contact.linkedin_url)) {
-            updates.linkedin_url = person.linkedin_url;
-            updatedFields.push("linkedIn");
-          }
-          const phoneNumber = person.phone_numbers?.[0]?.sanitized_number ||
-            person.phone_numbers?.[0]?.raw_number ||
-            person.organization?.phone;
-          if (phoneNumber && (force || !contact.phone)) {
-            updates.phone = phoneNumber;
-            updatedFields.push("phone");
-          }
-          if (person.photo_url && (force || !contact.avatar_url)) {
-            updates.avatar_url = person.photo_url;
-            updatedFields.push("photo");
-          }
-
-          const ALLOWED_ENRICHMENT_COLUMNS = new Set(["role", "linkedin_url", "phone", "avatar_url", "last_enriched_at", "enrichment_source"]);
-          updates.last_enriched_at = new Date();
-          updates.enrichment_source = "apollo";
-          const safeUpdates = Object.fromEntries(
-            Object.entries(updates).filter(([k]) => ALLOWED_ENRICHMENT_COLUMNS.has(k))
-          );
-
-          if (Object.keys(safeUpdates).length > 0) {
-            const setClauses = Object.keys(safeUpdates).map((k, i) => `${k} = $${i + 2}`);
-            setClauses.push(`updated_at = NOW()`);
-            await pool.query(
-              `UPDATE crm_contacts SET ${setClauses.join(", ")} WHERE id = $1`,
-              [contact.id, ...Object.values(safeUpdates)]
-            );
-            results.enriched++;
-            results.enrichedContacts.push({ id: contact.id, name: contact.name, fields: updatedFields });
-          } else {
-            results.skipped++;
-          }
-
-          // Rate limit: ~250ms between calls = ~4 calls/sec, well within Apollo limits
-          await new Promise(resolve => setTimeout(resolve, 250));
-
-        } catch (err: any) {
-          results.errors++;
-          console.error(`[apollo] Bulk enrich error for ${contact.name}:`, err.message);
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      }
-
-      const nextOffset = offset + limit;
-      const hasMore = nextOffset < totalEligible;
-      console.log(`[apollo] Batch enrichment complete (offset ${offset}, batch ${limit}): ${results.enriched} enriched, ${results.noMatch} no match, ${results.errors} errors, ${results.skipped} already complete`);
-      res.json({ success: true, ...results, totalEligible, offset, hasMore, nextOffset });
-
-    } catch (err: any) {
-      console.error("[apollo] Bulk enrich fatal error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // Lazy-init the table on first hit. Same pattern as
+  // brand_score_history in brand-triggers.ts — keeps deploys self-healing
+  // when the table never made it into the migrations folder.
+  let clientTemplatesTableEnsured = false;
+  async function ensureClientTemplatesTable() {
+    if (clientTemplatesTableEnsured) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS client_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id VARCHAR NOT NULL,
+        company_name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        description TEXT,
+        category TEXT DEFAULT 'document',
+        preview_data JSONB,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_client_templates_company_id ON client_templates(company_id);
+    `);
+    clientTemplatesTableEnsured = true;
+  }
 
   app.get("/api/client-templates", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const { resolveCompanyScope } = await import("./company-scope");
       const scopeCompanyId = await resolveCompanyScope(req);
 
@@ -3179,6 +4561,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/client-templates", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const userId = req.session.userId!;
       const userResult = await pool.query(`SELECT email FROM users WHERE id = $1`, [userId]);
       const email = userResult.rows[0]?.email?.toLowerCase() || "";
@@ -3204,6 +4587,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/client-templates/:id", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const userId = req.session.userId!;
       const userResult = await pool.query(`SELECT email FROM users WHERE id = $1`, [userId]);
       const email = userResult.rows[0]?.email?.toLowerCase() || "";
@@ -3284,7 +4668,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const dealsResult = await pool.query(
         `SELECT COUNT(*) as total,
-                COUNT(*) FILTER (WHERE status NOT IN ('Dead', 'Completed', 'Lost')) as active
+                COUNT(*) FILTER (WHERE status NOT IN ('WIT', 'COM', 'INV')) as active
          FROM crm_deals WHERE landlord_id = $1`,
         [companyId]
       );
@@ -3308,7 +4692,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         `SELECT d.id, d.name, d.status, d.property_id, d.deal_type as "dealType", p.name as property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
-         WHERE d.landlord_id = $1 AND d.status NOT IN ('Dead', 'Completed', 'Lost')
+         WHERE d.landlord_id = $1 AND d.status NOT IN ('WIT', 'COM', 'INV')
          ORDER BY p.name, d.created_at DESC`,
         [companyId]
       );
@@ -3452,7 +4836,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   const TEAM_FOLDERS = [
-    "London Leasing", "National Leasing", "Investment",
+    "London F&B", "London Retail", "National Leasing", "Investment",
     "Tenant Rep", "Development", "Lease Advisory", "Office Corporate", "Admin"
   ];
   const CHATBGP_BASE = path.join(process.cwd(), "ChatBGP");
@@ -3686,17 +5070,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         timeline.push({ type: "deal_created", date: deal.created_at, detail: `Deal "${deal.name}" created`, icon: "plus" });
       }
 
-      if (deal.hots_completed_at) {
-        timeline.push({ type: "hots_completed", date: deal.hots_completed_at, detail: "Heads of Terms completed", icon: "file-text" });
+      if (deal.instructed_at) {
+        timeline.push({ type: "instructed", date: deal.instructed_at, detail: "Instructed", icon: "briefcase" });
+      }
+      if (deal.target_date) {
+        timeline.push({ type: "target", date: deal.target_date, detail: "Target date", icon: "target" });
       }
       if (deal.kyc_approved && (deal.kyc_approved_at || deal.updated_at)) {
         timeline.push({ type: "kyc_approved", date: deal.kyc_approved_at || deal.updated_at, detail: `KYC approved by ${deal.kyc_approved_by || "system"}`, icon: "shield-check" });
       }
-      if (deal.completion_date) {
-        const compDate = new Date(deal.completion_date);
-        if (!isNaN(compDate.getTime())) {
-          timeline.push({ type: "completion", date: deal.completion_date, detail: "Deal completed", icon: "check-circle" });
-        }
+      if (deal.exchanged_at) {
+        timeline.push({ type: "exchanged", date: deal.exchanged_at, detail: "Exchanged", icon: "handshake" });
+      }
+      if (deal.completed_at) {
+        timeline.push({ type: "completion", date: deal.completed_at, detail: "Completed", icon: "check-circle" });
+      }
+      if (deal.invoiced_at) {
+        timeline.push({ type: "invoiced", date: deal.invoiced_at, detail: "Invoiced", icon: "receipt" });
       }
 
       const reqRows = await pool.query(
@@ -3779,7 +5169,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const [compsResult, dealsResult, newsResult, reqResult] = await Promise.all([
         pool.query(`SELECT id, name, tenant, headline_rent, area_sqft, completion_date, use_class FROM crm_comps WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
-        pool.query(`SELECT id, name, deal_type, status, rent_pa, fee, completion_date FROM crm_deals WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
+        pool.query(`SELECT id, name, deal_type, status, rent_pa, fee, target_date, exchanged_at, completed_at FROM crm_deals WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
         newsQuery,
         pool.query(`
           SELECT r.id, r.name, r.use, r.size, r.requirement_locations, c.name as company_name
@@ -3958,7 +5348,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
          LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
-         WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('Dead', 'Withdrawn')
+         WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('WIT')
          ORDER BY d.updated_at DESC LIMIT 15`,
         [userTeam]
       );
@@ -4008,7 +5398,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const digestRes = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn')
+         WHERE status NOT IN ('COM', 'INV', 'WIT')
          AND updated_at < NOW() - INTERVAL '14 days'
          AND team @> ARRAY[$1]::text[]
          ORDER BY updated_at ASC LIMIT 5`,
@@ -4088,7 +5478,7 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
 
       const stuckDeals = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn')
+         WHERE status NOT IN ('COM', 'INV', 'WIT')
          AND updated_at < NOW() - INTERVAL '30 days'
          ORDER BY updated_at ASC LIMIT 10`
       );
@@ -4510,10 +5900,9 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
       const totalDeals = allDeals.length;
 
-      // Pipeline statuses (not completed/invoiced/dead)
-      const INVOICED_STATUSES = ["Invoiced"];
-      const DEAD_STATUSES = ["Dead"];
-      const PIPELINE_STAGE_ORDER = ["Targeting", "Available", "Marketing", "NEG", "HOTs", "SOLs", "Exchanged", "Completed", "Live", "Invoiced"];
+      // Stage detection now uses canonical 10-code helper (legacy strings still mapped)
+      const { legacyToCode } = await import("@shared/deal-status");
+      const PIPELINE_STAGE_ORDER = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
 
       let totalWIP = 0;
       let totalInvoiced = 0;
@@ -4525,17 +5914,18 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       for (const deal of allDeals) {
         const fee = parseFloat(deal.fee) || 0;
         const status = (deal.status || "").trim();
+        const code = legacyToCode(status);
         const dealType = deal.deal_type || "Other";
 
         // WIP vs Invoiced
-        if (INVOICED_STATUSES.includes(status)) {
+        if (code === "INV") {
           totalInvoiced += fee;
-        } else if (!DEAD_STATUSES.includes(status)) {
+        } else if (code !== "WIT") {
           totalWIP += fee;
         }
 
-        // Pipeline value: statuses before Completed/Invoiced
-        const isPreCompletion = !["Completed", "Invoiced", "Dead", "Leasing Comps", "Investment Comps"].includes(status);
+        // Pipeline value: anything still in lifecycle (not COM/INV/WIT)
+        const isPreCompletion = code !== null && !["COM", "INV", "WIT"].includes(code);
         if (isPreCompletion) {
           pipelineValue += fee;
         }
@@ -4690,7 +6080,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       // Deals stuck in same status > 30 days
       const stuckDeals = await pool.query(`
         SELECT id, name, status, updated_at FROM crm_deals
-        WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
+        WHERE status NOT IN ('COM', 'INV', 'WIT')
         AND updated_at < NOW() - INTERVAL '30 days'
         ORDER BY updated_at ASC LIMIT 20
       `);
@@ -4712,7 +6102,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const noFeeResult = await pool.query(`
         SELECT COUNT(*)::int as count FROM crm_deals
         WHERE (fee IS NULL OR fee = 0)
-        AND status NOT IN ('Dead', 'Withdrawn', 'Completed', 'Invoiced', 'Leasing Comps', 'Investment Comps')
+        AND status NOT IN ('WIT', 'COM', 'INV')
       `);
       const noFeeCount = noFeeResult.rows[0]?.count || 0;
       if (noFeeCount > 0) {
@@ -4730,7 +6120,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const kycGaps = await pool.query(`
         SELECT id, name, status FROM crm_deals
         WHERE kyc_approved = false
-        AND status IN ('SOLs', 'Exchanged', 'Completing', 'HOTs')
+        AND status IN ('SOL', 'EXC', 'COM', 'NEG')
         LIMIT 10
       `);
       for (const d of kycGaps.rows) {
@@ -4745,23 +6135,26 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         });
       }
 
-      // Deals with stale completion dates (overdue)
+      // Deals with stale target dates (overdue)
       const overdueDeals = await pool.query(`
-        SELECT id, name, completion_date, status FROM crm_deals
-        WHERE completion_date IS NOT NULL
-        AND completion_date::date < CURRENT_DATE
-        AND status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
-        ORDER BY completion_date ASC
+        SELECT id, name, target_date, status FROM crm_deals
+        WHERE target_date IS NOT NULL
+        AND target_date < CURRENT_DATE
+        AND status NOT IN ('COM', 'INV', 'WIT')
+        AND exchanged_at IS NULL
+        AND completed_at IS NULL
+        ORDER BY target_date ASC
         LIMIT 10
       `);
       for (const d of overdueDeals.rows) {
+        const targetStr = d.target_date ? new Date(d.target_date).toLocaleDateString("en-GB") : "";
         notifications.push({
           id: `overdue-${d.id}`,
           type: "overdue_completion",
-          title: `Overdue completion: ${d.name}`,
-          description: `Expected completion ${d.completion_date} has passed`,
+          title: `Overdue target: ${d.name}`,
+          description: `Target date ${targetStr} has passed`,
           severity: "warning",
-          createdAt: d.completion_date,
+          createdAt: d.target_date,
           dealId: d.id,
         });
       }
@@ -4776,6 +6169,162 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ─── Tenant Rep Status Board ─────────────────────────────────────────────
+  app.get("/api/tenant-rep/searches", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          s.*,
+          c.name AS company_name,
+          c.domain AS company_domain,
+          c.rollout_status,
+          c.store_count,
+          co.name AS contact_name,
+          co.email AS contact_email,
+          co.phone AS contact_phone,
+          co.role AS contact_role,
+          d.name AS deal_name
+        FROM tenant_rep_searches s
+        LEFT JOIN crm_companies c ON c.id = s.company_id
+        LEFT JOIN crm_contacts co ON co.id = s.contact_id
+        LEFT JOIN crm_deals d ON d.id = s.deal_id
+        ORDER BY s.created_at DESC
+      `);
+      res.json(result.rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/tenant-rep/searches", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const {
+        clientName, companyId, contactId, dealId, status,
+        targetUse, sizeMin, sizeMax, targetLocations,
+        budgetMin, budgetMax, nextAction, nextActionDate, notes, assignedTo,
+      } = req.body;
+      const result = await pool.query(
+        `INSERT INTO tenant_rep_searches
+          (client_name, company_id, contact_id, deal_id, status,
+           target_use, size_min, size_max, target_locations,
+           budget_min, budget_max, next_action, next_action_date, notes, assigned_to)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         RETURNING *`,
+        [
+          clientName, companyId || null, contactId || null, dealId || null,
+          status || "Brief Received",
+          targetUse || null, sizeMin || null, sizeMax || null,
+          targetLocations || null, budgetMin || null, budgetMax || null,
+          nextAction || null, nextActionDate || null, notes || null, assignedTo || null,
+        ]
+      );
+      res.json(result.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/tenant-rep/searches/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const keyMap: Record<string, string> = {
+        clientName: "client_name", companyId: "company_id", contactId: "contact_id",
+        dealId: "deal_id", status: "status", notes: "notes",
+        targetUse: "target_use", sizeMin: "size_min", sizeMax: "size_max",
+        targetLocations: "target_locations", budgetMin: "budget_min", budgetMax: "budget_max",
+        nextAction: "next_action", nextActionDate: "next_action_date", assignedTo: "assigned_to",
+      };
+      const updates: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+      for (const [camel, col] of Object.entries(keyMap)) {
+        if (camel in req.body) { updates.push(`${col} = $${idx++}`); values.push(req.body[camel]); }
+      }
+      if (!updates.length) return res.json({ ok: true });
+      updates.push(`updated_at = now()`);
+      values.push(id);
+      const result = await pool.query(
+        `UPDATE tenant_rep_searches SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`,
+        values
+      );
+      res.json(result.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/tenant-rep/searches/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await pool.query("DELETE FROM tenant_rep_searches WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── ONS Inflation data (RPI + CPI annual averages) ───────────────────────
+  // Fetches from ONS public API and caches for 12 hours so the RPI/CPI
+  // calculator in comps always shows the latest published annual rates.
+  // Falls back to hardcoded data if ONS API is unreachable.
+  const INFLATION_FALLBACK = [
+    { year: 2015, rpi: 1.0, cpi: 0.0 }, { year: 2016, rpi: 1.8, cpi: 0.7 },
+    { year: 2017, rpi: 3.6, cpi: 2.7 }, { year: 2018, rpi: 3.3, cpi: 2.5 },
+    { year: 2019, rpi: 2.6, cpi: 1.8 }, { year: 2020, rpi: 1.5, cpi: 0.9 },
+    { year: 2021, rpi: 4.1, cpi: 2.6 }, { year: 2022, rpi: 11.6, cpi: 9.1 },
+    { year: 2023, rpi: 9.7, cpi: 7.3 }, { year: 2024, rpi: 3.6, cpi: 2.5 },
+    { year: 2025, rpi: 4.0, cpi: 2.6 },
+  ];
+  let inflationCache: { data: typeof INFLATION_FALLBACK; fetchedAt: number } | null = null;
+
+  async function fetchOnsAnnualRates(): Promise<typeof INFLATION_FALLBACK> {
+    // ONS mm23 dataset: D7BT = RPI 12-month rate, D7G7 = CPI 12-month rate
+    const [rpiRes, cpiRes] = await Promise.all([
+      fetch("https://api.ons.gov.uk/v1/datasets/mm23/timeseries/chaw/data"),
+      fetch("https://api.ons.gov.uk/v1/datasets/mm23/timeseries/d7g7/data"),
+    ]);
+    if (!rpiRes.ok || !cpiRes.ok) throw new Error("ONS API unavailable");
+    const [rpiJson, cpiJson]: any[] = await Promise.all([rpiRes.json(), cpiRes.json()]);
+
+    // ONS returns annual data as array of { year, value }
+    const rpiByYear = new Map<number, number>();
+    for (const row of rpiJson.years || []) {
+      const yr = parseInt(row.year); const val = parseFloat(row.value);
+      if (!isNaN(yr) && !isNaN(val)) rpiByYear.set(yr, val);
+    }
+    const result: typeof INFLATION_FALLBACK = [];
+    for (const row of cpiJson.years || []) {
+      const yr = parseInt(row.year); const cpi = parseFloat(row.value);
+      if (!isNaN(yr) && !isNaN(cpi) && yr >= 2015) {
+        result.push({ year: yr, rpi: rpiByYear.get(yr) ?? cpi + 1.2, cpi });
+      }
+    }
+    return result.sort((a, b) => a.year - b.year);
+  }
+
+  app.get("/api/inflation-data", requireAuth, async (_req, res) => {
+    try {
+      const now = Date.now();
+      if (!inflationCache || now - inflationCache.fetchedAt > 12 * 3600 * 1000) {
+        try {
+          const fresh = await fetchOnsAnnualRates();
+          if (fresh.length > 0) inflationCache = { data: fresh, fetchedAt: now };
+        } catch {
+          // ONS unreachable — use or keep cached/fallback data
+        }
+      }
+      res.json({ data: inflationCache?.data ?? INFLATION_FALLBACK, source: inflationCache ? "ons" : "fallback" });
+    } catch (e: any) {
+      res.json({ data: INFLATION_FALLBACK, source: "fallback" });
+    }
+  });
+
+  registerIngestRoutes(app);
+  registerGenericCrmRoutes(app);
+  setupStripeIssuingRoutes(app);
+  setupHrRoutes(app);
+  setupWhyBuyDesignRoutes(app);
+  setupDocumentPreferencesRoutes(app);
 
   return httpServer;
 }

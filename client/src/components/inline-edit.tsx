@@ -275,13 +275,14 @@ interface InlineLabelSelectProps {
   value: string | null | undefined;
   options: readonly string[] | string[];
   colorMap?: Record<string, string>;
+  labelMap?: Record<string, string>;
   onSave: (value: string) => void;
   placeholder?: string;
   allowClear?: boolean;
   compact?: boolean;
 }
 
-export function InlineLabelSelect({ value, options, colorMap, onSave, placeholder = "Set label", allowClear = true, compact = false }: InlineLabelSelectProps) {
+export function InlineLabelSelect({ value, options, colorMap, labelMap, onSave, placeholder = "Set label", allowClear = true, compact = false }: InlineLabelSelectProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -327,15 +328,16 @@ export function InlineLabelSelect({ value, options, colorMap, onSave, placeholde
   const bg = value && colorMap?.[value] ? colorMap[value] : value ? "bg-gray-500" : "";
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 max-w-full">
       {value ? (
         <button
           ref={triggerRef}
           onClick={openDropdown}
-          className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
+          className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap overflow-hidden text-ellipsis max-w-full inline-block align-middle ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
           data-testid="inline-label-display"
+          title={(value && labelMap?.[value]) || value}
         >
-          {value}
+          {(value && labelMap?.[value]) || value}
         </button>
       ) : (
         <button
@@ -369,7 +371,7 @@ export function InlineLabelSelect({ value, options, colorMap, onSave, placeholde
                 data-testid={`label-option-${opt}`}
               >
                 <span className={`${optBg} text-white text-[11px] font-medium px-3 py-1 rounded-full w-full text-center`}>
-                  {opt}
+                  {labelMap?.[opt] ?? opt}
                 </span>
               </button>
             );
@@ -627,11 +629,14 @@ interface InlineLinkSelectProps {
   options: { id: string; name: string }[];
   href?: string;
   onSave: (val: string | null) => void;
+  // If provided, an extra "Create new: <text>" row appears when the typed text
+  // doesn't match an existing option. The popover closes after onCreate runs.
+  onCreate?: (newName: string) => void;
   placeholder?: string;
   compact?: boolean;
 }
 
-export function InlineLinkSelect({ value, options, href, onSave, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
+export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
@@ -645,7 +650,7 @@ export function InlineLinkSelect({ value, options, href, onSave, placeholder = "
     <div className="flex items-center gap-1 shrink-0">
       {!compact && selectedName && href ? (
         <Link href={href}>
-          <span className="text-xs text-primary hover:underline cursor-pointer truncate max-w-[120px] block">
+          <span className="text-xs text-primary hover:underline cursor-pointer truncate max-w-[100px] block">
             {selectedName}
           </span>
         </Link>
@@ -706,8 +711,18 @@ export function InlineLinkSelect({ value, options, href, onSave, placeholder = "
                   {o.name}
                 </button>
               ))}
-              {filtered.length === 0 && (
+              {filtered.length === 0 && !onCreate && (
                 <p className="text-xs text-muted-foreground text-center py-2">No matches</p>
+              )}
+              {onCreate && filterText.trim() && !filtered.some(o => o.name.toLowerCase() === filterText.trim().toLowerCase()) && (
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent rounded-sm flex items-center gap-1 text-primary border-t mt-1 pt-2"
+                  onClick={() => { onCreate(filterText.trim()); setOpen(false); setFilterText(""); }}
+                  data-testid="inline-link-create"
+                >
+                  <Plus className="w-3 h-3" /> Create "{filterText.trim()}"
+                </button>
               )}
             </div>
           </ScrollArea>

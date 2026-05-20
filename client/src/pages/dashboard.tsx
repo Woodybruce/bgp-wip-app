@@ -220,11 +220,17 @@ function MyTasksWidget() {
   });
   const [quickInput, setQuickInput] = useState("");
   const activeTasks = tasksData.filter((t: any) => t.status !== "done");
-  const overdueTasks = activeTasks.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
+  const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+  const overdueTasks = activeTasks.filter((t: any) => {
+    if (!t.due_date) return false;
+    const due = new Date(t.due_date); due.setHours(0, 0, 0, 0);
+    return due < startOfToday();
+  });
   const priorityIcon = (p: string) => p === "urgent" ? <Flame className="w-2.5 h-2.5 text-red-500" /> : p === "high" ? <AlertTriangle className="w-2.5 h-2.5 text-orange-500" /> : null;
   const dueLabel = (d: string | null) => {
     if (!d) return null;
-    const diff = Math.floor((new Date(d).getTime() - new Date().setHours(0,0,0,0)) / 86400000);
+    const due = new Date(d); due.setHours(0, 0, 0, 0);
+    const diff = Math.floor((due.getTime() - startOfToday().getTime()) / 86400000);
     if (diff < 0) return <span className="text-[10px] text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
     if (diff === 0) return <span className="text-[10px] text-orange-600 font-medium">Today</span>;
     if (diff === 1) return <span className="text-[10px] text-blue-600">Tomorrow</span>;
@@ -509,12 +515,13 @@ export default function Dashboard() {
   });
 
   const [dashboardViewMode, setDashboardViewMode] = useState<"team" | "individual">(() => {
-    return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team";
+    try { return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team"; }
+    catch { return "team"; }
   });
   const [diaryRange, setDiaryRange] = useState<"today" | "week">("week");
   const handleViewModeChange = useCallback((mode: "team" | "individual") => {
     setDashboardViewMode(mode);
-    localStorage.setItem("bgp_dashboard_view_mode", mode);
+    try { localStorage.setItem("bgp_dashboard_view_mode", mode); } catch { /* private browsing */ }
   }, []);
   const { isLoading: statsLoading } = useQuery<CrmStats>({
     queryKey: ["/api/crm/stats"],
@@ -693,8 +700,9 @@ export default function Dashboard() {
   }, [layoutSaveMutation, user]);
 
   const handleResetLayout = useCallback(() => {
-    layoutSaveMutation.mutate(null as any);
-    window.location.reload();
+    layoutSaveMutation.mutate(null as any, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dashboard-template"] }),
+    });
   }, [layoutSaveMutation]);
 
   useEffect(() => {
@@ -709,13 +717,15 @@ export default function Dashboard() {
   const allDeals = crmDeals || [];
 
   const TEAM_ALIASES: Record<string, string[]> = useMemo(() => ({
-    "London Leasing": ["London Leasing", "London"],
+    "London F&B": ["London F&B"],
+    "London Retail": ["London Retail"],
     "National Leasing": ["National Leasing", "National"],
     "Investment": ["Investment"],
     "Tenant Rep": ["Tenant Rep"],
     "Development": ["Development"],
     "Lease Advisory": ["Lease Advisory"],
     "Office / Corporate": ["Office / Corporate", "Office", "Corporate"],
+    "Landsec": ["Landsec"],
   }), []);
 
   const matchesTeam = useCallback((teamField: string | string[] | null | undefined) => {
@@ -1107,7 +1117,7 @@ export default function Dashboard() {
             content: (
               <Card className="h-full">
                 <CardContent className="p-3 h-full">
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 h-full">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 h-full">
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800" data-testid="kpi-properties">
                       <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium uppercase tracking-wider">Properties</p>
                       <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{stats.totalProperties}</p>

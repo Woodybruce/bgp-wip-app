@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { usePropertyContext } from "@/lib/property-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -846,8 +847,18 @@ export default function KycClouseau() {
     pricePaid: landRegPrice,
   } : null);
 
-  const [searchMode, setSearchMode] = useState<"company" | "individual" | "property">("company");
-  const [searchQuery, setSearchQuery] = useState(landRegName);
+  const ctxProperty = usePropertyContext();
+  const [searchMode, setSearchMode] = useState<"company" | "individual" | "property">(ctxProperty?.name ? "property" : "company");
+  const [searchQuery, setSearchQuery] = useState(landRegName || ctxProperty?.name || "");
+  // When the parent Property Intelligence resolves a different property,
+  // switch to property mode and prefill — but don't override an in-progress
+  // company / individual search.
+  useEffect(() => {
+    if (ctxProperty?.name && (!searchQuery || searchQuery === landRegName)) {
+      setSearchMode("property");
+      setSearchQuery(ctxProperty.name);
+    }
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [investigation, setInvestigation] = useState<InvestigationResult | null>(null);
   const [individualResult, setIndividualResult] = useState<IndividualResult | null>(null);
@@ -1254,6 +1265,7 @@ export default function KycClouseau() {
                     }
                   }}
                   placeholder="Start typing an address (e.g. 18-22 Haymarket)..."
+                  resolveProperty
                 />
                 <Input
                   data-testid="input-property-postcode"
@@ -1894,7 +1906,8 @@ export default function KycClouseau() {
                   <Card>
                     <CardContent className="pt-6">
                       {(() => {
-                        const invId = (investigation as any).investigationId || (investigation as any)._investigationId;
+                        const rawInvId = (investigation as any).investigationId ?? (investigation as any)._investigationId;
+                        const invId = Number.isFinite(Number(rawInvId)) ? Number(rawInvId) : null;
                         const narrative = investigation.aiAnalysis || "";
                         const timedOut = /AI analysis (unavailable|timed out)/i.test(narrative);
                         const isPending = (investigation as any).aiStatus === "pending" || aiPollingId;
@@ -1913,11 +1926,11 @@ export default function KycClouseau() {
                           <div className="space-y-3">
                             {narrative && <MarkdownContent content={narrative} />}
                             {!narrative && <p className="text-sm text-muted-foreground">No AI analysis available.</p>}
-                            {invId && (
+                            {invId !== null && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => regenerateAiMutation.mutate(Number(invId))}
+                                onClick={() => regenerateAiMutation.mutate(invId)}
                                 disabled={regenerateAiMutation.isPending}
                                 data-testid="btn-regenerate-ai"
                               >

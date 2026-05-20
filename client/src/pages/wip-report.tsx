@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { toDateInputValue } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -24,8 +25,9 @@ import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
-import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
+import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
 
 type SortDirection = "asc" | "desc";
@@ -33,17 +35,24 @@ type SortDirection = "asc" | "desc";
 interface WipDealEntry {
   id: string;
   dealId: string;
+  dealRef?: number | null;
   dealType: string | null;
   ref: string;
   groupName: string | null;
   project: string | null;
   tenant: string | null;
+  billingEntity: string | null;
   team: string | null;
   agent: string | null;
   assetClass: string | null;
   amtWip: number | null;
   amtInvoice: number | null;
   month: string | null;
+  instructedAt: string | null;
+  targetDate: string | null;
+  exchangedAt: string | null;
+  completedAt: string | null;
+  invoicedAt: string | null;
   dealStatus: string | null;
   stage: string | null;
   invoiceNo: string | null;
@@ -74,21 +83,27 @@ interface ReconciliationData {
     groupName: string | null;
     dealStatus: string | null;
   }>;
+  unmatchedGroups: string[];
+  unmatchedProjects: string[];
 }
 
 const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
+  // Legacy — still exist in older deals
   "Acquisition": "bg-blue-100 text-blue-800",
-  "Sale": "bg-red-100 text-red-800",
   "Leasing": "bg-green-100 text-green-800",
-  "Lease Renewal": "bg-purple-100 text-purple-800",
-  "Rent Review": "bg-orange-100 text-orange-800",
   "Investment": "bg-indigo-100 text-indigo-800",
   "Lease Advisory": "bg-cyan-100 text-cyan-800",
+  // Current types
+  "Sale": "bg-red-100 text-red-800",
+  "Purchase": "bg-emerald-100 text-emerald-800",
+  "Investment Sale": "bg-red-200 text-red-900",
+  "Investment Acquisition": "bg-indigo-200 text-indigo-900",
+  "Lease Renewal": "bg-purple-100 text-purple-800",
+  "Rent Review": "bg-orange-100 text-orange-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",
   "Lease Acquisition": "bg-violet-100 text-violet-800",
   "Lease Disposal": "bg-amber-100 text-amber-800",
   "Regear": "bg-teal-100 text-teal-800",
-  "Purchase": "bg-emerald-100 text-emerald-800",
   "New Letting": "bg-lime-100 text-lime-800",
   "Sub-Letting": "bg-sky-100 text-sky-800",
   "Assignment": "bg-slate-100 text-slate-800",
@@ -151,6 +166,7 @@ function ClickableSummaryTable({
   activeValue,
   onRowClick,
   field,
+  overrideTotal,
 }: {
   title: string;
   data: Array<{ label: string; value: number; clickValue?: string }>;
@@ -158,8 +174,9 @@ function ClickableSummaryTable({
   activeValue: string | null;
   onRowClick: (field: string, value: string) => void;
   field: string;
+  overrideTotal?: number;
 }) {
-  const total = data.reduce((s, d) => s + d.value, 0);
+  const total = overrideTotal ?? data.reduce((s, d) => s + d.value, 0);
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid={`wip-summary-${title.toLowerCase().replace(/\s/g, "-")}`}>
@@ -176,16 +193,16 @@ function ClickableSummaryTable({
                 key={cv}
                 className={`flex items-center justify-between px-3 py-1.5 text-sm cursor-pointer transition-colors ${
                   activeValue === cv
-                    ? "bg-green-100 border-l-2 border-green-600"
-                    : "hover:bg-gray-50"
+                    ? "bg-primary/8 border-l-2 border-primary"
+                    : "hover:bg-muted/50"
                 }`}
                 onClick={() => onRowClick(field, cv)}
                 data-testid={`wip-click-${field}-${cv}`}
               >
-                <span className={`truncate flex-1 mr-1 ${activeValue === cv ? "text-green-900 font-semibold" : "text-gray-800"}`}>
+                <span className={`truncate flex-1 mr-1 ${activeValue === cv ? "text-foreground font-semibold" : "text-gray-800"}`}>
                   {row.label}
                 </span>
-                <span className={`font-mono font-medium text-right whitespace-nowrap ${activeValue === cv ? "text-green-900" : "text-gray-900"}`}>
+                <span className={`font-mono font-medium text-right whitespace-nowrap ${activeValue === cv ? "text-foreground" : "text-gray-900"}`}>
                   {formatFullCurrency(row.value)}
                 </span>
               </div>
@@ -294,7 +311,7 @@ function FilterSection({
           Clear
         </button>
       </div>
-      <ScrollArea className="max-h-[160px] px-2 py-1">
+      <ScrollArea className="max-h-[220px] px-2 py-1">
         {filtered.map((item) => (
           <label
             key={item}
@@ -452,6 +469,44 @@ function ReconciliationTab() {
           </ScrollableTable>
         )}
       </div>
+
+      {/* Unmatched client groups */}
+      {(data?.unmatchedGroups?.length ?? 0) > 0 && (
+        <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center gap-2">
+            <span className="text-sm font-semibold text-amber-800">WIP clients not found in CRM</span>
+            <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">{data!.unmatchedGroups.length}</Badge>
+          </div>
+          <div className="px-4 py-3 text-xs text-gray-600 space-y-1">
+            <p className="text-[11px] text-muted-foreground mb-2">These Group names couldn't be matched to an existing CRM company. Add them to the CRM or rename them to match.</p>
+            {data!.unmatchedGroups.map(g => (
+              <div key={g} className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                <span className="font-medium">{g}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Unmatched properties */}
+      {(data?.unmatchedProjects?.length ?? 0) > 0 && (
+        <div className="bg-white border border-blue-200 rounded-lg overflow-hidden">
+          <div className="bg-blue-50 border-b border-blue-200 px-4 py-3 flex items-center gap-2">
+            <span className="text-sm font-semibold text-blue-800">WIP properties not found in CRM</span>
+            <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-xs">{data!.unmatchedProjects.length}</Badge>
+          </div>
+          <div className="px-4 py-3 text-xs text-gray-600 space-y-1">
+            <p className="text-[11px] text-muted-foreground mb-2">These Property names didn't match a CRM property — new bare records were created. Add addresses via the Properties section.</p>
+            {data!.unmatchedProjects.map(p => (
+              <div key={p} className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                <span className="font-medium">{p}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -791,7 +846,14 @@ export default function WipReport() {
   const isLandsecView = activeTeam === "Landsec";
 
   const entries = useMemo(() => {
-    let filtered = rawEntries;
+    // Client-side safety net: strip any rows whose status maps to a non-WIP
+    // canonical code (REP/SPEC/LIVE/AVA/WIT). The server applies the same
+    // filter, but this catches stale cached responses or deployment lag.
+    let filtered = rawEntries.filter(e => {
+      const code = legacyToCode(e.dealStatus);
+      if (!code) return true; // unknown/null status — keep
+      return WIP_STATUSES.includes(code);
+    });
     if (isLandsecView) {
       filtered = filtered.filter((e) => {
         const gn = (e.groupName || "").toLowerCase().replace(/\s+/g, "");
@@ -820,7 +882,6 @@ export default function WipReport() {
   const [appendUploading, setAppendUploading] = useState(false);
   const [syncingXero, setSyncingXero] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const queryClient = useQueryClient();
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -861,7 +922,7 @@ export default function WipReport() {
       const data = await res.json();
       toast({ title: append ? "Data Added" : "WIP Updated", description: `${append ? "Appended" : "Imported"} ${data.imported} entries from spreadsheet.` });
       filtersInitialized.current = false;
-      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+      invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Upload failed", description: err?.message || "Could not import file.", variant: "destructive" });
     } finally {
@@ -884,7 +945,11 @@ export default function WipReport() {
   const clearClickFilter = useCallback(() => setClickFilter(null), []);
 
   const allTeams = useMemo(() => {
-    const set = new Set(entries.map((e) => e.team).filter(Boolean) as string[]);
+    const set = new Set<string>();
+    entries.forEach((e) => {
+      if (!e.team) return;
+      (e.team as string).split(",").map(t => t.trim()).filter(Boolean).forEach(t => set.add(t));
+    });
     return [...set].sort();
   }, [entries]);
 
@@ -893,15 +958,20 @@ export default function WipReport() {
     return [...set].sort((a, b) => getMonthSortKey(a) - getMonthSortKey(b));
   }, [entries]);
 
+  const normalizeAgent = (a: string) => a.replace(/\s*\(BGP House\)/i, "").trim();
+
   const allAgents = useMemo(() => {
-    const set = new Set<string>();
+    const map = new Map<string, string>(); // lowercase key → display value
     entries.forEach((e) => {
       if (e.agent) {
-        const parts = (e.agent as string).split(",").map(a => a.trim()).filter(Boolean);
-        parts.forEach(a => set.add(a));
+        const parts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim())).filter(Boolean);
+        parts.forEach(a => {
+          const k = a.toLowerCase();
+          if (!map.has(k)) map.set(k, a.toUpperCase());
+        });
       }
     });
-    return [...set].sort();
+    return [...map.values()].sort();
   }, [entries]);
 
   const allStatuses = useMemo(() => {
@@ -913,8 +983,10 @@ export default function WipReport() {
     const set = new Set<number>();
     let hasNullFY = false;
     entries.forEach((e) => {
-      if (e.fiscalYear) {
-        set.add(e.fiscalYear);
+      // Guard: fiscal years must be plausible 4-digit years — reject Excel serial numbers
+      const fy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
+      if (fy) {
+        set.add(fy);
       } else if (e.month) {
         const fy = getFiscalYear(e.month);
         if (fy) set.add(fy);
@@ -946,10 +1018,13 @@ export default function WipReport() {
   const sidebarFilteredEntries = useMemo(() => {
     return entries.filter((e) => {
       if (selectedTeams.size > 0 && selectedTeams.size < allTeams.length) {
-        if (!e.team || !selectedTeams.has(e.team)) return false;
+        if (!e.team) return false;
+        const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
+        if (!entryTeams.some(t => selectedTeams.has(t))) return false;
       }
       if (selectedFiscalYears.size > 0 && selectedFiscalYears.size < allFiscalYears.length) {
-        const fy = e.fiscalYear || (e.month ? getFiscalYear(e.month) : null);
+        const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
+        const fy = rawFy || (e.month ? getFiscalYear(e.month) : null);
         if (fy) {
           if (!selectedFiscalYears.has(fy)) return false;
         } else {
@@ -961,7 +1036,7 @@ export default function WipReport() {
       }
       if (selectedAgents.size > 0 && selectedAgents.size < allAgents.length) {
         if (!e.agent) return false;
-        const agentParts = (e.agent as string).split(",").map(a => a.trim()).filter(Boolean);
+        const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
         if (!agentParts.some(a => selectedAgents.has(a))) return false;
       }
       if (selectedStatuses.size > 0 && selectedStatuses.size < allStatuses.length) {
@@ -975,9 +1050,15 @@ export default function WipReport() {
     if (!clickFilter) return sidebarFilteredEntries;
     return sidebarFilteredEntries.filter((e) => {
       if (clickFilter.field === "agent") {
-        const agentField = (e.agent || "unknown").toLowerCase().trim();
+        const agentField = (e.agent || "unknown").trim();
         const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
-        return agents.some(a => a === clickFilter.value) || agentField === clickFilter.value;
+        const target = clickFilter.value.toLowerCase();
+        return agents.some(a => a.toLowerCase() === target);
+      }
+      if (clickFilter.field === "team") {
+        if (!e.team) return false;
+        const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
+        return entryTeams.some(t => t === clickFilter.value);
       }
       const val = e[clickFilter.field];
       return val === clickFilter.value;
@@ -1007,9 +1088,24 @@ export default function WipReport() {
 
   const teamData = useMemo(() => {
     const map: Record<string, number> = {};
+    // Count each deal's fee against every team it belongs to (no split).
+    // This matches click-filter behaviour: clicking a team shows all deals
+    // that include it, at full fee.
+    const counted = new Set<string>();
     filteredEntries.forEach((e) => {
-      const t = e.team || "Unknown";
-      map[t] = (map[t] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
+      const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
+      const teams = e.team
+        ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
+        : ["Unknown"];
+      teams.forEach(t => {
+        // Deduplicate per (entry, team) so a deal split across agents
+        // doesn't multiply the team total.
+        const key = `${e.id}::${t}`;
+        if (!counted.has(key)) {
+          counted.add(key);
+          map[t] = (map[t] || 0) + fee;
+        }
+      });
     });
     return Object.entries(map)
       .map(([label, value]) => ({ label, value }))
@@ -1020,14 +1116,14 @@ export default function WipReport() {
     const map: Record<string, number> = {};
     filteredEntries.forEach((e) => {
       const agentField = e.agent || "Unknown";
-      const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
+      const agents = agentField.split(",").map(a => normalizeAgent(a.trim())).filter(Boolean);
       const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
       const perAgent = agents.length > 0 ? fee / agents.length : fee;
       if (agents.length === 0) {
         map["Unknown"] = (map["Unknown"] || 0) + fee;
       } else {
         agents.forEach(a => {
-          const key = a.toLowerCase().trim();
+          const key = a.trim().toUpperCase();
           map[key] = (map[key] || 0) + perAgent;
         });
       }
@@ -1035,8 +1131,8 @@ export default function WipReport() {
     return Object.entries(map)
       .map(([key, value]) => {
         const display = key.includes(" ")
-          ? key.split(" ").map(p => p[0]).join("").toUpperCase()
-          : key.charAt(0).toUpperCase() + key.slice(1);
+          ? key.split(" ").map(p => p[0].toUpperCase()).join("")
+          : key.toUpperCase();
         return { label: display, value, fullName: key };
       })
       .sort((a, b) => b.value - a.value);
@@ -1087,6 +1183,7 @@ export default function WipReport() {
     sorted.sort((a, b) => {
       let aVal: any, bVal: any;
       switch (detailSort.column) {
+        case "dealRef": aVal = a.dealRef || 0; bVal = b.dealRef || 0; break;
         case "ref": aVal = a.ref || ""; bVal = b.ref || ""; break;
         case "groupName": aVal = a.groupName || ""; bVal = b.groupName || ""; break;
         case "project": aVal = a.project || ""; bVal = b.project || ""; break;
@@ -1097,6 +1194,12 @@ export default function WipReport() {
         case "amtWip": aVal = a.amtWip || 0; bVal = b.amtWip || 0; break;
         case "amtInvoice": aVal = a.amtInvoice || 0; bVal = b.amtInvoice || 0; break;
         case "month": aVal = getMonthSortKey(a.month || ""); bVal = getMonthSortKey(b.month || ""); break;
+        case "dealDate": {
+          const pick = (e: WipEntry) => e.invoicedAt || e.completedAt || e.exchangedAt || e.targetDate || "";
+          aVal = pick(a) ? new Date(pick(a)).getTime() : 0;
+          bVal = pick(b) ? new Date(pick(b)).getTime() : 0;
+          break;
+        }
         case "dealStatus": aVal = a.dealStatus || ""; bVal = b.dealStatus || ""; break;
         case "stage": aVal = a.stage || ""; bVal = b.stage || ""; break;
         default: aVal = 0; bVal = 0;
@@ -1160,7 +1263,7 @@ export default function WipReport() {
         description: parts.join(", "),
         variant: data.errors?.length ? "destructive" : "default",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+      invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Sync failed", description: err.message, variant: "destructive" });
     } finally {
@@ -1240,28 +1343,6 @@ export default function WipReport() {
               Clear: {clickFilter.value}
             </Button>
           )}
-          {isSeniorWipUser && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(e) => handleUpload(e, false)}
-                data-testid="wip-upload-input"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                data-testid="wip-upload-button"
-              >
-                {uploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
-                {uploading ? "Importing..." : "Upload WIP"}
-              </Button>
-            </>
-          )}
           <Button
             variant="outline"
             size="sm"
@@ -1297,22 +1378,6 @@ export default function WipReport() {
           WIP Report
         </button>
         <button
-          onClick={() => setActiveTab("reconciliation")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
-            activeTab === "reconciliation"
-              ? "border-green-600 text-green-700"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-          }`}
-          data-testid="wip-tab-reconciliation"
-        >
-          Reconciliation
-          {reconCount > 0 && (
-            <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-              {reconCount}
-            </Badge>
-          )}
-        </button>
-        <button
           onClick={() => setActiveTab("agent-summary")}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === "agent-summary"
@@ -1325,9 +1390,7 @@ export default function WipReport() {
         </button>
       </div>
 
-      {activeTab === "reconciliation" ? (
-        <ReconciliationTab />
-      ) : activeTab === "agent-summary" ? (
+      {activeTab === "agent-summary" ? (
         <AgentSummaryTab />
       ) : (
       <div className="flex gap-4 flex-1 min-h-0">
@@ -1362,7 +1425,7 @@ export default function WipReport() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
-              title="Group"
+              title="Client"
               data={groupData}
               valueLabel="Net fees"
               activeValue={clickFilterActiveField === "groupName" ? clickFilterActiveValue : null}
@@ -1376,6 +1439,7 @@ export default function WipReport() {
               activeValue={clickFilterActiveField === "team" ? clickFilterActiveValue : null}
               onRowClick={handleClickFilter}
               field="team"
+              overrideTotal={totalNetFees}
             />
             <ClickableSummaryTable
               title="BGP Contact"
@@ -1389,7 +1453,7 @@ export default function WipReport() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
-              title="Project"
+              title="Property"
               data={projectData}
               valueLabel="Net fees"
               activeValue={clickFilterActiveField === "project" ? clickFilterActiveValue : null}
@@ -1429,7 +1493,7 @@ export default function WipReport() {
               </div>
               {clickFilter && (
                 <Badge variant="secondary" className="text-[10px]">
-                  Filtered by {clickFilter.field === "groupName" ? "Group" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
+                  Filtered by {clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
                 </Badge>
               )}
             </div>
@@ -1457,16 +1521,19 @@ export default function WipReport() {
                       />
                     </th>
                     {[
+                      { key: "dealRef", label: "Ref", width: "w-16" },
                       { key: "ref", label: "Deal", width: "w-40" },
-                      { key: "groupName", label: "Group", width: "w-28" },
-                      { key: "project", label: "Project", width: "w-32" },
+                      { key: "groupName", label: "Client", width: "w-28" },
                       { key: "tenant", label: "Tenant", width: "w-32" },
+                      { key: "project", label: "Property", width: "w-32" },
+                      { key: "billingEntity", label: "Billing Entity", width: "w-32" },
                       { key: "team", label: "Team", width: "w-32" },
+                      { key: "amtWip", label: "Fee", width: "w-24" },
+                      { key: "amtInvoice", label: "Fee Split", width: "w-24" },
+                      { key: "dealDate", label: "Target Date", width: "w-28" },
                       { key: "dealType", label: "Deal Type", width: "w-24" },
+                      { key: "assetClass", label: "Asset Class", width: "w-24" },
                       { key: "agent", label: "BGP Contact", width: "w-20" },
-                      { key: "amtWip", label: "Amt WIP", width: "w-24" },
-                      { key: "amtInvoice", label: "Amt invoice", width: "w-24" },
-                      { key: "month", label: "Month", width: "w-16" },
                       { key: "dealStatus", label: "Deal Status", width: "w-24" },
                       { key: "stage", label: "Stage", width: "w-24" },
                     ].map((col) => (
@@ -1497,6 +1564,9 @@ export default function WipReport() {
                           />
                         )}
                       </td>
+                      <td className="px-2 py-1.5 text-xs font-mono text-gray-400 whitespace-nowrap">
+                        {e.dealRef ? `#${e.dealRef}` : "—"}
+                      </td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
@@ -1505,22 +1575,64 @@ export default function WipReport() {
                         ) : (e.ref || "—")}
                       </td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.groupName || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>
-                      <td className="px-2 py-1.5">
-                        {e.dealType ? (
-                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
-                        ) : <span className="text-gray-400">—</span>}
-                      </td>
-                      <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
                       <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                         {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
                       </td>
                       <td className="px-2 py-1.5 text-green-700 font-mono text-right">
                         {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-600">{e.month || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
+                        {(() => {
+                          const isActual = !!(e.exchangedAt || e.completedAt || e.invoicedAt);
+                          const pick = e.invoicedAt
+                            ? { label: "Invoiced", iso: e.invoicedAt, cls: "bg-green-100 text-green-800" }
+                            : e.completedAt
+                            ? { label: "Completed", iso: e.completedAt, cls: "bg-blue-100 text-blue-800" }
+                            : e.exchangedAt
+                            ? { label: "Exchanged", iso: e.exchangedAt, cls: "bg-amber-100 text-amber-800" }
+                            : e.targetDate
+                            ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
+                            : null;
+                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }); })() : null;
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              {!isActual && e.dealId ? (
+                                <input
+                                  type="date"
+                                  defaultValue={toDateInputValue(e.targetDate)}
+                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
+                                  onBlur={async (ev) => {
+                                    const val = ev.target.value;
+                                    if (!val) return;
+                                    await fetch(`/api/deals/${e.dealId}`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+                                      body: JSON.stringify({ targetDate: val }),
+                                    });
+                                    invalidateDealCaches();
+                                  }}
+                                />
+                              ) : dateStr ? (
+                                <span className="text-xs">{dateStr}</span>
+                              ) : (
+                                <span>—</span>
+                              )}
+                              {pick && <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {e.dealType ? (
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
+                        ) : <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[100px]">{e.assetClass || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
                       <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (
@@ -1545,7 +1657,7 @@ export default function WipReport() {
                     <td className="px-2 py-1.5 text-green-700 font-mono text-right">
                       {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
                     </td>
-                    <td colSpan={3} className="px-2 py-1.5" />
+                    <td colSpan={6} className="px-2 py-1.5" />
                   </tr>
                 </tfoot>
               </table>
@@ -1553,7 +1665,7 @@ export default function WipReport() {
           </div>
         </div>
 
-        <div className="w-52 flex-shrink-0 no-print overflow-y-auto space-y-3" data-testid="wip-filters-panel">
+        <div className="w-52 flex-shrink-0 no-print overflow-y-auto space-y-3 min-h-0 max-h-full" data-testid="wip-filters-panel">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-1">
               <Filter className="h-3 w-3" /> Filters

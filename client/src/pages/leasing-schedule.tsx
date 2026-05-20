@@ -1,11 +1,19 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute, Link } from "wouter";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRoute, useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
+import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,8 +25,8 @@ import {
   Building2, ChevronLeft, Search, Filter, Calendar, AlertTriangle,
   Edit2, Plus, Trash2, X, Check, MapPin, Users, TrendingUp,
   Clock, Target, Star, ChevronDown, ChevronRight, Loader2,
-  Shield, ShieldCheck, ShieldOff, Download, History, Lock, Eye, ExternalLink,
-  Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus,
+  Shield, ShieldCheck, ShieldOff, Download, Upload, History, Lock, Eye, ExternalLink,
+  Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus, RefreshCw, Pencil,
 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 
@@ -128,9 +136,558 @@ function InlineEditCell({ unitId, field, value, onSave, className = "", placehol
   </span>;
 }
 
+// Shared column widths for every per-zone <table> on the Leasing Schedule.
+// Each zone renders its own <table>; without a fixed layout the columns
+// auto-size to the content of each zone independently, so the boundaries
+// don't line up vertically across zones. A common <colgroup> + table-layout
+// fixed locks every zone table to identical column widths.
+const LEASING_COL_WIDTHS = [
+  { key: "existing",   width: 220 },
+  { key: "positioning", width: 160 },
+  { key: "financial",   width: 160 },
+  { key: "targets",     width: 240 },
+  { key: "optimum",     width: 160 },
+  { key: "priority",    width: 120 },
+  { key: "updates",     width: 280 },
+  { key: "actions",     width: 60 },
+];
+function LeasingColgroup() {
+  return (
+    <colgroup>
+      {LEASING_COL_WIDTHS.map(c => <col key={c.key} style={{ width: `${c.width}px` }} />)}
+    </colgroup>
+  );
+}
+const LEASING_TABLE_MIN_WIDTH = LEASING_COL_WIDTHS.reduce((s, c) => s + c.width, 0);
+
+// Landsec leasing-tracker status bands. The bracketed label is what Landsec
+// uses internally; we store the enum value in `status_band` and render the
+// label + colour. Drives the row tint on the Leasing Schedule.
+const STATUS_BANDS: Array<{ value: string; label: string; rowClass: string; pillClass: string }> = [
+  { value: "GREEN_A_HALO",       label: "A — Halo",          rowClass: "bg-emerald-200/80 dark:bg-emerald-900/60", pillClass: "border-emerald-600 text-emerald-900 bg-emerald-200 dark:text-emerald-100 dark:bg-emerald-800" },
+  { value: "GREEN_B_HALO",       label: "B — On Strategy",   rowClass: "bg-emerald-100/90 dark:bg-emerald-950/50", pillClass: "border-emerald-500 text-emerald-800 bg-emerald-100 dark:text-emerald-200 dark:bg-emerald-900" },
+  { value: "AMBER_C_MAINTAIN",   label: "C — Maintain Mix",  rowClass: "bg-amber-200/80 dark:bg-amber-900/50",     pillClass: "border-amber-600 text-amber-900 bg-amber-200 dark:text-amber-100 dark:bg-amber-800" },
+  { value: "DARK_RED_D_DIVEST",  label: "D — Divest Over Time", rowClass: "bg-rose-300/70 dark:bg-rose-900/60", pillClass: "border-rose-700 text-rose-900 bg-rose-200 dark:text-rose-100 dark:bg-rose-800" },
+  { value: "BRIGHT_RED_D_AT_RISK", label: "D — Customer At Risk / Live Opp", rowClass: "bg-red-300/80 dark:bg-red-900/70", pillClass: "border-red-700 text-red-900 bg-red-300 dark:text-red-100 dark:bg-red-800" },
+  { value: "GREY_VOID",          label: "Void / Live Opp",   rowClass: "bg-zinc-300/70 dark:bg-zinc-800/80",      pillClass: "border-zinc-500 text-zinc-800 bg-zinc-200 dark:text-zinc-200 dark:bg-zinc-700" },
+];
+
+function statusBandFor(value: string | null | undefined) {
+  return STATUS_BANDS.find(b => b.value === value) || null;
+}
+
+// Map the status_band enum to a tenant-name colour (matches Landsec key —
+// green for halo/on-strategy, amber for maintain, dark/bright red for divest/
+// at-risk, grey for void). Uses deeper shades than the row tint so the name
+// remains readable on top of a saturated background.
+function tenantNameColourFor(value: string | null | undefined): string {
+  switch (value) {
+    case "GREEN_A_HALO":
+    case "GREEN_B_HALO": return "text-emerald-900 dark:text-emerald-200";
+    case "AMBER_C_MAINTAIN": return "text-amber-900 dark:text-amber-200";
+    case "DARK_RED_D_DIVEST": return "text-rose-900 dark:text-rose-200";
+    case "BRIGHT_RED_D_AT_RISK": return "text-red-900 dark:text-red-200";
+    case "GREY_VOID": return "text-zinc-700 dark:text-zinc-300";
+    default: return "text-foreground";
+  }
+}
+
+// Header label for the Updates column, formatted like Landsec's
+// "Updates - APR 2026 LEASING MEETING". Picks the most recent meeting_month
+// from the units; falls back to the current month.
+function updatesHeaderLabel(units: any[]): string {
+  const mm = units.find((u: any) => u.meeting_month)?.meeting_month;
+  const label = (mm || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" })).toUpperCase();
+  return `Updates - ${label} - Leasing Meeting`;
+}
+
+// Brand picker — free-type autocomplete against CRM companies. Stores the
+// brand NAME as the field value (matches Landsec sheet semantics) but if the
+// typed name resolves to a tracked CRM company, the deep-link is preserved.
+// Suggested sub-types per Landsec positioning group (Key ii). Free-text is
+// allowed too — these are just hints in the dropdown so the team converges on
+// a shared vocabulary without being forced into it.
+const POSITIONING_SUBTYPES: Record<string, string[]> = {
+  "Everyday Connections": ["Social Dining", "Gym", "Wellness", "Convenience"],
+  "Quick Refuel": ["Café", "Grab & Go", "QSR", "Bakery"],
+  "Joyful Gatherings": ["Leisure", "Bars", "Premium Dining", "Cinema"],
+  "Leisurely Refuel": ["Casual Dining", "Premium Casual Dining", "Family Dining"],
+};
+
+// Positioning cell — two-step picker: group (Key ii umbrella) + sub-type.
+// Saves to two fields: positioning_group (filterable) + positioning (free text).
+function PositioningCell({ unitId, group, subType, onSave }: {
+  unitId: string; group: string | null | undefined; subType: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draftGroup, setDraftGroup] = useState(group || "");
+  const [draftSub, setDraftSub] = useState(subType || "");
+  useEffect(() => { if (open) { setDraftGroup(group || ""); setDraftSub(subType || ""); } }, [open, group, subType]);
+  const commit = () => {
+    if ((draftGroup || "") !== (group || "")) onSave(unitId, "positioning_group", draftGroup);
+    if ((draftSub || "") !== (subType || "")) onSave(unitId, "positioning", draftSub);
+    setOpen(false);
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <span
+          className="cursor-pointer hover:bg-muted/50 px-1 rounded text-xs inline-block leading-tight min-w-[100px] align-top"
+          data-testid={`positioning-cell-${unitId}`}
+        >
+          {group ? (
+            <div>
+              <div className="font-medium text-[11px]">{group}</div>
+              {subType && <div className="text-[11px] text-muted-foreground">{subType}</div>}
+            </div>
+          ) : subType ? (
+            <span className="text-[11px]">{subType}</span>
+          ) : (
+            <span className="italic text-muted-foreground">Set positioning</span>
+          )}
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="p-3 w-[260px]">
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Group (Key ii)</div>
+        <div className="flex flex-wrap gap-1 mb-3">
+          {POSITIONING_GROUPS.map(g => (
+            <button
+              key={g.key}
+              onClick={() => { setDraftGroup(draftGroup === g.key ? "" : g.key); if (draftGroup !== g.key) setDraftSub(""); }}
+              className={`text-[11px] px-2 py-1 rounded border ${draftGroup === g.key ? "bg-foreground text-background border-foreground" : "hover:bg-muted"}`}
+              data-testid={`positioning-group-${g.key}-${unitId}`}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Sub-type</div>
+        {draftGroup && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {(POSITIONING_SUBTYPES[draftGroup] || []).map(t => (
+              <button
+                key={t}
+                onClick={() => setDraftSub(t)}
+                className={`text-[11px] px-2 py-0.5 rounded border ${draftSub === t ? "bg-foreground text-background border-foreground" : "hover:bg-muted"}`}
+                data-testid={`positioning-sub-${t}-${unitId}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
+        <Input
+          value={draftSub}
+          onChange={(e) => setDraftSub(e.target.value)}
+          placeholder="Or type your own (e.g. Padel)"
+          className="h-7 text-[11px]"
+          data-testid={`positioning-sub-input-${unitId}`}
+        />
+        <div className="flex justify-end gap-1 mt-2">
+          <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button size="sm" className="h-7 text-[11px]" onClick={commit} data-testid={`positioning-save-${unitId}`}>Save</Button>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// Inline financial-performance cell — three-line LFL / MAT / Occ display.
+// Click any line to inline-edit. Grid layout keeps lines aligned even when
+// some values are missing (so empty rows don't collapse).
+function FinancialPerformanceCell({ unit, onSave }: { unit: any; onSave: (id: string, field: string, value: string) => void }) {
+  const lfl = unit.lfl_percent || "";
+  const mat = unit.mat_psqft || "";
+  const occ = unit.occ_cost_percent || "";
+  const Row = ({ label, value, field, valueClass }: { label: string; value: string; field: string; valueClass?: string }) => (
+    <div className="grid grid-cols-[60px_1fr] items-baseline gap-1 h-[14px] leading-[14px]">
+      <span className="text-right tabular-nums truncate">
+        <InlineEditCell unitId={unit.id} field={field} value={value} onSave={onSave} className={valueClass} placeholder="—" />
+      </span>
+      <span className="text-[10px] text-muted-foreground whitespace-nowrap">{label}</span>
+    </div>
+  );
+  return (
+    <div className="text-[11px]">
+      <Row label="% LFL" value={lfl} field="lfl_percent" valueClass={lfl ? (String(lfl).startsWith("-") ? "text-rose-600" : "text-emerald-700") : "text-muted-foreground"} />
+      <Row label="£ MAT/sqft" value={mat} field="mat_psqft" valueClass="font-medium" />
+      <Row label="% Occ" value={occ} field="occ_cost_percent" valueClass="text-muted-foreground" />
+    </div>
+  );
+}
+
+// Existing tenant cell — pulls name LIVE from the linked Tenancy Schedule
+// row when the row is FK'd, otherwise uses leasing_schedule_units.tenant_name.
+// Clickable through to the brand CRM when matched. Inline-editable if no
+// brand match (lets you correct a typo without leaving the schedule). The
+// status band picker is rendered as a small pill underneath the name so the
+// row tint can be set without a dedicated column.
+function ExistingTenantCell({ unit, nameColour, onSave }: {
+  unit: any; nameColour: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  // The brand-board link follows the Trading As name (= the brand), not the
+  // legal entity. live_trading_name comes from the tenancy_schedule join;
+  // fall back to live_tenant_name when no trading-as is recorded.
+  const tradingName = unit.live_trading_name || "";
+  const tenantName = unit.live_tenant_name || unit.tenant_name || unit.unit_name || "";
+  const displayName = tradingName || tenantName;
+  const brandLookupName = tradingName || tenantName;
+  const linkedCompanyId = unit.resolved_tenant_company_id || unit.tenant_company_id || null;
+  return (
+    <div>
+      {linkedCompanyId ? (
+        <Link
+          href={`/companies/${linkedCompanyId}`}
+          className={`text-sm font-bold leading-tight hover:underline ${nameColour}`}
+          data-testid={`existing-link-${unit.id}`}
+        >
+          {displayName || "—"}
+        </Link>
+      ) : (
+        <div className={`text-sm font-bold leading-tight ${nameColour} flex items-center gap-1`}>
+          <InlineEditCell unitId={unit.id} field="tenant_name" value={tenantName} onSave={onSave} className="text-sm font-bold" placeholder="Tenant" />
+          {brandLookupName && (
+            <Link
+              href={`/companies?q=${encodeURIComponent(brandLookupName)}`}
+              title="Open brand board for this tenant"
+              onClick={(e: any) => e.stopPropagation()}
+              data-testid={`existing-search-${unit.id}`}
+            >
+              <ExternalLink className="w-2.5 h-2.5 text-indigo-500 hover:text-indigo-700" />
+            </Link>
+          )}
+        </div>
+      )}
+      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+        <StatusBandCell unitId={unit.id} value={unit.status_band} onSave={onSave} />
+        <InlineStatusCell unitId={unit.id} value={unit.status} onSave={onSave} />
+      </div>
+    </div>
+  );
+}
+
+function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to search brands" }: {
+  unitId: string; field: string; value: string; onSave: (id: string, field: string, value: string) => void; placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value || "");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { data: companies = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/companies-basic"],
+    queryFn: async () => {
+      const r = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d.companies || []);
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name }));
+    },
+    staleTime: 120000,
+  });
+  const matches = useMemo(() => {
+    if (!text.trim()) return [];
+    const q = text.toLowerCase();
+    return companies.filter(c => c.name.toLowerCase().includes(q)).slice(0, 8);
+  }, [companies, text]);
+
+  useEffect(() => { if (editing) setTimeout(() => inputRef.current?.focus(), 30); }, [editing]);
+
+  if (!editing) {
+    return (
+      <span
+        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-xs font-medium inline-block align-top leading-tight"
+        onClick={() => { setText(value || ""); setEditing(true); }}
+        data-testid={`brand-cell-${field}-${unitId}`}
+      >
+        {value || <span className="text-muted-foreground italic font-normal">{placeholder}</span>}
+      </span>
+    );
+  }
+  return (
+    <div className="relative" onBlur={(e) => {
+      // Save on blur unless the new focus is inside this picker
+      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+        if (text !== (value || "")) onSave(unitId, field, text);
+        setEditing(false);
+      }
+    }}>
+      <Input
+        ref={inputRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { onSave(unitId, field, text); setEditing(false); }
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="h-6 text-xs px-1 py-0"
+        placeholder={placeholder}
+        data-testid={`brand-input-${field}-${unitId}`}
+      />
+      {matches.length > 0 && (
+        <div className="absolute z-50 mt-0.5 left-0 right-0 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto" data-testid={`brand-suggestions-${field}-${unitId}`}>
+          {matches.map(c => (
+            <button
+              key={c.id}
+              onMouseDown={(e) => { e.preventDefault(); setText(c.name); onSave(unitId, field, c.name); setEditing(false); }}
+              className="w-full text-left px-2 py-1 text-xs hover:bg-muted"
+              data-testid={`brand-suggestion-${c.id}`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Priority is stored as "MMM YYYY" (e.g. "May 2026") — month-year picker.
+function MonthYearCell({ unitId, field, value, onSave }: {
+  unitId: string; field: string; value: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const now = new Date();
+  const years = useMemo(() => Array.from({ length: 6 }, (_, i) => now.getFullYear() + i - 1), [now]);
+  const setVal = (month: string, year: number) => {
+    onSave(unitId, field, `${month} ${year}`);
+    setOpen(false);
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <span className="text-[11px] cursor-pointer px-1 rounded hover:bg-muted inline-block min-w-[60px]" data-testid={`monthyear-${field}-${unitId}`}>
+          {value || <span className="text-muted-foreground italic">Set date</span>}
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="p-2 w-[210px]">
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Year</div>
+        <div className="flex flex-wrap gap-1 mb-2">
+          {years.map(y => (
+            <button
+              key={y}
+              onClick={() => { const m = value?.split(" ")[0] && MONTHS.includes(value.split(" ")[0]) ? value.split(" ")[0] : MONTHS[now.getMonth()]; setVal(m, y); }}
+              className={`text-[11px] px-2 py-1 rounded border ${value?.endsWith(` ${y}`) ? "bg-foreground text-background" : "hover:bg-muted"}`}
+              data-testid={`year-${y}-${unitId}`}
+            >
+              {y}
+            </button>
+          ))}
+        </div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Month</div>
+        <div className="grid grid-cols-4 gap-1">
+          {MONTHS.map(m => (
+            <button
+              key={m}
+              onClick={() => { const y = (() => { const parsed = parseInt(value?.split(" ")[1] || ""); return isNaN(parsed) ? now.getFullYear() : parsed; })(); setVal(m, y); }}
+              className={`text-[11px] px-2 py-1 rounded border ${value?.startsWith(`${m} `) ? "bg-foreground text-background" : "hover:bg-muted"}`}
+              data-testid={`month-${m}-${unitId}`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        {value && (
+          <button
+            onClick={() => { onSave(unitId, field, ""); setOpen(false); }}
+            className="mt-2 text-[11px] text-muted-foreground hover:text-foreground underline"
+            data-testid={`monthyear-clear-${unitId}`}
+          >
+            Clear
+          </button>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// Textarea with @-mention autocomplete. On blur, scans for newly added
+// @username tokens and POSTs to /api/leasing-schedule/unit/:id/mention-tasks
+// to create user tasks for each tagged user.
+function MentionTextarea({ unitId, propertyId, value, onSave }: {
+  unitId: string; propertyId: string; value: string; onSave: (id: string, field: string, value: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value || "");
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState(-1);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { data: allUsers } = useQuery<Array<{ id: string; username: string; name?: string; email?: string }>>({
+    queryKey: ["/api/users"],
+    staleTime: 5 * 60_000,
+  });
+  const userMatches = useMemo(() => {
+    if (mentionQuery == null) return [];
+    const q = mentionQuery.toLowerCase();
+    return (allUsers || []).filter(u => {
+      const local = (u.email || u.username || "").split("@")[0].toLowerCase();
+      const name = (u.name || "").toLowerCase();
+      return local.includes(q) || name.includes(q);
+    }).slice(0, 6);
+  }, [allUsers, mentionQuery]);
+
+  const sync = (newText: string) => {
+    setText(newText);
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const caret = ta.selectionStart;
+    const before = newText.slice(0, caret);
+    const m = before.match(/(?:^|\s)@(\w*)$/);
+    if (m) {
+      setMentionStart(caret - m[1].length - 1);
+      setMentionQuery(m[1]);
+    } else {
+      setMentionQuery(null);
+      setMentionStart(-1);
+    }
+  };
+
+  const insertMention = (user: { username: string; email?: string }) => {
+    const handle = (user.email || user.username || "").split("@")[0];
+    if (mentionStart < 0) return;
+    const before = text.slice(0, mentionStart);
+    const after = text.slice((textareaRef.current?.selectionStart ?? mentionStart + 1));
+    const next = `${before}@${handle} ${after}`;
+    setText(next);
+    setMentionQuery(null);
+    setMentionStart(-1);
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        const pos = before.length + handle.length + 2;
+        ta.setSelectionRange(pos, pos);
+        ta.focus();
+      }
+    }, 10);
+  };
+
+  const commit = async () => {
+    if (text !== (value || "")) {
+      onSave(unitId, "updates", text);
+      // Fire-and-forget task creation for new mentions.
+      try {
+        await fetch(`/api/leasing-schedule/unit/${unitId}/mention-tasks`, {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ text, previousText: value || "", propertyId }),
+        });
+      } catch {}
+    }
+    setEditing(false);
+  };
+
+  // Render — show stylised text when not editing, textarea when editing.
+  if (!editing) {
+    // Highlight @username mentions in display
+    const parts = (value || "").split(/(@[\w.-]+)/g);
+    return (
+      <div
+        className="cursor-text hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-[11px] text-gray-700 dark:text-gray-300 leading-snug min-h-[24px] whitespace-pre-wrap"
+        onClick={() => { setText(value || ""); setEditing(true); setTimeout(() => textareaRef.current?.focus(), 30); }}
+        data-testid={`mention-display-${unitId}`}
+      >
+        {parts.map((p, i) => p.startsWith("@") ? (
+          <span key={i} className="text-blue-600 dark:text-blue-400 font-medium">{p}</span>
+        ) : <span key={i}>{p}</span>)}
+        {!value && <span className="italic text-muted-foreground">Update / agent input (use @ to tag)</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <Textarea
+        ref={textareaRef}
+        value={text}
+        onChange={(e) => sync(e.target.value)}
+        onBlur={() => { if (mentionQuery == null) commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setEditing(false); setText(value || ""); }
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit();
+        }}
+        rows={3}
+        className="text-[11px] resize-y min-h-[60px]"
+        data-testid={`mention-input-${unitId}`}
+      />
+      {userMatches.length > 0 && (
+        <div className="absolute z-50 mt-0.5 left-0 right-0 bg-popover border rounded-md shadow-lg" data-testid={`mention-suggestions-${unitId}`}>
+          {userMatches.map(u => (
+            <button
+              key={u.id}
+              onMouseDown={(e) => { e.preventDefault(); insertMention(u); }}
+              className="w-full text-left px-2 py-1 text-xs hover:bg-muted flex items-center justify-between gap-2"
+              data-testid={`mention-suggestion-${u.username}`}
+            >
+              <span className="font-medium">@{(u.email || u.username || "").split("@")[0]}</span>
+              {u.name && <span className="text-muted-foreground text-[11px]">{u.name}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Zone labels often arrive with a leading "1. " / "2." / etc from imported
+// templates. Strip for display; the order is preserved by sort_order anyway.
+function cleanZoneLabel(zone: string | null | undefined): string {
+  if (!zone) return "Unzoned";
+  return String(zone).replace(/^\s*\d+\.\s*/, "").trim() || "Unzoned";
+}
+
+function formatLandsecDate(d: string | null | undefined): string | null {
+  if (!d) return null;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  // dd/m/yy — matches Landsec's compact "24/3/35" style
+  return `${dt.getDate()}/${dt.getMonth() + 1}/${String(dt.getFullYear()).slice(-2)}`;
+}
+
+function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: string | null | undefined; onSave: (id: string, field: string, value: string) => void }) {
+  const band = statusBandFor(value);
+  // Render the trigger as a real <button> rather than a Badge wrapped in
+  // <DropdownMenuTrigger asChild>. Badge is a plain function component
+  // without forwardRef, so Radix can't reliably hook up the ref/anchor and
+  // the dropdown often fails to open. A button avoids the issue entirely
+  // while keeping the Badge-style chip look.
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={`inline-flex items-center whitespace-nowrap rounded-md border px-2.5 py-0.5 text-[10px] font-semibold cursor-pointer hover:brightness-95 ${band?.pillClass || "border-gray-300 text-gray-500"}`}
+          data-testid={`inline-statusband-${unitId}`}
+        >
+          {band?.label || "— Set band"}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[220px]" data-testid={`statusband-menu-${unitId}`}>
+        {STATUS_BANDS.map(b => (
+          <DropdownMenuItem
+            key={b.value}
+            onClick={() => onSave(unitId, "status_band", b.value)}
+            className={`text-xs cursor-pointer ${b.value === value ? "font-bold" : ""}`}
+            data-testid={`statusband-option-${b.value}-${unitId}`}
+          >
+            <span className={`inline-block w-3 h-3 rounded mr-2 align-middle ${b.rowClass}`}></span>{b.label}
+          </DropdownMenuItem>
+        ))}
+        {value && (
+          <DropdownMenuItem
+            onClick={() => onSave(unitId, "status_band", "")}
+            className="text-xs cursor-pointer text-muted-foreground border-t mt-1"
+            data-testid={`statusband-option-clear-${unitId}`}
+          >
+            <span className="inline-block w-3 h-3 rounded mr-2 align-middle bg-transparent border" />Clear
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: string; onSave: (id: string, field: string, value: string) => void }) {
   const statuses = ["Occupied", "Vacant", "Under Offer", "In Negotiation", "Archived"];
-  const [open, setOpen] = useState(false);
   const colors: Record<string, string> = {
     "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
     "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
@@ -139,21 +696,25 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
     "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
   };
   return (
-    <div className="relative">
-      <Badge variant="outline" className={`text-[9px] cursor-pointer ${colors[value] || "border-gray-300"}`} onClick={() => setOpen(!open)} data-testid={`inline-status-${unitId}`}>
-        {value}
-      </Badge>
-      {open && (
-        <div className="absolute z-50 mt-1 bg-white dark:bg-gray-900 border rounded-md shadow-lg py-1 min-w-[120px]" data-testid={`status-menu-${unitId}`}>
-          {statuses.map(s => (
-            <button key={s} onClick={() => { onSave(unitId, "status", s); setOpen(false); }}
-              className={`w-full text-left px-3 py-1 text-xs hover:bg-gray-100 dark:hover:bg-gray-800 ${s === value ? "font-bold" : ""}`} data-testid={`status-option-${s}-${unitId}`}>
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Badge variant="outline" className={`text-[10px] cursor-pointer ${colors[value] || "border-gray-300"}`} data-testid={`inline-status-${unitId}`}>
+          {value}
+        </Badge>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[140px]" data-testid={`status-menu-${unitId}`}>
+        {statuses.map(s => (
+          <DropdownMenuItem
+            key={s}
+            onClick={() => onSave(unitId, "status", s)}
+            className={`text-xs cursor-pointer ${s === value ? "font-bold" : ""}`}
+            data-testid={`status-option-${s}-${unitId}`}
+          >
+            {s}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -175,7 +736,13 @@ function InlineDateCell({ unitId, field, value, onSave, className = "" }: {
   </span>;
 }
 
-interface CrmCompanyBasic { id: string; name: string; }
+interface CrmCompanyBasic {
+  id: string;
+  name: string;
+  meta?: string | null;       // companyType chip (Tenant / Landlord / Agent…)
+  subLabel?: string | null;   // UK contracting entity (or first trading-entity alias)
+  aliases?: string[];         // trading-entity names, all searchable
+}
 
 function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate }: {
   unitId: string;
@@ -183,52 +750,63 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
   targetBrands: string;
   onUpdate: (id: string, field: string, value: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
 
   let ids: string[] = [];
   try { ids = JSON.parse(targetCompanyIds || "[]"); } catch { ids = []; }
 
-  const { data: allCompanies } = useQuery<CrmCompanyBasic[]>({
+  const { data: allCompanies = [] } = useQuery<CrmCompanyBasic[]>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
       const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);
-      return arr.map((c: any) => ({ id: String(c.id), name: c.name }));
+      // Carry trading name + UK contracting entity + alias list so the
+      // picker can show "Landsec" with "Land Securities Group Plc"
+      // underneath, and match searches against either.
+      return arr.map((c: any) => {
+        const trading = Array.isArray(c.tradingEntities || c.trading_entities) ? (c.tradingEntities || c.trading_entities) : [];
+        const aliases = trading.map((t: any) => t?.name).filter((n: any) => typeof n === "string" && n.length > 0);
+        const uk = c.ukEntityName || c.uk_entity_name || null;
+        return {
+          id: String(c.id),
+          name: c.name,
+          meta: c.companyType || c.company_type || null,
+          subLabel: uk || aliases[0] || null,
+          aliases,
+        };
+      });
     },
     staleTime: 120000,
   });
 
-  const linkedCompanies = useMemo(() => {
-    if (!allCompanies || ids.length === 0) return [];
-    return ids.map(id => allCompanies.find(c => c.id === id)).filter(Boolean) as CrmCompanyBasic[];
-  }, [allCompanies, ids]);
+  // Target picker is brand-only — exclude landlords / agents / solicitors
+  // so the dropdown shows only the kinds of rows that can sensibly be
+  // pitched into a unit.
+  const TARGET_EXCLUDE = new Set(["Landlord", "Landlord / Client", "Client", "Agent", "Solicitor", "Investor", "Vendor", "Purchaser"]);
+  const brandOptions = useMemo(
+    () => (allCompanies as any[]).filter(c => !c.meta || !TARGET_EXCLUDE.has(c.meta)),
+    [allCompanies],
+  );
 
-  const filtered = useMemo(() => {
-    if (!allCompanies || !search.trim()) return [];
-    const s = search.toLowerCase();
-    return allCompanies.filter(c => !ids.includes(c.id) && c.name.toLowerCase().includes(s)).slice(0, 8);
-  }, [allCompanies, search, ids]);
-
-  const addCompany = (companyId: string) => {
-    const newIds = [...ids, companyId];
-    onUpdate(unitId, "target_company_ids", JSON.stringify(newIds));
-    setSearch("");
+  // Multi-select via the shared picker — clicking an existing option
+  // toggles it; the green "Create brand" row at the bottom creates a
+  // tracked brand inline and immediately adds it to the target list.
+  const toggleId = (newId: string) => {
+    const nextIds = ids.includes(newId) ? ids.filter(i => i !== newId) : [...ids, newId];
+    onUpdate(unitId, "target_company_ids", JSON.stringify(nextIds));
   };
 
-  const removeCompany = (companyId: string) => {
-    const newIds = ids.filter(id => id !== companyId);
-    onUpdate(unitId, "target_company_ids", JSON.stringify(newIds));
-  };
+  const linkedCompanies = useMemo(
+    () => ids.map(id => allCompanies.find(c => c.id === id)).filter(Boolean) as CrmCompanyBasic[],
+    [allCompanies, ids],
+  );
 
-  useEffect(() => {
-    if (open && searchRef.current) searchRef.current.focus();
-  }, [open]);
-
+  // Closed state matches the previous bespoke chip rendering so existing
+  // tests + visual expectations keep working.
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -238,69 +816,57 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  return (
-    <div ref={containerRef} className="relative">
-      <div
-        onClick={() => setOpen(true)}
-        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 min-h-[18px] flex flex-wrap gap-0.5"
-        data-testid={`target-companies-${unitId}`}
-      >
-        {linkedCompanies.length > 0 ? (
-          linkedCompanies.map(c => (
-            <Link key={c.id} href={`/companies/${c.id}`} onClick={e => e.stopPropagation()}>
-              <Badge variant="outline" className="text-[9px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
-                {c.name}
-              </Badge>
-            </Link>
-          ))
-        ) : targetBrands ? (
-          <span className="text-[10px] text-gray-500">{targetBrands}</span>
-        ) : (
-          <span className="text-gray-300 italic text-[10px]">+ Target</span>
-        )}
-      </div>
-      {open && (
-        <div className="absolute z-50 mt-1 bg-white dark:bg-gray-900 border rounded-lg shadow-lg w-[220px] left-0" data-testid={`target-picker-${unitId}`}>
-          <div className="p-1.5">
-            <div className="flex flex-wrap gap-0.5 mb-1">
-              {linkedCompanies.map(c => (
-                <Badge key={c.id} variant="outline" className="text-[9px] border-teal-300 text-teal-700 bg-teal-50 pl-1.5 pr-0.5 py-0 gap-0.5">
+  if (!open) {
+    return (
+      <div ref={containerRef} className="relative">
+        <div
+          onClick={() => setOpen(true)}
+          className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 min-h-[18px] flex flex-wrap gap-0.5"
+          data-testid={`target-companies-${unitId}`}
+        >
+          {linkedCompanies.length > 0 ? (
+            linkedCompanies.map(c => (
+              <Link key={c.id} href={`/companies/${c.id}`} onClick={e => e.stopPropagation()}>
+                <Badge variant="outline" className="text-[10px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
                   {c.name}
-                  <button onClick={() => removeCompany(c.id)} className="hover:text-red-500 ml-0.5 p-0.5" data-testid={`remove-target-${c.id}-${unitId}`}>
-                    <X className="w-2.5 h-2.5" />
-                  </button>
                 </Badge>
-              ))}
-            </div>
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search companies..."
-              className="w-full bg-transparent border rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-teal-400"
-              data-testid={`target-search-${unitId}`}
-            />
-          </div>
-          {filtered.length > 0 && (
-            <div className="border-t max-h-[160px] overflow-y-auto">
-              {filtered.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => addCompany(c.id)}
-                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-1.5"
-                  data-testid={`target-option-${c.id}-${unitId}`}
-                >
-                  <Building2 className="w-3 h-3 text-gray-400 shrink-0" />
-                  <span className="truncate">{c.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {search.trim() && filtered.length === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground border-t">No companies found</div>
+              </Link>
+            ))
+          ) : targetBrands ? (
+            <span className="text-[11px] text-gray-500">{targetBrands}</span>
+          ) : (
+            <span className="text-gray-300 italic text-[11px]">+ Target</span>
           )}
         </div>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <CrmEntityPicker
+        value={ids}
+        options={brandOptions as any}
+        multi
+        alwaysOpen
+        kind="company"
+        searchPlaceholder="Search brands…"
+        emptyLabel="+ Target"
+        panelWidth={240}
+        testIdPrefix={`target-picker-${unitId}`}
+        onSelect={(opt) => toggleId(opt.id)}
+        onCreate={async (name) => {
+          const r = await apiRequest("POST", "/api/crm/companies", {
+            name: name.trim(),
+            companyType: "Tenant",
+            isTrackedBrand: true,
+          });
+          const created = await r.json();
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+          return { id: String(created.id), name: created.name, meta: created.companyType || created.company_type || null };
+        }}
+      />
     </div>
   );
 }
@@ -387,7 +953,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
           )}
         </div>
         {target.rationale && (
-          <button onClick={() => setShowRationale(!showRationale)} className="text-[10px] text-gray-400 hover:text-gray-600 mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
+          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-gray-400 hover:text-gray-600 mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
             {showRationale ? target.rationale : "View rationale..."}
           </button>
         )}
@@ -487,15 +1053,15 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   if (unitTargets.length === 0 && !generating) {
     return (
       <div className="flex items-center gap-2">
-        <button onClick={handleGenerate} className="flex items-center gap-1 text-[10px] text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded px-1.5 py-0.5" data-testid={`generate-targets-${unitId}`}>
+        <button onClick={handleGenerate} className="flex items-center gap-1 text-[11px] text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded px-1.5 py-0.5" data-testid={`generate-targets-${unitId}`}>
           <Sparkles className="w-3 h-3" />AI Targets
         </button>
-        <button onClick={() => setShowAdd(true)} className="text-[10px] text-gray-400 hover:text-gray-600" data-testid={`manual-target-${unitId}`}>
+        <button onClick={() => setShowAdd(true)} className="text-[11px] text-gray-400 hover:text-gray-600" data-testid={`manual-target-${unitId}`}>
           <Plus className="w-3 h-3" />
         </button>
         {showAdd && (
           <div className="flex items-center gap-1">
-            <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[10px] w-[120px]" data-testid={`new-target-input-${unitId}`}
+            <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[11px] w-[120px]" data-testid={`new-target-input-${unitId}`}
               onKeyDown={e => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }} autoFocus />
             <button onClick={handleAdd} className="text-emerald-500 p-0.5"><Check className="w-3 h-3" /></button>
             <button onClick={() => setShowAdd(false)} className="text-gray-400 p-0.5"><X className="w-3 h-3" /></button>
@@ -508,7 +1074,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   return (
     <div className="space-y-0.5" data-testid={`target-panel-${unitId}`}>
       {generating && (
-        <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] text-violet-500">
+        <div className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-violet-500">
           <Loader2 className="w-3 h-3 animate-spin" />Generating AI targets...
         </div>
       )}
@@ -516,18 +1082,18 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
         <TargetTenantRow key={t.id} target={t} onUpdate={handleUpdate} onDelete={handleDelete} />
       ))}
       <div className="flex items-center gap-1 pt-0.5">
-        <button onClick={handleGenerate} disabled={generating} className="flex items-center gap-1 text-[9px] text-violet-400 hover:text-violet-600 px-1 py-0.5 rounded hover:bg-violet-50" data-testid={`regenerate-${unitId}`}>
+        <button onClick={handleGenerate} disabled={generating} className="flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-600 px-1 py-0.5 rounded hover:bg-violet-50" data-testid={`regenerate-${unitId}`}>
           <Sparkles className="w-2.5 h-2.5" />{generating ? "Generating..." : "More"}
         </button>
-        <button onClick={() => setShowAdd(!showAdd)} className="text-[9px] text-gray-400 hover:text-gray-600 px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
+        <button onClick={() => setShowAdd(!showAdd)} className="text-[10px] text-gray-400 hover:text-gray-600 px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
           <Plus className="w-2.5 h-2.5 inline" />Add
         </button>
       </div>
       {showAdd && (
         <div className="flex items-center gap-1 px-2 py-1">
-          <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[10px] w-[120px]" data-testid={`new-target-input-${unitId}`}
+          <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[11px] w-[120px]" data-testid={`new-target-input-${unitId}`}
             onKeyDown={e => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }} autoFocus />
-          <select value={newRating} onChange={e => setNewRating(e.target.value)} className="border rounded px-1 py-0.5 text-[10px]" data-testid={`new-target-rating-${unitId}`}>
+          <select value={newRating} onChange={e => setNewRating(e.target.value)} className="border rounded px-1 py-0.5 text-[11px]" data-testid={`new-target-rating-${unitId}`}>
             <option value="green">Green</option>
             <option value="amber">Amber</option>
             <option value="red">Red</option>
@@ -541,7 +1107,9 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
 }
 
 function PropertyCard({ prop }: { prop: LeasingProperty }) {
-  const occupancy = prop.unit_count > 0 ? Math.round((prop.occupied_count / prop.unit_count) * 100) : 0;
+  const unitCount = Number(prop.unit_count) || 0;
+  const occupiedCount = Number(prop.occupied_count) || 0;
+  const occupancy = unitCount > 0 ? Math.round((occupiedCount / unitCount) * 100) : 0;
   return (
     <Link href={`/leasing-schedule/${prop.id}`}>
       <div className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer bg-white dark:bg-gray-900" data-testid={`property-card-${prop.id}`}>
@@ -552,12 +1120,12 @@ function PropertyCard({ prop }: { prop: LeasingProperty }) {
           </div>
           <div className="flex gap-1.5 items-center">
             {prop.leasing_privacy_enabled && (
-              <Badge variant="outline" className="text-[10px] border-violet-300 text-violet-700 bg-violet-50" data-testid={`privacy-badge-${prop.id}`}>
+              <Badge variant="outline" className="text-[11px] border-violet-300 text-violet-700 bg-violet-50" data-testid={`privacy-badge-${prop.id}`}>
                 <Lock className="w-2.5 h-2.5 mr-0.5" />Private
               </Badge>
             )}
             {prop.expiring_soon > 0 && (
-              <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">
+              <Badge variant="outline" className="text-[11px] border-amber-300 text-amber-700 bg-amber-50">
                 <AlertTriangle className="w-3 h-3 mr-0.5" />{prop.expiring_soon} expiring
               </Badge>
             )}
@@ -573,7 +1141,7 @@ function PropertyCard({ prop }: { prop: LeasingProperty }) {
           </div>
           <span className="text-[11px] font-medium text-gray-600">{occupancy}%</span>
         </div>
-        <div className="flex gap-3 mt-2 text-[10px]">
+        <div className="flex gap-3 mt-2 text-[11px]">
           <span className="text-emerald-600">{prop.occupied_count} occupied</span>
           <span className="text-gray-400">{prop.vacant_count} vacant</span>
         </div>
@@ -700,14 +1268,60 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const ZONE_ROW_LIMIT = 40;
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [statFilter, setStatFilter] = useState<string | null>(null);
+  const [positioningGroupFilter, setPositioningGroupFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
+  const [importParsing, setImportParsing] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ sheetName: string; sheetCount: number; rowsScanned: number; units: any[] } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+  // Landsec-format importer + pull-vacant-from-tenancy
+  const [landsecImporting, setLandsecImporting] = useState(false);
+  const landsecFileRef = useRef<HTMLInputElement>(null);
+  const [showPullVacant, setShowPullVacant] = useState(false);
+
+  const handleImportExcel = async (file: File) => {
+    setImportParsing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/parse-excel`, {
+        method: "POST", headers: getAuthHeaders(), body: fd,
+      });
+      if (!r.ok) { toast({ title: "Parse failed", description: (await r.json()).error || "Could not read file", variant: "destructive" }); return; }
+      const data = await r.json();
+      if (!data.units?.length) { toast({ title: "No units found", description: "AI could not extract rows from that sheet", variant: "destructive" }); return; }
+      setImportPreview(data);
+    } catch (e: any) {
+      toast({ title: "Parse failed", description: e.message, variant: "destructive" });
+    } finally {
+      setImportParsing(false);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview?.units?.length) return;
+    try {
+      const r = await fetch(`/api/leasing-schedule/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ property_id: propertyId, units: importPreview.units }),
+      });
+      if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); return; }
+      const data = await r.json();
+      toast({ title: `${data.imported} units imported` });
+      setImportPreview(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    }
+  };
 
   const { data: currentUser } = useQuery<{ id: string; username: string; is_admin: boolean }>({
     queryKey: ["/api/auth/me"],
   });
 
-  const { data: units = [], isLoading, error: unitsError } = useQuery<LeasingUnit[]>({
+  const { data: units = [], isLoading, error: unitsError, refetch: refetchUnits } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/property", propertyId],
     queryFn: async () => {
       const r = await fetch(`/api/leasing-schedule/property/${propertyId}`, { headers: getAuthHeaders() });
@@ -731,6 +1345,56 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   });
 
   const [generatingAll, setGeneratingAll] = useState(false);
+  const [aiBanding, setAiBanding] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
+  const [showSnapshots, setShowSnapshots] = useState(false);
+  const [syncingToTenancy, setSyncingToTenancy] = useState(false);
+  const handleSyncToTenancy = async () => {
+    if (!confirm("Create Tenancy Schedule rows for every Leasing unit that lacks one? Links the two so the Existing column pulls live tenant data.")) return;
+    setSyncingToTenancy(true);
+    try {
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/sync-to-tenancy`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "Sync failed");
+      toast({ title: `Synced ${out.scanned} units`, description: `${out.created} created in Tenancy, ${out.linked} linked to existing` });
+      refetchUnits();
+    } catch (e: any) {
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    } finally { setSyncingToTenancy(false); }
+  };
+  const handleSnapshot = async () => {
+    if (!confirm("Freeze the current Leasing Schedule as the version presented at this meeting? Past snapshots remain reclaimable.")) return;
+    setSnapshotting(true);
+    try {
+      const meetingMonth = (units.find((u: any) => u.meeting_month) as any)?.meeting_month
+        || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase();
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/snapshot`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingMonth }),
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "Snapshot failed");
+      toast({ title: "Snapshot saved", description: `${out.snapshot.unit_count} units frozen for ${out.snapshot.meeting_month}` });
+    } catch (e: any) {
+      toast({ title: "Snapshot failed", description: e.message, variant: "destructive" });
+    } finally { setSnapshotting(false); }
+  };
+  const handleAutoBand = async () => {
+    setAiBanding(true);
+    try {
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/auto-status`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out?.error || "AI banding failed");
+      toast({ title: `AI banded ${out.updated} of ${out.total} units`, description: out.attempted ? `${out.attempted} classifications proposed` : undefined });
+      refetchUnits();
+    } catch (e: any) {
+      toast({ title: "AI banding failed", description: e.message, variant: "destructive" });
+    } finally { setAiBanding(false); }
+  };
   const handleGenerateAll = async () => {
     setGeneratingAll(true);
     try {
@@ -796,6 +1460,18 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
     },
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids?: string[]) => {
+      const r = await apiRequest("POST", "/api/leasing-schedule/bulk-delete", { propertyId, ids: ids ?? null });
+      return r.json() as Promise<{ deleted: number }>;
+    },
+    onSuccess: (out) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+      toast({ title: `${out.deleted} unit${out.deleted === 1 ? "" : "s"} deleted` });
+    },
+    onError: (err: any) => toast({ title: "Bulk delete failed", description: err.message, variant: "destructive" }),
+  });
+
   const [includeArchived, setIncludeArchived] = useState(false);
 
   const inlineUpdate = (unitId: string, field: string, value: string) => {
@@ -821,9 +1497,10 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       if (statFilter === "vacant" && u.status !== "Vacant") return false;
       if (statFilter === "expiring" && !isExpiringSoon(u.lease_expiry)) return false;
       if (statFilter === "expired" && !isExpired(u.lease_expiry)) return false;
+      if (positioningGroupFilter && (u as any).positioning_group !== positioningGroupFilter) return false;
       return true;
     });
-  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived]);
+  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived, positioningGroupFilter]);
 
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
@@ -918,7 +1595,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
               <h2 className="text-lg font-bold hover:text-blue-600 hover:underline cursor-pointer transition-colors" data-testid="property-title">{propertyName}</h2>
             </Link>
             {privacyInfo?.privacy_enabled && (
-              <Badge variant="outline" className="text-[10px] border-violet-300 text-violet-700 bg-violet-50">
+              <Badge variant="outline" className="text-[11px] border-violet-300 text-violet-700 bg-violet-50">
                 <Lock className="w-2.5 h-2.5 mr-0.5" />Private
               </Badge>
             )}
@@ -941,14 +1618,191 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <Button variant="outline" size="sm" onClick={() => setShowAuditLog(!showAuditLog)} data-testid="btn-audit-log">
             <History className="w-3.5 h-3.5 mr-1" />Audit Log
           </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={handleAutoBand}
+            disabled={aiBanding}
+            data-testid="btn-ai-band"
+            title="Ask Claude to assign A/B/C/D/Void status bands based on tenant performance + Landsec strategy"
+          >
+            {aiBanding ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}AI Status Bands
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={handleSnapshot}
+            disabled={snapshotting}
+            data-testid="btn-snapshot"
+            title="Freeze the current schedule as the version presented at this Monday's meeting. Past snapshots remain reclaimable."
+          >
+            {snapshotting ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1" />}Approve &amp; Snapshot
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setShowSnapshots(true)}
+            data-testid="btn-snapshot-history"
+            title="View past snapshots"
+          >
+            <History className="w-3.5 h-3.5 mr-1" />History
+          </Button>
           <Button variant="outline" size="sm" onClick={handleExport} data-testid="btn-export">
             <Download className="w-3.5 h-3.5 mr-1" />Export
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} data-testid="btn-import">
+            <Upload className="w-3.5 h-3.5 mr-1" />Import
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => landsecFileRef.current?.click()}
+            disabled={landsecImporting}
+            data-testid="btn-import-landsec"
+            title="Import a Landsec-format leasing tracker xlsx (Zone / Existing / Targets columns)"
+          >
+            {landsecImporting ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />}Landsec xlsx
+          </Button>
+          <input
+            ref={landsecFileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              if (!propertyId) { toast({ title: "Open a property's leasing schedule first" }); return; }
+              setLandsecImporting(true);
+              try {
+                const fd = new FormData();
+                fd.append("file", f);
+                fd.append("propertyId", propertyId);
+                const meetingMonth = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase();
+                fd.append("meetingMonth", meetingMonth);
+                const r = await fetch("/api/leasing-schedule/import-landsec", { method: "POST", headers: getAuthHeaders(), body: fd });
+                const out = await r.json();
+                if (!r.ok) throw new Error(out.error || "Import failed");
+                toast({ title: `Imported ${out.imported} rows`, description: `From sheet "${out.sheetName}"` });
+                refetchUnits();
+              } catch (err: any) {
+                toast({ title: "Landsec import failed", description: err.message, variant: "destructive" });
+              } finally {
+                setLandsecImporting(false);
+                e.target.value = "";
+              }
+            }}
+          />
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setShowPullVacant(true)}
+            disabled={!propertyId}
+            data-testid="btn-pull-tenancy"
+            title="Pull vacant units from this property's Tenancy Schedule into the Leasing Schedule"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" />From Tenancy
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={handleSyncToTenancy}
+            disabled={syncingToTenancy || !propertyId}
+            data-testid="btn-sync-tenancy"
+            title="Seed missing Tenancy Schedule rows from the Leasing Schedule. One-shot — links the two so the Existing column pulls live."
+          >
+            {syncingToTenancy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}Sync to Tenancy
           </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAddUnit(true)} data-testid="btn-add-unit">
             <Plus className="w-3.5 h-3.5 mr-1" />Add Unit
           </Button>
+          {units.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const n = units.length;
+                if (!confirm(`Delete ALL ${n} unit${n === 1 ? "" : "s"} on this leasing schedule? This cannot be undone.`)) return;
+                if (!confirm(`Are you sure? Type 'OK' on the next prompt to confirm.`)) return;
+                const typed = prompt(`Type DELETE to wipe all ${n} units:`);
+                if ((typed || "").trim().toUpperCase() !== "DELETE") {
+                  toast({ title: "Cancelled — text did not match" });
+                  return;
+                }
+                bulkDeleteMutation.mutate(undefined);
+              }}
+              disabled={bulkDeleteMutation.isPending}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              data-testid="btn-delete-all-units"
+              title="Delete every unit on this leasing schedule"
+            >
+              {bulkDeleteMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 mr-1" />}
+              Delete all
+            </Button>
+          )}
         </div>
       </div>
+      {/* Last updated + meeting month banner */}
+      {(() => {
+        const mostRecent = units.reduce((max: Date | null, u: any) => {
+          const d = u.updated_at ? new Date(u.updated_at) : null;
+          return d && (!max || d > max) ? d : max;
+        }, null as Date | null);
+        const lastBy = (units.find((u: any) => u.last_updated_by) as any)?.last_updated_by || null;
+        const meetingMonth = (units.find((u: any) => u.meeting_month) as any)?.meeting_month || null;
+        return (
+          <div className="flex items-center gap-3 text-[11px] pt-2 pb-1 text-muted-foreground">
+            {mostRecent && (
+              <span className="inline-flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Last updated {mostRecent.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} at {mostRecent.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                {lastBy && <span className="ml-1">by <span className="font-medium text-foreground">{lastBy}</span></span>}
+              </span>
+            )}
+            {meetingMonth && (
+              <span className="inline-flex items-center gap-1 ml-2">
+                <Badge variant="outline" className="text-[11px]">For {meetingMonth} meeting</Badge>
+              </span>
+            )}
+          </div>
+        );
+      })()}
+      {/* Landsec status-band legend */}
+      <div className="flex items-center gap-2 flex-wrap text-[11px] pt-2 pb-1 border-b border-border/40">
+        <span className="text-muted-foreground uppercase tracking-wider mr-1">Status bands:</span>
+        {STATUS_BANDS.map(b => (
+          <span key={b.value} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border ${b.pillClass}`}>
+            {b.label}
+          </span>
+        ))}
+      </div>
+
+      {/* Strategic Principles & Priorities (per-property opt-in) */}
+      <StrategicPrinciplesPanel propertyId={propertyId} />
+
+      {/* Positioning group filter chips (Landsec Key ii) — click to filter the
+          schedule by umbrella category. Same UX shape as deal-status chips. */}
+      <div className="flex items-center gap-2 flex-wrap text-[11px] pt-2 pb-1 border-b border-border/40">
+        <span className="text-muted-foreground uppercase tracking-wider mr-1">Positioning:</span>
+        <button
+          onClick={() => setPositioningGroupFilter(null)}
+          className={`px-2 py-0.5 rounded border ${!positioningGroupFilter ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted"}`}
+          data-testid="positioning-filter-all"
+        >
+          All
+        </button>
+        {POSITIONING_GROUPS.map(g => (
+          <button
+            key={g.key}
+            onClick={() => setPositioningGroupFilter(positioningGroupFilter === g.key ? null : g.key)}
+            className={`px-2 py-0.5 rounded border ${positioningGroupFilter === g.key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted"}`}
+            data-testid={`positioning-filter-${g.key}`}
+            title={g.subTypes}
+          >
+            {g.label}
+          </button>
+        ))}
+      </div>
+
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="leasing_schedule_units"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule-units"] })}
+      />
 
       {privacyInfo?.privacy_enabled && privacyInfo.assigned_agents.length > 0 && (
         <div className="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 rounded-lg text-xs">
@@ -963,26 +1817,26 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       <div className="flex gap-3 flex-wrap">
         <button onClick={() => { setStatFilter(null); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${!statFilter ? "ring-2 ring-gray-400 bg-gray-100 dark:bg-gray-700" : "bg-gray-50 dark:bg-gray-800 hover:bg-gray-100"}`} data-testid="stat-total">
           <p className="text-lg font-bold">{stats.total}</p>
-          <p className="text-[10px] text-gray-500">Total Units</p>
+          <p className="text-[11px] text-gray-500">Total Units</p>
         </button>
         <button onClick={() => { setStatFilter(statFilter === "occupied" ? null : "occupied"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "occupied" ? "ring-2 ring-emerald-400 bg-emerald-100 dark:bg-emerald-900/40" : "bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100"}`} data-testid="stat-occupied">
           <p className="text-lg font-bold text-emerald-700">{stats.occupied}</p>
-          <p className="text-[10px] text-emerald-600">Occupied</p>
+          <p className="text-[11px] text-emerald-600">Occupied</p>
         </button>
         <button onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "vacant" ? "ring-2 ring-gray-400 bg-gray-200 dark:bg-gray-600" : "bg-gray-50 dark:bg-gray-800 hover:bg-gray-100"}`} data-testid="stat-vacant">
           <p className="text-lg font-bold text-gray-500">{stats.vacant}</p>
-          <p className="text-[10px] text-gray-500">Vacant</p>
+          <p className="text-[11px] text-gray-500">Vacant</p>
         </button>
         {stats.expiringSoon > 0 && (
           <button onClick={() => { setStatFilter(statFilter === "expiring" ? null : "expiring"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expiring" ? "ring-2 ring-amber-400 bg-amber-100 dark:bg-amber-900/40" : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`} data-testid="stat-expiring">
             <p className="text-lg font-bold text-amber-700">{stats.expiringSoon}</p>
-            <p className="text-[10px] text-amber-600">Expiring &lt;12m</p>
+            <p className="text-[11px] text-amber-600">Expiring &lt;12m</p>
           </button>
         )}
         {stats.expired > 0 && (
           <button onClick={() => { setStatFilter(statFilter === "expired" ? null : "expired"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expired" ? "ring-2 ring-red-400 bg-red-100 dark:bg-red-900/40" : "bg-red-50 dark:bg-red-950/20 hover:bg-red-100"}`} data-testid="stat-expired">
             <p className="text-lg font-bold text-red-700">{stats.expired}</p>
-            <p className="text-[10px] text-red-600">Expired</p>
+            <p className="text-[11px] text-red-600">Expired</p>
           </button>
         )}
       </div>
@@ -1029,71 +1883,91 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
               data-testid={`zone-toggle-${zone}`}
             >
               {isZoneExpanded(zone) ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
-              <span className="font-semibold text-sm">{zone}</span>
-              <Badge variant="secondary" className="text-[10px] ml-1">{zoneUnits.length}</Badge>
+              <span className="font-semibold text-sm">{cleanZoneLabel(zone)}</span>
+              <Badge variant="secondary" className="text-[11px] ml-1">{zoneUnits.length}</Badge>
               {zoneUnits[0]?.positioning && (
-                <span className="text-[10px] text-gray-400 ml-2 truncate">{zoneUnits[0].positioning}</span>
+                <span className="text-[11px] text-gray-400 ml-2 truncate">{zoneUnits[0].positioning}</span>
               )}
             </button>
             {isZoneExpanded(zone) && (
-              <div className="overflow-x-auto">
-                <table className="w-full" data-testid={`zone-table-${zone}`}>
+              <div className="overflow-x-auto min-w-0">
+                {/* Width pinned to the colgroup total (not w-full) so the
+                    columns stay at their declared sizes when the chat
+                    dock opens/closes. With w-full, table-layout: fixed
+                    was stretching/compressing each <col> proportionally
+                    to the wrapper width, which caused the 'columns get
+                    squashed' look when ChatBGP took 340px. Pinning
+                    means the wrapper just scrolls horizontally. */}
+                <table className="text-xs" style={{ tableLayout: "fixed", width: `${LEASING_TABLE_MIN_WIDTH}px` }} data-testid={`zone-table-${zone}`}>
+                  <LeasingColgroup />
                   <thead>
                     <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b text-left text-sm">
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[140px]">Tenant</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[50px]">Agent</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">Status</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[80px]">Expiry</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">Break</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[70px]">RR</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[100px]">Performance</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[220px]">Target Tenants</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 min-w-[200px]">Updates</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-500 w-[60px]"></th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Existing</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Positioning</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Financial Performance</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Targets</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Optimum Target</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Priority</th>
+                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">{updatesHeaderLabel(zoneUnits)}</th>
+                      <th className="px-3 py-1.5"></th>
                     </tr>
                   </thead>
-                  <tbody className="text-xs">
+                  <tbody className="text-[13px]">
                     {(() => {
                       const showAll = expandedRowZones.has(zone);
                       const visible = showAll ? zoneUnits : zoneUnits.slice(0, ZONE_ROW_LIMIT);
                       const hasMore = zoneUnits.length > ZONE_ROW_LIMIT && !showAll;
                       return (<>
                         {visible.map(u => {
-                          const expired = isExpired(u.lease_expiry);
-                          const expSoon = isExpiringSoon(u.lease_expiry);
+                          const band = statusBandFor((u as any).status_band);
+                          const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
+                          const nameColour = tenantNameColourFor((u as any).status_band);
+                          const expFmt = formatLandsecDate((u as any).live_lease_expiry || u.lease_expiry);
+                          const breakFmt = formatLandsecDate((u as any).live_lease_break || u.lease_break);
+                          const llBreakFmt = formatLandsecDate((u as any).landlord_break);
+                          const rrFmt = formatLandsecDate((u as any).live_rent_review || u.rent_review);
                           return (
-                            <tr key={u.id} className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/30 ${u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : ""}`} data-testid={`unit-row-${u.id}`}>
-                              <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" />
-                              </td>
-                              <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="agent_initials" value={u.agent_initials || ""} onSave={inlineUpdate} className="text-gray-500" />
-                              </td>
-                              <td className="px-3 py-2">
-                                <InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} />
-                              </td>
-                              <td className={`px-3 py-2 ${expired ? "text-red-600 font-medium" : expSoon ? "text-amber-600 font-medium" : "text-gray-600"}`}>
-                                <InlineDateCell unitId={u.id} field="lease_expiry" value={u.lease_expiry} onSave={inlineUpdate} />
-                              </td>
-                              <td className="px-3 py-2">
-                                <InlineDateCell unitId={u.id} field="lease_break" value={u.lease_break} onSave={inlineUpdate} className="text-gray-500" />
-                              </td>
-                              <td className="px-3 py-2">
-                                <InlineDateCell unitId={u.id} field="rent_review" value={u.rent_review} onSave={inlineUpdate} className="text-gray-500" />
-                              </td>
-                              <td className="px-3 py-2">
-                                <div className="space-y-0.5">
-                                  <InlineEditCell unitId={u.id} field="mat_psqft" value={u.mat_psqft || ""} onSave={inlineUpdate} className="text-[10px]" placeholder="MAT" />
-                                  <InlineEditCell unitId={u.id} field="lfl_percent" value={u.lfl_percent || ""} onSave={inlineUpdate} className={`text-[10px] ${u.lfl_percent?.startsWith("-") ? "text-red-500" : "text-emerald-600"}`} placeholder="LFL%" />
-                                  <InlineEditCell unitId={u.id} field="occ_cost_percent" value={u.occ_cost_percent || ""} onSave={inlineUpdate} className="text-[10px] text-gray-400" placeholder="Occ%" />
+                            <tr key={u.id} className={`border-b hover:brightness-95 transition-all align-top ${rowTint}`} data-testid={`unit-row-${u.id}`}>
+                              {/* Existing — tenant name pulled LIVE from Tenancy Schedule
+                                  when linked; clickable through to brand profile when matched
+                                  to a CRM company. Colour-coded by status band. */}
+                              <td className="px-3 py-2 align-top">
+                                <ExistingTenantCell unit={u} nameColour={nameColour} onSave={inlineUpdate} />
+                                <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                                  {expFmt && <div>(Exp. {expFmt})</div>}
+                                  {breakFmt && <div>(TB {breakFmt})</div>}
+                                  {llBreakFmt && <div>(LL {llBreakFmt})</div>}
+                                  {rrFmt && <div>(RR {rrFmt})</div>}
+                                  {!expFmt && !breakFmt && !llBreakFmt && !rrFmt && (
+                                    <div className="italic opacity-60">No lease dates — link to Tenancy Schedule</div>
+                                  )}
                                 </div>
                               </td>
-                              <td className="px-3 py-2 min-w-[220px]">
+                              {/* Positioning — group (Key ii) + sub-type two-step picker */}
+                              <td className="px-3 py-2 align-top">
+                                <PositioningCell unitId={u.id} group={(u as any).positioning_group} subType={(u as any).positioning || ""} onSave={inlineUpdate} />
+                              </td>
+                              {/* Financial Performance — 3-line LFL / MAT / Occ */}
+                              <td className="px-3 py-2 align-top">
+                                <FinancialPerformanceCell unit={u} onSave={inlineUpdate} />
+                              </td>
+                              {/* Targets */}
+                              <td className="px-3 py-2 align-top">
                                 <TargetTenantPanel unitId={u.id} propertyId={propertyId} targets={allTargets} onRefresh={() => refetchTargets()} />
                               </td>
+                              {/* Optimum Target */}
                               <td className="px-3 py-2">
-                                <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-600" placeholder="Updates" multiline />
+                                <BrandPickerCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} placeholder="Optimum target" />
                               </td>
+                              {/* Priority — month/year */}
+                              <td className="px-3 py-2">
+                                <MonthYearCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} />
+                              </td>
+                              {/* Updates — @-mention autocomplete + task creation */}
+                              <td className="px-3 py-2">
+                                <MentionTextarea unitId={u.id} propertyId={propertyId} value={u.updates || ""} onSave={inlineUpdate} />
+                              </td>
+                              {/* Actions */}
                               <td className="px-3 py-2">
                                 <div className="flex items-center gap-0.5">
                                   <button
@@ -1114,7 +1988,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                         })}
                         {hasMore && (
                           <tr>
-                            <td colSpan={10} className="text-center py-2">
+                            <td colSpan={8} className="text-center py-2">
                               <button
                                 onClick={() => setExpandedRowZones(prev => { const n = new Set(prev); n.add(zone); return n; })}
                                 className="text-xs text-primary hover:underline font-medium"
@@ -1148,6 +2022,23 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showSnapshots} onOpenChange={setShowSnapshots}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader><DialogTitle><History className="w-4 h-4 inline mr-2" />Snapshot history — {propertyName}</DialogTitle></DialogHeader>
+          <SnapshotsPanel propertyId={propertyId} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showPullVacant} onOpenChange={setShowPullVacant}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Pull units from Tenancy Schedule</DialogTitle></DialogHeader>
+          <PullFromTenancyPanel
+            propertyId={propertyId}
+            onDone={() => { setShowPullVacant(false); refetchUnits(); }}
+          />
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showAuditLog} onOpenChange={setShowAuditLog}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle><History className="w-4 h-4 inline mr-2" />Audit Log — {propertyName}</DialogTitle></DialogHeader>
@@ -1163,7 +2054,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                   </div>
                   <div className="shrink-0 font-medium text-gray-600 w-[80px]">{entry.user_name}</div>
                   <div className="flex-1">
-                    <Badge variant="outline" className={`text-[9px] mr-1.5 ${
+                    <Badge variant="outline" className={`text-[10px] mr-1.5 ${
                       entry.action === "create" ? "border-emerald-300 text-emerald-700" :
                       entry.action === "delete" ? "border-red-300 text-red-700" :
                       entry.action === "privacy_toggle" ? "border-violet-300 text-violet-700" :
@@ -1248,9 +2139,20 @@ function TargetCompanyNames({ targetCompanyIds, targetBrands }: { targetCompanyI
     staleTime: 120000,
   });
   if (ids.length > 0 && allCompanies) {
-    const names = ids.map(id => allCompanies.find(c => c.id === id)?.name).filter(Boolean);
-    if (names.length > 0) return <span className="flex flex-wrap gap-0.5">{names.map((n, i) => (
-      <Badge key={i} variant="outline" className="text-[8px] border-teal-300 text-teal-700 bg-teal-50 px-1 py-0">{n}</Badge>
+    const resolved = ids
+      .map(id => ({ id, name: allCompanies.find(c => c.id === id)?.name }))
+      .filter(x => x.name);
+    if (resolved.length > 0) return <span className="flex flex-wrap gap-0.5">{resolved.map((r, i) => (
+      <Link
+        key={i}
+        href={`/companies/${r.id}`}
+        onClick={(e) => e.stopPropagation()}
+        className="inline-flex items-center hover:underline"
+      >
+        <Badge variant="outline" className="text-[8px] border-teal-300 text-teal-700 bg-teal-50 px-1 py-0 cursor-pointer">
+          {r.name}
+        </Badge>
+      </Link>
     ))}</span>;
   }
   return <span>{targetBrands || "—"}</span>;
@@ -1267,6 +2169,51 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
+  // Excel import state — referenced by the "Import Excel" button + preview
+  // dialog rendered further down. These were missing in this component
+  // (only declared in the standalone PropertyScheduleView), which crashed
+  // the property detail page with `ReferenceError: importParsing is not
+  // defined` whenever the schedule was rendered.
+  const [importParsing, setImportParsing] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ sheetName: string; sheetCount: number; rowsScanned: number; units: any[] } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportExcel = async (file: File) => {
+    setImportParsing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/parse-excel`, {
+        method: "POST", headers: getAuthHeaders(), body: fd,
+      });
+      if (!r.ok) { toast({ title: "Parse failed", description: (await r.json()).error || "Could not read file", variant: "destructive" }); return; }
+      const data = await r.json();
+      if (!data.units?.length) { toast({ title: "No units found", description: "AI could not extract rows from that sheet", variant: "destructive" }); return; }
+      setImportPreview(data);
+    } catch (e: any) {
+      toast({ title: "Parse failed", description: e.message, variant: "destructive" });
+    } finally {
+      setImportParsing(false);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview?.units?.length) return;
+    try {
+      const r = await fetch(`/api/leasing-schedule/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ property_id: propertyId, units: importPreview.units }),
+      });
+      if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); return; }
+      const data = await r.json();
+      toast({ title: `${data.imported} units imported` });
+      setImportPreview(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    }
+  };
 
   const { data: units = [], isLoading, error: unitsError } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/property", propertyId],
@@ -1382,7 +2329,6 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
     const isAccessDenied = (unitsError as Error)?.message === "ACCESS_DENIED";
     return (
       <div className="space-y-3" data-testid="property-leasing-schedule">
-        <h3 className="font-semibold text-sm flex items-center gap-2"><Building2 className="w-4 h-4" />Leasing Schedule</h3>
         <div className="text-center py-6 text-gray-400 border rounded-lg">
           <Lock className="w-6 h-6 mx-auto mb-1 opacity-40" />
           <p className="text-xs">{isAccessDenied ? "You don't have access to this property's leasing schedule" : "Failed to load leasing schedule"}</p>
@@ -1392,16 +2338,27 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   }
   if (units.length === 0 && !showAddUnit) return (
     <div className="space-y-3" data-testid="property-leasing-schedule">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <Building2 className="w-4 h-4" />Leasing Schedule
-        </h3>
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => importFileRef.current?.click()} disabled={importParsing} data-testid="btn-import-first">
+            {importParsing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
+          </Button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleImportExcel(f);
+              e.target.value = "";
+            }}
+          />
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-first-unit">
             <Plus className="w-3 h-3 mr-1" />Add Unit
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer">
+            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
@@ -1411,8 +2368,55 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
       <div className="text-center py-6 text-gray-400 border rounded-lg">
         <Building2 className="w-6 h-6 mx-auto mb-1 opacity-40" />
         <p className="text-xs">No units in leasing schedule</p>
-        <p className="text-[10px] mt-0.5">Add units to track this property's leasing schedule</p>
+        <p className="text-[11px] mt-0.5">Add units or import a landlord Excel to track this property's leasing schedule</p>
       </div>
+
+      <Dialog open={!!importPreview} onOpenChange={(v) => !v && setImportPreview(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              Preview import — {importPreview?.units.length} units from "{importPreview?.sheetName}"
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-[11px] text-muted-foreground mb-2">
+            AI mapped {importPreview?.rowsScanned} rows. Review before importing — you can edit rows after.
+          </div>
+          <div className="overflow-auto flex-1 border rounded">
+            <table className="w-full text-[11px]">
+              <thead className="bg-muted/40 sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1">Unit</th>
+                  <th className="text-left px-2 py-1">Tenant</th>
+                  <th className="text-right px-2 py-1">Sq ft</th>
+                  <th className="text-right px-2 py-1">Rent £ p.a.</th>
+                  <th className="text-left px-2 py-1">Expiry</th>
+                  <th className="text-left px-2 py-1">Break</th>
+                  <th className="text-left px-2 py-1">Review</th>
+                  <th className="text-left px-2 py-1">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importPreview?.units.map((u, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="px-2 py-1 font-mono">{u.unit_name || "—"}</td>
+                    <td className="px-2 py-1">{u.tenant_name || "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.sqft ? Number(u.sqft).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.rent_pa ? "£" + Number(u.rent_pa).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1">{u.lease_expiry || "—"}</td>
+                    <td className="px-2 py-1">{u.lease_break || "—"}</td>
+                    <td className="px-2 py-1">{u.rent_review || "—"}</td>
+                    <td className="px-2 py-1">{u.status || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setImportPreview(null)}>Cancel</Button>
+            <Button size="sm" onClick={confirmImport}>Import {importPreview?.units.length} units</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 
@@ -1436,10 +2440,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   return (
     <div className="space-y-3" data-testid="property-leasing-schedule">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <Building2 className="w-4 h-4" />Leasing Schedule
-          <Badge variant="secondary" className="text-[10px]">{stats.total} units</Badge>
-        </h3>
+        <Badge variant="secondary" className="text-[11px]">{stats.total} units</Badge>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search className="absolute left-2 top-1.5 w-3 h-3 text-gray-400" />
@@ -1453,11 +2454,25 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1" onClick={handleExportExcel} data-testid="btn-export-excel">
             <Download className="w-3 h-3" />Excel
           </Button>
+          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1" onClick={() => importFileRef.current?.click()} disabled={importParsing} data-testid="btn-import-excel">
+            {importParsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}Import
+          </Button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleImportExcel(f);
+              e.target.value = "";
+            }}
+          />
           <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1" onClick={() => setShowAddUnit(true)} data-testid="btn-add-unit-prop">
             <Plus className="w-3 h-3" />Add
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
+            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
@@ -1479,14 +2494,14 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
               data-testid={`stat-${s.key}`}
             >
               <div className={`text-lg font-bold ${statusFilter === s.key ? "" : "text-foreground"}`}>{s.count}</div>
-              <div className={`text-[10px] font-medium ${statusFilter === s.key ? "" : "text-muted-foreground"}`}>{s.label}</div>
+              <div className={`text-[11px] font-medium ${statusFilter === s.key ? "" : "text-muted-foreground"}`}>{s.label}</div>
             </button>
           ))}
         </div>
         {archivedCount > 0 && (
           <button
             onClick={() => setIncludeArchived(!includeArchived)}
-            className={`flex items-center gap-1 px-2 py-1 rounded border text-[10px] transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50"}`}
+            className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50"}`}
             data-testid="toggle-include-archived-prop"
           >
             <Eye className="w-3 h-3" />
@@ -1499,11 +2514,11 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
 
       <div className="border rounded-lg overflow-hidden">
         <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border-b">
-          <button onClick={toggleAll} className="text-[10px] text-gray-500 hover:text-gray-700 flex items-center gap-1" data-testid="btn-toggle-all-zones">
+          <button onClick={toggleAll} className="text-[11px] text-gray-500 hover:text-gray-700 flex items-center gap-1" data-testid="btn-toggle-all-zones">
             {allExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
             {allExpanded ? "Collapse all" : "Expand all"}
           </button>
-          <span className="text-[10px] text-gray-400">{filteredUnits.length} of {units.length} units</span>
+          <span className="text-[11px] text-gray-400">{filteredUnits.length} of {units.length} units</span>
         </div>
 
         {zoneGroups.map(([zone, zoneUnits]) => {
@@ -1517,83 +2532,86 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                 data-testid={`zone-header-${zone}`}
               >
                 {isExpanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
-                <span className="font-medium text-xs">{zone}</span>
-                <Badge variant="secondary" className="text-[9px]">{zoneUnits.length}</Badge>
-                <span className="text-[9px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
+                <span className="font-medium text-xs">{cleanZoneLabel(zone)}</span>
+                <Badge variant="secondary" className="text-[10px]">{zoneUnits.length}</Badge>
+                <span className="text-[10px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
               </button>
               {isExpanded && (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
+                <div className="overflow-x-auto min-w-0">
+                  <table className="text-xs" style={{ tableLayout: "fixed", width: `${LEASING_TABLE_MIN_WIDTH}px` }}>
+                    <LeasingColgroup />
                     <thead>
                       <tr className="bg-gray-50/30 border-b text-left text-sm">
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[140px]">Unit</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[120px]">Tenant</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[75px]">Status</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[85px]">Expiry</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[85px]">Break</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[80px]">Rent PA</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[60px]">Sq Ft</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[70px]">MAT/psf</th>
-                        <th className="px-2 py-1 font-medium text-gray-500">Targets</th>
-                        <th className="px-2 py-1 font-medium text-gray-500 w-[140px]">Updates</th>
-                        <th className="px-2 py-1 w-8"></th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Existing</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Positioning</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Financial Performance</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Targets</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Optimum Target</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Priority</th>
+                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">{updatesHeaderLabel(zoneUnits)}</th>
+                        <th className="px-2 py-1"></th>
                       </tr>
                     </thead>
-                    <tbody className="text-xs">
-                      {zoneUnits.map(u => (
-                        <tr key={u.id} className={`border-b hover:bg-gray-50 dark:hover:bg-gray-900/50 group ${u.status === "Archived" ? "opacity-50" : ""}`} data-testid={`unit-row-${u.id}`}>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" placeholder="Unit name" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="tenant_name" value={u.tenant_name || ""} onSave={inlineUpdate} placeholder="Tenant" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineDateCell unitId={u.id} field="lease_expiry" value={u.lease_expiry} onSave={inlineUpdate}
-                              className={isExpired(u.lease_expiry) ? "text-red-600" : isExpiringSoon(u.lease_expiry) ? "text-amber-600" : ""} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineDateCell unitId={u.id} field="lease_break" value={u.lease_break} onSave={inlineUpdate} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="rent_pa" value={u.rent_pa?.toString() || ""} onSave={inlineUpdate} placeholder="£" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="sqft" value={u.sqft?.toString() || ""} onSave={inlineUpdate} placeholder="sqft" />
-                          </td>
-                          <td className="px-2 py-1 text-[10px]">
-                            <InlineEditCell unitId={u.id} field="mat_psqft" value={u.mat_psqft || ""} onSave={inlineUpdate} placeholder="—" />
-                          </td>
-                          <td className="px-2 py-1">
-                            <TargetCompaniesCell unitId={u.id} targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} onUpdate={inlineUpdate} />
-                          </td>
-                          <td className="px-2 py-1">
-                            <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} placeholder="Notes..." multiline />
-                          </td>
-                          <td className="px-2 py-1">
-                            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
-                                className={u.status === "Archived" ? "text-emerald-500 hover:text-emerald-700" : "text-gray-400 hover:text-amber-600"}
-                                title={u.status === "Archived" ? "Restore" : "Archive"}
-                                data-testid={`btn-archive-unit-${u.id}`}
-                              >
-                                {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
-                              </button>
-                              <button
-                                onClick={() => { if (confirm("Delete this unit permanently?")) deleteMutation.mutate(u.id); }}
-                                className="text-red-400 hover:text-red-600"
-                                data-testid={`btn-delete-unit-${u.id}`}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                    <tbody className="text-[13px]">
+                      {zoneUnits.map(u => {
+                        const band = statusBandFor((u as any).status_band);
+                        const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
+                        const nameColour = tenantNameColourFor((u as any).status_band);
+                        const expFmt = formatLandsecDate((u as any).live_lease_expiry || u.lease_expiry);
+                        const breakFmt = formatLandsecDate((u as any).live_lease_break || u.lease_break);
+                        const llBreakFmt = formatLandsecDate((u as any).landlord_break);
+                        const rrFmt = formatLandsecDate((u as any).live_rent_review || u.rent_review);
+                        return (
+                          <tr key={u.id} className={`border-b hover:brightness-95 transition-all align-top group ${rowTint} ${u.status === "Archived" ? "opacity-50" : ""}`} data-testid={`unit-row-${u.id}`}>
+                            <td className="px-2 py-1.5 align-top">
+                              <ExistingTenantCell unit={u} nameColour={nameColour} onSave={inlineUpdate} />
+                              <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                                {expFmt && <div>(Exp. {expFmt})</div>}
+                                {breakFmt && <div>(TB {breakFmt})</div>}
+                                {llBreakFmt && <div>(LL {llBreakFmt})</div>}
+                                {rrFmt && <div>(RR {rrFmt})</div>}
+                              </div>
+                            </td>
+                            <td className="px-2 py-1.5 align-top">
+                              <PositioningCell unitId={u.id} group={(u as any).positioning_group} subType={(u as any).positioning || ""} onSave={inlineUpdate} />
+                            </td>
+                            <td className="px-2 py-1.5 align-top">
+                              <FinancialPerformanceCell unit={u} onSave={inlineUpdate} />
+                            </td>
+                            <td className="px-2 py-1.5 align-top">
+                              <TargetCompaniesCell unitId={u.id} targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} onUpdate={inlineUpdate} />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <BrandPickerCell unitId={u.id} field="optimum_target" value={(u as any).optimum_target || ""} onSave={inlineUpdate} placeholder="Optimum target" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <MonthYearCell unitId={u.id} field="priority" value={u.priority || ""} onSave={inlineUpdate} />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <MentionTextarea unitId={u.id} propertyId={propertyId} value={u.updates || ""} onSave={inlineUpdate} />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
+                                  className={u.status === "Archived" ? "text-emerald-500 hover:text-emerald-700" : "text-gray-400 hover:text-amber-600"}
+                                  title={u.status === "Archived" ? "Restore" : "Archive"}
+                                  data-testid={`btn-archive-unit-${u.id}`}
+                                >
+                                  {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                                </button>
+                                <button
+                                  onClick={() => { if (confirm("Delete this unit permanently?")) deleteMutation.mutate(u.id); }}
+                                  className="text-red-400 hover:text-red-600"
+                                  data-testid={`btn-delete-unit-${u.id}`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1604,6 +2622,368 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
         {filteredUnits.length === 0 && (
           <div className="text-center py-4 text-gray-400 text-xs">No units match your filters</div>
         )}
+      </div>
+
+      <Dialog open={!!importPreview} onOpenChange={(v) => !v && setImportPreview(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              Preview import — {importPreview?.units.length} units from "{importPreview?.sheetName}"
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-[11px] text-muted-foreground mb-2">
+            AI mapped {importPreview?.rowsScanned} rows. Review before importing — you can edit individual rows after.
+          </div>
+          <div className="overflow-auto flex-1 border rounded">
+            <table className="w-full text-[11px]">
+              <thead className="bg-muted/40 sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1">Unit</th>
+                  <th className="text-left px-2 py-1">Tenant</th>
+                  <th className="text-right px-2 py-1">Sq ft</th>
+                  <th className="text-right px-2 py-1">Rent £ p.a.</th>
+                  <th className="text-left px-2 py-1">Expiry</th>
+                  <th className="text-left px-2 py-1">Break</th>
+                  <th className="text-left px-2 py-1">Review</th>
+                  <th className="text-left px-2 py-1">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importPreview?.units.map((u, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="px-2 py-1 font-mono">{u.unit_name || "—"}</td>
+                    <td className="px-2 py-1">{u.tenant_name || "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.sqft ? Number(u.sqft).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.rent_pa ? "£" + Number(u.rent_pa).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1">{u.lease_expiry || "—"}</td>
+                    <td className="px-2 py-1">{u.lease_break || "—"}</td>
+                    <td className="px-2 py-1">{u.rent_review || "—"}</td>
+                    <td className="px-2 py-1">{u.status || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setImportPreview(null)}>Cancel</Button>
+            <Button size="sm" onClick={confirmImport} data-testid="btn-confirm-import">Import {importPreview?.units.length} units</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// Landsec "Key ii" positioning umbrella categories. Drives the filter chips
+// at the top of the schedule + the Positioning sub-type assignment per unit.
+const POSITIONING_GROUPS: Array<{ key: string; label: string; subTypes: string }> = [
+  { key: "Everyday Connections", label: "Everyday Connections", subTypes: "Social Dining" },
+  { key: "Quick Refuel",         label: "Quick Refuel",         subTypes: "Café / Grab & Go / QSR" },
+  { key: "Joyful Gatherings",    label: "Joyful Gatherings",    subTypes: "Leisure / Bars / Premium Dining" },
+  { key: "Leisurely Refuel",     label: "Leisurely Refuel",     subTypes: "Casual / Premium Casual Dining" },
+];
+
+interface StrategicPrinciples {
+  enabled: boolean;
+  fivePriorities: Array<{ rank: number; text: string }>;
+  positioningKey: Array<{ group: string; description: string }>;
+  rules: Array<{ tag: string; rule: string }>;
+  topThree: Array<{ rank: number; text: string; band?: string }>;
+}
+
+const DEFAULT_PRINCIPLES: StrategicPrinciples = {
+  enabled: false,
+  fivePriorities: [
+    { rank: 1, text: "Delivering Social Dining across all major retail schemes" },
+    { rank: 2, text: "Casual Dining converted to Best-Of-QSR (↓) or Elevated Restaurants (↑)" },
+    { rank: 3, text: "Elevated & Independent Cafe and Grab & Go" },
+    { rank: 4, text: "Rightsizing Cinema" },
+    { rank: 5, text: "Leisure: Flight To Prime" },
+  ],
+  positioningKey: POSITIONING_GROUPS.map(g => ({ group: g.label, description: g.subTypes })),
+  rules: [
+    { tag: "Divest or Void", rule: "Min x3 brands in Target + x1 in Optimum" },
+    { tag: "Red", rule: "Overarching category in Target and x1 brand in Optimum" },
+  ],
+  topThree: [
+    { rank: 1, text: "" },
+    { rank: 2, text: "" },
+    { rank: 3, text: "" },
+  ],
+};
+
+// Editable Strategic Principles & Priorities block. Renders above the schedule
+// when enabled. Toggle is per-property — most clients won't use this; Landsec
+// does. Stored as JSONB on crm_properties.strategic_principles.
+function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery<{ principles: StrategicPrinciples | null }>({
+    queryKey: ["/api/leasing-schedule/property", propertyId, "strategic-principles"],
+    queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/strategic-principles`, { headers: getAuthHeaders() }).then(r => r.json()),
+  });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<StrategicPrinciples | null>(null);
+  const principles = data?.principles || null;
+
+  const save = useMutation({
+    mutationFn: async (next: StrategicPrinciples) => {
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/strategic-principles`, {
+        method: "PUT", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ principles: next }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Save failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId, "strategic-principles"] });
+      toast({ title: "Saved" });
+      setEditing(false);
+      setDraft(null);
+    },
+    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return null;
+
+  // Not yet set up — show "Enable" CTA so user can opt in (most clients won't).
+  if (!principles) {
+    return (
+      <div className="border rounded-lg p-3 bg-muted/20 text-xs flex items-center justify-between">
+        <span className="text-muted-foreground">Strategic Principles & Priorities (Landsec key block) — not enabled for this property.</span>
+        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => save.mutate(DEFAULT_PRINCIPLES)} data-testid="btn-enable-principles">
+          Enable
+        </Button>
+      </div>
+    );
+  }
+  if (!principles.enabled) return null;
+
+  const view = editing && draft ? draft : principles;
+  const startEdit = () => { setDraft(JSON.parse(JSON.stringify(principles))); setEditing(true); };
+  const cancelEdit = () => { setDraft(null); setEditing(false); };
+  const update = (patch: Partial<StrategicPrinciples>) => { if (!draft) return; setDraft({ ...draft, ...patch }); };
+
+  return (
+    <div className="border rounded-lg p-4 bg-card/60">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-bold uppercase tracking-wider">Overarching Hospitality &amp; Leisure Strategic Principles &amp; Priorities</h3>
+        <div className="flex items-center gap-1">
+          {editing ? (
+            <>
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={cancelEdit}>Cancel</Button>
+              <Button size="sm" className="h-7 text-[11px]" onClick={() => draft && save.mutate(draft)} disabled={save.isPending}>
+                {save.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}Save
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={startEdit} data-testid="btn-edit-principles"><Pencil className="w-3 h-3 mr-1" />Edit</Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground" onClick={() => save.mutate({ ...principles, enabled: false })} data-testid="btn-disable-principles">Hide</Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+        {/* Five Priorities */}
+        <div>
+          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">5 Priorities</div>
+          <div className="space-y-1">
+            {view.fivePriorities.map((p, i) => (
+              <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
+                <span className="text-muted-foreground">Priority {["One", "Two", "Three", "Four", "Five"][i]}</span>
+                {editing ? (
+                  <Input className="h-7 text-[11px]" value={p.text} onChange={e => { const next = [...(draft!.fivePriorities)]; next[i] = { ...next[i], text: e.target.value }; update({ fivePriorities: next }); }} />
+                ) : (
+                  <span>{i + 1}. {p.text || <span className="italic text-muted-foreground">—</span>}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top Three Strategic Priorities */}
+        <div>
+          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">Top Three Strategic Priorities</div>
+          <div className="space-y-1">
+            {view.topThree.map((p, i) => (
+              <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
+                <span className="text-muted-foreground">Priority {["One", "Two", "Three"][i]}</span>
+                {editing ? (
+                  <Input
+                    className="h-7 text-[11px]"
+                    value={p.text}
+                    placeholder="e.g. West Village leasing (TG)"
+                    onChange={e => { const next = [...(draft!.topThree)]; next[i] = { ...next[i], text: e.target.value }; update({ topThree: next }); }}
+                  />
+                ) : (
+                  <span className={p.band === "AMBER" ? "text-amber-700" : p.band === "RED" ? "text-rose-700" : ""}>{p.text || <span className="italic text-muted-foreground">—</span>}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Key ii — Positioning groups */}
+        <div>
+          <div className="font-semibold mb-1.5">Positioning Groups (Key ii)</div>
+          <div className="space-y-1">
+            {view.positioningKey.map((p, i) => (
+              <div key={i} className="grid grid-cols-[140px_1fr] gap-2">
+                <span className="font-medium">{p.group}</span>
+                <span className="text-muted-foreground">{p.description}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Rules */}
+        <div>
+          <div className="font-semibold mb-1.5">Rules</div>
+          <div className="space-y-1">
+            {view.rules.map((r, i) => (
+              <div key={i} className="grid grid-cols-[120px_1fr] gap-2">
+                <span className="font-medium text-rose-700">{r.tag}</span>
+                <span className="text-muted-foreground">{r.rule}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Snapshot history viewer — lists past frozen versions of this property's
+// Leasing Schedule. Click one to see its full row list at the time of freeze.
+function SnapshotsPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading, refetch } = useQuery<{ snapshots: Array<{ id: string; meeting_month: string; taken_at: string; taken_by_name: string; unit_count: number; notes: string | null }> }>({
+    queryKey: ["/api/leasing-schedule/property", propertyId, "snapshots"],
+    queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/snapshots`, { headers: getAuthHeaders() }).then(r => r.json()),
+  });
+  const [openId, setOpenId] = useState<string | null>(null);
+  const { data: detail } = useQuery<{ snapshot: any }>({
+    queryKey: ["/api/leasing-schedule/snapshot", openId],
+    queryFn: () => fetch(`/api/leasing-schedule/snapshot/${openId}`, { headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: !!openId,
+  });
+
+  if (isLoading) return <div className="py-6 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>;
+  if (!data?.snapshots?.length) return <div className="py-6 text-sm text-muted-foreground">No snapshots yet. Use "Approve & Snapshot" after each Monday meeting to freeze a version.</div>;
+
+  return (
+    <div className="space-y-3">
+      <div className="border rounded divide-y">
+        {data.snapshots.map(s => (
+          <div key={s.id} className="px-3 py-2 hover:bg-muted/30 cursor-pointer" onClick={() => setOpenId(s.id === openId ? null : s.id)} data-testid={`snapshot-row-${s.id}`}>
+            <div className="flex items-center justify-between text-xs">
+              <div>
+                <div className="font-medium">{s.meeting_month || "Untitled"}</div>
+                <div className="text-muted-foreground text-[11px]">{new Date(s.taken_at).toLocaleString("en-GB")} {s.taken_by_name ? `· by ${s.taken_by_name}` : ""} · {s.unit_count} units</div>
+              </div>
+              <ChevronRight className={`w-3 h-3 transition-transform ${openId === s.id ? "rotate-90" : ""}`} />
+            </div>
+            {openId === s.id && detail?.snapshot?.data && (
+              <div className="mt-2 pt-2 border-t text-[11px]">
+                <div className="max-h-[300px] overflow-y-auto space-y-0.5">
+                  {(detail.snapshot.data as any[]).map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="font-medium min-w-[100px] truncate">{row.tenant_name || row.unit_name}</span>
+                      <span className="text-muted-foreground truncate">{row.zone || "Unzoned"}</span>
+                      <span className="ml-auto text-muted-foreground truncate max-w-[280px]">{row.updates || ""}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Pull units from a property's Tenancy Schedule into the Leasing Schedule.
+// Lists tenancy units NOT already on the leasing schedule (matched by unit
+// name) with checkboxes; vacant ones default-checked since they're the main
+// use case. Each promotion fires a POST to /api/leasing-schedule/promote-from-tenancy.
+function PullFromTenancyPanel({ propertyId, onDone }: { propertyId: string; onDone: () => void }) {
+  const { toast } = useToast();
+  const { data: list, isLoading, refetch } = useQuery<{ units: any[] }>({
+    queryKey: ["/api/leasing-schedule/property", propertyId, "available-from-tenancy"],
+    queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/available-from-tenancy`, { headers: getAuthHeaders() }).then(r => r.json()),
+  });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (list?.units) setPicked(new Set(list.units.filter((u: any) => (u.status || "").toLowerCase() === "vacant").map((u: any) => u.id)));
+  }, [list?.units]);
+
+  const promote = async () => {
+    setBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of picked) {
+      try {
+        const r = await fetch("/api/leasing-schedule/promote-from-tenancy", {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ tenancyUnitId: id }),
+        });
+        if (r.ok) ok++; else fail++;
+      } catch { fail++; }
+    }
+    setBusy(false);
+    toast({ title: `Promoted ${ok} unit${ok === 1 ? "" : "s"}`, description: fail > 0 ? `${fail} failed` : undefined });
+    onDone();
+  };
+
+  if (isLoading) return <div className="py-6 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Loading tenancy schedule…</div>;
+  if (!list?.units?.length) return <div className="py-6 text-sm text-muted-foreground">All tenancy units are already on the leasing schedule.</div>;
+
+  const togglePick = (id: string) => {
+    setPicked(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  };
+  const toggleAll = (on: boolean) => setPicked(on ? new Set(list.units.map((u: any) => u.id)) : new Set());
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Units on this property's Tenancy Schedule that aren't yet on the Leasing Schedule. Vacant units are pre-selected. Promoting copies the basic unit info; lease economics stay live-linked to the Tenancy Schedule.
+      </p>
+      <div className="flex items-center gap-3 text-xs">
+        <button onClick={() => toggleAll(true)} className="text-primary hover:underline">Select all</button>
+        <button onClick={() => toggleAll(false)} className="text-muted-foreground hover:text-foreground">Clear</button>
+        <span className="ml-auto text-muted-foreground">{picked.size} selected of {list.units.length}</span>
+      </div>
+      <div className="border rounded max-h-[400px] overflow-y-auto divide-y">
+        {list.units.map((u: any) => {
+          const isVacant = (u.status || "").toLowerCase() === "vacant";
+          const checked = picked.has(u.id);
+          return (
+            <label key={u.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/30 ${isVacant ? "bg-amber-50/40 dark:bg-amber-950/20" : ""}`}>
+              <input type="checkbox" checked={checked} onChange={() => togglePick(u.id)} />
+              <div className="flex-1 min-w-0 text-xs">
+                <div className="font-medium flex items-center gap-2">
+                  {u.unit_number || u.premises || "—"}
+                  {isVacant && <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700">VACANT</Badge>}
+                  {u.in_leasing_schedule && <Badge variant="outline" className="text-[10px] border-blue-400 text-blue-700">Flagged</Badge>}
+                </div>
+                <div className="text-muted-foreground truncate">
+                  {u.tenant_name || "No tenant"}{u.permitted_use ? ` · ${u.permitted_use}` : ""}{u.nia_sqft ? ` · ${u.nia_sqft.toLocaleString()} sqft NIA` : ""}{u.passing_rent_pa ? ` · £${u.passing_rent_pa.toLocaleString()} pa` : ""}
+                </div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onDone}>Cancel</Button>
+        <Button size="sm" onClick={promote} disabled={busy || picked.size === 0} data-testid="btn-promote-from-tenancy">
+          {busy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}
+          Add {picked.size} to Leasing Schedule
+        </Button>
       </div>
     </div>
   );
@@ -1620,17 +3000,17 @@ function PropAddUnitForm({ propertyId, onSave, onCancel, isPending }: {
     <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50 space-y-2">
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <label className="text-[10px] text-gray-500 block mb-0.5">Unit Name *</label>
+          <label className="text-[11px] text-gray-500 block mb-0.5">Unit Name *</label>
           <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Unit 1A"
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="input-new-unit-name" />
         </div>
         <div>
-          <label className="text-[10px] text-gray-500 block mb-0.5">Zone</label>
+          <label className="text-[11px] text-gray-500 block mb-0.5">Zone</label>
           <input value={zone} onChange={e => setZone(e.target.value)} placeholder="e.g. Ground Floor"
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="input-new-unit-zone" />
         </div>
         <div>
-          <label className="text-[10px] text-gray-500 block mb-0.5">Status</label>
+          <label className="text-[11px] text-gray-500 block mb-0.5">Status</label>
           <select value={status} onChange={e => setStatus(e.target.value)}
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="select-new-unit-status">
             <option value="Occupied">Occupied</option>
@@ -1683,13 +3063,14 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
   const expiring = units.filter(u => isExpiringSoon(u.lease_expiry)).length;
 
   return (
-    <div className="space-y-3" data-testid="company-leasing-schedule">
+    <Card>
+    <CardContent className="p-3 space-y-3" data-testid="company-leasing-schedule">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-sm flex items-center gap-2">
           <Building2 className="w-4 h-4" />Leasing Schedule
-          <Badge variant="secondary" className="text-[10px]">{totalUnits} units across {byProperty.size} properties</Badge>
+          <Badge variant="secondary" className="text-[11px]">{totalUnits} units across {byProperty.size} properties</Badge>
         </h3>
-        <div className="flex items-center gap-3 text-[10px]">
+        <div className="flex items-center gap-3 text-[11px]">
           <span className="text-emerald-600">{occupied} occupied</span>
           {expiring > 0 && <span className="text-amber-600">{expiring} expiring</span>}
           <Link href="/leasing-schedule">
@@ -1714,11 +3095,11 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
             >
               {expanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />}
               <span className="font-medium text-sm">{name}</span>
-              <Badge variant="secondary" className="text-[10px]">{propUnits.length}</Badge>
-              <span className="text-[10px] text-emerald-600 ml-auto">{propOccupied} occ</span>
-              {propExpiring > 0 && <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600 ml-1">{propExpiring} exp</Badge>}
+              <Badge variant="secondary" className="text-[11px]">{propUnits.length}</Badge>
+              <span className="text-[11px] text-emerald-600 ml-auto">{propOccupied} occ</span>
+              {propExpiring > 0 && <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-600 ml-1">{propExpiring} exp</Badge>}
               <Link href={`/leasing-schedule/${propId}`}>
-                <span className="text-[10px] text-indigo-500 hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
+                <span className="text-[11px] text-indigo-500 hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
               </Link>
             </button>
             {expanded && (
@@ -1740,21 +3121,21 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
                         <td className="px-3 py-1.5 text-gray-500 max-w-[120px] truncate">{u.zone}</td>
                         <td className="px-3 py-1.5 font-medium">{u.unit_name}</td>
                         <td className="px-3 py-1.5">
-                          <Badge variant="outline" className={`text-[9px] ${u.status === "Occupied" ? "border-emerald-300 text-emerald-700" : "border-gray-300 text-gray-500"}`}>{u.status}</Badge>
+                          <Badge variant="outline" className={`text-[10px] ${u.status === "Occupied" ? "border-emerald-300 text-emerald-700" : "border-gray-300 text-gray-500"}`}>{u.status}</Badge>
                         </td>
                         <td className={`px-3 py-1.5 ${isExpired(u.lease_expiry) ? "text-red-600" : isExpiringSoon(u.lease_expiry) ? "text-amber-600" : "text-gray-600"}`}>
                           {u.lease_expiry ? formatDate(u.lease_expiry) : "—"}
                         </td>
-                        <td className="px-3 py-1.5 text-[10px]">
+                        <td className="px-3 py-1.5 text-[11px]">
                           {u.mat_psqft && <span>{u.mat_psqft}</span>}
                           {u.lfl_percent && <span className={`ml-1 ${u.lfl_percent.startsWith("-") ? "text-red-500" : "text-emerald-600"}`}>{u.lfl_percent}</span>}
                         </td>
-                        <td className="px-3 py-1.5 text-[10px] text-gray-500 max-w-[150px]">
+                        <td className="px-3 py-1.5 text-[11px] text-gray-500 max-w-[150px]">
                           <TargetCompanyNames targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} />
                         </td>
                       </tr>
                     ))}
-                    {propUnits.length > 20 && <tr><td colSpan={6} className="px-3 py-1 text-center text-[10px] text-gray-400">+{propUnits.length - 20} more</td></tr>}
+                    {propUnits.length > 20 && <tr><td colSpan={6} className="px-3 py-1 text-center text-[11px] text-gray-400">+{propUnits.length - 20} more</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -1763,7 +3144,8 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
         );
       })}
       </div>
-    </div>
+    </CardContent>
+    </Card>
   );
 }
 
@@ -1782,10 +3164,168 @@ export default function LeasingSchedulePage() {
   }, [search]);
   const [exporting, setExporting] = useState(false);
 
+  // ─── Board-level import (xlsx → pick a CRM property → parse → import) ───
+  const [importOpen, setImportOpen] = useState(false);
+  const [importPropertyId, setImportPropertyId] = useState<string>("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importStep, setImportStep] = useState<"pick" | "parsing" | "preview" | "importing">("pick");
+  const [importPreview, setImportPreview] = useState<{ sheetName: string; units: any[] } | null>(null);
+  // Multi-scheme: each scheme from the xlsx gets its own property mapping
+  const [multiSchemes, setMultiSchemes] = useState<Array<{
+    sheetName: string;
+    schemeHint: string;
+    units: any[];
+    propertyId: string;
+    skipped?: boolean;
+    skipReason?: string;
+    error?: string;
+  }> | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
   const { data: properties = [], isLoading } = useQuery<LeasingProperty[]>({
     queryKey: ["/api/leasing-schedule/properties"],
     enabled: !propertyId,
   });
+
+  const { data: crmPropertiesResp } = useQuery<any>({
+    queryKey: ["/api/crm/properties", "for-leasing-import"],
+    queryFn: () => fetch(`/api/crm/properties?limit=2000`, { headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: !propertyId,
+  });
+  const crmProperties: { id: string; name: string; address?: string }[] = useMemo(() => {
+    const raw = Array.isArray(crmPropertiesResp) ? crmPropertiesResp : (crmPropertiesResp?.data || []);
+    return raw.map((p: any) => ({ id: p.id, name: p.name || p.address || "(unnamed)", address: p.address }))
+      .sort((a: any, b: any) => a.name.localeCompare(b.name));
+  }, [crmPropertiesResp]);
+
+  const resetImport = () => {
+    setImportOpen(false);
+    setImportPropertyId("");
+    setImportFile(null);
+    setImportStep("pick");
+    setImportPreview(null);
+    setMultiSchemes(null);
+  };
+
+  // Parse: always calls the multi endpoint. If it returns one scheme we drop
+  // back to the single-property preview; if it returns several we go into the
+  // scheme→property mapping view.
+  const runBoardParse = async () => {
+    if (!importFile) return;
+    setImportStep("parsing");
+    try {
+      const fd = new FormData();
+      fd.append("file", importFile);
+      const r = await fetch(`/api/leasing-schedule/parse-excel-multi`, {
+        method: "POST", headers: getAuthHeaders(), body: fd,
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        toast({ title: "Parse failed", description: err.error || "Could not read file", variant: "destructive" });
+        setImportStep("pick");
+        return;
+      }
+      const data = await r.json();
+      const schemes: Array<{ sheetName: string; schemeHint?: string; units: any[]; skipped?: boolean; skipReason?: string; error?: string }> =
+        Array.isArray(data.schemes) ? data.schemes : [];
+
+      if (schemes.length === 0) {
+        toast({ title: "No sheets found", description: "The workbook appears to be empty", variant: "destructive" });
+        setImportStep("pick");
+        return;
+      }
+
+      const usableCount = schemes.filter(s => Array.isArray(s.units) && s.units.length > 0).length;
+
+      if (usableCount === 0) {
+        toast({
+          title: "No unit rows extracted",
+          description: `Read ${schemes.length} sheet${schemes.length === 1 ? "" : "s"} but AI couldn't find unit rows on any of them`,
+          variant: "destructive",
+        });
+        setImportStep("pick");
+        return;
+      }
+
+      // If exactly one sheet has units AND it's the only sheet full-stop,
+      // use the simple single-scheme preview. Otherwise always show the multi
+      // view so the user can see every sheet including skipped ones.
+      if (usableCount === 1 && schemes.length === 1) {
+        const only = schemes.find(s => s.units.length > 0)!;
+        setImportPreview({ sheetName: only.sheetName, units: only.units });
+        setMultiSchemes(null);
+        setImportStep("preview");
+        return;
+      }
+
+      // Multi-scheme workbook: keep all sheets — including skipped/errored —
+      // so the user can see and debug why a particular tab wasn't parsed.
+      setMultiSchemes(schemes.map(s => ({
+        sheetName: s.sheetName,
+        schemeHint: s.schemeHint || s.sheetName,
+        units: s.units || [],
+        propertyId: importPropertyId || "",
+        skipped: s.skipped,
+        skipReason: s.skipReason,
+        error: s.error,
+      })));
+      setImportPreview(null);
+      setImportStep("preview");
+    } catch (e: any) {
+      toast({ title: "Parse failed", description: e.message, variant: "destructive" });
+      setImportStep("pick");
+    }
+  };
+
+  const runBoardImport = async () => {
+    // Multi path
+    if (multiSchemes && multiSchemes.length > 0) {
+      const mapped = multiSchemes.filter(s => s.propertyId && s.units.length > 0);
+      if (mapped.length === 0) {
+        toast({ title: "Pick a property for at least one scheme", variant: "destructive" });
+        return;
+      }
+      setImportStep("importing");
+      try {
+        const r = await fetch(`/api/leasing-schedule/import-multi`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ imports: mapped.map(s => ({ property_id: s.propertyId, units: s.units })) }),
+        });
+        if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); setImportStep("preview"); return; }
+        const data = await r.json();
+        toast({ title: `${data.totalImported} units imported across ${mapped.length} scheme${mapped.length === 1 ? "" : "s"}` });
+        queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/properties"] });
+        resetImport();
+      } catch (e: any) {
+        toast({ title: "Import failed", description: e.message, variant: "destructive" });
+        setImportStep("preview");
+      }
+      return;
+    }
+
+    // Single path
+    if (!importPreview?.units?.length || !importPropertyId) {
+      toast({ title: "Pick a property for this schedule", variant: "destructive" });
+      return;
+    }
+    setImportStep("importing");
+    try {
+      const r = await fetch(`/api/leasing-schedule/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ property_id: importPropertyId, units: importPreview.units }),
+      });
+      if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); setImportStep("preview"); return; }
+      const data = await r.json();
+      toast({ title: `${data.imported} units imported` });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/properties"] });
+      resetImport();
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+      setImportStep("preview");
+    }
+  };
 
   const handleExportAll = async () => {
     if (properties.length === 0) return;
@@ -1877,6 +3417,10 @@ export default function LeasingSchedulePage() {
             <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search properties..." className="pl-8 h-8 text-xs w-[200px]" data-testid="search-properties" />
           </div>
+          <Button size="sm" className="h-8 text-xs gap-1.5" onClick={() => setImportOpen(true)} data-testid="btn-import-board">
+            <Upload className="w-3.5 h-3.5" />
+            Import Excel
+          </Button>
           {properties.length > 0 && (
             <>
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={handleDownloadExcel} disabled={downloadingExcel} data-testid="btn-download-excel">
@@ -1987,9 +3531,11 @@ export default function LeasingSchedulePage() {
               </TableHeader>
               <TableBody>
                 {filtered.map(p => {
-                  const occ = p.unit_count > 0 ? Math.round((p.occupied_count / p.unit_count) * 100) : 0;
+                  const uc = Number(p.unit_count) || 0;
+                  const oc = Number(p.occupied_count) || 0;
+                  const occ = uc > 0 ? Math.round((oc / uc) * 100) : 0;
                   return (
-                    <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.location.href = `/leasing-schedule/${p.id}`}>
+                    <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50">
                       <TableCell>
                         <Link href={`/leasing-schedule/${p.id}`} className="font-medium text-sm hover:underline">{p.name}</Link>
                       </TableCell>
@@ -2004,7 +3550,7 @@ export default function LeasingSchedulePage() {
                       <TableCell className="text-center text-sm text-gray-400">{p.vacant_count}</TableCell>
                       <TableCell className="text-center text-sm">
                         {p.expiring_soon > 0 ? (
-                          <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">{p.expiring_soon}</Badge>
+                          <Badge variant="outline" className="text-[11px] border-amber-300 text-amber-700 bg-amber-50">{p.expiring_soon}</Badge>
                         ) : "—"}
                       </TableCell>
                       <TableCell className="text-center">
@@ -2022,10 +3568,7 @@ export default function LeasingSchedulePage() {
             </Table>
           </div>
           {filtered.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <Building2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No leasing schedules found</p>
-            </div>
+            <EmptyBoardImport onImportClick={() => setImportOpen(true)} />
           )}
         </Card>
       ) : (
@@ -2041,7 +3584,7 @@ export default function LeasingSchedulePage() {
                     <span className="hover:underline cursor-pointer text-blue-600 dark:text-blue-400" data-testid={`link-landlord-${landlordId}`}>{landlord}</span>
                   </Link>
                 ) : landlord}
-                <Badge variant="secondary" className="text-[10px]">{props.reduce((s, p) => s + p.unit_count, 0)} units</Badge>
+                <Badge variant="secondary" className="text-[11px]">{props.reduce((s, p) => s + p.unit_count, 0)} units</Badge>
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {props.map(p => <PropertyCard key={p.id} prop={p} />)}
@@ -2050,14 +3593,253 @@ export default function LeasingSchedulePage() {
             );
           })}
           {filtered.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <Building2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No leasing schedules found</p>
-              <p className="text-xs mt-1">Properties with leasing instruction data will appear here</p>
-            </div>
+            <EmptyBoardImport onImportClick={() => setImportOpen(true)} />
           )}
         </div>
       )}
+
+      {/* Board-level Import Excel dialog */}
+      <Dialog open={importOpen} onOpenChange={(o) => { if (!o) resetImport(); else setImportOpen(true); }}>
+        <DialogContent className={multiSchemes ? "max-w-3xl" : "max-w-lg"}>
+          <DialogHeader>
+            <DialogTitle>Import Leasing Schedule from Excel</DialogTitle>
+          </DialogHeader>
+          {importStep === "pick" && (
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Drop an Excel file. If it contains <strong>multiple schemes</strong> (one per tab), you'll be able to map each one to a property after parsing.
+              </p>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Excel file (.xlsx / .xls / .csv)</label>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={e => setImportFile(e.target.files?.[0] || null)}
+                  data-testid="input-import-file"
+                />
+                <div
+                  role="button"
+                  onClick={() => importFileRef.current?.click()}
+                  onDragOver={e => { e.preventDefault(); }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) setImportFile(f);
+                  }}
+                  className="border-2 border-dashed rounded-md p-6 text-center cursor-pointer hover:bg-muted/40 transition"
+                >
+                  <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+                  {importFile ? (
+                    <>
+                      <p className="text-sm font-medium">{importFile.name}</p>
+                      <p className="text-[11px] text-muted-foreground">{(importFile.size / 1024).toFixed(0)} KB · click to change</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm">Drop your schedule here</p>
+                      <p className="text-[11px] text-muted-foreground">or click to browse</p>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Default property <span className="text-[11px] opacity-70">(used when the file has only one scheme; for multi-scheme files you'll map each scheme individually next)</span>
+                </label>
+                <Select value={importPropertyId} onValueChange={setImportPropertyId}>
+                  <SelectTrigger className="h-9 text-sm" data-testid="select-import-property">
+                    <SelectValue placeholder="Pick a property (optional for multi-scheme files)…" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {crmProperties.map(p => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" size="sm" onClick={resetImport}>Cancel</Button>
+                <Button size="sm" onClick={runBoardParse} disabled={!importFile} data-testid="btn-import-parse">
+                  Parse file
+                </Button>
+              </div>
+            </div>
+          )}
+          {importStep === "parsing" && (
+            <div className="py-10 text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+              <p className="text-sm">Reading workbook — AI is extracting the rows…</p>
+              <p className="text-[11px] text-muted-foreground mt-1">This can take 10-30 seconds for large schedules.</p>
+            </div>
+          )}
+          {importStep === "preview" && importPreview && !multiSchemes && (
+            <div className="space-y-3">
+              <div className="text-sm">
+                Detected <strong>{importPreview.units.length}</strong> units on sheet <strong>{importPreview.sheetName}</strong>.
+              </div>
+              {!importPropertyId && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Which property is this schedule for?</label>
+                  <Select value={importPropertyId} onValueChange={setImportPropertyId}>
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Pick a property…" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      {crmProperties.map(p => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className="max-h-[300px] overflow-auto border rounded text-xs">
+                <table className="w-full">
+                  <thead className="bg-muted/50 sticky top-0">
+                    <tr>
+                      <th className="text-left p-2">Unit</th>
+                      <th className="text-left p-2">Tenant</th>
+                      <th className="text-left p-2">Rent pa</th>
+                      <th className="text-left p-2">Sqft</th>
+                      <th className="text-left p-2">Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.units.slice(0, 50).map((u: any, i: number) => (
+                      <tr key={i} className="border-t">
+                        <td className="p-2">{u.unit_name || u.unit || "—"}</td>
+                        <td className="p-2">{u.tenant_name || u.tenant || "—"}</td>
+                        <td className="p-2">{u.rent_pa || u.rent || "—"}</td>
+                        <td className="p-2">{u.sqft || u.area || "—"}</td>
+                        <td className="p-2">{u.lease_expiry || u.expiry || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {importPreview.units.length > 50 && (
+                  <p className="text-[11px] text-muted-foreground p-2">Showing first 50 of {importPreview.units.length} rows.</p>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={() => setImportStep("pick")}>Back</Button>
+                <Button size="sm" onClick={runBoardImport} disabled={!importPropertyId} data-testid="btn-import-confirm">
+                  Import {importPreview.units.length} units
+                </Button>
+              </div>
+            </div>
+          )}
+          {importStep === "preview" && multiSchemes && (() => {
+            const mapable = multiSchemes.filter(s => s.units.length > 0);
+            const skippedCount = multiSchemes.length - mapable.length;
+            const mappedReady = mapable.filter(s => s.propertyId);
+            return (
+              <div className="space-y-3">
+                <div className="text-sm">
+                  Found <strong>{multiSchemes.length}</strong> sheet{multiSchemes.length === 1 ? "" : "s"}.
+                  {" "}<strong>{mapable.length}</strong> with unit rows
+                  ({mapable.reduce((s, x) => s + x.units.length, 0)} units total)
+                  {skippedCount > 0 && <>, <strong>{skippedCount}</strong> skipped</>}.
+                </div>
+                <div className="max-h-[420px] overflow-auto border rounded divide-y">
+                  {multiSchemes.map((scheme, idx) => {
+                    const hasUnits = scheme.units.length > 0;
+                    const showError = !!scheme.error;
+                    const showSkipped = !hasUnits && !showError;
+                    return (
+                      <div key={idx} className={`p-3 space-y-2 ${!hasUnits ? "bg-muted/20" : ""}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium truncate">{scheme.schemeHint}</p>
+                              {showError && <Badge variant="destructive" className="text-[11px]">error</Badge>}
+                              {showSkipped && <Badge variant="secondary" className="text-[11px]">skipped</Badge>}
+                              {hasUnits && <Badge variant="outline" className="text-[11px] border-emerald-500 text-emerald-700">{scheme.units.length} units</Badge>}
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              Sheet "{scheme.sheetName}"
+                              {scheme.skipReason && <> · {scheme.skipReason}</>}
+                              {scheme.error && <> · {scheme.error}</>}
+                            </p>
+                          </div>
+                          <div className="w-[260px] shrink-0">
+                            <Select
+                              value={scheme.propertyId}
+                              onValueChange={(v) => {
+                                setMultiSchemes(prev => prev ? prev.map((s, i) => i === idx ? { ...s, propertyId: v } : s) : prev);
+                              }}
+                              disabled={!hasUnits}
+                            >
+                              <SelectTrigger className="h-8 text-xs" data-testid={`select-scheme-${idx}`}>
+                                <SelectValue placeholder={hasUnits ? "Map to property…" : "No units to import"} />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-[260px]">
+                                {crmProperties.map(p => (
+                                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        {hasUnits && (
+                          <div className="text-[11px] text-muted-foreground">
+                            Preview:{" "}
+                            {scheme.units.slice(0, 3).map((u: any) => u.tenant_name || u.unit_name || "?").join(" · ")}
+                            {scheme.units.length > 3 && ` · +${scheme.units.length - 3} more`}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <p className="text-[11px] text-muted-foreground">
+                    {mappedReady.length} of {mapable.length} mappable schemes ready
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setImportStep("pick")}>Back</Button>
+                    <Button
+                      size="sm"
+                      onClick={runBoardImport}
+                      disabled={mappedReady.length === 0}
+                      data-testid="btn-import-multi-confirm"
+                    >
+                      Import {mappedReady.reduce((s, x) => s + x.units.length, 0)} units
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          {importStep === "importing" && (
+            <div className="py-10 text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+              <p className="text-sm">Writing units to the schedule…</p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function EmptyBoardImport({ onImportClick }: { onImportClick: () => void }) {
+  return (
+    <div className="text-center py-14 px-4">
+      <div className="mx-auto w-14 h-14 rounded-full bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center mb-3">
+        <Building2 className="w-7 h-7 text-blue-500" />
+      </div>
+      <h3 className="text-base font-semibold mb-1">No leasing schedules yet</h3>
+      <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
+        Import a landlord's Excel schedule — AI will extract units, tenants, rents, breaks and expiries into the board.
+      </p>
+      <Button onClick={onImportClick} className="gap-1.5" data-testid="btn-empty-import">
+        <Upload className="w-4 h-4" />
+        Import Excel schedule
+      </Button>
+      <p className="text-[11px] text-muted-foreground mt-3">
+        Supports .xlsx, .xls, .csv — any landlord format.
+      </p>
     </div>
   );
 }

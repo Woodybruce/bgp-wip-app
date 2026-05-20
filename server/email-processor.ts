@@ -1,14 +1,59 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { chatbgpEmailLog, crmContacts, crmCompanies, crmInteractions, users } from "@shared/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
-import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment } from "./shared-mailbox";
+import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest, getSharedMailboxConversation } from "./shared-mailbox";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { generateAutonomousDocument, exportDocumentToPdf } from "./document-templates";
+import { ingestBytes } from "./universal-ingest";
 
 const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+
+const DATA_MIME_TYPES = new Set([
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+  "application/csv",
+  "application/pdf",
+  "text/plain",
+  "application/vnd.oasis.opendocument.spreadsheet",
+]);
+
+function isDataFile(filename: string, contentType?: string): boolean {
+  if (contentType && DATA_MIME_TYPES.has(contentType.split(";")[0].trim().toLowerCase())) return true;
+  const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
+  return ["xlsx", "xls", "csv", "pdf", "txt", "ods"].includes(ext);
+}
+
+async function fetchAndIngestAttachments(messageId: string, fromEmail: string): Promise<string> {
+  try {
+    const attList = await graphRequest(
+      `/users/${SHARED_MAILBOX}/messages/${messageId}/attachments?$select=id,name,contentType,size,isInline`
+    );
+    const dataAtts = (attList.value || []).filter(
+      (a: any) => !a.isInline && isDataFile(a.name, a.contentType) && (a.size || 0) < 25 * 1024 * 1024
+    );
+    if (dataAtts.length === 0) return "";
+    const summaries: string[] = [];
+    for (const att of dataAtts) {
+      try {
+        const detail = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/attachments/${att.id}`);
+        const bytes = Buffer.from(detail.contentBytes, "base64");
+        const result = await ingestBytes({ bytes, filename: att.name, userId: fromEmail, userName: fromEmail });
+        summaries.push(`**${att.name}**: ${result.narrative}`);
+      } catch (err: any) {
+        console.warn(`[email-ingest] Attachment ${att.name} failed: ${err?.message}`);
+        summaries.push(`**${att.name}**: could not parse (${err?.message})`);
+      }
+    }
+    return summaries.join("\n");
+  } catch (err: any) {
+    console.warn(`[email-ingest] fetchAndIngestAttachments failed: ${err?.message}`);
+    return "";
+  }
+}
 
 // Convert Microsoft Graph message HTML/text body to a plain-text string
 // that preserves readable structure. The old extractor preferred
@@ -129,7 +174,7 @@ Also extract:
 - For "news" type: the property/area/opportunity mentioned
 - Which BGP team member sent/forwarded it (if any)
 - Any external contact names and email addresses
-- Which BGP teams/departments should know about this email. Teams are: London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Landsec, Office / Corporate, Accounts. Pick ALL relevant teams. For example: a retail availability in Mayfair → London Leasing; an investment opportunity → Investment; a lease renewal query → Lease Advisory; a nationwide requirement → National Leasing.
+- Which BGP teams/departments should know about this email. Teams are: London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Landsec, Office / Corporate, Accounts. Pick ALL relevant teams. For example: a retail availability in Mayfair → London Retail; an F&B operator opportunity → London F&B; an investment opportunity → Investment; a lease renewal query → Lease Advisory; a nationwide requirement → National Leasing.
 - A short "intelligence briefing" (1-2 sentences) explaining why this email matters and what BGP should do about it, written for a senior director.
 
 You MUST return ONLY a valid JSON object with no additional text, explanation, or markdown formatting. Do not wrap in code fences.
@@ -142,7 +187,7 @@ You MUST return ONLY a valid JSON object with no additional text, explanation, o
   "requestedAction": "description of what to do (for instructions)",
   "propertyContext": "property/area mentioned if any",
   "urgency": "high|normal|low",
-  "relevantTeams": ["London Leasing", "Investment"],
+  "relevantTeams": ["London Retail", "Investment"],
   "briefing": "Short intelligence note for the team — why this matters and what to do"
 }`;
 
@@ -185,7 +230,16 @@ Return JSON:
   ],
   "replyToSender": "The response to email back to the team member (mention what docs were generated/attached)",
   "summary": "What was done"
-}`;
+}
+
+REPLY STYLE:
+- Write like a competent colleague replying inside an active email thread, NOT a help-desk bot. The recipient will see your reply on top of the original Outlook conversation — don't pretend the thread doesn't exist or ask them to "resend the full chain". If the body looks truncated, do your best with what you've got and ask one specific follow-up question if anything's missing.
+- Professional but warm. Business English. Contractions OK ("I've", "we'll"). No emojis, no exclamation marks, no jokes.
+- 2-5 sentences. Lead with what you did or what you found, then any caveats or asks. Don't pad with "Thanks for forwarding" / "Happy to help" boilerplate.
+- If you took CRM actions (logged an interaction, created a deal etc.), mention them in one short sentence inline — don't dump a bullet list of "Actions taken" at the bottom.
+- Never write "This is an automated response" or anything like it — the system doesn't append a footer any more.
+- Never lecture about what wasn't included, what threshold the request met, etc.
+- Sign off with "ChatBGP" on its own line. No corporate signature, no disclaimers — the recipient already has BGP's signature in the thread below.`;
 
 interface EmailClassification {
   classification: string;
@@ -260,8 +314,122 @@ async function processInstruction(
   subject: string,
   bodyText: string,
   from: string,
-  classification: EmailClassification
+  classification: EmailClassification,
+  messageId?: string,
 ): Promise<{ actions: ProcessedAction[]; reply: string; attachments?: EmailAttachment[] }> {
+  // Entity pre-fetch — extract postcodes, addresses, and capitalised
+  // company names from the email body, then look them up in the CRM
+  // and join the matches into the AI prompt. Closes the "I don't know
+  // what you're referring to" gap by grounding the AI in the actual
+  // data BGP has — no more inventing properties from thin air.
+  let entityContext = "";
+  try {
+    const text = `${subject} ${bodyText}`;
+    // Postcodes — UK format
+    const postcodes = Array.from(
+      new Set(
+        (text.match(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi) || [])
+          .map((s) => s.toUpperCase().replace(/\s+/g, " ").trim()),
+      ),
+    ).slice(0, 5);
+    // Capitalised multi-word phrases — likely company / property names
+    const capPhrases = Array.from(
+      new Set(
+        (text.match(/\b([A-Z][a-zA-Z0-9&'.-]+(?:\s+[A-Z][a-zA-Z0-9&'.-]+){1,4})\b/g) || [])
+          .filter((s) => !/^(Subject|From|To|Cc|Sent|Date|Hi|Dear|Best|Regards|Kind|Many|Thanks|Thank|RE|FW|FWD)\b/i.test(s))
+          .map((s) => s.trim()),
+      ),
+    ).slice(0, 12);
+
+    const chunks: string[] = [];
+    if (postcodes.length > 0) {
+      const matchedProps = await pool.query<any>(
+        `SELECT name, address, postcode, group_name, status FROM crm_properties
+          WHERE postcode = ANY($1::text[]) OR REPLACE(UPPER(postcode), ' ', '') = ANY($2::text[])
+          LIMIT 12`,
+        [postcodes, postcodes.map((p) => p.replace(/\s+/g, ""))],
+      );
+      if (matchedProps.rows.length > 0) {
+        chunks.push(`Properties at mentioned postcodes (${postcodes.join(", ")}):`);
+        for (const p of matchedProps.rows) {
+          chunks.push(`  - ${p.name} (${p.postcode || "no postcode"}) ${p.group_name ? `[${p.group_name}]` : ""} ${p.status ? `· ${p.status}` : ""}`);
+        }
+      }
+    }
+    if (capPhrases.length > 0) {
+      const matchedCompanies = await pool.query<any>(
+        `SELECT name, industry, type FROM crm_companies
+          WHERE lower(name) = ANY($1::text[])
+             OR EXISTS (
+               SELECT 1 FROM unnest($1::text[]) AS phrase
+                WHERE lower(crm_companies.name) LIKE '%' || phrase || '%'
+                  OR phrase LIKE '%' || lower(crm_companies.name) || '%'
+             )
+          LIMIT 12`,
+        [capPhrases.map((s) => s.toLowerCase())],
+      );
+      if (matchedCompanies.rows.length > 0) {
+        chunks.push(`Companies matching mentioned names:`);
+        for (const c of matchedCompanies.rows) {
+          chunks.push(`  - ${c.name}${c.industry ? ` · ${c.industry}` : ""}${c.type ? ` (${c.type})` : ""}`);
+        }
+      }
+
+      // Also look for matching properties by name fragment (Lots Rd,
+      // Hanover Square, etc.) — common case the user complained about.
+      const matchedByName = await pool.query<any>(
+        `SELECT name, address, postcode, status FROM crm_properties
+          WHERE EXISTS (
+            SELECT 1 FROM unnest($1::text[]) AS phrase
+             WHERE lower(crm_properties.name) LIKE '%' || phrase || '%'
+          )
+          LIMIT 12`,
+        [capPhrases.map((s) => s.toLowerCase())],
+      );
+      if (matchedByName.rows.length > 0) {
+        chunks.push(`Properties matching mentioned names:`);
+        for (const p of matchedByName.rows) {
+          chunks.push(`  - ${p.name} (${p.postcode || "no postcode"}) ${p.status ? `· ${p.status}` : ""}`);
+        }
+      }
+    }
+    if (chunks.length > 0) {
+      entityContext = `\n\nENTITIES MATCHED IN CRM (use these for context — don't invent properties / companies that aren't here):\n${chunks.join("\n")}\n`;
+    } else if (postcodes.length > 0 || capPhrases.length > 0) {
+      entityContext = `\n\nENTITIES NOT FOUND IN CRM: ${[...postcodes, ...capPhrases.slice(0, 5)].join(", ")} — be honest that BGP doesn't have records for these. Don't make up details.\n`;
+    }
+  } catch (err: any) {
+    console.warn(`[email-processor] entity pre-fetch failed: ${err?.message}`);
+  }
+
+  // Pull prior messages in the same email thread so the AI has context
+  // when the user replies "yes go ahead" or "what about the second
+  // option" — without this, every reply is a cold start.
+  let conversationHistory = "";
+  if (messageId) {
+    try {
+      const current = await getSharedMailboxMessageById(messageId);
+      const convId = current?.conversationId;
+      if (convId) {
+        const prior = await getSharedMailboxConversation(convId, messageId);
+        if (prior.length > 0) {
+          const formatted = prior
+            .slice(0, 8)            // most recent 8 prior messages, oldest first below
+            .reverse()
+            .map((m: any) => {
+              const sender = m.from?.emailAddress?.address || m.from?.emailAddress?.name || "(unknown)";
+              const when = m.receivedDateTime ? new Date(m.receivedDateTime).toISOString().slice(0, 16).replace("T", " ") : "";
+              const preview = (m.bodyPreview || "").replace(/\s+/g, " ").trim().slice(0, 400);
+              return `[${when}] ${sender}: ${preview}`;
+            })
+            .join("\n");
+          conversationHistory = `\n\nPRIOR THREAD (oldest first, most recent ${prior.length} messages — use this for context):\n${formatted}\n`;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[email-processor] thread history fetch failed: ${err?.message}`);
+    }
+  }
   const allContacts = await db.select({
     id: crmContacts.id,
     name: crmContacts.name,
@@ -290,7 +458,7 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
           { role: "system", content: INSTRUCTION_PROMPT + "\n\n" + crmContext },
           {
             role: "user",
-            content: `Subject: ${subject}\nFrom: ${from}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
+            content: `Subject: ${subject}\nFrom: ${from}${entityContext}${conversationHistory}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
           },
         ],
         max_completion_tokens: 2048,
@@ -476,9 +644,33 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
     }
   }
 
+  // Attachment hallucination guard. The AI's reply text sometimes claims
+  // "the document is attached" but no generate_document action was emitted
+  // (e.g. it intended to but didn't, or it was paraphrasing). If we don't
+  // actually have an attachment to send, strip the claim from the reply —
+  // better to undersell than mislead. ("Attaching the doc separately" reads
+  // better than "PFA" with no attachment.)
+  let finalReply = parsed.replyToSender || "Your instruction has been received and processed.";
+  if (generatedAttachments.length === 0) {
+    const claimsAttachment = /attach(?:ed|ing|ment|ments)|enclos(?:ed|ure)|please find|\bPFA\b|is attached|find attached/i.test(finalReply);
+    if (claimsAttachment) {
+      // Drop any sentence containing an attachment claim.
+      finalReply = finalReply
+        .split(/(?<=[.!?])\s+/)
+        .filter((s: string) => !/attach(?:ed|ing|ment|ments)|enclos(?:ed|ure)|please find|\bPFA\b|find attached/i.test(s))
+        .join(" ")
+        .trim();
+      // If we stripped everything, fall back to a neutral acknowledgement.
+      if (!finalReply) {
+        finalReply = "Thanks for the email — I've logged this. Reply if you need anything else.";
+      }
+      console.warn(`[email-processor] stripped attachment claim from reply — no document was actually generated`);
+    }
+  }
+
   return {
     actions: executedActions,
-    reply: parsed.replyToSender || "Your instruction has been received and processed.",
+    reply: finalReply,
     attachments: generatedAttachments.length > 0 ? generatedAttachments : undefined,
   };
 }
@@ -725,6 +917,32 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
       const toRecipients = (msg.toRecipients || []).map((r: any) => r.emailAddress?.address || "");
       const ccRecipients = (msg.ccRecipients || []).map((r: any) => r.emailAddress?.address || "");
 
+      // Index every incoming email body into the knowledge base so the
+      // archivist surface (search, "what did Jack say about TCR?",
+      // chatbgp recall) can quote from it later. Skipped if the body
+      // is essentially empty or under the 50-char threshold the
+      // archivist itself enforces. Fire-and-forget — failure here
+      // must not block the reply path.
+      const kbContent = `From: ${fromName || fromEmail} <${fromEmail}>\nDate: ${receivedAt.toISOString()}\nSubject: ${subject}\n\n${bodyText}`;
+      const kbPath = `email://shared/${messageId}`;
+      (async () => {
+        try {
+          const { summarizeAndIndex } = await import("./archivist");
+          await summarizeAndIndex(
+            `Email: ${subject}`,
+            kbPath,
+            msg.webLink || null,
+            "email://shared",
+            kbContent,
+            kbContent.length,
+            receivedAt,
+            "email",
+          );
+        } catch (kbErr: any) {
+          console.warn(`[email-processor] KB index failed for ${messageId}:`, kbErr?.message || kbErr);
+        }
+      })();
+
       try {
         const classification = await classifyEmail(subject, bodyText, fromEmail, toRecipients, ccRecipients);
         console.log(`[email-processor] ${subject} → ${classification.classification} (${classification.urgency})`);
@@ -752,11 +970,18 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
               break;
             }
 
-            const result = await processInstruction(subject, bodyText, fromEmail, classification);
+            const result = await processInstruction(subject, bodyText, fromEmail, classification, messageId);
             actionsTaken = result.actions;
             console.log(`[email-processor] Instruction processed for "${subject}": ${result.actions.length} actions, reply=${!!result.reply}`);
 
-            const replyText = result.reply || `Hi — I've received your email "${subject}" and logged it. If you need me to take a specific action, try sending a more detailed instruction via the ChatBGP dashboard or email.`;
+            // Also ingest any data file attachments alongside the instruction.
+            const attachIngest = await fetchAndIngestAttachments(messageId, fromEmail);
+            if (attachIngest) {
+              actionsTaken.push({ type: "attachment_ingested", result: attachIngest, success: true });
+            }
+
+            const replyText = (result.reply || `Hi — I've received your email "${subject}" and logged it.`) +
+              (attachIngest ? `\n\nAttachment import:\n${attachIngest}` : "");
             replySent = await sendReplyWithFallback(messageId, fromEmail, subject, replyText, actionsTaken, result.attachments);
             break;
           }
@@ -792,14 +1017,23 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
           }
 
           case "document": {
-            actionsTaken.push({
-              type: "document_received",
-              result: `Document email noted: ${subject}. Attachments should be filed via the dashboard.`,
-              success: true,
-            });
-            if (isRegisteredUser) {
-              const docReply = `Thanks — I've received the document "${subject}". It's been noted and can be filed via the BGP dashboard.`;
-              replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+            const ingestSummary = await fetchAndIngestAttachments(messageId, fromEmail);
+            if (ingestSummary) {
+              actionsTaken.push({ type: "attachment_ingested", result: ingestSummary, success: true });
+              if (isRegisteredUser) {
+                const docReply = `Thanks — I've processed the attachments from "${subject}":\n\n${ingestSummary}`;
+                replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+              }
+            } else {
+              actionsTaken.push({
+                type: "document_received",
+                result: `Document email noted: ${subject}. No importable data files found.`,
+                success: true,
+              });
+              if (isRegisteredUser) {
+                const docReply = `Thanks — I've received your email "${subject}". I couldn't find any importable data files (Excel, CSV, or PDF). If you meant to send a leasing schedule or similar, try attaching the file directly.`;
+                replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+              }
             }
             break;
           }
@@ -891,24 +1125,15 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
   return { processed, errors };
 }
 
-function formatReplyHtml(reply: string, actions: ProcessedAction[]): string {
-  const actionList = actions
-    .filter(a => a.success)
-    .map(a => `<li>${a.result}</li>`)
-    .join("");
-
-  return `
-    <div style="font-family: Arial, Helvetica, sans-serif; color: #333;">
-      <p>${reply.replace(/\n/g, "<br>")}</p>
-      ${actionList ? `
-        <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-        <p style="color: #666; font-size: 13px;"><strong>Actions taken:</strong></p>
-        <ul style="color: #666; font-size: 13px;">${actionList}</ul>
-      ` : ""}
-      <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-      <p style="color: #999; font-size: 11px;">This is an automated response from ChatBGP. For complex requests, please use the <a href="https://bgp-wip-app-production-efac.up.railway.app/chatbgp">ChatBGP dashboard</a>.</p>
-    </div>
-  `;
+function formatReplyHtml(reply: string, _actions: ProcessedAction[]): string {
+  // Strip everything that made the reply read like a bot: the "Logged
+  // in BGP" bullet list and the "This is an automated response" footer.
+  // The reply body alone — written by the Claude prompt as a normal
+  // email — is what we send. Outlook's quoted thread is appended by
+  // replyToSharedMailboxMessage below, so the recipient sees a clean
+  // human-style reply on top of the conversation history they expect.
+  const escapedHtml = reply.replace(/\n/g, "<br>");
+  return `<div style="font-family: Arial, Helvetica, sans-serif; color: #222;">${escapedHtml}</div>`;
 }
 
 let processingInterval: ReturnType<typeof setInterval> | null = null;
@@ -1039,7 +1264,8 @@ export function registerEmailProcessorRoutes(app: Express) {
 
   app.post("/api/email-processor/reprocess/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const logId = parseInt(req.params.id);
+      const logId = parseInt(String(req.params.id));
+      if (isNaN(logId)) return res.status(400).json({ message: "Invalid log ID" });
       const [logEntry] = await db.select().from(chatbgpEmailLog).where(eq(chatbgpEmailLog.id, logId)).limit(1);
       if (!logEntry) return res.status(404).json({ message: "Log entry not found" });
       if (!logEntry.messageId) return res.status(400).json({ message: "No message ID to reprocess" });
@@ -1071,7 +1297,7 @@ export function registerEmailProcessorRoutes(app: Express) {
       }
 
       if (classification.classification === "instruction") {
-        const result = await processInstruction(subject, bodyText, fromEmail, classification);
+        const result = await processInstruction(subject, bodyText, fromEmail, classification, logEntry.messageId);
         actionsTaken = result.actions;
         const replyText = result.reply || `Hi — I've received your email "${subject}" and logged it. If you need me to take a specific action, try sending a more detailed instruction via the ChatBGP dashboard or email.`;
         replySent = await sendReplyWithFallback(logEntry.messageId, fromEmail, subject, replyText, actionsTaken, result.attachments);

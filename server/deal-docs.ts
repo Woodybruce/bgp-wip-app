@@ -299,7 +299,7 @@ router.get("/api/deal/:dealId/offer-summary.pdf", requireAuth, async (req, res) 
       { label: "Rent free", v: deal.rent_free ? `${deal.rent_free} months` : null },
       { label: "Capital contribution", v: money(deal.capital_contribution) },
       { label: "Total area", v: deal.total_area_sqft ? `${Number(deal.total_area_sqft).toLocaleString()} sqft` : null },
-      { label: "Completion", v: deal.completion_date || deal.completion_target_date || null },
+      { label: "Target date", v: deal.target_date ? new Date(deal.target_date).toLocaleDateString("en-GB") : null },
     ];
     const colW = (pageW - 24) / 3;
     for (let i = 0; i < offer.length; i++) {
@@ -363,7 +363,7 @@ router.get("/api/deal/:dealId/completion.pdf", requireAuth, async (req, res) => 
     const summary = [
       { label: "Price / Rent", v: money(deal.pricing || deal.rent_pa) },
       { label: "Term", v: deal.lease_length ? `${deal.lease_length} years` : null },
-      { label: "Completed", v: deal.completion_date || (deal.hots_completed_at ? new Date(deal.hots_completed_at).toLocaleDateString("en-GB") : null) },
+      { label: "Completed", v: deal.completed_at ? new Date(deal.completed_at).toLocaleDateString("en-GB") : (deal.exchanged_at ? new Date(deal.exchanged_at).toLocaleDateString("en-GB") : null) },
       { label: "Fee", v: money(deal.fee) },
     ];
     const colW = (pageW - 24) / 2;

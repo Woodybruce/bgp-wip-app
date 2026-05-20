@@ -159,7 +159,7 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
     let value: any = aiVal;
     if (field === "store_count" || field === "employee_count") {
       const n = Number(aiVal);
-      if (!Number.isFinite(n)) continue;
+      if (!Number.isFinite(n) || n < 0) continue;
       value = Math.round(n);
     }
     if (typeof value === "string") value = value.trim();
@@ -344,26 +344,21 @@ async function searchUnsplash(query: string, count: number): Promise<StockHit[]>
   } catch { return []; }
 }
 
-async function searchPexels(query: string, count: number): Promise<StockHit[]> {
-  const key = process.env.PEXELS_API_KEY;
-  if (!key) return [];
-  try {
-    const res = await fetch(
-      `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${count}&orientation=landscape`,
-      { headers: { Authorization: key } }
-    );
-    if (!res.ok) return [];
-    const data = await res.json() as any;
-    return (data.photos || []).map((p: any) => ({
-      url: p.src?.large || p.src?.medium,
-      description: p.alt || query,
-      photographer: p.photographer || "Pexels",
-      source: "pexels",
-    }));
-  } catch { return []; }
+// Pexels stock-image fetch is disabled (so is Unsplash — see fetchBrandImages
+// below). To re-enable, restore the body and re-enable fetchBrandImages too.
+async function searchPexels(_query: string, _count: number): Promise<StockHit[]> {
+  return [];
 }
 
-async function fetchBrandImages(companyId: string, brandName: string, industry?: string): Promise<number> {
+async function fetchBrandImages(_companyId: string, _brandName: string, _industry?: string): Promise<number> {
+  // Disabled — auto-fetched stock photos (Unsplash + Pexels) were
+  // bloating image_studio_images with brand-mismatched dross that nobody
+  // used in proposals. AI brand enrichment (industry, store_count, etc.)
+  // continues unaffected. Email-related crons (weekly digest, brand
+  // digest, Pathway email ingest) are unaffected. To re-enable, restore
+  // the body below.
+  return 0;
+  /*
   // Skip if we already have enough images for this brand
   const existing = await pool.query(
     `SELECT COUNT(*)::int AS cnt FROM image_studio_images WHERE LOWER(brand_name) = LOWER($1)`,
@@ -429,6 +424,7 @@ async function fetchBrandImages(companyId: string, brandName: string, industry?:
   }
   if (imported > 0) console.log(`[brand-images] Imported ${imported} images for ${brandName}`);
   return imported;
+  */
 }
 
 export default router;

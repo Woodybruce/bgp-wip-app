@@ -13,6 +13,7 @@ import {
   investmentComps,
 } from "@shared/schema";
 import { requireAuth } from "./auth";
+import { legacyToCode } from "@shared/deal-status";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 
 async function safeAICall(prompt: { system: string; user: string; maxTokens?: number }): Promise<string> {
@@ -61,7 +62,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       const alerts: Array<{ type: string; severity: "high" | "medium" | "low"; dealId: string; dealName: string; message: string }> = [];
 
       for (const deal of deals) {
-        if (!deal.status || ["Completed", "Withdrawn", "Invoiced", "Billed"].includes(deal.status)) continue;
+        if (!deal.status || ["COM", "WIT", "INV"].includes(legacyToCode(deal.status) || "")) continue;
 
         const updatedAt = deal.updatedAt ? new Date(deal.updatedAt) : null;
         const daysSinceUpdate = updatedAt ? Math.floor((now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24)) : null;
@@ -75,25 +76,26 @@ export function registerAIIntelligenceRoutes(app: Express) {
           });
         }
 
-        if (deal.completionDate) {
-          const completionDate = new Date(deal.completionDate);
-          const daysUntil = Math.floor((completionDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        if (deal.targetDate) {
+          const targetDate = new Date(deal.targetDate);
+          const targetStr = targetDate.toLocaleDateString("en-GB");
+          const daysUntil = Math.floor((targetDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
           if (daysUntil >= 0 && daysUntil <= 14) {
             alerts.push({
               type: "approaching_completion",
               severity: daysUntil <= 3 ? "high" : "medium",
               dealId: deal.id,
               dealName: deal.name,
-              message: `Completion date in ${daysUntil} day${daysUntil !== 1 ? "s" : ""} (${deal.completionDate})`,
+              message: `Target date in ${daysUntil} day${daysUntil !== 1 ? "s" : ""} (${targetStr})`,
             });
           }
-          if (daysUntil < 0) {
+          if (daysUntil < 0 && !deal.exchangedAt && !deal.completedAt) {
             alerts.push({
               type: "overdue_completion",
               severity: "high",
               dealId: deal.id,
               dealName: deal.name,
-              message: `Completion date was ${Math.abs(daysUntil)} days ago (${deal.completionDate}) but deal is still "${deal.status}"`,
+              message: `Target date was ${Math.abs(daysUntil)} days ago (${targetStr}) but deal is still "${deal.status}"`,
             });
           }
         }
@@ -114,7 +116,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
           }
         }
 
-        if (deal.status === "Under Offer" && deal.amlCheckCompleted !== "YES") {
+        if (legacyToCode(deal.status) === "SOL" && deal.amlCheckCompleted !== "YES") {
           alerts.push({
             type: "missing_aml",
             severity: "medium",
@@ -157,8 +159,8 @@ export function registerAIIntelligenceRoutes(app: Express) {
           OR ${crmDeals.leasingAgentId} = ${contactId}`
       );
 
-      const activeDeals = linkedDeals.filter(d => d.status && !["Completed", "Withdrawn", "Invoiced", "Billed"].includes(d.status));
-      const completedDeals = linkedDeals.filter(d => d.status && ["Completed", "Invoiced", "Billed"].includes(d.status));
+      const activeDeals = linkedDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
+      const completedDeals = linkedDeals.filter(d => ["COM", "INV"].includes(legacyToCode(d.status) || ""));
 
       const lastInteraction = interactions[0];
       const daysSinceContact = lastInteraction?.interactionDate
@@ -396,7 +398,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
           rentPa: d.rentPa,
           pricePsf: d.pricePsf,
           totalArea: d.totalAreaSqft,
-          completionDate: d.completionDate,
+          completionDate: d.completedAt ? new Date(d.completedAt).toISOString().slice(0, 10) : null,
           tenant: d.name,
         })),
         investmentComps: relevantInvComps.map(c => ({
@@ -404,7 +406,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
           price: c.price,
           yield: c.netInitialYield,
           sqft: c.totalSqft,
-          date: c.completionDate,
+          date: c.transactionDate,
         })),
       };
 
@@ -443,7 +445,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
   "filters": {
     "name": "text to search in name/title",
     "agent": "agent name if mentioned",
-    "team": "team name if mentioned (Investment, London Leasing, National Leasing, Lease Advisory, Tenant Rep, Development)",
+    "team": "team name if mentioned (Investment, London F&B, London Retail, National Leasing, Lease Advisory, Tenant Rep, Development)",
     "status": "status if mentioned",
     "location": "location/area if mentioned (e.g. Chelsea, Mayfair, Belgravia)",
     "minFee": number or null,
@@ -561,7 +563,9 @@ export function registerAIIntelligenceRoutes(app: Express) {
         breakOption: deal.breakOption,
         rentFree: deal.rentFree,
         capitalContribution: deal.capitalContribution,
-        completionDate: deal.completionDate,
+        targetDate: deal.targetDate,
+        exchangedAt: deal.exchangedAt,
+        completedAt: deal.completedAt,
         comments: deal.comments,
       };
 
@@ -617,7 +621,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
         }
       }
 
-      const underOffer = items.filter(i => i.status === "Under Offer");
+      const underOffer = items.filter(i => legacyToCode(i.status) === "SOL");
       const completed = items.filter(i => i.status === "Completed");
       const live = items.filter(i => i.status === "Live");
 
@@ -804,11 +808,11 @@ export function registerAIIntelligenceRoutes(app: Express) {
       const recentlyUpdated = teamDeals.filter(d => d.updatedAt && new Date(d.updatedAt) > weekAgo);
       const newDeals = teamDeals.filter(d => d.createdAt && new Date(d.createdAt) > weekAgo);
       const completedDeals = teamDeals.filter(d =>
-        (d.status === "Completed" || d.status === "Invoiced" || d.status === "Exchanged") &&
+        ["COM", "INV", "EXC"].includes(legacyToCode(d.status) || "") &&
         d.updatedAt && new Date(d.updatedAt) > weekAgo
       );
 
-      const activeDeals = teamDeals.filter(d => d.status && !["Completed", "Withdrawn", "Invoiced", "Billed"].includes(d.status));
+      const activeDeals = teamDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
       const totalActiveFees = activeDeals.reduce((s, d) => s + (d.fee || 0), 0);
       const completedFees = completedDeals.reduce((s, d) => s + (d.fee || 0), 0);
 

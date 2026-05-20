@@ -55,10 +55,22 @@ export async function extractTextFromFile(filePath: string, originalName: string
         const { PDFParse } = await import("pdf-parse");
         const pdfBuffer = await fs.promises.readFile(filePath);
         const parser = new (PDFParse as any)(new Uint8Array(pdfBuffer));
-        const data = await parser.getText();
-        const text = typeof data === "string" ? data : (data as any).text || String(data);
-        try { parser.destroy(); } catch {}
-        return text;
+        try {
+          const data = await parser.getText();
+          const text = typeof data === "string" ? data : (data as any).text || String(data);
+          return text;
+        } catch (pdfErr: any) {
+          // Malformed or image-only PDFs — treat as no extractable text rather
+          // than blowing up the whole indexing job. Common on scanned forms.
+          const msg = pdfErr?.message || String(pdfErr);
+          if (/InvalidPDFException|Invalid PDF|password|encrypted/i.test(msg)) {
+            console.warn(`[FileExtractor] Skipping unreadable PDF "${originalName}": ${msg}`);
+            return "";
+          }
+          throw pdfErr;
+        } finally {
+          try { parser.destroy(); } catch {}
+        }
       }
 
       case ".pptx": {
@@ -84,7 +96,7 @@ export async function extractTextFromFile(filePath: string, originalName: string
         return content;
     }
   } catch (error: any) {
-    console.error(`[FileExtractor] Error extracting ${ext} file:`, error);
+    console.warn(`[FileExtractor] Error extracting ${ext} from ${originalName}: ${error?.message || error}`);
     throw new Error(`Failed to extract text from ${originalName}: ${error.message}`);
   }
 }

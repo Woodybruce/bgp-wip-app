@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
+import { SourceCell, SourcePicker } from "@/components/source-cell";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -38,7 +39,7 @@ import {
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import InvestmentCompsPage from "@/pages/investment-comps";
@@ -482,19 +483,14 @@ function computeNetEffective(comp: CrmComp): number {
   return avgHeadline - annualisedIncentive;
 }
 
-// UK RPI / CPI annual averages — last 10 years (ONS published annual % change).
-// Used by the indexation calculator for RPI / CPI lease reviews. Update annually.
-const UK_INDEX_DATA: { year: number; rpi: number; cpi: number }[] = [
-  { year: 2015, rpi: 1.0, cpi: 0.0 },
-  { year: 2016, rpi: 1.8, cpi: 0.7 },
-  { year: 2017, rpi: 3.6, cpi: 2.7 },
-  { year: 2018, rpi: 3.3, cpi: 2.5 },
-  { year: 2019, rpi: 2.6, cpi: 1.8 },
-  { year: 2020, rpi: 1.5, cpi: 0.9 },
-  { year: 2021, rpi: 4.1, cpi: 2.6 },
-  { year: 2022, rpi: 11.6, cpi: 9.1 },
-  { year: 2023, rpi: 9.7, cpi: 7.3 },
-  { year: 2024, rpi: 3.6, cpi: 2.5 },
+// Fallback data used until live ONS data loads.
+const UK_INDEX_FALLBACK: { year: number; rpi: number; cpi: number }[] = [
+  { year: 2015, rpi: 1.0, cpi: 0.0 }, { year: 2016, rpi: 1.8, cpi: 0.7 },
+  { year: 2017, rpi: 3.6, cpi: 2.7 }, { year: 2018, rpi: 3.3, cpi: 2.5 },
+  { year: 2019, rpi: 2.6, cpi: 1.8 }, { year: 2020, rpi: 1.5, cpi: 0.9 },
+  { year: 2021, rpi: 4.1, cpi: 2.6 }, { year: 2022, rpi: 11.6, cpi: 9.1 },
+  { year: 2023, rpi: 9.7, cpi: 7.3 }, { year: 2024, rpi: 3.6, cpi: 2.5 },
+  { year: 2025, rpi: 4.0, cpi: 2.6 },
 ];
 
 // Inline-edit cell that stores raw numbers but displays them with thousands separators.
@@ -714,11 +710,27 @@ function DealCell({
 
 function RpiCpiCalculator() {
   const [baseRent, setBaseRent] = useState("");
-  const [startYear, setStartYear] = useState<number>(UK_INDEX_DATA[0].year);
-  const [endYear, setEndYear] = useState<number>(UK_INDEX_DATA[UK_INDEX_DATA.length - 1].year);
   const [index, setIndex] = useState<"rpi" | "cpi">("rpi");
   const [cap, setCap] = useState("");
   const [collar, setCollar] = useState("");
+
+  const { data: inflationResp } = useQuery<{ data: typeof UK_INDEX_FALLBACK; source: string }>({
+    queryKey: ["/api/inflation-data"],
+    staleTime: 12 * 3600 * 1000,
+  });
+  const UK_INDEX_DATA = inflationResp?.data ?? UK_INDEX_FALLBACK;
+  const isLive = inflationResp?.source === "ons";
+
+  const [startYear, setStartYear] = useState<number>(UK_INDEX_FALLBACK[0].year);
+  const [endYear, setEndYear] = useState<number>(UK_INDEX_FALLBACK[UK_INDEX_FALLBACK.length - 1].year);
+
+  // Update end year when live data loads with a newer year
+  useEffect(() => {
+    if (UK_INDEX_DATA.length > 0) {
+      const latestYear = UK_INDEX_DATA[UK_INDEX_DATA.length - 1].year;
+      setEndYear(prev => prev === UK_INDEX_FALLBACK[UK_INDEX_FALLBACK.length - 1].year ? latestYear : prev);
+    }
+  }, [UK_INDEX_DATA.length]);
 
   const rent = parseFloat(baseRent.replace(/[^0-9.-]/g, "")) || 0;
   const capN = parseFloat(cap) || Infinity;
@@ -839,7 +851,7 @@ function RpiCpiCalculator() {
           </table>
         </div>
         <p className="text-[10px] text-muted-foreground mt-2">
-          Source: UK ONS — annual averages of monthly Retail Price Index (RPI) and Consumer Price Index (CPI). Apply the cap/collar to each year's indexation before compounding (standard UK lease convention).
+          {isLive ? "Live" : "Cached"} ONS data — annual averages of RPI and CPI. Cap/collar applied per year before compounding (standard UK lease convention).
         </p>
       </div>
     </div>
@@ -919,6 +931,10 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
     zA: "", zA1: "", zB: "", zB1: "", zC: "", zC1: "", zD: "", zD1: "", rem: "",
     basStorage: "", firstTrading: "",
   });
+  const [itzaDivisors, setItzaDivisors] = useState<Record<string, string>>({
+    zA: "1", zA1: "1.5", zB: "2", zB1: "3", zC: "4", zC1: "6", zD: "8", zD1: "10", rem: "12",
+    basStorage: "20", firstTrading: "10",
+  });
   const [itzaDiscount1, setItzaDiscount1] = useState("");
   const [itzaAddition1, setItzaAddition1] = useState("");
   const [itzaEndDiscount, setItzaEndDiscount] = useState("");
@@ -927,13 +943,16 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const itzaRateVal = parseFloat(itzaRate) || 0;
   const groundZoneCalcs = ITZA_ZONES.map(z => {
     const a = parseFloat(itzaZoneAreas[z.key]) || 0;
-    const rate = itzaRateVal / z.div;
-    return { ...z, area: a, rate, erv: a * rate };
+    const div = parseFloat(itzaDivisors[z.key]) || z.div;
+    const rate = div > 0 ? itzaRateVal / div : 0;
+    return { ...z, div, area: a, rate, erv: a * rate };
   });
   const basStorageArea = parseFloat(itzaZoneAreas.basStorage) || 0;
   const firstTradingAreaVal = parseFloat(itzaZoneAreas.firstTrading) || 0;
-  const basStorageERV = basStorageArea * (itzaRateVal / 20);
-  const firstTradingERV = firstTradingAreaVal * (itzaRateVal / 10);
+  const basStorageDiv = parseFloat(itzaDivisors.basStorage) || 20;
+  const firstTradingDiv = parseFloat(itzaDivisors.firstTrading) || 10;
+  const basStorageERV = basStorageArea * (basStorageDiv > 0 ? itzaRateVal / basStorageDiv : 0);
+  const firstTradingERV = firstTradingAreaVal * (firstTradingDiv > 0 ? itzaRateVal / firstTradingDiv : 0);
   const itzaGIA = groundZoneCalcs.reduce((s, z) => s + z.area, 0) + basStorageArea + firstTradingAreaVal;
   const itzaITZA = groundZoneCalcs.reduce((s, z) => s + (z.div > 0 ? z.area / z.div : 0), 0);
   const groundSubTotal = groundZoneCalcs.reduce((s, z) => s + z.erv, 0);
@@ -952,7 +971,16 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const [giaAreas, setGiaAreas] = useState<Record<string, string>>({
     groundSales: "", groundAncillary: "",
     firstTrading: "", firstAncillary: "",
+    secondTrading: "", secondAncillary: "",
     basTrading: "", basAncillary: "", basVaults: "",
+    terrace: "",
+  });
+  const [giaWeights, setGiaWeights] = useState<Record<string, string>>({
+    groundSales: "1", groundAncillary: "0.5",
+    firstTrading: "0.5", firstAncillary: "0.25",
+    secondTrading: "0.25", secondAncillary: "0.15",
+    basTrading: "0.5", basAncillary: "0.25", basVaults: "0.125",
+    terrace: "0.15",
   });
   const [giaAdj1, setGiaAdj1] = useState("");
   const [giaAdj2, setGiaAdj2] = useState("");
@@ -965,7 +993,8 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const giaRateVal = parseFloat(giaRate) || 0;
   const giaFloorCalcs = GIA_FLOORS.map(f => {
     const a = parseFloat(giaAreas[f.key]) || 0;
-    return { ...f, area: a, rate: giaRateVal * f.weight, erv: a * giaRateVal * f.weight };
+    const weight = parseFloat(giaWeights[f.key] ?? String(f.weight)) || f.weight;
+    return { ...f, area: a, weight, rate: giaRateVal * weight, erv: a * giaRateVal * weight };
   });
   const giaTotalArea = giaFloorCalcs.reduce((s, f) => s + f.area, 0);
   const giaSubTotal = giaFloorCalcs.reduce((s, f) => s + f.erv, 0);
@@ -1368,7 +1397,17 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                   {groundZoneCalcs.map(z => (
                     <tr key={z.key} className="hover:bg-muted/20">
                       <td className="px-2 py-1">{z.label}</td>
-                      <td className="px-2 py-1 text-muted-foreground">A/{z.div}</td>
+                      <td className="px-2 py-1">
+                        <div className="flex items-center gap-0.5">
+                          <span className="text-muted-foreground text-xs">A/</span>
+                          <Input
+                            type="number"
+                            value={itzaDivisors[z.key]}
+                            onChange={e => setItzaDivisors(prev => ({ ...prev, [z.key]: e.target.value }))}
+                            className="h-6 text-xs w-14 px-1"
+                          />
+                        </div>
+                      </td>
                       <td className="px-2 py-1">
                         <Input
                           type="number"
@@ -1379,7 +1418,7 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                         />
                       </td>
                       <td className="px-2 py-1 text-right text-muted-foreground">
-                        {itzaRateVal > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
+                        {itzaRateVal > 0 && z.div > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
                       </td>
                       <td className="px-2 py-1 text-right font-medium">
                         {z.erv > 0 ? `£${Math.round(z.erv).toLocaleString()}` : "—"}
@@ -1426,32 +1465,30 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                 <tbody className="divide-y">
                   <tr className="hover:bg-muted/20">
                     <td className="px-2 py-1">Basement – Storage</td>
-                    <td className="px-2 py-1 text-muted-foreground">A/20</td>
                     <td className="px-2 py-1">
-                      <Input
-                        type="number"
-                        value={itzaZoneAreas.basStorage}
-                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))}
-                        placeholder="0"
-                        className="h-7 text-xs text-right w-24 ml-auto"
-                      />
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-muted-foreground text-xs">A/</span>
+                        <Input type="number" value={itzaDivisors.basStorage} onChange={e => setItzaDivisors(prev => ({ ...prev, basStorage: e.target.value }))} className="h-6 text-xs w-14 px-1" />
+                      </div>
                     </td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 20).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1">
+                      <Input type="number" value={itzaZoneAreas.basStorage} onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))} placeholder="0" className="h-7 text-xs text-right w-24 ml-auto" />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 && basStorageDiv > 0 ? `£${(itzaRateVal / basStorageDiv).toFixed(2)}` : "—"}</td>
                     <td className="px-2 py-1 text-right font-medium">{basStorageERV > 0 ? `£${Math.round(basStorageERV).toLocaleString()}` : "—"}</td>
                   </tr>
                   <tr className="hover:bg-muted/20">
                     <td className="px-2 py-1">First – Trading</td>
-                    <td className="px-2 py-1 text-muted-foreground">A/10</td>
                     <td className="px-2 py-1">
-                      <Input
-                        type="number"
-                        value={itzaZoneAreas.firstTrading}
-                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))}
-                        placeholder="0"
-                        className="h-7 text-xs text-right w-24 ml-auto"
-                      />
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-muted-foreground text-xs">A/</span>
+                        <Input type="number" value={itzaDivisors.firstTrading} onChange={e => setItzaDivisors(prev => ({ ...prev, firstTrading: e.target.value }))} className="h-6 text-xs w-14 px-1" />
+                      </div>
                     </td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 10).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1">
+                      <Input type="number" value={itzaZoneAreas.firstTrading} onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))} placeholder="0" className="h-7 text-xs text-right w-24 ml-auto" />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 && firstTradingDiv > 0 ? `£${(itzaRateVal / firstTradingDiv).toFixed(2)}` : "—"}</td>
                     <td className="px-2 py-1 text-right font-medium">{firstTradingERV > 0 ? `£${Math.round(firstTradingERV).toLocaleString()}` : "—"}</td>
                   </tr>
                 </tbody>
@@ -1540,11 +1577,21 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                   {giaFloorCalcs.map(f => (
                     <tr key={f.key} className="hover:bg-muted/20">
                       <td className="px-2 py-1">{f.label}</td>
-                      <td className="px-2 py-1 text-right text-muted-foreground">{(f.weight * 100).toFixed(1)}%</td>
+                      <td className="px-2 py-1 text-right">
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Input
+                            type="number"
+                            step="0.001"
+                            value={giaWeights[f.key]}
+                            onChange={e => setGiaWeights(prev => ({ ...prev, [f.key]: e.target.value }))}
+                            className="h-6 text-xs w-16 px-1 text-right"
+                          />
+                        </div>
+                      </td>
                       <td className="px-2 py-1">
                         <Input
                           type="number"
-                          value={giaAreas[f.key]}
+                          value={giaAreas[f.key] ?? ""}
                           onChange={e => setGiaAreas(prev => ({ ...prev, [f.key]: e.target.value }))}
                           placeholder="0"
                           className="h-7 text-xs text-right w-24 ml-auto"
@@ -2091,7 +2138,9 @@ function PropertyAddressInput({ value, propertyOptions, onSelectProperty, onSele
   );
 }
 
+
 export default function Comps() {
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -2302,7 +2351,7 @@ export default function Comps() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       toast({ title: "Company added to CRM", description: "Enrichment started — Apollo is filling in details." });
       if (created?.id) {
-        window.location.href = `/companies?highlight=${created.id}`;
+        navigate(`/companies?highlight=${created.id}`);
       }
     },
     onError: (err: any) => {
@@ -2428,12 +2477,37 @@ export default function Comps() {
   const [newHeadlineRent, setNewHeadlineRent] = useState("");
   const [newZoneA, setNewZoneA] = useState("");
   const [newDate, setNewDate] = useState("");
+  const [newSourceEvidence, setNewSourceEvidence] = useState<string | null>(null);
+  const [newSourceUrl, setNewSourceUrl] = useState<string | null>(null);
+  const [newSourceTitle, setNewSourceTitle] = useState<string | null>(null);
 
   const resetCreateForm = () => {
     setNewName(""); setNewPropertyId(null); setNewAddress(null);
     setNewTenant(""); setNewArea(""); setNewPostcode(""); setNewUseClass("");
     setNewTxnType(""); setNewHeadlineRent(""); setNewZoneA(""); setNewDate("");
+    setNewSourceEvidence(null); setNewSourceUrl(null); setNewSourceTitle(null);
   };
+
+  // Deep-link: /comps?create=1&source=Email&sourceUrl=...&sourceTitle=...
+  // Mail viewer / pathway page navigates here with the source already
+  // populated so the user just fills in the deal details. Params are
+  // stripped after consumption so refresh doesn't re-open the dialog.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("create") !== "1") return;
+    const src = params.get("source");
+    const url = params.get("sourceUrl");
+    const title = params.get("sourceTitle");
+    const name = params.get("name");
+    if (src) setNewSourceEvidence(src);
+    if (url) setNewSourceUrl(url);
+    if (title) setNewSourceTitle(title);
+    if (name) setNewName(name);
+    setCreateOpen(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startPdfExport = useCallback(async (targetComps: CrmComp[]) => {
     if (!targetComps.length) return;
@@ -2837,6 +2911,15 @@ export default function Comps() {
                     />
                   </td>
                   <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        className="p-1 rounded hover:bg-muted transition-colors"
+                        onClick={() => setSelectedComp(comp)}
+                        title="View Details"
+                        data-testid={`comp-view-${comp.id}`}
+                      >
+                        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                      </button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button className="p-1 rounded hover:bg-muted transition-colors" data-testid={`comp-menu-${comp.id}`}>
@@ -2864,6 +2947,7 @@ export default function Comps() {
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    </div>
                   </td>
                   <td className="px-2 py-1.5 align-top">
                     <div className="flex items-center gap-1">
@@ -3454,10 +3538,21 @@ export default function Comps() {
           {selectedComp && (
             <>
               <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-primary" />
-                  {selectedComp.name}
-                </DialogTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <DialogTitle className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-primary" />
+                    {selectedComp.name}
+                  </DialogTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs shrink-0"
+                    onClick={() => { setCalcComp(selectedComp); setCalcOpen(true); }}
+                    data-testid="button-detail-ner"
+                  >
+                    <Calculator className="w-3 h-3" /> NER Calculator
+                  </Button>
+                </div>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div className="space-y-3">
@@ -3606,7 +3701,7 @@ export default function Comps() {
                         <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         <a
                           href={`/api/comp-files/${f.id}/download`}
-                          className="flex-1 truncate hover:text-primary transition-colors font-medium"
+                          className="flex-1 truncate min-w-0 hover:text-primary transition-colors font-medium"
                           target="_blank"
                           rel="noopener"
                           data-testid={`link-download-file-${f.id}`}
@@ -3728,6 +3823,15 @@ export default function Comps() {
               <label className="text-xs font-medium mb-1 block">Date</label>
               <Input value={newDate} onChange={e => setNewDate(e.target.value)} placeholder="Jun 2024" className="h-9" data-testid="create-comp-date" />
             </div>
+            <div className="border-t pt-3">
+              <SourcePicker
+                evidence={newSourceEvidence}
+                url={newSourceUrl}
+                title={newSourceTitle}
+                onChange={(s) => { setNewSourceEvidence(s.evidence); setNewSourceUrl(s.url); setNewSourceTitle(s.title); }}
+              />
+              <p className="text-[10px] text-muted-foreground mt-1.5">Defaults to "BGP Direct" if not set. Pick a source type and paste a link to deep-link from the comps schedule back to the email / pathway / file.</p>
+            </div>
           </div>
           <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -3745,7 +3849,9 @@ export default function Comps() {
                 headlineRent: newHeadlineRent || null,
                 zoneARate: newZoneA || null,
                 completionDate: newDate || null,
-                sourceEvidence: "BGP Direct",
+                sourceEvidence: newSourceEvidence || "BGP Direct",
+                sourceUrl: newSourceUrl,
+                sourceTitle: newSourceTitle,
               })}
               data-testid="button-save-comp"
             >

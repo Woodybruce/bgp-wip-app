@@ -2,7 +2,15 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { db } from "./db";
-import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages } from "@shared/schema";
+import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets } from "@shared/schema";
+
+// Image kinds accepted on the property_imagery_assets row when a capture
+// or upload is linked to a property. Mirrors ImageryKind in property-imagery.ts.
+const ALL_KINDS = [
+  "hero", "internal", "secondary_external",
+  "location_plan", "floor_plan", "covenant_card",
+  "comps_chart", "erv_walk", "overlay",
+] as const;
 import { eq, desc, ilike, or, sql, inArray, count } from "drizzle-orm";
 import multer from "multer";
 import sharp from "sharp";
@@ -318,69 +326,38 @@ async function generateThumbnail(buffer: Buffer): Promise<{ thumbnail: string; w
 async function requireAdmin(req: Request, res: Response, next: Function) {
   const userId = req.session?.userId || (req as any).tokenUserId;
   if (!userId) return res.status(401).json({ error: "Not authenticated" });
-  const result = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
-  if (!result.rows[0]?.is_admin) return res.status(403).json({ error: "Admin access required" });
-  next();
-}
-
-/**
- * Capture a Google Street View image for an address and save to image_studio_images.
- * Exposed for the property-pathway orchestrator (Stage 8 — Studio Time).
- */
-export async function captureStreetViewForAddress(args: { address: string; propertyId?: string | null; heading?: number; pitch?: number; fov?: number }): Promise<{ id: string; localPath: string }> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY not configured");
-
-  const params = new URLSearchParams({
-    size: "1200x800",
-    location: args.address,
-    heading: String(args.heading ?? 0),
-    pitch: String(args.pitch ?? 0),
-    fov: String(args.fov ?? 90),
-    key: apiKey,
-  });
-  const resp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
-  if (!resp.ok) throw new Error(`Street View fetch failed: ${resp.status}`);
-  const buffer = Buffer.from(await resp.arrayBuffer());
-  const safeName = args.address.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-").slice(0, 80);
-  const filename = `streetview-${safeName}-${crypto.randomUUID().slice(0, 8)}.jpg`;
-  const filePath = path.join(IMAGE_DIR, filename);
-  fs.writeFileSync(filePath, buffer);
-
-  const { thumbnail, width, height } = await generateThumbnail(buffer);
-
-  const [inserted] = await db.insert(imageStudioImages).values({
-    fileName: `Street View — ${args.address}`,
-    category: "Street Views",
-    tags: ["Street View", "Google", "Exterior", "pathway"],
-    description: `Google Street View capture of ${args.address} (auto — property pathway Stage 8)`,
-    source: "streetview",
-    propertyId: args.propertyId || undefined,
-    address: args.address,
-    mimeType: "image/jpeg",
-    fileSize: buffer.length,
-    width,
-    height,
-    thumbnailData: thumbnail,
-    localPath: filePath,
-  }).returning();
-
-  return { id: inserted.id, localPath: filePath };
+  try {
+    // Match auth.ts: admin if is_admin=true OR email is in ADMIN_EMAILS.
+    // Without the email fallback, a user gated by email-only admin could
+    // load image-studio (other routes use auth.ts requireAdmin) but get
+    // 403 on bulk-categorize / bulk-tag / etc.
+    const { ADMIN_EMAILS } = await import("./auth");
+    const result = await pool.query("SELECT is_admin, email FROM users WHERE id = $1", [userId]);
+    const row = result.rows[0];
+    if (!row) return res.status(401).json({ error: "Not authenticated" });
+    const emailMatches = (ADMIN_EMAILS as Set<string>).has(String(row.email || "").toLowerCase().trim());
+    if (!row.is_admin && !emailMatches) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    next();
+  } catch (e: any) {
+    console.error("[image-studio requireAdmin] DB check failed:", e?.message);
+    res.status(500).json({ error: "Auth check failed", detail: e?.message });
+  }
 }
 
 // ─── Stage 8 bulk image sweep ─────────────────────────────────────────────
-// Runs after the business plan and Excel model are agreed. Sweeps every
-// source we have — Street View (4 headings + ±offsets along the street),
-// Google Places photos, Clearbit logos for tenants — and files the results
-// into three named collections on the run: Building / Tenants / Area.
-//
-// Nothing here is expensive enough to gate on — API keys burn a few hundred
-// quota points per run, not dollars. No image generation (Flux/DALL-E) is
-// triggered; we only harvest real photography.
+// Runs after the business plan and Excel model are agreed. Harvests Google
+// Places photos of the building + neighbours and any embedded images from
+// uploaded brochures, then files them into three named collections on the
+// run: Building / Tenants / Area. Street View auto-capture was removed —
+// it filled folders with low-quality drive-by shots; users can grab a
+// specific Street View via the manual capture button in Image Studio if
+// they actually want one.
 
 type StoredImage = { id: string; localPath: string };
 
-async function storeImageFromBuffer(args: {
+export async function storeImageFromBuffer(args: {
   buffer: Buffer;
   fileName: string;
   category: string;
@@ -464,32 +441,6 @@ async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: n
   }
 }
 
-async function streetViewBuffer(args: { lat?: number; lng?: number; address?: string; heading: number; pitch?: number; apiKey: string }): Promise<Buffer | null> {
-  const params = new URLSearchParams({
-    size: "1200x800",
-    heading: String(args.heading),
-    pitch: String(args.pitch ?? 0),
-    fov: "90",
-    key: args.apiKey,
-  });
-  if (args.lat != null && args.lng != null) {
-    params.set("location", `${args.lat},${args.lng}`);
-  } else if (args.address) {
-    params.set("location", args.address);
-  } else return null;
-  try {
-    const r = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
-    if (!r.ok) return null;
-    const buf = Buffer.from(await r.arrayBuffer());
-    // Google returns a tiny generic "Sorry, we have no imagery here" for blind
-    // locations (~2-6KB). Filter those.
-    if (buf.length < 7000) return null;
-    return buf;
-  } catch {
-    return null;
-  }
-}
-
 async function placeDetailsPhotos(placeId: string, apiKey: string, max = 15): Promise<string[]> {
   try {
     const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=photos&key=${apiKey}`;
@@ -555,23 +506,6 @@ async function nearbyPlaces(lat: number, lng: number, apiKey: string, radius = 8
   }
 }
 
-async function clearbitLogoBuffer(companyName: string): Promise<{ buffer: Buffer; domain: string } | null> {
-  try {
-    const sugResp = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`);
-    if (!sugResp.ok) return null;
-    const suggestions: any[] = await sugResp.json().catch(() => []);
-    const domain = suggestions?.[0]?.domain;
-    if (!domain) return null;
-    const logoResp = await fetch(`https://logo.clearbit.com/${domain}?size=512`);
-    if (!logoResp.ok) return null;
-    const buf = Buffer.from(await logoResp.arrayBuffer());
-    if (buf.length < 400) return null;
-    return { buffer: buf, domain };
-  } catch {
-    return null;
-  }
-}
-
 export async function sweepStage8ImagesForRun(args: {
   runId: string;
   address: string;
@@ -585,7 +519,6 @@ export async function sweepStage8ImagesForRun(args: {
   tenantsCollectionId?: string;
   areaCollectionId?: string;
   imagesAdded: number;
-  streetViewImageId?: string;
   collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }>;
 }> {
   const apiKey = process.env.GOOGLE_API_KEY;
@@ -605,33 +538,10 @@ export async function sweepStage8ImagesForRun(args: {
   const buildingImages: string[] = [];
   const tenantImages: string[] = [];
   const areaImages: string[] = [];
-  let firstStreetViewImageId: string | undefined;
 
   const geo = await geocodeAddress(args.address, apiKey);
 
-  // ─── Building: 4-heading street view + Places photos of the building ────
-  for (const heading of [0, 90, 180, 270]) {
-    const buf = await streetViewBuffer({ lat: geo?.lat, lng: geo?.lng, address: args.address, heading, apiKey });
-    if (!buf) continue;
-    try {
-      const stored = await storeImageFromBuffer({
-        buffer: buf,
-        fileName: `Street View ${heading}° — ${args.address}`,
-        category: "Street Views",
-        tags: ["Street View", "Building", "Exterior", "pathway", `heading-${heading}`],
-        description: `Google Street View of ${args.address} at ${heading}° heading (auto — pathway Stage 8).`,
-        source: "streetview",
-        propertyId: args.propertyId,
-        address: args.address,
-        filenameHint: `${args.address}-${heading}`,
-      });
-      buildingImages.push(stored.id);
-      if (!firstStreetViewImageId) firstStreetViewImageId = stored.id;
-    } catch (err: any) {
-      console.warn(`[pathway sweep] SV ${heading}° failed:`, err?.message);
-    }
-  }
-
+  // ─── Building: Places photos of the building ────────────────────────────
   if (geo?.placeId) {
     const refs = await placeDetailsPhotos(geo.placeId, apiKey, 15);
     let idx = 0;
@@ -644,9 +554,8 @@ export async function sweepStage8ImagesForRun(args: {
           buffer: buf,
           fileName: `Place photo ${idx} — ${args.address}`,
           category: "Places",
-          // Google building photos are overwhelmingly interior. Tag them that
-          // way so Why Buy / Image Studio filters can favour exteriors
-          // (Street View) when an exterior is needed.
+          // Google building photos are overwhelmingly interior; tag as such
+          // so Why Buy / Image Studio filters can favour brochure exteriors.
           tags: ["Google Places", "Building", "Interior-likely", "pathway"],
           description: `Google Places photo ${idx} of ${args.address} (auto — pathway Stage 8).`,
           source: "places",
@@ -659,34 +568,12 @@ export async function sweepStage8ImagesForRun(args: {
     }
   }
 
-  // ─── Tenants: Clearbit logos + Places photos of flagship stores ─────────
+  // ─── Tenants: Places photos of flagship stores ──────────────────────────
   const uniqueTenants = Array.from(new Set((args.tenantNames || []).map(t => t.trim()).filter(t => t && t.length > 1)));
   for (const tenant of uniqueTenants.slice(0, 6)) {
-    // Clearbit logo
-    try {
-      const logo = await clearbitLogoBuffer(tenant);
-      if (logo) {
-        const stored = await storeImageFromBuffer({
-          buffer: logo.buffer,
-          fileName: `${tenant} — Logo`,
-          category: "Brands",
-          tags: ["Logo", "Tenant", tenant, "pathway"],
-          description: `Clearbit logo for ${tenant} (${logo.domain}) — pathway Stage 8.`,
-          source: "clearbit",
-          propertyId: args.propertyId,
-          brandName: tenant,
-          mimeType: "image/png",
-          filenameHint: tenant,
-        });
-        tenantImages.push(stored.id);
-      }
-    } catch (err: any) {
-      console.warn(`[pathway sweep] Clearbit ${tenant} failed:`, err?.message);
-    }
-
-    // Places findplace → photos + shopfront Street View. Bias the search
-    // to the subject building so we resolve the correct branch (e.g. the
-    // Haymarket Pret, not a Pret 5 miles away).
+    // Places findplace → photos. Bias the search to the subject building so
+    // we resolve the correct branch (e.g. the Haymarket Pret, not a Pret 5
+    // miles away).
     try {
       const bias = geo ? { lat: geo.lat, lng: geo.lng, radiusM: 250 } : undefined;
       const place = await findPlaceByText(`${tenant}`, apiKey, bias)
@@ -713,64 +600,14 @@ export async function sweepStage8ImagesForRun(args: {
           });
           tenantImages.push(stored.id);
         }
-        // Guaranteed shopfront exterior via Street View at the tenant's own
-        // coord. Pull two headings so one reads well even if facing away.
-        if (place.lat && place.lng) {
-          for (const heading of [0, 180]) {
-            const svBuf = await streetViewBuffer({ lat: place.lat, lng: place.lng, heading, apiKey });
-            if (!svBuf) continue;
-            try {
-              const stored = await storeImageFromBuffer({
-                buffer: svBuf,
-                fileName: `${tenant} — Shopfront ${heading}°`,
-                category: "Street Views",
-                tags: ["Street View", "Tenant", "Brand", "Exterior", "Shopfront", tenant, `brand:${tenant}`, "pathway"],
-                description: `Street View shopfront of ${place.name} (tenant: ${tenant}) at ${heading}° — pathway Stage 8.`,
-                source: "streetview",
-                propertyId: args.propertyId,
-                brandName: tenant,
-                filenameHint: `${tenant}-shopfront-${heading}`,
-              });
-              tenantImages.push(stored.id);
-            } catch {}
-          }
-        }
       }
     } catch (err: any) {
       console.warn(`[pathway sweep] Places ${tenant} failed:`, err?.message);
     }
   }
 
-  // ─── Area: street view ± offsets along the street + nearby places ───────
+  // ─── Area: nearby place photos ──────────────────────────────────────────
   if (geo) {
-    // 30m and 60m offsets in four cardinal directions
-    const M_IN_DEG_LAT = 1 / 111_000;
-    const M_IN_DEG_LNG = 1 / (111_000 * Math.cos((geo.lat * Math.PI) / 180));
-    const offsets: Array<{ dLat: number; dLng: number; heading: number; label: string }> = [
-      { dLat:  30 * M_IN_DEG_LAT, dLng: 0,                        heading: 180, label: "+30m N" },
-      { dLat: -30 * M_IN_DEG_LAT, dLng: 0,                        heading: 0,   label: "-30m S" },
-      { dLat: 0,                   dLng:  30 * M_IN_DEG_LNG,      heading: 270, label: "+30m E" },
-      { dLat: 0,                   dLng: -30 * M_IN_DEG_LNG,      heading: 90,  label: "-30m W" },
-    ];
-    for (const off of offsets) {
-      const buf = await streetViewBuffer({ lat: geo.lat + off.dLat, lng: geo.lng + off.dLng, heading: off.heading, apiKey });
-      if (!buf) continue;
-      try {
-        const stored = await storeImageFromBuffer({
-          buffer: buf,
-          fileName: `Area SV ${off.label} — ${args.address}`,
-          category: "Street Views",
-          tags: ["Street View", "Area", "Context", "pathway"],
-          description: `Street View ${off.label} from ${args.address} — pathway Stage 8.`,
-          source: "streetview",
-          propertyId: args.propertyId,
-          address: args.address,
-          filenameHint: `${args.address}-${off.label}`,
-        });
-        areaImages.push(stored.id);
-      } catch {}
-    }
-
     const neighbours = await nearbyPlaces(geo.lat, geo.lng, apiKey, 80, 6);
     for (const p of neighbours) {
       // skip the building's own place_id
@@ -851,7 +688,6 @@ export async function sweepStage8ImagesForRun(args: {
     tenantsCollectionId: tenantsId,
     areaCollectionId: areaId,
     imagesAdded: buildingAdded + tenantAdded + areaAdded,
-    streetViewImageId: firstStreetViewImageId,
     collections,
   };
 }
@@ -859,9 +695,39 @@ export async function sweepStage8ImagesForRun(args: {
 export function registerImageStudioRoutes(app: Express) {
   ensureTable().catch(err => console.error("[image-studio] Table setup error:", err.message));
 
+  // List images — DOES NOT return thumbnail_data (a base64 column that runs
+  // 5-10KB per row and balloons the response into multi-MB territory once
+  // the library has more than a few hundred images). The client fetches
+  // thumbnails individually via /api/image-studio/:id/thumb, which the
+  // browser then HTTP-caches.
+  const LIST_COLS = {
+    id: imageStudioImages.id,
+    fileName: imageStudioImages.fileName,
+    category: imageStudioImages.category,
+    tags: imageStudioImages.tags,
+    description: imageStudioImages.description,
+    source: imageStudioImages.source,
+    propertyId: imageStudioImages.propertyId,
+    area: imageStudioImages.area,
+    address: imageStudioImages.address,
+    brandName: imageStudioImages.brandName,
+    brandSector: imageStudioImages.brandSector,
+    propertyType: imageStudioImages.propertyType,
+    mimeType: imageStudioImages.mimeType,
+    fileSize: imageStudioImages.fileSize,
+    width: imageStudioImages.width,
+    height: imageStudioImages.height,
+    sharepointItemId: imageStudioImages.sharepointItemId,
+    sharepointDriveId: imageStudioImages.sharepointDriveId,
+    localPath: imageStudioImages.localPath,
+    uploadedBy: imageStudioImages.uploadedBy,
+    createdAt: imageStudioImages.createdAt,
+    hasThumbnail: sql<boolean>`(${imageStudioImages.thumbnailData} IS NOT NULL)`.as("has_thumbnail"),
+  };
+
   app.get("/api/image-studio", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const images = await db.select().from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
+      const images = await db.select(LIST_COLS).from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -873,7 +739,7 @@ export function registerImageStudioRoutes(app: Express) {
       const q = (req.query.q as string || "").trim();
       if (!q) return res.json([]);
       const pattern = `%${q}%`;
-      const images = await db.select().from(imageStudioImages)
+      const images = await db.select(LIST_COLS).from(imageStudioImages)
         .where(or(
           ilike(imageStudioImages.fileName, pattern),
           ilike(imageStudioImages.description, pattern),
@@ -887,6 +753,26 @@ export function registerImageStudioRoutes(app: Express) {
         ))
         .orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Serve a single image's thumbnail (the base64 JPEG stored in
+  // thumbnail_data, decoded). Cached aggressively — the row is small but
+  // the trip to Postgres still adds up at scale, so let the browser cache
+  // it for a day.
+  app.get("/api/image-studio/:id/thumb", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const [row] = await db
+        .select({ thumbnailData: imageStudioImages.thumbnailData, mimeType: imageStudioImages.mimeType })
+        .from(imageStudioImages)
+        .where(eq(imageStudioImages.id, String(req.params.id)));
+      if (!row?.thumbnailData) return res.status(404).end();
+      const buf = Buffer.from(row.thumbnailData, "base64");
+      res.setHeader("Content-Type", row.mimeType || "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      res.end(buf);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -906,6 +792,11 @@ export function registerImageStudioRoutes(app: Express) {
       const propertyType = (req.body.propertyType as string) || null;
       const tagsRaw = req.body.tags as string || "";
       const tags = tagsRaw ? tagsRaw.split(",").map(t => t.trim()).filter(Boolean) : [];
+      // Optional: link uploaded files to a CRM property as imagery assets
+      // so they appear in the Pathway picker / Property Intelligence
+      // imagery tab without a separate Discover step.
+      const linkPropertyId = (req.body.propertyId as string) || null;
+      const linkKind = (req.body.kind as string) || "secondary_external";
 
       const results = [];
       for (const file of files) {
@@ -936,6 +827,25 @@ export function registerImageStudioRoutes(app: Express) {
           uploadedBy: userId,
         }).returning();
 
+        // Link to a CRM property (imagery asset) when caller provided one.
+        if (linkPropertyId) {
+          try {
+            await db.insert(propertyImageryAssets).values({
+              propertyId: linkPropertyId,
+              kind: ALL_KINDS.includes(linkKind as any) ? linkKind : "secondary_external",
+              source: "manual_upload",
+              imageStudioId: inserted.id,
+              score: 0.6,
+              width,
+              height,
+              caption: file.originalname,
+              generatedBy: userId,
+            } as any);
+          } catch (linkErr: any) {
+            console.warn("[image-studio/upload] property_imagery_assets link failed:", linkErr?.message);
+          }
+        }
+
         results.push(inserted);
       }
 
@@ -950,14 +860,35 @@ export function registerImageStudioRoutes(app: Express) {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
       if (!image) return res.status(404).json({ error: "Not found" });
 
-      if (image.localPath && fs.existsSync(image.localPath)) {
-        res.setHeader("Content-Type", image.mimeType);
+      const imgBuffer = await readPersistedImage(image.localPath);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", image.mimeType || "image/jpeg");
         res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.sendFile(image.localPath);
+        return res.end(imgBuffer);
       }
 
-      res.status(404).json({ error: "File not found on disk" });
+      res.status(404).json({ error: "Image not found" });
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // MUST be registered before /:id — Express matches in order and "bulk-categorize"
+  // would otherwise be captured as an :id parameter.
+  app.patch("/api/image-studio/bulk-categorize", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { ids, category } = req.body;
+      if (!Array.isArray(ids) || !ids.length || !category) {
+        return res.status(400).json({ error: "ids (array) and category (string) required" });
+      }
+      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
+      const r = await pool.query(
+        `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
+        [...ids, category]
+      );
+      res.json({ success: true, updated: r.rowCount ?? 0 });
+    } catch (e: any) {
+      console.error("[image-studio bulk-categorize] failed:", e?.code, e?.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -995,22 +926,27 @@ export function registerImageStudioRoutes(app: Express) {
         return res.status(400).json({ error: "ids (array) required" });
       }
       const images = await db.select().from(imageStudioImages).where(inArray(imageStudioImages.id, ids));
+
+      // Delete local files (synchronous fs calls — fast)
       for (const image of images) {
         if (image.localPath && fs.existsSync(image.localPath)) {
           try { fs.unlinkSync(image.localPath); } catch {}
         }
-        if (image.sharepointDriveId && image.sharepointItemId) {
-          await pool.query(
-            "INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ($1, $2) ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING",
-            [image.sharepointDriveId, image.sharepointItemId]
-          );
-        }
       }
-      // Clean up collection references before deleting images
-      await pool.query(
-        `DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`,
-        [ids]
-      );
+
+      // Batch-insert SharePoint tombstones in one query instead of N round-trips
+      const spPairs = images.filter(img => img.sharepointDriveId && img.sharepointItemId);
+      if (spPairs.length > 0) {
+        const values = spPairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const params = spPairs.flatMap(img => [img.sharepointDriveId, img.sharepointItemId]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          params
+        );
+      }
+
+      // Clean up collection references and delete records — both already batched
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
       await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
       res.json({ success: true, deleted: images.length });
     } catch (e: any) {
@@ -1018,18 +954,311 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/image-studio/bulk-categorize", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  // Dedupe brand logos — keep oldest per brand_name (case-insensitive),
+  // delete the rest. Run this manually after a logo.dev import that left
+  // duplicate pairs in the library.
+  app.post("/api/image-studio/dedupe-brand-logos", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const { ids, category } = req.body;
-      if (!Array.isArray(ids) || !ids.length || !category) {
-        return res.status(400).json({ error: "ids (array) and category (string) required" });
+      const { rows: dupeIds } = await pool.query<{ id: string; local_path: string | null; sharepoint_drive_id: string | null; sharepoint_item_id: string | null }>(`
+        SELECT id, local_path, sharepoint_drive_id, sharepoint_item_id
+        FROM image_studio_images
+        WHERE brand_name IS NOT NULL AND brand_name <> ''
+          AND id NOT IN (
+            SELECT DISTINCT ON (lower(trim(brand_name))) id
+            FROM image_studio_images
+            WHERE brand_name IS NOT NULL AND brand_name <> ''
+            ORDER BY lower(trim(brand_name)), created_at ASC
+          )
+      `);
+
+      if (!dupeIds.length) return res.json({ success: true, deleted: 0, kept: 0 });
+
+      for (const row of dupeIds) {
+        if (row.local_path && fs.existsSync(row.local_path)) {
+          try { fs.unlinkSync(row.local_path); } catch {}
+        }
       }
-      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
-      await pool.query(
-        `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
-        [...ids, category]
+
+      const spPairs = dupeIds.filter(r => r.sharepoint_drive_id && r.sharepoint_item_id);
+      if (spPairs.length) {
+        const values = spPairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const params = spPairs.flatMap(r => [r.sharepoint_drive_id, r.sharepoint_item_id]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          params
+        );
+      }
+
+      const ids = dupeIds.map(r => r.id);
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
+      await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
+
+      const { rows: remaining } = await pool.query<{ count: string }>(`SELECT COUNT(*) FROM image_studio_images WHERE brand_name IS NOT NULL AND brand_name <> ''`);
+      res.json({ success: true, deleted: dupeIds.length, kept: parseInt(remaining[0].count, 10) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Public-ish brand logo lookup — used by Brand Explorer thumbnails.
+  // Returns the most recent Image Studio logo for the given brand name.
+  // 404 → frontend falls back to Clearbit. Auth required, but not admin.
+  app.get("/api/brand-logo/:name", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.params.name || "").trim();
+      if (!name) return res.status(400).json({ error: "name required" });
+      const domain = String(req.query.domain || "").trim().toLowerCase().replace(/^www\./, "");
+
+      // Build a set of name variants to try matching against. Brand names in
+      // crm_companies often have suffixes ("Ltd", "Limited", "Group", "plc")
+      // that aren't in the logo library filenames. We strip those and also
+      // try the first significant word as a loose fallback.
+      const stripped = name.replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp)\b\.?/gi, "").replace(/\s+/g, " ").trim();
+      const firstWord = name.split(/\s+/)[0] || name;
+      const variants = Array.from(new Set([name, stripped, firstWord].filter(Boolean).map(s => s.toLowerCase().trim())));
+
+      // Domain stem: "pretamanger.com" → "pretamanger"
+      const domainStem = domain ? domain.split(".")[0] : "";
+
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null; brand_name: string | null; file_name: string }>(
+        `SELECT id, local_path, mime_type, thumbnail_data, brand_name, file_name
+         FROM image_studio_images
+         WHERE lower(trim(brand_name)) = ANY($1::text[])
+            OR (category = 'Brands' AND lower(trim(file_name)) = ANY($1::text[]))
+            OR (category = 'Brands' AND lower(file_name) LIKE lower($2) || '%')
+            OR (category = 'Brands' AND $3 <> '' AND lower(file_name) LIKE '%' || $3 || '%')
+            OR (category = 'Brands' AND $3 <> '' AND lower(trim(brand_name)) LIKE '%' || $3 || '%')
+         ORDER BY
+           CASE WHEN lower(trim(brand_name)) = lower(trim($4)) THEN 0
+                WHEN lower(trim(file_name))  = lower(trim($4)) THEN 1
+                WHEN $3 <> '' AND lower(file_name) LIKE $3 || '%' THEN 2
+                ELSE 3 END,
+           created_at DESC
+         LIMIT 1`,
+        [variants, name, domainStem, name]
       );
-      res.json({ success: true, updated: ids.length });
+
+      const row = rows[0];
+      if (!row) {
+        // No local hit. Redirect to logo.dev (or Google favicons) so the <img>
+        // renders something rather than 404. Clearbit's logo API was killed by
+        // HubSpot March 2025. If no domain was supplied, slugify the name and
+        // guess `<slug>.com` — logo.dev returns a placeholder for unknown
+        // domains so the image element always loads.
+        let effectiveDomain = domain;
+        if (!effectiveDomain) {
+          const slug = name
+            .toLowerCase()
+            .replace(/['']/g, "")
+            .replace(/&/g, "and")
+            .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
+            .replace(/[^a-z0-9]+/g, "")
+            .trim();
+          if (slug.length >= 3) effectiveDomain = `${slug}.com`;
+        }
+        if (effectiveDomain) {
+          const token = process.env.LOGO_DEV_TOKEN;
+          const target = token
+            ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
+            : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
+          res.setHeader("Cache-Control", "public, max-age=3600");
+          return res.redirect(302, target);
+        }
+        // Short TTL on the no-logo 404 so we don't get stuck serving stale
+        // misses for a day after a fix lands.
+        res.setHeader("Cache-Control", "public, max-age=60");
+        return res.status(404).json({ error: "no logo" });
+      }
+
+      const imgBuffer = await readPersistedImage(row.local_path);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", row.mime_type || "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.end(imgBuffer);
+      }
+
+      if (row.thumbnail_data) {
+        const b64Match = row.thumbnail_data.match(/^data:([^;]+);base64,(.+)$/);
+        if (b64Match) {
+          const buf = Buffer.from(b64Match[2], "base64");
+          res.setHeader("Content-Type", b64Match[1]);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.end(buf);
+        }
+      }
+
+      // Row exists but the blob is missing/unreadable. Don't 404 — fall through
+      // to the same logo.dev redirect path used when there's no row at all.
+      let effectiveDomain = domain;
+      if (!effectiveDomain) {
+        const slug = name
+          .toLowerCase()
+          .replace(/['']/g, "")
+          .replace(/&/g, "and")
+          .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
+          .replace(/[^a-z0-9]+/g, "")
+          .trim();
+        if (slug.length >= 3) effectiveDomain = `${slug}.com`;
+      }
+      if (effectiveDomain) {
+        const token = process.env.LOGO_DEV_TOKEN;
+        const target = token
+          ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
+          : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.redirect(302, target);
+      }
+      res.setHeader("Cache-Control", "public, max-age=60");
+      return res.status(404).json({ error: "no readable blob" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot stats — client calls this once per session to decide whether
+  // /api/brand-logo/:name is worth hitting at all.
+  //
+  // Threshold: hasLogos = true once there's at least 1 brand logo. Earlier
+  // we had a 50-row threshold to prevent spam when the library was empty;
+  // that's no longer needed because (a) 404 responses are now cached by the
+  // browser for 24h, (b) /api/brand-logo/* is exempt from the global rate
+  // limiter, and (c) access logs are suppressed. So as soon as a single
+  // logo lands, surface it.
+  app.get("/api/brand-logo-stats", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM image_studio_images
+          WHERE category = 'Brands'
+            AND brand_name IS NOT NULL
+            AND brand_name <> ''`
+      );
+      const count = Number(rows[0]?.count || 0);
+      // No browser cache — used to be 5 min, but that locked in a stale
+      // 'hasLogos: false' for users who loaded the page before the bulk
+      // logo import ran. UI now always tries the local URL anyway, so
+      // this endpoint is mostly informational.
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ count, hasLogos: count >= 1 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Diagnostic — for a specific brand row, report which storage paths are
+  // populated (disk file? file_storage backup? thumbnailData?). Helps
+  // pinpoint why an existing row 404s even though the SQL match found it.
+  app.get("/api/brand-logo-row-debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.query.name || "").trim();
+      if (!name) return res.status(400).json({ error: "name required" });
+
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null; file_size: number | null; brand_name: string | null; file_name: string }>(
+        `SELECT id, local_path, mime_type, thumbnail_data, file_size, brand_name, file_name
+         FROM image_studio_images
+         WHERE category = 'Brands' AND lower(trim(brand_name)) = lower(trim($1))
+         LIMIT 1`,
+        [name]
+      );
+      const row = rows[0];
+      if (!row) return res.json({ matched: false });
+
+      const onDisk = !!row.local_path && fs.existsSync(row.local_path);
+      let inFileStorage: any = null;
+      if (row.local_path) {
+        try {
+          const f = await getFile(storageKeyForImage(row.local_path));
+          inFileStorage = f ? { size: f.data.length, mimeType: f.mimeType } : null;
+        } catch (e: any) {
+          inFileStorage = { error: e?.message };
+        }
+      }
+      const thumbStartsWithData = !!(row.thumbnail_data && row.thumbnail_data.startsWith("data:"));
+      const thumbLength = row.thumbnail_data ? row.thumbnail_data.length : 0;
+      const thumbHead = row.thumbnail_data ? row.thumbnail_data.slice(0, 50) : null;
+
+      res.json({
+        matched: true,
+        row: {
+          id: row.id,
+          brand_name: row.brand_name,
+          file_name: row.file_name,
+          mime_type: row.mime_type,
+          file_size: row.file_size,
+          local_path: row.local_path,
+        },
+        on_disk: onDisk,
+        in_file_storage: inFileStorage,
+        thumbnail: {
+          present: !!row.thumbnail_data,
+          starts_with_data_url: thumbStartsWithData,
+          length: thumbLength,
+          head: thumbHead,
+        },
+        verdict: onDisk
+          ? "ok-disk"
+          : inFileStorage
+            ? "ok-file-storage-fallback"
+            : thumbStartsWithData
+              ? "ok-thumbnail-fallback"
+              : "NO BYTES — row exists but no readable image. Re-import needed.",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Diagnostic — shows what's in the brand library and whether a given name
+  // matches anything. Hit /api/brand-logo-debug?name=Pret to test from the
+  // browser. Auth required, but anyone can use.
+  app.get("/api/brand-logo-debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.query.name || "").trim();
+      const domain = String(req.query.domain || "").trim().toLowerCase().replace(/^www\./, "");
+
+      const { rows: counts } = await pool.query<{ total: string; with_brand_name: string; brands_category: string }>(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(*) FILTER (WHERE brand_name IS NOT NULL AND brand_name <> '')::text AS with_brand_name,
+           COUNT(*) FILTER (WHERE category = 'Brands')::text AS brands_category
+         FROM image_studio_images`
+      );
+
+      const { rows: samples } = await pool.query<{ brand_name: string | null; file_name: string; category: string | null; created_at: string }>(
+        `SELECT brand_name, file_name, category, created_at
+         FROM image_studio_images
+         WHERE category = 'Brands' OR (brand_name IS NOT NULL AND brand_name <> '')
+         ORDER BY created_at DESC
+         LIMIT 10`
+      );
+
+      let matchInfo: any = null;
+      if (name) {
+        const stripped = name.replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp)\b\.?/gi, "").replace(/\s+/g, " ").trim();
+        const firstWord = name.split(/\s+/)[0] || name;
+        const variants = Array.from(new Set([name, stripped, firstWord].filter(Boolean).map(s => s.toLowerCase().trim())));
+        const domainStem = domain ? domain.split(".")[0] : "";
+
+        const { rows: matches } = await pool.query<{ id: string; brand_name: string | null; file_name: string; category: string | null }>(
+          `SELECT id, brand_name, file_name, category
+           FROM image_studio_images
+           WHERE lower(trim(brand_name)) = ANY($1::text[])
+              OR (category = 'Brands' AND lower(trim(file_name)) = ANY($1::text[]))
+              OR (category = 'Brands' AND lower(file_name) LIKE lower($2) || '%')
+              OR (category = 'Brands' AND $3 <> '' AND lower(file_name) LIKE '%' || $3 || '%')
+              OR (category = 'Brands' AND $3 <> '' AND lower(trim(brand_name)) LIKE '%' || $3 || '%')
+           LIMIT 5`,
+          [variants, name, domainStem]
+        );
+        matchInfo = { variants, domainStem, matches };
+      }
+
+      res.json({
+        counts: counts[0],
+        samples,
+        query: { name, domain },
+        match: matchInfo,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1132,7 +1361,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/ai-edit", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/ai-edit", requireAuth, async (req: Request, res: Response) => {
     try {
       const { imageId, editPrompt } = req.body;
       const trimmedEdit = (editPrompt || "").trim();
@@ -1143,9 +1372,15 @@ export function registerImageStudioRoutes(app: Express) {
 
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
       if (!image) return res.status(404).json({ error: "Image not found" });
-      if (image.uploadedBy && image.uploadedBy !== userId) return res.status(403).json({ error: "Not authorised to edit this image" });
+      // Team-shared imagery (property captures, etc.) — anyone signed in can iterate.
       const sourceBuffer = await readPersistedImage(image.localPath);
       if (!sourceBuffer) return res.status(400).json({ error: "Image file not found. The original image was lost on a deploy — re-capture / re-upload the source image and try again." });
+
+      // Save undo snapshot (normalised to PNG) so the user can revert this edit
+      const undoPath = path.join(IMAGE_DIR, `undo-${imageId}.png`);
+      const undoBuffer = (image.mimeType === "image/png") ? sourceBuffer : await sharp(sourceBuffer).png().toBuffer();
+      fs.writeFileSync(undoPath, undoBuffer);
+
       const base64 = sourceBuffer.toString("base64");
       const inputMime = image.mimeType || "image/jpeg";
 
@@ -1188,26 +1423,66 @@ export function registerImageStudioRoutes(app: Express) {
 
       const { thumbnail, width, height } = await generateThumbnail(resultBuffer);
 
-      const [inserted] = await db.insert(imageStudioImages).values({
-        fileName: `Edit: ${trimmedEdit.slice(0, 50)} (from ${image.fileName})`,
-        category: image.category || "Generated",
-        tags: [...(image.tags || []), "AI Edited", provider].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
-        description: `AI edit of "${image.fileName}": ${trimmedEdit}`,
-        source: "ai-edited",
-        area: image.area,
+      // Update the existing record in place so the user can keep amending the same image
+      const oldPath = image.localPath;
+      const [updated] = await db.update(imageStudioImages).set({
         mimeType: "image/png",
         fileSize: resultBuffer.length,
         width,
         height,
         thumbnailData: thumbnail,
         localPath: filePath,
-        uploadedBy: userId,
-        propertyId: image.propertyId,
-      }).returning();
+        tags: [...new Set([...(image.tags || []), "AI Edited", provider])],
+        source: "ai-edited",
+      }).where(eq(imageStudioImages.id, imageId)).returning();
 
-      res.json({ ...inserted, provider });
+      // Clean up old file (best-effort — a different path means the old bytes are orphaned)
+      if (oldPath && oldPath !== filePath) {
+        try { fs.unlinkSync(oldPath); } catch {}
+      }
+
+      res.json({ ...updated, provider });
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/image-studio/:id/revert", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const undoPath = path.join(IMAGE_DIR, `undo-${id}.png`);
+      if (!fs.existsSync(undoPath)) return res.status(404).json({ error: "No undo snapshot available for this image" });
+
+      const undoBuffer = fs.readFileSync(undoPath);
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+
+      const filename = `reverted-${crypto.randomUUID()}.png`;
+      const filePath = path.join(IMAGE_DIR, filename);
+      await persistImage(filePath, undoBuffer, "image/png");
+
+      const { thumbnail, width, height } = await generateThumbnail(undoBuffer);
+      const oldPath = image.localPath;
+
+      const cleanedTags = (image.tags || []).filter(t => !["AI Edited", "gemini", "local", "openai"].includes(t));
+      const [updated] = await db.update(imageStudioImages).set({
+        mimeType: "image/png",
+        fileSize: undoBuffer.length,
+        width,
+        height,
+        thumbnailData: thumbnail,
+        localPath: filePath,
+        tags: cleanedTags,
+        source: image.source === "ai-edited" ? "uploaded" : (image.source || "uploaded"),
+      }).where(eq(imageStudioImages.id, id)).returning();
+
+      if (oldPath && oldPath !== filePath) { try { fs.unlinkSync(oldPath); } catch {} }
+      try { fs.unlinkSync(undoPath); } catch {}
+
+      res.json(updated);
+    } catch (e: any) {
+      console.error("[image-studio] revert error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1454,7 +1729,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.get("/api/image-studio/streetview-proxy", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/image-studio/streetview-proxy", requireAuth, async (req: Request, res: Response) => {
     try {
       const { location, heading, pitch, fov, size } = req.query;
       if (!location) return res.status(400).json({ error: "location required" });
@@ -1483,9 +1758,9 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/capture-streetview", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/capture-streetview", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { location, heading, pitch, fov, category, area, tags } = req.body;
+      const { location, heading, pitch, fov, category, area, tags, propertyId, kind } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
 
       const apiKey = process.env.GOOGLE_API_KEY;
@@ -1529,6 +1804,49 @@ export function registerImageStudioRoutes(app: Express) {
         uploadedBy: userId,
       }).returning();
 
+      // If a property was specified, link this capture to it as a
+      // property_imagery_asset so it shows up in the Pathway picker
+      // (and Property Intelligence imagery tab) without anyone having
+      // to manually re-link. Default kind is secondary_external —
+      // user can re-tag as hero from the picker.
+      if (propertyId && typeof propertyId === "string") {
+        try {
+          await db.insert(propertyImageryAssets).values({
+            propertyId,
+            kind: (kind && ALL_KINDS.includes(kind)) ? kind : "secondary_external",
+            source: "street_view",
+            imageStudioId: inserted.id,
+            score: 0.7,
+            width,
+            height,
+            caption: `Street View · heading ${heading || 0}°`,
+            generatedBy: userId,
+          } as any);
+        } catch (linkErr: any) {
+          console.warn("[capture-streetview] property_imagery_assets link failed:", linkErr?.message);
+        }
+
+        // Also save into entity_images so the Images panel on the property
+        // sidebar picks it up. file_blobs gets a copy of the bytes; the same
+        // file_id is referenced from uploaded_files + entity_images.
+        try {
+          const fileMeta = await pool.query(
+            `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+             VALUES ($1, $1, 'entity_image', $2, 'image/jpeg', $3, 'team') RETURNING id`,
+            [userId, filename, buffer.length]
+          );
+          const fileId = fileMeta.rows[0].id;
+          await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, buffer]);
+          await pool.query(
+            `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+             VALUES ('property', $1, $2, $3, 'street_view', $4, $5)`,
+            [propertyId, fileId, inserted.id, `Street View · ${heading || 0}° / ${pitch || 0}° / fov ${fov || 90}`, userId]
+          );
+        } catch (entityErr: any) {
+          console.warn("[capture-streetview] entity_images link failed:", entityErr?.message);
+        }
+      }
+
       res.json(inserted);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1536,9 +1854,9 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   // Combined capture + AI enhance endpoint — one-click professional property photography
-  app.post("/api/image-studio/capture-and-enhance", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/capture-and-enhance", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { location, heading, pitch, fov, category, area, tags } = req.body;
+      const { location, heading, pitch, fov, category, area, tags, propertyId } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
 
       const apiKey = process.env.GOOGLE_API_KEY;
@@ -1648,6 +1966,42 @@ export function registerImageStudioRoutes(app: Express) {
 
         enhancedRecord = { ...inserted, provider: enhanceProvider };
         console.log(`[capture-enhance] Enhanced image saved: ${inserted.id}`);
+
+        // Link the enhanced image to the property if propertyId was passed —
+        // shows up in property sidebar Images panel + Pathway imagery picker.
+        if (propertyId && typeof propertyId === "string") {
+          try {
+            await db.insert(propertyImageryAssets).values({
+              propertyId,
+              kind: "secondary_external",
+              source: "street_view",
+              imageStudioId: inserted.id,
+              score: 0.8,
+              width: enhThumb.width,
+              height: enhThumb.height,
+              caption: `Street View · enhanced · ${heading || 0}°`,
+              generatedBy: userId,
+            } as any);
+          } catch (linkErr: any) {
+            console.warn("[capture-enhance] property_imagery_assets link failed:", linkErr?.message);
+          }
+          try {
+            const fileMeta = await pool.query(
+              `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+               VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+              [userId, enhFilename, enhExt === ".png" ? "image/png" : "image/jpeg", enhancedBuffer.length]
+            );
+            const fileId = fileMeta.rows[0].id;
+            await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, enhancedBuffer]);
+            await pool.query(
+              `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+               VALUES ('property', $1, $2, $3, 'street_view', $4, $5)`,
+              [propertyId, fileId, inserted.id, `Street View · enhanced · ${heading || 0}°`, userId]
+            );
+          } catch (entityErr: any) {
+            console.warn("[capture-enhance] entity_images link failed:", entityErr?.message);
+          }
+        }
       } else {
         console.warn(`[capture-enhance] AI enhancement failed for ${location}, returning raw only`);
       }
@@ -1717,7 +2071,7 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   // Bulk assign property endpoint
-  app.post("/api/image-studio/bulk-assign-property", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/bulk-assign-property", requireAuth, async (req: Request, res: Response) => {
     try {
       const { ids, propertyId, address } = req.body;
       if (!Array.isArray(ids) || !ids.length || !propertyId) {
@@ -1728,6 +2082,62 @@ export function registerImageStudioRoutes(app: Express) {
       await db.update(imageStudioImages)
         .set(updates)
         .where(inArray(imageStudioImages.id, ids));
+
+      // Sync to property_imagery_assets + entity_images so the property
+      // sidebar Images panel + Pathway imagery picker pick the images up
+      // automatically. Idempotent per (image_studio_id, property_id).
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      for (const imgId of ids) {
+        try {
+          const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imgId));
+          if (!img) continue;
+
+          // property_imagery_assets (skip if one already exists for this image+property)
+          const existingAsset = await pool.query(
+            "SELECT id FROM property_imagery_assets WHERE property_id = $1 AND image_studio_id = $2 LIMIT 1",
+            [propertyId, imgId]
+          );
+          if (existingAsset.rows.length === 0) {
+            await pool.query(
+              `INSERT INTO property_imagery_assets (property_id, kind, source, image_studio_id, caption, generated_by)
+               VALUES ($1, 'secondary_external', $2, $3, $4, $5)`,
+              [propertyId, img.source || "uploaded", imgId, img.fileName || null, userId]
+            );
+          }
+
+          // entity_images (skip if already linked)
+          const existingEntity = await pool.query(
+            "SELECT id FROM entity_images WHERE entity_type = 'property' AND entity_id = $1 AND image_studio_id = $2 LIMIT 1",
+            [propertyId, imgId]
+          );
+          if (existingEntity.rows.length === 0 && img.localPath) {
+            // Read bytes from disk so the sidebar thumbnail renders without
+            // a separate Image Studio request.
+            try {
+              const buf = await readPersistedImage(img.localPath);
+              if (buf) {
+                const fileMeta = await pool.query(
+                  `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+                   VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+                  [userId, img.fileName, img.mimeType || "image/jpeg", buf.length]
+                );
+                const fileId = fileMeta.rows[0].id;
+                await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, buf]);
+                await pool.query(
+                  `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+                   VALUES ('property', $1, $2, $3, $4, $5, $6)`,
+                  [propertyId, fileId, imgId, img.source === "streetview" ? "street_view" : "photo", img.fileName, userId]
+                );
+              }
+            } catch (blobErr: any) {
+              console.warn(`[bulk-assign-property] entity_images sync for ${imgId} failed:`, blobErr?.message);
+            }
+          }
+        } catch (linkErr: any) {
+          console.warn(`[bulk-assign-property] link failed for ${imgId}:`, linkErr?.message);
+        }
+      }
+
       res.json({ success: true, updated: ids.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1775,11 +2185,18 @@ export function registerImageStudioRoutes(app: Express) {
       const [collection] = await db.select().from(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
       if (!collection) return res.status(404).json({ error: "Collection not found" });
 
+      // Drop thumbnail_data (large base64) — client falls back to /thumb endpoint.
       const result = await pool.query(`
-        SELECT i.* FROM image_studio_images i
-        JOIN image_studio_collection_images ci ON ci.image_id = i.id
-        WHERE ci.collection_id = $1
-        ORDER BY ci.added_at DESC
+        SELECT i.id, i.file_name, i.category, i.tags, i.description, i.source,
+               i.property_id, i.area, i.address, i.brand_name, i.brand_sector,
+               i.property_type, i.mime_type, i.file_size, i.width, i.height,
+               i.sharepoint_item_id, i.sharepoint_drive_id, i.local_path,
+               i.uploaded_by, i.created_at,
+               (i.thumbnail_data IS NOT NULL) AS has_thumbnail
+          FROM image_studio_images i
+          JOIN image_studio_collection_images ci ON ci.image_id = i.id
+         WHERE ci.collection_id = $1
+         ORDER BY ci.added_at DESC
       `, [collectionId]);
 
       res.json({ ...collection, images: result.rows });

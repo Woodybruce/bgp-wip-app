@@ -1,9 +1,12 @@
 import { useMemo, useState, useCallback, memo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -11,7 +14,7 @@ import { ViewToggle } from "@/components/mobile-card-view";
 import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
   Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
-  ChevronDown, ChevronUp, ExternalLink, Building, Database,
+  ChevronDown, ChevronUp, ExternalLink, Building, Database, Sparkles,
 } from "lucide-react";
 
 // Friendly labels + tones for automated check sources that populate aml_checklist.
@@ -23,6 +26,9 @@ const SOURCE_META: Record<string, { label: string; tone: string; title: string }
   perplexity: { label: "Adverse media", tone: "border-purple-300 text-purple-700 bg-purple-50", title: "Perplexity adverse media scan" },
   clouseau: { label: "Clouseau", tone: "border-teal-300 text-teal-700 bg-teal-50", title: "Clouseau investigation" },
   comply_advantage: { label: "ComplyAdvantage", tone: "border-amber-300 text-amber-700 bg-amber-50", title: "ComplyAdvantage PEP/sanctions" },
+  sharepoint_history: { label: "Prior pack", tone: "border-emerald-300 text-emerald-700 bg-emerald-50", title: "Existing KYC pack found in BGP SharePoint folder" },
+  yahoo_finance: { label: "Yahoo Finance", tone: "border-violet-300 text-violet-700 bg-violet-50", title: "Listed share data — market cap, momentum, halts" },
+  creditsafe: { label: "Creditsafe", tone: "border-cyan-300 text-cyan-700 bg-cyan-50", title: "Creditsafe Connect commercial credit data" },
   system: { label: "System", tone: "border-slate-300 text-slate-700 bg-slate-50", title: "Automated rule" },
 };
 
@@ -37,6 +43,7 @@ function extractSources(checklist: any): string[] {
   return order.filter(s => seen.has(s));
 }
 import { KycPanel } from "@/components/kyc-panel";
+import { AmlAiPanel } from "@/components/deal-aml-status";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 interface BoardRow {
@@ -213,6 +220,7 @@ interface DealBoardData {
 }
 
 export default function ComplianceBoard() {
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("board");
@@ -223,6 +231,28 @@ export default function ComplianceBoard() {
 
   const { data: dealsData, isLoading: dealsLoading } = useQuery<DealBoardData>({
     queryKey: ["/api/kyc/board/deals"],
+  });
+
+  const backfill = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/kyc/backfill-deals", {});
+      return (await res.json()) as {
+        dealsScanned: number;
+        companiesFound: number;
+        skippedRecent: number;
+        swept: number;
+        failed: number;
+      };
+    },
+    onSuccess: (r) => {
+      toast({
+        title: "AML backfill complete",
+        description: `${r.dealsScanned} deals · ${r.swept} swept · ${r.skippedRecent} fresh · ${r.failed} errors`,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Backfill failed", description: e?.message || "Unknown error", variant: "destructive" });
+    },
   });
 
   const filtered = useMemo(() => {
@@ -251,10 +281,24 @@ export default function ComplianceBoard() {
             Compliance Board
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            AML status for every counterparty on a live deal · {data?.counts.total || 0} total
+            AML status for every counterparty on a live deal · {data?.counts?.total || 0} total
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => backfill.mutate()}
+            disabled={backfill.isPending}
+            className="h-9 gap-1.5"
+            data-testid="button-aml-backfill"
+            title="Run AML sweeps across every active deal counterparty (skips ones swept in the last 30 days)"
+          >
+            {backfill.isPending
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Sparkles className="w-3.5 h-3.5" />}
+            {backfill.isPending ? "Running..." : "Run AML on all deals"}
+          </Button>
           <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -627,6 +671,11 @@ const DealCard = memo(function DealCard({ row }: { row: DealRow }) {
               </div>
             );
           })}
+          {/* Deal-level AML AI augments below the per-counterparty KYC pack:
+              MLR scope, AI triage, SoF analyser, MLRO PDF, client upload links. */}
+          <div className="mt-3 pt-3 border-t">
+            <AmlAiPanel dealId={row.id} dealName={row.name} />
+          </div>
         </div>
       )}
     </div>

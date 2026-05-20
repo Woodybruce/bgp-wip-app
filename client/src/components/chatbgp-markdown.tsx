@@ -1,27 +1,74 @@
 import { useState } from "react";
-import { Copy, Check, Download } from "lucide-react";
+import { Copy, Check, Download, Loader2 } from "lucide-react";
 
-function AuthDownloadLink({ href, children }: { href: string; children: React.ReactNode }) {
-  // Build a direct download URL with auth token in query string
-  // This lets mobile browsers handle the download natively via <a href>
-  // instead of JavaScript fetch() which mobile Safari/Chrome block.
-  // Token key depends on where we're running: main app uses bgp_auth_token,
-  // Office add-ins (Excel, Outlook, Teams) use bgp_addin_token.
-  const token = localStorage.getItem("bgp_addin_token") || localStorage.getItem("bgp_auth_token") || "";
-  const separator = href.includes("?") ? "&" : "?";
-  const directUrl = token ? `${href}${separator}token=${token}` : href;
-  const filename = href.split("/").pop()?.split("?")[0] || "download";
+// Single source of truth for chat-media downloads across desktop chat,
+// the standalone /chatbgp page and the mobile PWA. iOS PWA standalone
+// mode treats <a href download> with an authenticated binary response
+// as a navigation — the WebView tries to render the body, fails, and
+// presents the user with a white screen they have to force-quit to
+// escape. fetch → blob → URL.createObjectURL → temporary <a> click
+// keeps the navigation same-origin to a blob: URL, which the WebView
+// treats as a proper file download and surfaces via the native share /
+// save sheet.
+export function AuthDownloadLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const onClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = localStorage.getItem("bgp_addin_token") || localStorage.getItem("bgp_auth_token") || "";
+      const sep = href.includes("?") ? "&" : "?";
+      const url = token ? `${href}${sep}token=${token}` : href;
+      const filename = href.split("/").pop()?.split("?")[0] || "download";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        // Try to surface the server-side reason — chat-media returns JSON
+        // with { message } on 401, useful for diagnosing token issues.
+        let detail = `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j?.message) detail = `${detail}: ${j.message}`; } catch {}
+        throw new Error(detail);
+      }
+      const blob = await res.blob();
+      if (blob.size === 0) throw new Error("Empty response from server");
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Give the browser a beat to start the save before we revoke the
+      // blob URL — revoking immediately can race the download on iOS.
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
+    } catch (e: any) {
+      setErr(e?.message || "Download failed");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <a
-      href={directUrl}
-      download={filename}
-      className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 transition-colors text-sm font-medium no-underline cursor-pointer min-h-[44px]"
-      data-testid="link-download-file"
-    >
-      <Download className="w-4 h-4" />
-      {children}
-    </a>
+    <span className="inline-flex flex-col items-start">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 disabled:opacity-60 transition-colors text-sm font-medium no-underline cursor-pointer min-h-[44px]"
+        data-testid="link-download-file"
+      >
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+        {children}
+      </button>
+      {err && (
+        <span className="text-[11px] text-red-600 mt-0.5 max-w-[280px] break-words" data-testid="download-error">
+          Download failed — {err}
+        </span>
+      )}
+    </span>
   );
 }
 

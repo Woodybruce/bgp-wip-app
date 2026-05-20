@@ -3,7 +3,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Upload, Ruler, SquareDashedBottom, MousePointer, ZoomIn, ZoomOut,
   RotateCcw, Loader2, Move, Trash2, FileText, Info, Maximize2,
-  Undo2, Redo2, Scaling, ChevronLeft, ChevronRight,
+  Undo2, Redo2, Scaling, ChevronLeft, ChevronRight, Type,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,14 @@ interface Measurement {
   unit: string;
 }
 
-type Tool = "pan" | "measure" | "area" | "calibrate";
+interface TextAnnotation {
+  id: string;
+  x: number;
+  y: number;
+  text: string;
+}
+
+type Tool = "pan" | "measure" | "area" | "calibrate" | "text";
 
 // Metres → target unit factors. PDF calibration is stored as metres-per-point.
 const METRE_TO_UNIT: Record<string, number> = {
@@ -162,6 +169,10 @@ export default function CadMeasurePage() {
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [entityCount, setEntityCount] = useState(0);
   const [shiftHeld, setShiftHeld] = useState(false);
+  const [snapPoint, setSnapPoint] = useState<{ x: number; y: number } | null>(null);
+  const [textAnnotations, setTextAnnotations] = useState<TextAnnotation[]>([]);
+  const [pendingText, setPendingText] = useState<{ worldX: number; worldY: number; screenX: number; screenY: number } | null>(null);
+  const [pendingTextValue, setPendingTextValue] = useState("");
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(true); };
@@ -352,6 +363,28 @@ export default function CadMeasurePage() {
       }
     }
 
+    if (snapPoint && activeTool !== "pan") {
+      const sp = toScreen(snapPoint.x, snapPoint.y);
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      const sz = 10;
+      ctx.strokeRect(sp.sx - sz / 2, sp.sy - sz / 2, sz, sz);
+    }
+
+    for (const ann of textAnnotations) {
+      const p = toScreen(ann.x, ann.y);
+      ctx.font = "bold 12px Inter, sans-serif";
+      const tw = ctx.measureText(ann.text).width;
+      ctx.fillStyle = isDark ? "rgba(30,41,59,0.85)" : "rgba(255,255,255,0.85)";
+      ctx.fillRect(p.sx + 6, p.sy - 14, tw + 8, 18);
+      ctx.fillStyle = isDark ? "#fbbf24" : "#92400e";
+      ctx.fillText(ann.text, p.sx + 10, p.sy - 1);
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.fillStyle = isDark ? "#64748b" : "#94a3b8";
     ctx.font = "11px Inter, sans-serif";
     ctx.fillText(`Scale: ${scale.toFixed(1)}x | ${isPdfMode ? `${pdfNumPages} page${pdfNumPages === 1 ? "" : "s"}` : `${entities.length} entities`}`, 10, canvas.height - 10);
@@ -361,7 +394,7 @@ export default function CadMeasurePage() {
         10, canvas.height - 26
       );
     }
-  }, [dxfData, pdfImage, pdfNumPages, isPdfMode, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, effectiveUnitScale, effectiveUnitLabel, shiftHeld, orthoSnap]);
+  }, [dxfData, pdfImage, pdfNumPages, isPdfMode, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, effectiveUnitScale, effectiveUnitLabel, shiftHeld, orthoSnap, snapPoint, textAnnotations]);
 
   useEffect(() => { drawCanvas(); }, [drawCanvas]);
 
@@ -494,7 +527,20 @@ export default function CadMeasurePage() {
     if (!dxfData || activeTool === "pan") return;
     const raw = screenToWorld(e.clientX, e.clientY);
     const prev = currentPoints[currentPoints.length - 1];
-    const world = e.shiftKey && prev ? orthoSnap(prev, raw) : raw;
+    const ortho = e.shiftKey && prev ? orthoSnap(prev, raw) : raw;
+    const world = snapPoint ?? ortho;
+
+    if (activeTool === "text") {
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      setPendingText({
+        worldX: world.x,
+        worldY: world.y,
+        screenX: containerRect ? e.clientX - containerRect.left : e.clientX,
+        screenY: containerRect ? e.clientY - containerRect.top : e.clientY,
+      });
+      setPendingTextValue("");
+      return;
+    }
 
     if (activeTool === "measure") {
       if (currentPoints.length === 0) {
@@ -561,7 +607,46 @@ export default function CadMeasurePage() {
       setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
     }
     if (dxfData) {
-      setMouseWorldPos(screenToWorld(e.clientX, e.clientY));
+      const rawPos = screenToWorld(e.clientX, e.clientY);
+
+      let snapped: { x: number; y: number } | null = null;
+      if (activeTool !== "pan" && activeTool !== "text" && dxfData.entities.length > 0) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const cursorSx = e.clientX - rect.left;
+          const cursorSy = e.clientY - rect.top;
+          const { bounds } = dxfData;
+          const drawW = bounds.maxX - bounds.minX;
+          const drawH = bounds.maxY - bounds.minY;
+          const padding = 40;
+          const scaleX = (canvas.width - 2 * padding) / drawW;
+          const scaleY = (canvas.height - 2 * padding) / drawH;
+          const s = Math.min(scaleX, scaleY) * scale;
+          const ox = padding + (canvas.width - 2 * padding - drawW * s) / 2 + offset.x;
+          const oy = padding + (canvas.height - 2 * padding - drawH * s) / 2 + offset.y;
+          const SNAP_PX = 16;
+          let bestDist = SNAP_PX;
+          for (const entity of dxfData.entities) {
+            const candidates: { x: number; y: number }[] = [];
+            if (entity.type === "LINE") {
+              if (entity.startPoint) candidates.push(entity.startPoint);
+              if (entity.endPoint) candidates.push(entity.endPoint);
+            } else if ((entity.type === "LWPOLYLINE" || entity.type === "POLYLINE") && entity.vertices) {
+              for (const v of entity.vertices) candidates.push(v);
+            }
+            for (const pt of candidates) {
+              const sx = (pt.x - bounds.minX) * s + ox;
+              const sy = (bounds.maxY - pt.y) * s + oy;
+              const dist = Math.sqrt((sx - cursorSx) ** 2 + (sy - cursorSy) ** 2);
+              if (dist < bestDist) { bestDist = dist; snapped = pt; }
+            }
+          }
+        }
+      }
+
+      setSnapPoint(snapped);
+      setMouseWorldPos(snapped ?? rawPos);
     }
   };
 
@@ -582,6 +667,7 @@ export default function CadMeasurePage() {
     setMeasurements([]);
     setRedoStack([]);
     setCurrentPoints([]);
+    setTextAnnotations([]);
   };
 
   // Refs mirror the latest state so keyboard handlers don't see stale values
@@ -702,6 +788,7 @@ export default function CadMeasurePage() {
               { tool: "pan" as Tool, icon: Move, label: "Pan" },
               { tool: "measure" as Tool, icon: Ruler, label: "Measure" },
               { tool: "area" as Tool, icon: SquareDashedBottom, label: "Area" },
+              { tool: "text" as Tool, icon: Type, label: "Text Label" },
               ...(isPdfMode ? [{ tool: "calibrate" as Tool, icon: Scaling, label: "Set Scale" }] : []),
             ]).map(({ tool, icon: Icon, label }) => (
               <button
@@ -837,10 +924,43 @@ export default function CadMeasurePage() {
                 {activeTool === "calibrate" && (
                   <p>{currentPoints.length === 0 ? "Click one end of a known dimension" : "Click the other end"}</p>
                 )}
+                {activeTool === "text" && (
+                  <p>Click anywhere to place a text label</p>
+                )}
                 {(activeTool === "measure" || activeTool === "area" || activeTool === "calibrate") && currentPoints.length > 0 && (
                   <p className="text-[10px] text-muted-foreground mt-1">Hold <kbd className="px-1 border rounded bg-muted">⇧ Shift</kbd> to lock horizontal/vertical</p>
                 )}
               </div>
+            )}
+
+            {pendingText && (
+              <input
+                autoFocus
+                className="absolute z-20 bg-background border rounded px-2 py-1 text-sm shadow-lg min-w-[140px]"
+                style={{ left: pendingText.screenX, top: pendingText.screenY - 36 }}
+                value={pendingTextValue}
+                placeholder="Type label, press Enter"
+                onChange={e => setPendingTextValue(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    if (pendingTextValue.trim()) {
+                      setTextAnnotations(prev => [...prev, { id: Date.now().toString(), x: pendingText.worldX, y: pendingText.worldY, text: pendingTextValue.trim() }]);
+                    }
+                    setPendingText(null);
+                    setPendingTextValue("");
+                  } else if (e.key === "Escape") {
+                    setPendingText(null);
+                    setPendingTextValue("");
+                  }
+                }}
+                onBlur={() => {
+                  if (pendingTextValue.trim()) {
+                    setTextAnnotations(prev => [...prev, { id: Date.now().toString(), x: pendingText.worldX, y: pendingText.worldY, text: pendingTextValue.trim() }]);
+                  }
+                  setPendingText(null);
+                  setPendingTextValue("");
+                }}
+              />
             )}
 
             {isPdfMode && pdfNumPages > 1 && (

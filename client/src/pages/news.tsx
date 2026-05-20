@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
+import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import {
   Select,
   SelectContent,
@@ -50,8 +51,9 @@ import type { NewsArticle, EmailIngest, NewsLead } from "@shared/schema";
 const TEAMS = [
   "For You",
   "All",
+  "London F&B",
+  "London Retail",
   "Investment",
-  "London Leasing",
   "Lease Advisory",
   "National Leasing",
   "Tenant Rep",
@@ -195,6 +197,7 @@ function FeedTab() {
   const [activeTeam, setActiveTeam] = useState("For You");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [showStats, setShowStats] = useState(false);
   const [savedArticles, setSavedArticles] = useState<Set<string>>(new Set());
   const [dismissedArticles, setDismissedArticles] = useState<Set<string>>(new Set());
@@ -306,9 +309,17 @@ function FeedTab() {
         const articleCat = (a.category || "").toLowerCase();
         if (!articleCat.includes(categoryFilter.toLowerCase())) return false;
       }
+      if (tagFilter.size > 0) {
+        const articleTags = new Set((a.aiTags || []).map(t => t.toLowerCase()));
+        let matched = false;
+        for (const wanted of tagFilter) {
+          if (articleTags.has(wanted)) { matched = true; break; }
+        }
+        if (!matched) return false;
+      }
       return true;
     });
-  }, [articles, categoryFilter, dismissedArticles]);
+  }, [articles, categoryFilter, tagFilter, dismissedArticles]);
 
   const totalArticles = articles?.length || 0;
   const scoredArticles = articles?.filter((a) => a.processed)?.length || 0;
@@ -432,6 +443,8 @@ function FeedTab() {
         </Select>
       </div>
 
+      <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} />
+
       {isSavedTab ? (
         isSavedLoading ? (
           <div className="space-y-3">
@@ -460,6 +473,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (
@@ -605,6 +627,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (

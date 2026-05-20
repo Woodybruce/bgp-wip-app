@@ -1,15 +1,16 @@
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import type { CrmDeal } from "@shared/schema";
+import { legacyToCode } from "@shared/deal-status";
 
+// WIP-only kanban: NEG → INV. Pipeline (REP/SPEC/LIVE/AVA) belongs on the
+// Letting / Investment trackers; WIT is hidden from the WIP board entirely.
 const KANBAN_COLUMNS = [
-  { key: "Pipeline", label: "Pipeline", statuses: ["Targeting", "Available", "Marketing", "Speculative", "Live"] },
-  { key: "NEG", label: "Under Negotiation", statuses: ["NEG", "Under Negotiation"] },
-  { key: "HOTs", label: "HOTs", statuses: ["HOTs"] },
-  { key: "SOLs", label: "SOLs", statuses: ["SOLs"] },
-  { key: "Exchanged", label: "Exchanged", statuses: ["Exchanged"] },
-  { key: "Completed", label: "Completed", statuses: ["Completed"] },
-  { key: "Invoiced", label: "Invoiced", statuses: ["Invoiced"] },
+  { key: "NEG", label: "Negotiating", statuses: ["NEG"] },
+  { key: "SOL", label: "Solicitors", statuses: ["SOL"] },
+  { key: "EXC", label: "Exchanged", statuses: ["EXC"] },
+  { key: "COM", label: "Completed", statuses: ["COM"] },
+  { key: "INV", label: "Invoiced", statuses: ["INV"] },
 ];
 
 const DEAL_TYPE_COLORS: Record<string, string> = {
@@ -42,7 +43,8 @@ const ASSET_CLASS_COLORS: Record<string, string> = {
 
 const TEAM_COLORS: Record<string, string> = {
   "Development": "bg-orange-100 text-orange-800",
-  "London Leasing": "bg-blue-100 text-blue-800",
+  "London F&B": "bg-rose-100 text-rose-800",
+  "London Retail": "bg-teal-100 text-teal-800",
   "National Leasing": "bg-emerald-100 text-emerald-800",
   "Investment": "bg-purple-100 text-purple-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",
@@ -59,14 +61,20 @@ function formatFee(fee: number | null | undefined): string {
 interface DealKanbanProps {
   deals: CrmDeal[];
   propertyMap: Map<string, string>;
+  unitMap?: Map<string, string>;
+  tenantMap?: Map<string, string>;
 }
 
-export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
+// Stages where the tenant becomes part of the card heading.
+const TENANT_HEADING_STATUSES = new Set(["SOL", "EXC", "COM", "INV"]);
+
+export function DealKanban({ deals, propertyMap, unitMap, tenantMap }: DealKanbanProps) {
   // Group deals into columns
   const columns = KANBAN_COLUMNS.map((col) => {
-    const columnDeals = deals.filter((d) =>
-      col.statuses.includes(d.status || "")
-    );
+    const columnDeals = deals.filter((d) => {
+      const code = legacyToCode(d.status);
+      return code !== null && col.statuses.includes(code);
+    });
     const totalFee = columnDeals.reduce(
       (sum, d) => sum + (d.fee ? Number(d.fee) : 0),
       0
@@ -112,7 +120,17 @@ export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
               const propName = deal.propertyId
                 ? propertyMap.get(deal.propertyId) || ""
                 : "";
-              const displayName = propName || deal.name;
+              const unitName = deal.unitId
+                ? unitMap?.get(deal.unitId) || ""
+                : "";
+              const tenantName = deal.tenantId
+                ? tenantMap?.get(deal.tenantId) || ""
+                : "";
+              const code = legacyToCode(deal.status);
+              const showTenant = code && TENANT_HEADING_STATUSES.has(code) && tenantName;
+              // Heading: unit > property > deal name. In SOL+, append tenant.
+              const baseName = unitName || propName || deal.name;
+              const displayName = showTenant ? `${baseName} — ${tenantName}` : baseName;
               const agents = Array.isArray(deal.internalAgent)
                 ? deal.internalAgent.join(", ")
                 : deal.internalAgent || "";

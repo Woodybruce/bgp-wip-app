@@ -1,10 +1,12 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
-import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps } from "@shared/schema";
+import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps, newsTags } from "@shared/schema";
+import { DEFAULT_NEWS_TAGS } from "@shared/news-tags";
+import { authHeadersForUrl, authCookieStatus } from "./auth-cookies";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
-import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands } from "./news-brand-linking";
+import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, type SocialPlatform } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
@@ -24,6 +26,29 @@ const DEFAULT_SOURCES = [
   { name: "London Property News", url: "https://www.londonpropertynews.co.uk", feedUrl: "https://www.londonpropertynews.co.uk/feed/", type: "rss", category: "Property" },
   { name: "Property Investor Today", url: "https://www.propertyinvestortoday.co.uk", feedUrl: "https://www.propertyinvestortoday.co.uk/rss.xml", type: "rss", category: "Investment" },
   { name: "Drapers", url: "https://www.drapersonline.com", feedUrl: "https://www.drapersonline.com/rss", type: "rss", category: "Retail" },
+  { name: "Retail Week", url: "https://www.retailweek.com", feedUrl: "https://www.retailweek.com/feed", type: "rss", category: "Retail" },
+  { name: "Modern Retail", url: "https://www.modernretail.co", feedUrl: "https://www.modernretail.co/feed/", type: "rss", category: "Retail" },
+  { name: "Glossy", url: "https://www.glossy.co", feedUrl: "https://www.glossy.co/feed/", type: "rss", category: "Retail" },
+  { name: "Sourcing Journal", url: "https://sourcingjournal.com", feedUrl: "https://sourcingjournal.com/feed/", type: "rss", category: "Retail" },
+  { name: "Retail Dive", url: "https://www.retaildive.com", feedUrl: "https://www.retaildive.com/feeds/news/", type: "rss", category: "Retail" },
+  { name: "WWD", url: "https://wwd.com", feedUrl: "https://wwd.com/feed/", type: "rss", category: "Retail" },
+  { name: "The Industry Beauty", url: "https://www.theindustry.beauty", feedUrl: "https://www.theindustry.beauty/feed/", type: "rss", category: "Retail" },
+  { name: "Hospitality Net", url: "https://www.hospitalitynet.org", feedUrl: "https://www.hospitalitynet.org/rss/news.xml", type: "rss", category: "Hospitality" },
+  { name: "Big Hospitality", url: "https://www.bighospitality.co.uk", feedUrl: "https://www.bighospitality.co.uk/feed", type: "rss", category: "Hospitality" },
+  // Harry's curated luxury / fashion / lifestyle list — additions Nov 2026
+  { name: "GQ (UK)", url: "https://www.gq-magazine.co.uk", feedUrl: "https://www.gq-magazine.co.uk/feed", type: "rss", category: "Retail" },
+  { name: "Gentleman's Journal", url: "https://www.thegentlemansjournal.com", feedUrl: "https://www.thegentlemansjournal.com/feed/", type: "rss", category: "Retail" },
+  { name: "Vogue (UK)", url: "https://www.vogue.co.uk", feedUrl: "https://www.vogue.co.uk/feed", type: "rss", category: "Retail" },
+  { name: "Vogue Runway", url: "https://www.vogue.com", feedUrl: "https://www.vogue.com/feed/rss", type: "rss", category: "Retail" },
+  { name: "Reuters Business", url: "https://www.reuters.com/business", feedUrl: "https://feeds.reuters.com/reuters/businessNews", type: "rss", category: "Retail" },
+  { name: "The Guardian — Retail", url: "https://www.theguardian.com/business/retail", feedUrl: "https://www.theguardian.com/business/retail/rss", type: "rss", category: "Retail" },
+  // Brand / fashion / retail press — added for Tenant Rep + Leasing brand-hunting
+  { name: "Vogue Business", url: "https://www.voguebusiness.com", feedUrl: "https://www.voguebusiness.com/feed", type: "rss", category: "Retail" },
+  { name: "Highsnobiety", url: "https://www.highsnobiety.com", feedUrl: "https://www.highsnobiety.com/feed/", type: "rss", category: "Retail" },
+  // Google News searches for topics without a direct RSS feed
+  { name: "Industry of Fashion (Google News)", url: "https://news.google.com/search?q=%22industry+of+fashion%22", feedUrl: "https://news.google.com/rss/search?q=%22industry+of+fashion%22&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
+  { name: "Industry of Beauty (Google News)", url: "https://news.google.com/search?q=%22industry+of+beauty%22", feedUrl: "https://news.google.com/rss/search?q=%22industry+of+beauty%22&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
+  { name: "UK Retail Expansion (Google News)", url: "https://news.google.com/search?q=%22new+store%22+%22UK%22+retail", feedUrl: "https://news.google.com/rss/search?q=%22new+store%22+UK+retail&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
 ];
 
 const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
@@ -31,21 +56,25 @@ const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
     focus: "Property investment, capital markets, transactions, yields, returns, acquisitions, disposals",
     keywords: ["investment", "acquisition", "yield", "capital", "transaction", "portfolio", "fund", "IRR", "disposal", "buyer", "seller", "REIT", "valuation"],
   },
-  "London Leasing": {
-    focus: "London commercial leasing, letting activity, new lettings, rent reviews, lease terms in Belgravia, Mayfair, Chelsea, Knightsbridge, West End",
-    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "retail unit", "prime pitch", "flagship"],
+  "London F&B": {
+    focus: "London food & beverage leasing, restaurant and hospitality lettings, new openings, rent reviews in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: new F&B operators, restaurant concepts, café chains, wellness and hospitality brands expanding into London.",
+    keywords: ["restaurant", "café", "bar", "hospitality", "F&B", "food and beverage", "letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "flagship", "new opening", "new restaurant", "first UK restaurant", "brand expansion", "wellness", "operator"],
+  },
+  "London Retail": {
+    focus: "London retail leasing, new lettings and rent reviews for retail units in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: brand expansion, new store openings, flagships, new UK operators, DTC brands opening physical retail, fashion expansion, high street repositioning — these identify prospective tenants for London retail instructions.",
+    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "retail unit", "prime pitch", "flagship", "new opening", "new store", "first UK store", "London flagship", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "fashion brand", "brand performance", "global retail"],
   },
   "Lease Advisory": {
     focus: "Lease consultancy, rent reviews, lease renewals, dilapidations, break options, service charges",
     keywords: ["rent review", "lease renewal", "dilapidation", "break clause", "service charge", "arbitration", "lease term", "covenant"],
   },
   "National Leasing": {
-    focus: "UK-wide commercial leasing outside London, regional retail and office markets, out-of-town, shopping centres",
-    keywords: ["regional", "national", "Birmingham", "Manchester", "Leeds", "Bristol", "Edinburgh", "shopping centre", "retail park", "high street", "provincial"],
+    focus: "UK-wide commercial leasing outside London, regional retail and office markets, out-of-town, shopping centres. Also: brand expansion into regional cities, new store openings, flagships, new UK operators, rollout programmes, high street brand activity — these identify prospective tenants for regional instructions.",
+    keywords: ["regional", "national", "Birmingham", "Manchester", "Leeds", "Bristol", "Edinburgh", "shopping centre", "retail park", "high street", "provincial", "new opening", "new store", "rollout", "brand expansion", "new operator", "flagship", "global retail", "fashion"],
   },
   "Tenant Rep": {
-    focus: "Tenant representation, occupier requirements, search and acquisition, fit-out, relocations",
-    keywords: ["occupier", "tenant requirement", "relocation", "fit-out", "requirement", "search", "representation", "workspace", "office move"],
+    focus: "Tenant representation, occupier requirements, search and acquisition, fit-out, relocations. Primary angle: spotting brands that are expanding, opening new stores or flagships, entering new markets (UK / London / US), DTC brands moving into physical retail, strong brand performance, wellness operators, high street repositioning — all are signals of brands who may need an acquiring agent.",
+    keywords: ["occupier", "tenant requirement", "relocation", "fit-out", "requirement", "search", "representation", "workspace", "office move", "new opening", "new store", "flagship", "first UK store", "expansion", "entering UK", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "wellness", "fashion", "global retail", "brand performance", "high street", "US expansion", "opening in London", "opening in Paris", "opening in New York", "rollout"],
   },
   "Development": {
     focus: "Property development, repurposing, planning applications, construction, change of use, mixed-use schemes",
@@ -55,12 +84,15 @@ const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
 
 async function seedNewsSources() {
   const existing = await db.select().from(newsSources);
-  if (existing.length === 0) {
-    for (const source of DEFAULT_SOURCES) {
+  const existingNames = new Set(existing.map(s => s.name));
+  let added = 0;
+  for (const source of DEFAULT_SOURCES) {
+    if (!existingNames.has(source.name)) {
       await db.insert(newsSources).values(source);
+      added++;
     }
-    console.log(`Seeded ${DEFAULT_SOURCES.length} news sources`);
   }
+  if (added > 0) console.log(`Seeded ${added} new news sources (${existing.length + added} total)`);
 }
 
 async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
@@ -86,16 +118,29 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
       for (const item of items) {
         if (!item.title || !item.link) continue;
 
+        // Unwrap Google News redirect URLs to the real publisher URL. Done up
+        // front so the stored URL is clickable and so og:image extraction has
+        // something real to work with. Falls back to the wrapped URL if the
+        // resolver fails — better than dropping the article.
+        let articleUrl = item.link;
+        if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+          const real = await resolveGoogleNewsUrl(articleUrl);
+          if (real) articleUrl = real;
+        }
+
         const existingArr = await db.select({ id: newsArticles.id })
           .from(newsArticles)
-          .where(eq(newsArticles.url, item.link))
+          .where(eq(newsArticles.url, articleUrl))
           .limit(1);
 
         if (existingArr.length > 0) continue;
 
         let imgUrl = extractImageUrl(item);
-        if (!imgUrl && item.link) {
-          imgUrl = await fetchOgImage(item.link);
+        if (!imgUrl) {
+          imgUrl = await fetchOgImage(articleUrl);
+        }
+        if (!imgUrl) {
+          imgUrl = faviconForUrl(articleUrl);
         }
 
         await db.insert(newsArticles).values({
@@ -104,7 +149,7 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
           title: item.title,
           summary: item.contentSnippet?.slice(0, 500) || item.content?.slice(0, 500) || null,
           content: item.content || null,
-          url: item.link,
+          url: articleUrl,
           author: item.creator || item.author || null,
           imageUrl: imgUrl,
           publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
@@ -121,24 +166,48 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
       console.error(`RSS fetch error for ${source.name}:`, err?.message?.slice(0, 100));
       errors++;
     }
+
+    // Throttle between feed fetches to keep Google News happy. Without this,
+    // hammering ~860 per-brand Google News feeds in sequence triggers their
+    // abuse protection (503 partway through the run). 2s for Google News,
+    // 250ms for other publishers — keeps a full cron pass under 30 min for
+    // the brand-feed bulk plus tiny extra for direct RSS.
+    const isGoogle = source.type === "google_news" || /google\.com/i.test(source.feedUrl || "");
+    await new Promise(r => setTimeout(r, isGoogle ? 2000 : 250));
   }
 
   return { fetched, errors };
 }
 
+// Google News RSS image redirects resolve to a Google-hosted logo, not the
+// article image. Reject those so we fall back to a publisher favicon.
+function isJunkImage(url: string | null | undefined): boolean {
+  if (!url) return true;
+  return /google\.com|gstatic\.com|googleusercontent\.com\/.*\/proxy/i.test(url);
+}
+
 function extractImageUrl(item: any): string | null {
-  if (item.enclosure?.url) return item.enclosure.url;
-  if (item["media:content"]?.url) return item["media:content"].url;
-  if (item["media:thumbnail"]?.url) return item["media:thumbnail"].url;
-  const mediaGroup = item["media:group"];
-  if (mediaGroup?.["media:content"]?.url) return mediaGroup["media:content"].url;
-  if (mediaGroup?.["media:thumbnail"]?.url) return mediaGroup["media:thumbnail"].url;
+  const pick = (u?: string | null) => (u && !isJunkImage(u) ? u : null);
+  const candidates: (string | undefined)[] = [
+    item.enclosure?.url,
+    item["media:content"]?.url,
+    item["media:thumbnail"]?.url,
+    item["media:group"]?.["media:content"]?.url,
+    item["media:group"]?.["media:thumbnail"]?.url,
+  ];
+  for (const c of candidates) {
+    const v = pick(c);
+    if (v) return v;
+  }
   const imgMatch = item.content?.match(/<img[^>]+src="([^"]+)"/);
-  if (imgMatch) return imgMatch[1];
+  if (imgMatch && !isJunkImage(imgMatch[1])) return imgMatch[1];
   return null;
 }
 
 async function fetchOgImage(url: string): Promise<string | null> {
+  // Google News URLs redirect to a stub page with Google's logo as og:image.
+  // Skip those — the frontend falls back to a newspaper icon.
+  if (/^https?:\/\/(news\.)?google\.com\//i.test(url)) return null;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -147,18 +216,269 @@ async function fetchOgImage(url: string): Promise<string | null> {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; BGPNewsBot/1.0)",
         "Accept": "text/html",
+        ...authHeadersForUrl(url),
       },
       redirect: "follow",
     });
     clearTimeout(timeout);
     if (!resp.ok) return null;
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(resp.url)) return null;
     const html = await resp.text();
     const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-    if (ogMatch?.[1]) return ogMatch[1];
+    if (ogMatch?.[1] && !isJunkImage(ogMatch[1])) return ogMatch[1];
     const twMatch = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i);
-    if (twMatch?.[1]) return twMatch[1];
+    if (twMatch?.[1] && !isJunkImage(twMatch[1])) return twMatch[1];
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Publisher favicon fallback. When og:image extraction fails we use a high-res
+// favicon as a thumbnail so cards aren't blank. Better than nothing — the user
+// at least sees the source.
+function faviconForUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (/google\.com|gstatic\.com|googleusercontent\.com/i.test(u.hostname)) return null;
+    // Google's s2 favicons endpoint returns higher-res icons than scraping
+    // /favicon.ico directly. Used for the news-card thumbnail fallback only.
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=128`;
+  } catch {
+    return null;
+  }
+}
+
+// Publisher name → root domain map. Falls back from URL-based favicon lookup
+// when the article URL is still a Google News wrapper (~95% of imports as of
+// May 2026). Keep in sync with the same map in the brand-profile sidebar.
+const PUBLISHER_DOMAINS: Record<string, string> = {
+  "drapers": "drapersonline.com",
+  "retail week": "retailweek.com",
+  "retail gazette": "retailgazette.co.uk",
+  "property week": "propertyweek.com",
+  "estates gazette": "egi.co.uk",
+  "vogue business": "voguebusiness.com",
+  "business of fashion": "businessoffashion.com",
+  "bof": "businessoffashion.com",
+  "vogue": "vogue.co.uk",
+  "bbc": "bbc.co.uk",
+  "bbc news": "bbc.co.uk",
+  "the times": "thetimes.co.uk",
+  "times": "thetimes.co.uk",
+  "the guardian": "theguardian.com",
+  "guardian": "theguardian.com",
+  "telegraph": "telegraph.co.uk",
+  "the telegraph": "telegraph.co.uk",
+  "financial times": "ft.com",
+  "ft": "ft.com",
+  "reuters": "reuters.com",
+  "bloomberg": "bloomberg.com",
+  "fashionunited": "fashionunited.uk",
+  "who what wear": "whowhatwear.com",
+  "elle": "elle.com",
+  "harpers bazaar": "harpersbazaar.com",
+  "harper's bazaar": "harpersbazaar.com",
+  "gq": "gq.com",
+  "wallpaper": "wallpaper.com",
+  "metro": "metro.co.uk",
+  "yahoo life": "uk.style.yahoo.com",
+  "thisismoney": "thisismoney.co.uk",
+  "daily mail": "dailymail.co.uk",
+  "evening standard": "standard.co.uk",
+  "city am": "cityam.com",
+  "gentleman's journal": "thegentlemansjournal.com",
+  "vogue runway": "vogue.com",
+};
+
+function publisherFavicon(sourceName: string | null | undefined): string | null {
+  if (!sourceName) return null;
+  const clean = sourceName.replace(/\s*\(Google News\)\s*$/i, "").trim().toLowerCase();
+  const domain = PUBLISHER_DOMAINS[clean];
+  if (!domain) return null;
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+}
+
+// Fast backfill — sets a publisher-favicon thumbnail on every article without
+// an image, mapping by source_name. No HTTP calls, runs in seconds even for
+// 100k articles. Doesn't unwrap Google News URLs, doesn't fetch og:image; the
+// per-article scrape (backfillMissingImages) is still available for richer
+// thumbnails on the recent slice.
+async function backfillFaviconsBySourceName(): Promise<{ updated: number; bySource: Record<string, number> }> {
+  const rows = await db.execute(sql`
+    SELECT id, source_name FROM news_articles
+     WHERE (image_url IS NULL OR image_url = '')
+       AND source_name IS NOT NULL AND source_name <> ''`);
+  const bySource: Record<string, number> = {};
+  let updated = 0;
+  const updates: Array<{ id: string; url: string }> = [];
+  for (const row of rows.rows as any[]) {
+    const favicon = publisherFavicon(row.source_name);
+    if (!favicon) continue;
+    updates.push({ id: row.id, url: favicon });
+    bySource[row.source_name] = (bySource[row.source_name] || 0) + 1;
+  }
+  for (const u of updates) {
+    try {
+      await db.update(newsArticles).set({ imageUrl: u.url }).where(eq(newsArticles.id, u.id));
+      updated++;
+    } catch {}
+  }
+  console.log(`[news] Favicon backfill: ${updated} articles updated across ${Object.keys(bySource).length} publishers`);
+  return { updated, bySource };
+}
+
+// Most articles have source_name = "<brand> (Google News)" (the BGP brand the
+// article was fetched for, not the publisher). Map those to the BGP brand-logo
+// endpoint so each article gets the brand's own logo as a thumbnail. The
+// img tag fetches /api/brand-logo/<name> with session cookies; 404s are
+// hidden by the UI's onError handler.
+async function backfillBrandLogosBySourceName(): Promise<{ updated: number; sampleNames: string[] }> {
+  const rows = await db.execute(sql`
+    SELECT id, source_name FROM news_articles
+     WHERE (image_url IS NULL OR image_url = '')
+       AND source_name IS NOT NULL AND source_name <> ''`);
+  let updated = 0;
+  const seen = new Set<string>();
+  const sampleNames: string[] = [];
+  for (const row of rows.rows as any[]) {
+    const clean = String(row.source_name).replace(/\s*\(Google News\)\s*$/i, "").trim();
+    if (!clean) continue;
+    const url = `/api/brand-logo/${encodeURIComponent(clean)}`;
+    try {
+      await db.update(newsArticles).set({ imageUrl: url }).where(eq(newsArticles.id, row.id));
+      updated++;
+      if (!seen.has(clean) && sampleNames.length < 20) { seen.add(clean); sampleNames.push(clean); }
+    } catch {}
+  }
+  console.log(`[news] Brand-logo backfill: ${updated} articles updated, ${seen.size} unique brands`);
+  return { updated, sampleNames };
+}
+
+// Revert the brand-logo backfill. The user wants the actual article thumbnail
+// (og:image / media:content) — the brand's logo is not what news cards show
+// in other apps. Clears image_url for any row pointing at /api/brand-logo/...
+async function clearBrandLogoBackfill(): Promise<number> {
+  const r = await db.execute(sql`
+    UPDATE news_articles SET image_url = NULL
+     WHERE image_url ILIKE '/api/brand-logo/%'`);
+  return (r.rowCount as number) ?? 0;
+}
+
+// Article-thumbnail backfill — for the most recent N articles, unwrap any
+// Google News URL, fetch the real article, extract og:image (or twitter:image),
+// save as image_url. Uses ScraperAPI when available so we get past geo / UA
+// blocks that kill the direct fetch path. Slow but produces real thumbnails.
+async function backfillArticleThumbnails(limit: number): Promise<{ scanned: number; updated: number; errors: number }> {
+  let scraperFetch: any = null;
+  try {
+    const m = await import("./utils/scraperapi");
+    if (m.isScraperApiAvailable()) scraperFetch = m.scraperFetch;
+  } catch {}
+
+  const missing = await db.select({ id: newsArticles.id, url: newsArticles.url })
+    .from(newsArticles)
+    .where(sql`${newsArticles.imageUrl} IS NULL OR ${newsArticles.imageUrl} = ''
+               OR ${newsArticles.imageUrl} ILIKE '/api/brand-logo/%'`)
+    .orderBy(desc(newsArticles.publishedAt))
+    .limit(limit);
+
+  let updated = 0, errors = 0;
+  for (const article of missing) {
+    if (!article.url) continue;
+    let articleUrl = article.url;
+    const updateFields: Record<string, any> = {};
+
+    // Unwrap Google News if needed
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+      const real = await resolveGoogleNewsUrl(articleUrl);
+      if (real && real !== articleUrl) {
+        articleUrl = real;
+        updateFields.url = real;
+      }
+    }
+
+    // Skip if still a Google wrapper after unwrap attempt — no usable og:image.
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+      errors++;
+      continue;
+    }
+
+    // Try direct fetch first (cheaper), fall back to ScraperAPI on failure.
+    let img: string | null = await fetchOgImage(articleUrl);
+    if (!img && scraperFetch) {
+      try {
+        const r = await scraperFetch(articleUrl, { uk: true, render: false, timeoutMs: 20000 });
+        if (r.ok) {
+          const html = await r.text();
+          const og = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+            || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+          if (og?.[1] && !isJunkImage(og[1])) img = og[1];
+          if (!img) {
+            const tw = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)
+              || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i);
+            if (tw?.[1] && !isJunkImage(tw[1])) img = tw[1];
+          }
+        }
+      } catch {}
+    }
+
+    if (img) {
+      updateFields.imageUrl = img;
+    } else {
+      errors++;
+      continue;
+    }
+
+    try {
+      await db.update(newsArticles).set(updateFields).where(eq(newsArticles.id, article.id));
+      updated++;
+    } catch {
+      // URL UNIQUE constraint hit — try just the image
+      if (updateFields.imageUrl) {
+        try {
+          await db.update(newsArticles).set({ imageUrl: updateFields.imageUrl }).where(eq(newsArticles.id, article.id));
+          updated++;
+        } catch {}
+      }
+    }
+    await new Promise(r => setTimeout(r, 150));
+  }
+  console.log(`[news] Thumbnail backfill: ${updated}/${missing.length} updated, ${errors} no-image`);
+  return { scanned: missing.length, updated, errors };
+}
+
+// Google News RSS URLs (news.google.com/rss/articles/CBM…) are opaque wrappers
+// that redirect to the real article. Without unwrapping, clicking them often
+// dead-ends and og:image extraction is impossible. This function follows the
+// redirect chain + parses the response for a canonical URL.
+async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
+  if (!/^https?:\/\/(news\.)?google\.com\//i.test(googleUrl)) return googleUrl;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    const resp = await fetch(googleUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; BGPNewsBot/1.0)",
+        "Accept": "text/html",
+        ...authHeadersForUrl(googleUrl),
+      },
+      redirect: "follow",
+    });
+    clearTimeout(timeout);
+    // If the server-side redirect actually landed off Google, we have the real URL.
+    if (!/^https?:\/\/(news\.)?google\.com\//i.test(resp.url)) return resp.url;
+    const html = await resp.text();
+    // Google's article stub embeds the real URL in JS — pull the first non-Google
+    // http(s) URL out of the response body.
+    const m = html.match(/data-n-au=["']([^"']+)["']/i)
+      || html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
+      || html.match(/"(https?:\/\/(?!(?:news\.)?google\.com\/)[^"\s]+)"/);
+    if (m?.[1]) return m[1];
     return null;
   } catch {
     return null;
@@ -166,29 +486,73 @@ async function fetchOgImage(url: string): Promise<string | null> {
 }
 
 async function backfillMissingImages(): Promise<number> {
+  return backfillMissingImagesUpTo(200);
+}
+
+async function backfillMissingImagesUpTo(limit: number): Promise<number> {
+  // Pull articles where either the thumbnail is missing OR the URL is still a
+  // raw Google News wrapper (so we can unwrap + thumb in one pass).
   const missing = await db.select({ id: newsArticles.id, url: newsArticles.url })
     .from(newsArticles)
-    .where(sql`${newsArticles.imageUrl} IS NULL`)
+    .where(sql`${newsArticles.imageUrl} IS NULL OR ${newsArticles.url} ILIKE 'https://news.google.com/%' OR ${newsArticles.url} ILIKE 'https://www.google.com/%'`)
     .orderBy(desc(newsArticles.publishedAt))
-    .limit(30);
+    .limit(limit);
 
   if (missing.length === 0) return 0;
   let updated = 0;
 
   for (const article of missing) {
     if (!article.url) continue;
-    const img = await fetchOgImage(article.url);
-    if (img) {
-      await db.update(newsArticles)
-        .set({ imageUrl: img })
-        .where(eq(newsArticles.id, article.id));
-      updated++;
+    let articleUrl = article.url;
+    const updateFields: Record<string, any> = {};
+
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+      const real = await resolveGoogleNewsUrl(articleUrl);
+      if (real && real !== articleUrl) {
+        articleUrl = real;
+        updateFields.url = real;
+      }
     }
-    await new Promise(r => setTimeout(r, 500));
+
+    let img = await fetchOgImage(articleUrl);
+    if (!img) img = faviconForUrl(articleUrl);
+    if (img) updateFields.imageUrl = img;
+
+    if (Object.keys(updateFields).length > 0) {
+      try {
+        await db.update(newsArticles)
+          .set(updateFields)
+          .where(eq(newsArticles.id, article.id));
+        updated++;
+      } catch {
+        // URL UNIQUE constraint — another article with the unwrapped URL
+        // already exists. Just set the favicon on this row and move on.
+        if (updateFields.imageUrl && !updateFields.url) continue;
+        try {
+          await db.update(newsArticles)
+            .set({ imageUrl: updateFields.imageUrl })
+            .where(eq(newsArticles.id, article.id));
+        } catch {}
+      }
+    }
+    await new Promise(r => setTimeout(r, 200));
   }
 
-  console.log(`[news] Backfilled ${updated}/${missing.length} article images`);
+  console.log(`[news] Backfilled ${updated}/${missing.length} articles (images + Google News unwraps)`);
   return updated;
+}
+
+async function getActiveTagVocabulary(): Promise<string[]> {
+  try {
+    const rows = await db.select({ name: newsTags.name })
+      .from(newsTags)
+      .where(eq(newsTags.active, true))
+      .orderBy(newsTags.sortOrder);
+    if (rows.length > 0) return rows.map(r => r.name);
+  } catch (e: any) {
+    console.warn(`[news] tag vocab read failed, using defaults: ${e?.message}`);
+  }
+  return [...DEFAULT_NEWS_TAGS];
 }
 
 async function scoreArticlesWithAI(): Promise<number> {
@@ -205,13 +569,16 @@ async function scoreArticlesWithAI(): Promise<number> {
     prefsMap[p.team] = p;
   }
 
+  const tagVocab = await getActiveTagVocabulary();
+  const tagVocabStr = tagVocab.map(t => `"${t}"`).join(", ");
+
   let scored = 0;
 
   const batchSize = 5;
   for (let i = 0; i < unprocessed.length; i += batchSize) {
     const batch = unprocessed.slice(i, i + batchSize);
 
-    const articlesText = batch.map((a, idx) => 
+    const articlesText = batch.map((a, idx) =>
       `Article ${idx + 1}:\nTitle: ${a.title}\nSummary: ${a.summary || "N/A"}\nSource: ${a.sourceName}\nCategory: ${a.category}`
     ).join("\n\n");
 
@@ -226,18 +593,23 @@ async function scoreArticlesWithAI(): Promise<number> {
         messages: [
           {
             role: "system",
-            content: `You are a news relevance scoring engine for BGP, a London property consultancy. Score each article's relevance (0-100) for each team, generate tags, and write a concise AI summary.
+            content: `You are a news relevance scoring engine for BGP, a London property consultancy. Score each article's relevance (0-100) for each team, generate tags from the controlled vocabulary, and write a concise AI summary.
 
 Teams:
 ${teamDescriptions}
+
+TAGS — choose 0-4 from this exact list (use the exact spelling, lower-case):
+[${tagVocabStr}]
+
+Pick only tags that the article genuinely matches. Do not invent tags outside this list. If you also want to add ONE free-text location tag (e.g. "Mayfair", "Birmingham") because the article is geographically specific, append it after the controlled tags.
 
 Respond in JSON format:
 {
   "articles": [
     {
       "index": 1,
-      "relevanceScores": { "Investment": 85, "London Leasing": 60, "Lease Advisory": 30, "National Leasing": 20, "Tenant Rep": 45, "Development": 10 },
-      "tags": ["retail", "letting", "Mayfair"],
+      "relevanceScores": { "Investment": 85, "London Retail": 60, "London F&B": 55, "Lease Advisory": 30, "National Leasing": 20, "Tenant Rep": 45, "Development": 10 },
+      "tags": ["retail", "new openings", "Mayfair"],
       "aiSummary": "Brief 1-2 sentence summary highlighting why this matters for property professionals"
     }
   ]
@@ -301,7 +673,8 @@ async function extractCompsFromArticles(): Promise<{ extracted: number; created:
     const tags = (a.aiTags || []).map((t: string) => t.toLowerCase());
     const scores = a.aiRelevanceScores as Record<string, number> | null;
     const leasingScore = Math.max(
-      (scores?.["London Leasing"] || 0),
+      (scores?.["London F&B"] || 0),
+      (scores?.["London Retail"] || 0),
       (scores?.["National Leasing"] || 0),
       (scores?.["Lease Advisory"] || 0),
       (scores?.["Tenant Rep"] || 0)
@@ -444,20 +817,30 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     const compSearchQuery = encodeURIComponent('"zone a" OR "net effective" OR "ITZA" OR "new letting" OR "rent free" OR "headline rent" OR "comparable" OR "sq ft" OR "psf" OR "lease renewal"');
 
     const emailTexts: string[] = [];
+    // Per-message webLink + label so each extracted comp can deep-link back to
+    // the email it came from. Index aligns with the order pushed into emailTexts;
+    // the AI returns sourceArticleIndex (1-based) for each comp.
+    const emailArticles: { url: string; title: string }[] = [];
 
     for (const email of teamEmails.slice(0, 15)) {
       try {
-        const searchPath = `/users/${email}/messages?$search=${compSearchQuery}&$top=50&$select=subject,bodyPreview,from,receivedDateTime&$orderby=receivedDateTime desc`;
+        const searchPath = `/users/${email}/messages?$search=${compSearchQuery}&$top=50&$select=subject,bodyPreview,from,receivedDateTime,webLink&$orderby=receivedDateTime desc`;
         const data = await graphRequest(searchPath);
         const messages = data?.value || [];
 
         for (const msg of messages) {
           const preview = msg.bodyPreview || "";
           const subject = msg.subject || "";
-          // Graph $search already filtered by comp keywords — push all results
+          const fromName = msg.from?.emailAddress?.name || "Unknown";
+          const fromAddr = msg.from?.emailAddress?.address || "";
+          const idx = emailTexts.length + 1;
           emailTexts.push(
-            `Email from ${msg.from?.emailAddress?.name || "Unknown"} (${msg.from?.emailAddress?.address || ""}):\nSubject: ${subject}\nDate: ${msg.receivedDateTime?.split("T")[0] || "unknown"}\nPreview: ${preview.slice(0, 500)}`
+            `Source #${idx} — Email from ${fromName} (${fromAddr}):\nSubject: ${subject}\nDate: ${msg.receivedDateTime?.split("T")[0] || "unknown"}\nPreview: ${preview.slice(0, 500)}`
           );
+          emailArticles.push({
+            url: msg.webLink || "",
+            title: `${fromName}: ${subject}`.slice(0, 200),
+          });
         }
       } catch (err: any) {
         console.error(`[Comp Extract] Error reading ${email}:`, err?.message?.slice(0, 100));
@@ -467,12 +850,13 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     if (emailTexts.length === 0) return { extracted: 0, created: 0 };
 
     const batchText = emailTexts.slice(0, 50).join("\n\n---\n\n");
+    const articleSlice = emailArticles.slice(0, 50);
 
     const response = await callClaude({
       model: CHATBGP_HELPER_MODEL,
       messages: [
         { role: "system", content: COMP_EXTRACTION_PROMPT },
-        { role: "user", content: `Extract leasing comps from these team emails:\n\n${batchText}` },
+        { role: "user", content: `Extract leasing comps from these team emails. Each one is labelled "Source #N — ..."; set sourceArticleIndex to that N so the comp deep-links back to its email.\n\n${batchText}` },
       ],
       max_completion_tokens: 4096,
       response_format: { type: "json_object" },
@@ -484,7 +868,7 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     const parsed = safeParseJSON(content);
     const comps = parsed?.comps || [];
     extracted = comps.length;
-    created = await saveExtractedComps(comps, "Email");
+    created = await saveExtractedComps(comps, "Email", articleSlice);
   } catch (err: any) {
     console.error("[Comp Extract] Email extraction error:", err?.message?.slice(0, 200));
   }
@@ -510,7 +894,9 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
     for (const folderName of compsFolderPaths) {
       try {
         const encoded = encodeURIComponent(folderName);
-        const resp = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}:/children?$select=id,name,size,lastModifiedDateTime,file&$top=20&$orderby=lastModifiedDateTime desc`, {
+        // Include webUrl so each extracted comp can deep-link back to the SP
+        // file it came from rather than just being labelled "File".
+        const resp = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}:/children?$select=id,name,size,lastModifiedDateTime,file,webUrl&$top=20&$orderby=lastModifiedDateTime desc`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (resp.ok) {
@@ -570,8 +956,18 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
           if (content) {
             const parsed = safeParseJSON(content);
             const comps = parsed?.comps || [];
+            // Single-file batch — every comp from this iteration links back to
+            // this same SP file. Tag sourceArticleIndex=1 from the AI for safety.
+            const fileArticle = file.webUrl
+              ? [{ url: file.webUrl as string, title: file.name as string }]
+              : [];
+            // Default sourceArticleIndex to 1 so saveExtractedComps picks up the
+            // article URL even if the AI omitted it for a single-file batch.
+            for (const c of comps) {
+              if (typeof c.sourceArticleIndex !== "number") c.sourceArticleIndex = 1;
+            }
             extracted += comps.length;
-            created += await saveExtractedComps(comps, "File");
+            created += await saveExtractedComps(comps, "File", fileArticle);
           }
         } finally {
           try { fs.unlinkSync(tmpFile); } catch { }
@@ -778,6 +1174,89 @@ export async function searchGreenStreet(query: string, limit: number = 10): Prom
 export function setupNewsFeedRoutes(app: Express) {
   seedNewsSources().catch(console.error);
 
+  // Diagnostic — which paywalled-publication auth cookies are configured.
+  // Returns { label, envVar, configured } per publication; never leaks the
+  // cookie value itself.
+  app.get("/api/news-feed/auth-cookies/health", requireAuth, async (_req: Request, res: Response) => {
+    res.json({ status: authCookieStatus() });
+  });
+
+  // ─── Tag vocabulary CRUD ─────────────────────────────────────────────────
+  // requireAuth only — any logged-in user can edit, not admin-gated.
+  app.get("/api/news-feed/tags", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const rows = await db.select().from(newsTags).orderBy(newsTags.sortOrder, newsTags.name);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  app.post("/api/news-feed/tags", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const rawName = String(req.body?.name || "").trim().toLowerCase();
+      if (!rawName) return res.status(400).json({ error: "name is required" });
+      if (rawName.length > 60) return res.status(400).json({ error: "tag too long (max 60 chars)" });
+      const label = String(req.body?.label || rawName).trim().slice(0, 80);
+      const sortOrder = Number(req.body?.sortOrder ?? 1000);
+      const userId = (req as any).user?.id ? String((req as any).user.id) : null;
+      const [created] = await db.insert(newsTags).values({
+        name: rawName,
+        label,
+        sortOrder,
+        createdBy: userId,
+        active: true,
+      }).onConflictDoNothing().returning();
+      if (!created) return res.status(409).json({ error: "tag already exists" });
+      res.json(created);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  app.patch("/api/news-feed/tags/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const patch: any = {};
+      if (req.body?.label !== undefined) patch.label = String(req.body.label).slice(0, 80);
+      if (req.body?.active !== undefined) patch.active = !!req.body.active;
+      if (req.body?.sortOrder !== undefined) patch.sortOrder = Number(req.body.sortOrder);
+      if (Object.keys(patch).length === 0) return res.json({ ok: true });
+      const [updated] = await db.update(newsTags).set(patch).where(eq(newsTags.id, req.params.id)).returning();
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  app.delete("/api/news-feed/tags/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await db.delete(newsTags).where(eq(newsTags.id, req.params.id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
+  // Re-tag the recent backlog so newly-added tags get applied without waiting
+  // weeks for the cron to churn through. Marks last N articles as unprocessed
+  // — the scoreArticlesWithAI cron will pick them up.
+  app.post("/api/news-feed/retag", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(Number(req.body?.limit ?? 500), 2000);
+      const ids = await db.select({ id: newsArticles.id })
+        .from(newsArticles)
+        .orderBy(desc(newsArticles.publishedAt))
+        .limit(limit);
+      if (ids.length === 0) return res.json({ marked: 0 });
+      await db.update(newsArticles)
+        .set({ processed: false })
+        .where(inArray(newsArticles.id, ids.map(r => r.id)));
+      res.json({ marked: ids.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "failed" });
+    }
+  });
+
   app.get("/api/news-feed/sources", requireAuth, async (_req: Request, res: Response) => {
     const sources = await db.select().from(newsSources).orderBy(newsSources.name);
     res.json(sources);
@@ -869,11 +1348,55 @@ export function setupNewsFeedRoutes(app: Express) {
     }
   });
 
+  // Per-brand social feeds via RSS.app (Instagram / X / LinkedIn).
+  // Preview shows what *would* be created without burning RSS.app quota.
+  // ?platforms=instagram,x,linkedin (default: all). ?limit=N caps the plan.
+  function parsePlatforms(raw: unknown): SocialPlatform[] | undefined {
+    if (typeof raw !== "string" || !raw) return undefined;
+    const allowed: SocialPlatform[] = ["instagram", "x", "linkedin"];
+    const picked = raw.split(",").map(s => s.trim().toLowerCase()).filter((s): s is SocialPlatform => (allowed as string[]).includes(s));
+    return picked.length ? picked : undefined;
+  }
+
+  app.get("/api/news-feed/brand-social/preview", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const platforms = parsePlatforms(req.query.platforms);
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const result = await previewBrandSocialFeeds({ platforms, limit });
+      res.json({ count: result.plan.length, existing: result.existing, plan: result.plan });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Preview failed" });
+    }
+  });
+
+  app.post("/api/news-feed/brand-social/refresh", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const platforms = parsePlatforms(req.query.platforms);
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const result = await ensureBrandSocialFeeds({ platforms, limit });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Refresh failed" });
+    }
+  });
+
   // Re-link existing articles to tracked brands → brand_signals
   app.post("/api/news-feed/link-brands", requireAuth, async (req: Request, res: Response) => {
     try {
       const limit = Number(req.query.limit) || 500;
       const result = await linkRecentArticlesToBrands({ limit });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Backfill AI classification over existing generic "news" brand_signals.
+  // Call repeatedly — each run processes up to ?limit=50 rows.
+  app.post("/api/news-feed/backfill-signals", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Number(req.query.limit) || 50;
+      const result = await backfillSignalClassifications({ limit });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -889,6 +1412,113 @@ export function setupNewsFeedRoutes(app: Express) {
     } catch (err: any) {
       console.error("News fetch error:", err);
       res.status(500).json({ message: "Failed to fetch news" });
+    }
+  });
+
+  // Diagnostic: how many articles currently have a thumbnail vs none?
+  app.get("/api/news-feed/image-stats", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const total = await db.execute(sql`SELECT COUNT(*)::int AS n FROM news_articles`);
+      const withImg = await db.execute(sql`SELECT COUNT(*)::int AS n FROM news_articles WHERE image_url IS NOT NULL AND image_url <> ''`);
+      const stillGoogle = await db.execute(sql`SELECT COUNT(*)::int AS n FROM news_articles WHERE url ILIKE 'https://news.google.com/%' OR url ILIKE 'https://www.google.com/%'`);
+      res.json({
+        total: (total.rows[0] as any).n,
+        with_image: (withImg.rows[0] as any).n,
+        without_image: (total.rows[0] as any).n - (withImg.rows[0] as any).n,
+        still_wrapped_google_news: (stillGoogle.rows[0] as any).n,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Bulk backfill — runs unrestricted (the regular fetch caps at 200 per call).
+  // Async/fire-and-forget so the request doesn't time out on Railway's proxy.
+  app.post("/api/news-feed/backfill-images", requireAuth, async (req: Request, res: Response) => {
+    const limit = Math.min(parseInt(String(req.body?.limit || req.query.limit || 2000), 10) || 2000, 10000);
+    (async () => {
+      try {
+        const updated = await backfillMissingImagesUpTo(limit);
+        console.log(`[news] Bulk backfill done: ${updated} images updated (limit ${limit})`);
+      } catch (e: any) {
+        console.error("[news] Bulk backfill failed:", e?.message || e);
+      }
+    })();
+    res.json({ started: true, limit });
+  });
+
+  // Fast favicon-only backfill — maps every imageless article's source_name to
+  // a publisher domain favicon. No HTTP calls, completes in seconds. Use this
+  // first; the slower og:image scraper (backfill-images) can upgrade the slice
+  // we actually look at.
+  app.post("/api/news-feed/backfill-favicons", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await backfillFaviconsBySourceName();
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Most articles are Google-News-sourced per BGP brand — source_name is the
+  // brand name. Map each to its /api/brand-logo URL so the thumbnail shows the
+  // brand's logo. Covers ~all articles in one shot.
+  app.post("/api/news-feed/backfill-brand-logos", requireAuth, async (_req: Request, res: Response) => {
+    // Fire-and-forget — 93k articles × per-row UPDATE blows the Railway proxy
+    // timeout (~60s). Run in background and reply immediately.
+    (async () => {
+      try {
+        const result = await backfillBrandLogosBySourceName();
+        console.log(`[news] Brand-logo backfill done: ${result.updated} articles, ${result.sampleNames.length} sample brands`);
+      } catch (e: any) {
+        console.error("[news] Brand-logo backfill failed:", e?.message || e);
+      }
+    })();
+    res.json({ started: true });
+  });
+
+  // Revert the brand-logo backfill — what we actually want is each article's
+  // own og:image (the publisher-supplied thumbnail), not the BGP brand logo.
+  app.post("/api/news-feed/clear-brand-logos", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const cleared = await clearBrandLogoBackfill();
+      res.json({ ok: true, cleared });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Proper article-thumbnail backfill — unwraps Google News, fetches the real
+  // article (via ScraperAPI when available), pulls og:image / twitter:image.
+  // Slow (each row ~0.5–2s); fire-and-forget so the request doesn't time out.
+  app.post("/api/news-feed/backfill-thumbnails", requireAuth, async (req: Request, res: Response) => {
+    const limit = Math.min(parseInt(String(req.body?.limit || req.query.limit || 1000), 10) || 1000, 10000);
+    (async () => {
+      try {
+        const r = await backfillArticleThumbnails(limit);
+        console.log(`[news] Thumbnail backfill done: ${r.updated}/${r.scanned} updated, ${r.errors} no-image`);
+      } catch (e: any) {
+        console.error("[news] Thumbnail backfill failed:", e?.message || e);
+      }
+    })();
+    res.json({ started: true, limit });
+  });
+
+  // Diagnostic: top source_name values amongst imageless articles. Tells us
+  // which publishers to add to PUBLISHER_DOMAINS so the favicon backfill
+  // actually covers the bulk of the data.
+  app.get("/api/news-feed/source-names", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT source_name, COUNT(*)::int AS n
+          FROM news_articles
+         WHERE (image_url IS NULL OR image_url = '')
+         GROUP BY source_name
+         ORDER BY n DESC
+         LIMIT 80`);
+      res.json({ top: rows.rows });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

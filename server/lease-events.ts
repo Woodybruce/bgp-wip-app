@@ -49,9 +49,12 @@ export function registerLeaseEventRoutes(app: Express) {
 
   app.post("/api/lease-events", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (!req.body.eventDate) {
+        return res.status(400).json({ error: "Event date is required" });
+      }
       const payload: InsertLeaseEvent = {
         ...req.body,
-        eventDate: req.body.eventDate ? new Date(req.body.eventDate) : null,
+        eventDate: new Date(req.body.eventDate),
         noticeDate: req.body.noticeDate ? new Date(req.body.noticeDate) : null,
         createdBy: req.body.createdBy || req.session?.userId || null,
       };
@@ -65,6 +68,9 @@ export function registerLeaseEventRoutes(app: Express) {
 
   app.patch("/api/lease-events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
+      if ("eventDate" in req.body && !req.body.eventDate) {
+        return res.status(400).json({ error: "Event date is required" });
+      }
       const updates: Record<string, any> = { ...req.body, updatedAt: new Date() };
       if (updates.eventDate) updates.eventDate = new Date(updates.eventDate);
       if (updates.noticeDate) updates.noticeDate = new Date(updates.noticeDate);

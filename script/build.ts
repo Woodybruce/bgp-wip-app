@@ -3,6 +3,7 @@ import { build as viteBuild } from "vite";
 import { rm, readFile, writeFile, copyFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import pg from "pg";
+import sharp from "sharp";
 
 async function runPreMigrations() {
   const dbUrl = process.env.DATABASE_URL;
@@ -199,6 +200,15 @@ async function buildAll() {
 
   console.log("building client...");
   await viteBuild();
+
+  // Generate PNG icons for the Excel add-in manifest. Office requires PNG
+  // (not SVG). We derive them from the existing icon.svg at the required sizes.
+  const svgSrc = await readFile("client/public/icon.svg");
+  for (const size of [16, 32, 64, 80, 128, 192]) {
+    const dest = `dist/public/icon-${size}.png`;
+    await sharp(svgSrc).resize(size, size).png().toFile(dest);
+  }
+  console.log("generated PNG icons for Excel add-in manifest");
 
   // Bump the Service Worker cache name to the build timestamp so old caches
   // (and the stale HTML/asset map they hold) get evicted on next deploy.

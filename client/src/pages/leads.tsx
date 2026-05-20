@@ -22,13 +22,14 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Search, AlertCircle, X, UserPlus, Plus, Pencil, Trash2, ArrowRightCircle, Users } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect } from "@/components/inline-edit";
-import { SOURCE_TYPES, SOURCE_LIST, normaliseSource } from "@shared/source-types";
+import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
+import { SourcePicker } from "@/components/source-cell";
 import { ExternalLink } from "lucide-react";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS } from "@/lib/crm-options";
@@ -40,9 +41,27 @@ export default function Leads() {
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<Partial<CrmLead> | null>(null);
   const [editItem, setEditItem] = useState<CrmLead | null>(null);
   const [deleteItem, setDeleteItem] = useState<CrmLead | null>(null);
   const { toast } = useToast();
+
+  // Deep-link: /leads?create=1&source=Email&sourceUrl=...&sourceTitle=...
+  // Mail viewer / pathway page navigates here with the source attribution
+  // pre-attached. Strip params after consumption.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("create") !== "1") return;
+    setCreatePrefill({
+      source: params.get("source") || "",
+      sourceUrl: params.get("sourceUrl") || "",
+      sourceTitle: params.get("sourceTitle") || "",
+      name: params.get("name") || "",
+    } as Partial<CrmLead>);
+    setCreateOpen(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
 
   const { data: items = [], isLoading, error } = useQuery<CrmLead[]>({
     queryKey: ["/api/crm/leads"],
@@ -199,7 +218,7 @@ export default function Leads() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="leads-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="leads-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -307,7 +326,7 @@ export default function Leads() {
               </CardContent>
             </Card>
           ) : (
-            <Card>
+            <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={1200}>
                 <Table>
                   <TableHeader>
@@ -462,11 +481,12 @@ export default function Leads() {
 
       <LeadFormDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(o) => { setCreateOpen(o); if (!o) setCreatePrefill(null); }}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
         title="Create Lead"
         groups={groups}
+        defaultValues={createPrefill || undefined}
       />
 
       {editItem && (
@@ -530,6 +550,8 @@ function LeadFormDialog({
     leadType: defaultValues?.leadType || "",
     assignedTo: defaultValues?.assignedTo || "",
     source: defaultValues?.source || "",
+    sourceUrl: (defaultValues as any)?.sourceUrl || "",
+    sourceTitle: (defaultValues as any)?.sourceTitle || "",
     email: defaultValues?.email || "",
     phone: defaultValues?.phone || "",
     notes: defaultValues?.notes || "",
@@ -594,14 +616,6 @@ function LeadFormDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label>Source</Label>
-              <Input
-                value={form.source}
-                onChange={(e) => setForm({ ...form, source: e.target.value })}
-                data-testid="input-lead-source"
-              />
-            </div>
-            <div className="space-y-2">
               <Label>Email</Label>
               <Input
                 type="email"
@@ -610,13 +624,21 @@ function LeadFormDialog({
                 data-testid="input-lead-email"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                data-testid="input-lead-phone"
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>Phone</Label>
-            <Input
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              data-testid="input-lead-phone"
+          <div className="rounded-md border p-3 bg-muted/30">
+            <SourcePicker
+              evidence={form.source}
+              url={form.sourceUrl}
+              title={form.sourceTitle}
+              onChange={(s) => setForm({ ...form, source: s.evidence || "", sourceUrl: s.url || "", sourceTitle: s.title || "" })}
             />
           </div>
           <div className="space-y-2">

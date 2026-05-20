@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -31,11 +32,13 @@ import {
 import { useState, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect } from "@/components/inline-edit";
-import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer } from "@shared/schema";
+import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
+import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
+import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
+import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
@@ -43,7 +46,8 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 
-const MARKETING_STATUSES = ["Reporting", "Available", "Negotiating", "Under Offer", "Let", "Withdrawn"];
+import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+const MARKETING_STATUSES = LETTING_STATUSES;
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -58,21 +62,25 @@ const LOCATION_COLORS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  "Reporting": "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
-  "Available": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  "Negotiating": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "Under Offer": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  "Let": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  "Withdrawn": "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
+  REP: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  AVA: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+  NEG: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  SOL: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  EXC: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  COM: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  WIT: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
+  INV: "bg-emerald-200 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200",
 };
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
-  "Reporting": "bg-violet-500",
-  "Available": "bg-emerald-500",
-  "Negotiating": "bg-blue-500",
-  "Under Offer": "bg-amber-500",
-  "Let": "bg-green-500",
-  "Withdrawn": "bg-gray-500",
+  REP: "bg-violet-500",
+  AVA: "bg-emerald-500",
+  NEG: "bg-blue-500",
+  SOL: "bg-amber-500",
+  EXC: "bg-violet-600",
+  COM: "bg-green-500",
+  WIT: "bg-gray-500",
+  INV: "bg-emerald-600",
 };
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
@@ -159,6 +167,7 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
 interface UnitFormState {
   unitName: string;
   propertyId: string;
+  dealType: string;
   floor: string;
   sqft: string;
   askingRent: string;
@@ -180,6 +189,7 @@ interface UnitFormState {
 const emptyForm: UnitFormState = {
   unitName: "",
   propertyId: "",
+  dealType: "New Letting",
   floor: "",
   sqft: "",
   askingRent: "",
@@ -188,7 +198,7 @@ const emptyForm: UnitFormState = {
   useClass: "",
   condition: "",
   availableDate: "",
-  marketingStatus: "Available",
+  marketingStatus: "AVA",
   epcRating: "",
   location: "",
   notes: "",
@@ -202,6 +212,7 @@ function formToPayload(f: UnitFormState) {
   return {
     unitName: f.unitName,
     propertyId: f.propertyId,
+    dealType: f.dealType || "New Letting",
     floor: f.floor || null,
     sqft: f.sqft ? parseFloat(f.sqft) : null,
     askingRent: f.askingRent ? parseFloat(f.askingRent) : null,
@@ -210,7 +221,7 @@ function formToPayload(f: UnitFormState) {
     useClass: f.useClass || null,
     condition: f.condition || null,
     availableDate: f.availableDate || null,
-    marketingStatus: f.marketingStatus || "Available",
+    marketingStatus: legacyToCode(f.marketingStatus) || "AVA",
     epcRating: f.epcRating || null,
     location: f.location || null,
     notes: f.notes || null,
@@ -221,10 +232,11 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
+    dealType: dealType || "New Letting",
     floor: u.floor || "",
     sqft: u.sqft?.toString() || "",
     askingRent: u.askingRent?.toString() || "",
@@ -233,7 +245,7 @@ function unitToForm(u: AvailableUnit): UnitFormState {
     useClass: u.useClass || "",
     condition: u.condition || "",
     availableDate: u.availableDate || "",
-    marketingStatus: u.marketingStatus || "Available",
+    marketingStatus: legacyToCode(u.marketingStatus) || "AVA",
     epcRating: u.epcRating || "",
     location: u.location || "",
     notes: u.notes || "",
@@ -274,10 +286,7 @@ function CurrencyInput({ value, onChange, placeholder, prefix, testId }: { value
   );
 }
 
-const INTERNAL_BGP_TEAMS = new Set([
-  "London Leasing", "National Leasing", "Investment", "Tenant Rep",
-  "Development", "Lease Advisory", "Office / Corporate",
-]);
+const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 export default function AvailableUnitsPage() {
   const { activeTeam } = useTeam();
@@ -317,6 +326,8 @@ export default function AvailableUnitsPage() {
     leaseLength: "",
     rentFree: "",
     comments: "",
+    amlChecked: "",      // YES | NO | N-A — soft-required at SOL
+    overrideCompliance: false, // user-acknowledged shipping despite incomplete AML/fee agreement
   });
   const { toast } = useToast();
 
@@ -326,6 +337,10 @@ export default function AvailableUnitsPage() {
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+  });
+
+  const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
+    queryKey: ["/api/property-units"],
   });
 
   const { data: deals = [] } = useQuery<CrmDeal[]>({
@@ -411,6 +426,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
       toast({ title: "Viewing removed" });
     },
+    onError: (e: any) => toast({ title: "Couldn't remove viewing", description: e.message, variant: "destructive" }),
   });
 
   const addOfferMutation = useMutation({
@@ -434,6 +450,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
       toast({ title: "Offer removed" });
     },
+    onError: (e: any) => toast({ title: "Couldn't remove offer", description: e.message, variant: "destructive" }),
   });
 
   const { data: filesForUnit = [] } = useQuery<UnitMarketingFile[]>({
@@ -477,11 +494,31 @@ export default function AvailableUnitsPage() {
     return m;
   }, [deals]);
 
+  const unitsByProperty = useMemo(() => {
+    const m: Record<string, PropertyUnit[]> = {};
+    for (const pu of propertyUnits) {
+      (m[pu.propertyId] = m[pu.propertyId] || []).push(pu);
+    }
+    return m;
+  }, [propertyUnits]);
+
+  const unitMasterById = useMemo(() => {
+    const m: Record<string, PropertyUnit> = {};
+    for (const pu of propertyUnits) m[pu.id] = pu;
+    return m;
+  }, [propertyUnits]);
+
   const userMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const u of bgpUsers) m[u.id] = u.name;
     return m;
   }, [bgpUsers]);
+
+  const companyMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of crmCompanies) m[c.id] = c.name;
+    return m;
+  }, [crmCompanies]);
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/available-units", data),
@@ -499,6 +536,9 @@ export default function AvailableUnitsPage() {
       apiRequest("PATCH", `/api/available-units/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Master fields (floor/sqft/useClass/condition/epcRating/unitName) flow to
+      // property_units server-side, so refresh that cache too.
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
       setEditItem(null);
       toast({ title: "Unit updated" });
     },
@@ -541,6 +581,72 @@ export default function AvailableUnitsPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const dealInlineUpdate = useMutation({
+    mutationFn: async ({ id, field, value }: { id: string; field: string; value: unknown }) => {
+      await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+    },
+    onSuccess: () => {
+      invalidateDealCaches();
+    },
+    onError: (e: any) => toast({ title: "Error saving", description: e.message, variant: "destructive" }),
+  });
+
+  const createPropertyUnitMutation = useMutation({
+    mutationFn: async (data: { propertyId: string; unitName: string; floor?: string | null; sqft?: number | null }) => {
+      const res = await apiRequest("POST", "/api/property-units", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+    },
+    onError: (e: any) => toast({ title: "Error creating unit", description: e.message, variant: "destructive" }),
+  });
+
+  // Pick an existing master unit (by id) for a listing, or create one and link.
+  // Keeps listing.unitId, listing.unitName, deal.unitId, and deal.name in sync.
+  const pickOrCreateUnit = async (
+    listing: AvailableUnit,
+    selection: { unitId: string } | { newName: string }
+  ) => {
+    let unitId: string | null = null;
+    let unitName: string;
+
+    if ("unitId" in selection) {
+      const pu = unitMasterById[selection.unitId];
+      if (!pu) return;
+      unitId = pu.id;
+      unitName = pu.unitName;
+    } else {
+      const trimmed = selection.newName.trim();
+      if (!trimmed) return;
+      // Reuse if a unit with this name already exists on the property
+      const existing = (unitsByProperty[listing.propertyId] || []).find(
+        u => u.unitName.trim().toLowerCase() === trimmed.toLowerCase()
+      );
+      if (existing) {
+        unitId = existing.id;
+        unitName = existing.unitName;
+      } else {
+        const created = await createPropertyUnitMutation.mutateAsync({
+          propertyId: listing.propertyId,
+          unitName: trimmed,
+          floor: listing.floor || null,
+          sqft: listing.sqft ?? null,
+        });
+        unitId = created.id;
+        unitName = trimmed;
+      }
+    }
+
+    updateMutation.mutate({ id: listing.id, data: { unitId, unitName } });
+    if (listing.dealId) {
+      const prop = propertyMap[listing.propertyId];
+      const dealName = prop ? `${prop.name} – ${unitName}` : unitName;
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "unitId", value: unitId });
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "name", value: dealName });
+    }
+  };
+
   const linkDealMutation = useMutation({
     mutationFn: ({ id, dealId }: { id: string; dealId: string }) =>
       apiRequest("POST", `/api/available-units/${id}/link-deal`, { dealId }),
@@ -557,7 +663,7 @@ export default function AvailableUnitsPage() {
     mutationFn: (id: string) => apiRequest("POST", `/api/available-units/${id}/create-deal`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       toast({ title: "Deal created and linked" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -570,40 +676,51 @@ export default function AvailableUnitsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setWipUnit(null);
-      toast({ title: "Under Offer — WIP deal created" });
+      toast({ title: "Promoted to Solicitors" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const openWipDialog = (unit: AvailableUnit) => {
     const prop = propertyMap[unit.propertyId];
+    // Pre-fill from the linked deal if there is one — that's the common path
+    // now that Add Unit auto-creates a deal at AVA. User just updates the
+    // fields that matter at the SOL handover.
+    const existingDeal = unit.dealId ? dealMap[unit.dealId] : null;
     setWipForm({
-      dealType: "Letting",
-      team: [],
-      agent: unit.agent || "",
+      dealType: existingDeal?.dealType || "Letting",
+      team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
+      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "",
       tenantName: "",
-      fee: unit.fee?.toString() || "",
-      feeAgreement: "",
-      askingRent: unit.askingRent?.toString() || "",
-      totalAreaSqft: unit.sqft?.toString() || "",
-      leaseLength: "",
-      rentFree: "",
-      comments: `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
+      fee: (existingDeal?.fee ?? unit.fee)?.toString() || "",
+      feeAgreement: existingDeal?.feeAgreement || "",
+      askingRent: (existingDeal?.rentPa ?? unit.askingRent)?.toString() || "",
+      totalAreaSqft: (existingDeal?.totalAreaSqft ?? unit.sqft)?.toString() || "",
+      leaseLength: existingDeal?.leaseLength?.toString() || "",
+      rentFree: existingDeal?.rentFree?.toString() || "",
+      comments: existingDeal?.comments || `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
+      amlChecked: existingDeal?.amlCheckCompleted || "",
+      overrideCompliance: false,
     });
     setWipUnit(unit);
   };
 
   const inlineUpdate = (id: string, field: string, value: any) => {
     if (typeof value === "number" && isNaN(value)) value = null;
-    if (field === "marketingStatus" && value === "Under Offer") {
+    // Status → SOL always fires the promotion modal so the user captures the
+    // SOL-handover fields (fee, fee agreement, tenant, lease length, rent free).
+    // Pre-fill comes from the linked deal if it already exists.
+    if (field === "marketingStatus" && legacyToCode(value) === "SOL") {
       const unit = units.find(u => u.id === id);
-      if (unit && !unit.dealId) {
+      if (unit) {
         openWipDialog(unit);
         return;
       }
     }
+    // Server PATCH handler routes master-managed fields (unitName, floor, sqft,
+    // useClass, condition, epcRating) to property_units when unit_id is set.
     updateMutation.mutate({ id, data: { [field]: value } });
   };
 
@@ -614,7 +731,7 @@ export default function AvailableUnitsPage() {
 
   const filtered = useMemo(() => {
     let result = teamUnits;
-    if (statusFilter !== "all") result = result.filter(u => u.marketingStatus === statusFilter);
+    if (statusFilter !== "all") result = result.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
@@ -631,7 +748,10 @@ export default function AvailableUnitsPage() {
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const s of MARKETING_STATUSES) counts[s] = 0;
-    for (const u of teamUnits) counts[u.marketingStatus || "Available"] = (counts[u.marketingStatus || "Available"] || 0) + 1;
+    for (const u of teamUnits) {
+      const code = legacyToCode(u.marketingStatus) || "AVA";
+      counts[code] = (counts[code] || 0) + 1;
+    }
     return counts;
   }, [teamUnits]);
 
@@ -818,9 +938,9 @@ export default function AvailableUnitsPage() {
               className={`${STATUS_LABEL_COLORS[s]} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
                 statusFilter === s ? "ring-2 ring-primary ring-offset-1 scale-105" : statusFilter !== "all" ? "opacity-40" : "hover:opacity-90"
               }`}
-              data-testid={`filter-status-${s.toLowerCase().replace(/\s/g, "-")}`}
+              data-testid={`filter-status-${s.toLowerCase()}`}
             >
-              {s}
+              {DEAL_STATUS_LABELS[s]}
               {statusFilter === s && <X className="inline h-3 w-3 ml-1 -mr-0.5" />}
             </button>
           ))}
@@ -849,20 +969,20 @@ export default function AvailableUnitsPage() {
       <ScrollArea className="w-full">
         <div className="flex items-center gap-3 pb-1">
           {MARKETING_STATUSES.map(s => {
-            const count = teamUnits.filter(u => u.marketingStatus === s).length;
+            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <Card
                 key={s}
                 className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
                 onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-                data-testid={`stat-card-${s.toLowerCase().replace(/\s/g, "-")}`}
+                data-testid={`stat-card-${s.toLowerCase()}`}
               >
                 <CardContent className="p-3">
                   <div className="flex items-center gap-2">
                     <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
                     <div>
                       <p className="text-lg font-bold">{count}</p>
-                      <p className="text-xs text-muted-foreground">{s}</p>
+                      <p className="text-xs text-muted-foreground">{DEAL_STATUS_LABELS[s]}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -890,10 +1010,10 @@ export default function AvailableUnitsPage() {
                 <DropdownMenuItem
                   key={s}
                   onClick={() => bulkStatusMutation.mutate({ ids: Array.from(selectedIds), status: s })}
-                  data-testid={`bulk-status-${s.toLowerCase().replace(/\s/g, "-")}`}
+                  data-testid={`bulk-status-${s.toLowerCase()}`}
                 >
                   <span className={`w-2 h-2 rounded-full mr-2 ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                  {s}
+                  {DEAL_STATUS_LABELS[s]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -905,7 +1025,7 @@ export default function AvailableUnitsPage() {
       )}
 
       <Card>
-        <ScrollableTable minWidth={1800}>
+        <ScrollableTable minWidth={2600}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -920,32 +1040,34 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                <TableHead className="w-10 px-1"><Star className="w-3.5 h-3.5 text-muted-foreground" /></TableHead>
+                <TableHead className="w-[50px]">Ref</TableHead>
                 <TableHead className="w-[180px]">Property</TableHead>
-                <TableHead className="w-[140px]">Unit</TableHead>
+                <TableHead className="w-[120px]">Deal Type</TableHead>
+                <TableHead className="w-[140px]">Client</TableHead>
+                <TableHead className="w-[140px]">Tenant</TableHead>
+                <TableHead className="w-[140px]">Team</TableHead>
                 <TableHead>Floor</TableHead>
-                <TableHead className="text-right">Sq Ft</TableHead>
+                <TableHead className="min-w-[140px]">Floor Areas</TableHead>
                 <TableHead className="text-right">Asking Rent</TableHead>
                 <TableHead className="text-right">Rates p.a.</TableHead>
                 <TableHead className="text-right">SC p.a.</TableHead>
                 <TableHead>Asset Class</TableHead>
-                <TableHead>Location</TableHead>
                 <TableHead>Condition</TableHead>
                 <TableHead>EPC</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>Deal Status</TableHead>
                 <TableHead className="text-center">Viewings</TableHead>
                 <TableHead className="text-center">Offers</TableHead>
                 <TableHead className="text-right">Fee</TableHead>
-                <TableHead>Agent</TableHead>
-                <TableHead>WIP Deal</TableHead>
+                <TableHead>BGP Contact</TableHead>
+                <TableHead className="w-[110px]">Fee Agreement</TableHead>
                 <TableHead>Marketing</TableHead>
-                <TableHead className="w-[100px]">Actions</TableHead>
+                <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={20} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={26} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -970,27 +1092,93 @@ export default function AvailableUnitsPage() {
                           data-testid={`checkbox-unit-${u.id}`}
                         />
                       </TableCell>
-                      <TableCell className="px-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleFavoriteMutation.mutate(u.propertyId); }}
-                          className="p-1 hover:bg-muted rounded transition-colors"
-                          data-testid={`star-unit-${u.id}`}
-                          title={favoriteIds.includes(u.propertyId) ? "Remove from dashboard" : "Pin to dashboard"}
-                        >
-                          <Star className={`w-4 h-4 ${favoriteIds.includes(u.propertyId) ? "text-amber-500 fill-amber-500" : "text-muted-foreground/40 hover:text-amber-400"}`} />
-                        </button>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {deal?.dealRef ? (
+                          <div className="flex items-center gap-1.5">
+                            <a
+                              href={`/deals/${deal.id}`}
+                              className="text-blue-600 hover:underline"
+                              title={`Open deal ${deal.dealRef}`}
+                              data-testid={`link-deal-ref-${u.id}`}
+                            >
+                              #{deal.dealRef}
+                            </a>
+                            {(() => {
+                              const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
+                              const feeOk = deal.feeAgreement === "YES";
+                              const code = legacyToCode(deal.status);
+                              // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
+                              const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
+                              if (!promoted) return null;
+                              if (amlOk && feeOk) return null;
+                              return (
+                                <span
+                                  className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"
+                                  title={`Compliance gap: ${[!amlOk && "AML", !feeOk && "Fee agreement"].filter(Boolean).join(" + ")}`}
+                                  data-testid={`compliance-flag-${u.id}`}
+                                />
+                              );
+                            })()}
+                          </div>
+                        ) : "—"}
                       </TableCell>
-                      <TableCell className="font-medium max-w-[180px] truncate" title={prop?.name}>
-                        <a href={`/properties/${u.propertyId}`} className="text-blue-600 hover:underline dark:text-blue-400" data-testid={`link-property-${u.id}`}>
-                          {prop?.name || u.propertyId}
-                        </a>
-                      </TableCell>
-                      <TableCell>
-                        <InlineText
-                          value={u.unitName}
-                          onSave={v => inlineUpdate(u.id, "unitName", v)}
-                          data-testid={`inline-unit-name-${u.id}`}
+                      <TableCell className="px-1.5 py-1 font-medium max-w-[200px]">
+                        <InlineLinkSelect
+                          value={u.propertyId}
+                          options={properties.map(p => ({ id: p.id, name: p.name }))}
+                          href={`/properties/${u.propertyId}`}
+                          onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
+                          placeholder="Link property"
+                          data-testid={`link-property-${u.id}`}
                         />
+                      </TableCell>
+                      <TableCell className="px-1.5">
+                        {deal ? (
+                          <InlineLabelSelect
+                            value={deal.dealType}
+                            options={CRM_OPTIONS.dealType}
+                            colorMap={DEAL_TYPE_COLORS}
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null })}
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="px-1.5 max-w-[140px]">
+                        {deal ? (() => {
+                          const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
+                          const field = isTenantRep ? "tenantId" : "landlordId";
+                          const value = isTenantRep ? deal.tenantId : deal.landlordId;
+                          return (
+                            <InlineLinkSelect
+                              value={value}
+                              options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              href={value ? `/companies/${value}` : undefined}
+                              onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field, value: v || null })}
+                              placeholder="Link client"
+                            />
+                          );
+                        })() : <span className="text-xs text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="px-1.5 max-w-[140px]">
+                        {deal ? (
+                          <InlineLinkSelect
+                            value={deal.tenantId}
+                            options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                            href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: v || null })}
+                            placeholder="Link tenant"
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="px-1.5 max-w-[160px]">
+                        {deal ? (
+                          <InlineMultiSelect
+                            value={deal.team || []}
+                            options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
+                            colorMap={DEAL_TEAM_COLORS}
+                            placeholder="Set team"
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
                         <InlineSelect
@@ -999,13 +1187,50 @@ export default function AvailableUnitsPage() {
                           onSave={v => inlineUpdate(u.id, "floor", v)}
                         />
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.sqft}
-                          onSave={v => inlineUpdate(u.id, "sqft", v)}
-                          placeholder="—"
-                          className="text-right"
-                        />
+                      <TableCell className="px-1.5 py-1">
+                        <div className="space-y-0.5">
+                          {deal ? (
+                            [
+                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft", show: true },
+                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft", show: true },
+                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft", show: true },
+                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft", show: isRetailAssetClass(deal.assetClass) },
+                              { label: deal.areaBasis || areaBasisFromAssetClass(deal.assetClass), value: deal.totalAreaSqft, field: "totalAreaSqft", show: true },
+                            ].filter(r => r.show).map(({ label, value, field }) => (
+                              <div key={field} className="flex items-center gap-1.5">
+                                <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">{label}</span>
+                                <InlineNumber
+                                  value={value}
+                                  onSave={v => {
+                                    dealInlineUpdate.mutate({ id: deal.id, field, value: v });
+                                    // Auto-sum GF+FF+Bsmt into Total (mirrors Deals board logic)
+                                    if (field === "gfAreaSqft" || field === "ffAreaSqft" || field === "basementAreaSqft") {
+                                      const gf = field === "gfAreaSqft" ? (v || 0) : (deal.gfAreaSqft || 0);
+                                      const ff = field === "ffAreaSqft" ? (v || 0) : (deal.ffAreaSqft || 0);
+                                      const bsmt = field === "basementAreaSqft" ? (v || 0) : (deal.basementAreaSqft || 0);
+                                      const total = gf + ff + bsmt || null;
+                                      dealInlineUpdate.mutate({ id: deal.id, field: "totalAreaSqft", value: total });
+                                      inlineUpdate(u.id, "sqft", total);
+                                    }
+                                    if (field === "totalAreaSqft") inlineUpdate(u.id, "sqft", v);
+                                  }}
+                                  suffix=" sf"
+                                  className="text-xs"
+                                />
+                              </div>
+                            ))
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">Total</span>
+                              <InlineNumber
+                                value={u.sqft}
+                                onSave={v => inlineUpdate(u.id, "sqft", v)}
+                                suffix=" sf"
+                                className="text-xs"
+                              />
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <InlineNumber
@@ -1044,15 +1269,6 @@ export default function AvailableUnitsPage() {
                         />
                       </TableCell>
                       <TableCell>
-                        <InlineLabelSelect
-                          value={u.location || ""}
-                          options={LOCATIONS}
-                          colorMap={LOCATION_COLORS}
-                          onSave={v => inlineUpdate(u.id, "location", v)}
-                          placeholder="Set location"
-                        />
-                      </TableCell>
-                      <TableCell>
                         <InlineSelect
                           value={u.condition || ""}
                           options={CONDITIONS}
@@ -1068,10 +1284,11 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       <TableCell>
                         <InlineLabelSelect
-                          value={u.marketingStatus || "Available"}
+                          value={legacyToCode(u.marketingStatus) || "AVA"}
                           options={MARKETING_STATUSES}
                           colorMap={STATUS_LABEL_COLORS}
-                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "Available")}
+                          labelMap={DEAL_STATUS_LABELS}
+                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
                           allowClear={false}
                         />
                       </TableCell>
@@ -1117,34 +1334,47 @@ export default function AvailableUnitsPage() {
                           testId={`inline-agent-${u.id}`}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-1.5 py-1">
                         {deal ? (
-                          <a href={`/deals/${deal.id}`} className="text-xs text-blue-600 hover:underline" data-testid={`link-deal-${u.id}`}>
-                            {deal.name || "View Deal"}
-                          </a>
+                          deal.feeAgreementUrl ? (
+                            <div className="flex items-center gap-1">
+                              <a
+                                href={deal.feeAgreementUrl.startsWith("http") ? deal.feeAgreementUrl : `https://${deal.feeAgreementUrl}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-green-700 hover:underline"
+                                title="Open fee agreement"
+                              >
+                                <FileBadge className="h-3.5 w-3.5" />
+                                View
+                              </a>
+                              <button
+                                className="text-[10px] text-muted-foreground hover:text-foreground ml-1"
+                                title="Change URL"
+                                onClick={() => {
+                                  const url = window.prompt("Fee agreement URL:", deal.feeAgreementUrl || "");
+                                  if (url !== null) dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url || null });
+                                }}
+                              >✎</button>
+                            </div>
+                          ) : (
+                            <button
+                              className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-800"
+                              title="No fee agreement on file — click to add link"
+                              onClick={() => {
+                                const url = window.prompt("Paste fee agreement URL (SharePoint / OneDrive link):");
+                                if (url) {
+                                  dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url });
+                                  dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreement", value: "YES" });
+                                }
+                              }}
+                            >
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              Missing
+                            </button>
+                          )
                         ) : (
-                          <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-1 text-xs"
-                              onClick={() => { setLinkDealOpen(u); setLinkDealId(""); }}
-                              title="Link existing deal"
-                              data-testid={`button-link-deal-${u.id}`}
-                            >
-                              <Link2 className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-1 text-xs"
-                              onClick={() => createDealMutation.mutate(u.id)}
-                              title="Auto-create deal"
-                              data-testid={`button-create-deal-${u.id}`}
-                            >
-                              <ArrowRightLeft className="h-3 w-3" />
-                            </Button>
-                          </div>
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
                       <TableCell>
@@ -1159,7 +1389,7 @@ export default function AvailableUnitsPage() {
                           Files
                         </Button>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
@@ -1175,7 +1405,7 @@ export default function AvailableUnitsPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
-                            onClick={() => { setForm(unitToForm(u)); setEditItem(u); }}
+                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }}
                             data-testid={`button-edit-${u.id}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -1202,11 +1432,12 @@ export default function AvailableUnitsPage() {
 
       <UnitFormDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(v) => { setCreateOpen(v); if (!v) setForm(emptyForm); }}
         title="Add Available Unit"
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
         onSubmit={() => createMutation.mutate(formToPayload(form))}
         isPending={createMutation.isPending}
@@ -1214,11 +1445,12 @@ export default function AvailableUnitsPage() {
 
       <UnitFormDialog
         open={!!editItem}
-        onOpenChange={v => { if (!v) setEditItem(null); }}
+        onOpenChange={v => { if (!v) { setEditItem(null); setForm(emptyForm); } }}
         title="Edit Unit"
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
@@ -1295,12 +1527,17 @@ export default function AvailableUnitsPage() {
       <Dialog open={!!wipUnit} onOpenChange={v => { if (!v) setWipUnit(null); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create WIP Deal — Under Offer</DialogTitle>
+            <DialogTitle>Promote to Solicitors</DialogTitle>
             <DialogDescription>
               {wipUnit ? `${propertyMap[wipUnit.propertyId]?.name || "Property"} — ${wipUnit.unitName}` : ""}
               . Fill in the deal details below.
             </DialogDescription>
           </DialogHeader>
+          {wipUnit && (
+            <div className="pb-2">
+              <PropertyPlanningCard propertyId={wipUnit.propertyId} compact />
+            </div>
+          )}
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -1319,7 +1556,7 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.team[0] || ""} onValueChange={v => setWipForm(f => ({ ...f, team: v ? [v] : [] }))}>
                   <SelectTrigger data-testid="wip-team"><SelectValue placeholder="Select team" /></SelectTrigger>
                   <SelectContent>
-                    {["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"].map(t => (
+                    {CRM_OPTIONS.dealTeam.map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1328,7 +1565,7 @@ export default function AvailableUnitsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1">Agent</Label>
+                <Label className="text-xs mb-1">Agent *</Label>
                 <Select value={wipForm.agent} onValueChange={v => setWipForm(f => ({ ...f, agent: v }))}>
                   <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
                   <SelectContent>
@@ -1339,7 +1576,7 @@ export default function AvailableUnitsPage() {
                 </Select>
               </div>
               <div>
-                <Label className="text-xs mb-1">Tenant / Applicant</Label>
+                <Label className="text-xs mb-1">Tenant / Applicant *</Label>
                 <Input
                   value={wipForm.tenantName}
                   onChange={e => setWipForm(f => ({ ...f, tenantName: e.target.value }))}
@@ -1350,7 +1587,7 @@ export default function AvailableUnitsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1">Fee (£)</Label>
+                <Label className="text-xs mb-1">Fee (£) *</Label>
                 <CurrencyInput
                   value={wipForm.fee}
                   onChange={v => setWipForm(f => ({ ...f, fee: v }))}
@@ -1360,14 +1597,29 @@ export default function AvailableUnitsPage() {
                 />
               </div>
               <div>
-                <Label className="text-xs mb-1">Fee Agreement</Label>
-                <Input
-                  value={wipForm.feeAgreement}
-                  onChange={e => setWipForm(f => ({ ...f, feeAgreement: e.target.value }))}
-                  placeholder="e.g. 10% of rent"
-                  data-testid="wip-fee-agreement"
-                />
+                <Label className="text-xs mb-1">Fee Agreement signed</Label>
+                <Select value={wipForm.feeAgreement} onValueChange={v => setWipForm(f => ({ ...f, feeAgreement: v }))}>
+                  <SelectTrigger data-testid="wip-fee-agreement"><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YES">YES</SelectItem>
+                    <SelectItem value="NO">NO</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1">AML / KYC checked</Label>
+                <Select value={wipForm.amlChecked} onValueChange={v => setWipForm(f => ({ ...f, amlChecked: v }))}>
+                  <SelectTrigger data-testid="wip-aml"><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YES">YES</SelectItem>
+                    <SelectItem value="NO">NO</SelectItem>
+                    <SelectItem value="N-A">N/A</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -1395,6 +1647,7 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs mb-1">Lease Length (years)</Label>
                 <Input
                   type="number"
+                  min="0"
                   value={wipForm.leaseLength}
                   onChange={e => setWipForm(f => ({ ...f, leaseLength: e.target.value }))}
                   placeholder="0"
@@ -1405,6 +1658,7 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs mb-1">Rent Free (months)</Label>
                 <Input
                   type="number"
+                  min="0"
                   value={wipForm.rentFree}
                   onChange={e => setWipForm(f => ({ ...f, rentFree: e.target.value }))}
                   placeholder="0"
@@ -1422,16 +1676,51 @@ export default function AvailableUnitsPage() {
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
-            <Button
-              onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm })}
-              disabled={wipDealMutation.isPending}
-              data-testid="wip-submit"
-            >
-              {wipDealMutation.isPending ? "Creating..." : "Create WIP Deal"}
-            </Button>
-          </DialogFooter>
+          {(() => {
+            const hardMissing: string[] = [];
+            if (!wipForm.tenantName.trim()) hardMissing.push("Tenant");
+            if (!wipForm.fee.trim()) hardMissing.push("Fee");
+            if (!wipForm.agent.trim()) hardMissing.push("Agent");
+            const softMissing: string[] = [];
+            if (wipForm.feeAgreement !== "YES") softMissing.push("Fee agreement signed");
+            if (wipForm.amlChecked !== "YES" && wipForm.amlChecked !== "N-A") softMissing.push("AML / KYC checked");
+            const canSubmit = hardMissing.length === 0 && (softMissing.length === 0 || wipForm.overrideCompliance);
+            return (
+              <>
+                {(hardMissing.length > 0 || softMissing.length > 0) && (
+                  <div className="rounded-md border p-2 bg-amber-50 dark:bg-amber-900/10 mt-2 space-y-1.5">
+                    {hardMissing.length > 0 && (
+                      <p className="text-xs text-rose-700 dark:text-rose-400">Required before saving: {hardMissing.join(", ")}</p>
+                    )}
+                    {hardMissing.length === 0 && softMissing.length > 0 && (
+                      <>
+                        <p className="text-xs text-amber-700 dark:text-amber-400">Missing compliance: {softMissing.join(", ")}</p>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={wipForm.overrideCompliance}
+                            onChange={e => setWipForm(f => ({ ...f, overrideCompliance: e.target.checked }))}
+                            data-testid="wip-override"
+                          />
+                          <span>Promote anyway — I'll complete these before exchange</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
+                  <Button
+                    onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm })}
+                    disabled={wipDealMutation.isPending || !canSubmit}
+                    data-testid="wip-submit"
+                  >
+                    {wipDealMutation.isPending ? "Saving..." : "Promote to Solicitors"}
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -1627,14 +1916,14 @@ export default function AvailableUnitsPage() {
                   <CurrencyInput value={offerForm.rentPa} onChange={v => setOfferForm(f => ({ ...f, rentPa: v }))} placeholder="0" prefix="£" testId="offer-rent" />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs">Rent Free (months)</Label>
-                  <Input type="number" value={offerForm.rentFreeMonths} onChange={e => setOfferForm(f => ({ ...f, rentFreeMonths: e.target.value }))} placeholder="0" data-testid="offer-rent-free" />
+                  <Input type="number" min="0" value={offerForm.rentFreeMonths} onChange={e => setOfferForm(f => ({ ...f, rentFreeMonths: e.target.value }))} placeholder="0" data-testid="offer-rent-free" />
                 </div>
                 <div>
                   <Label className="text-xs">Term (years)</Label>
-                  <Input type="number" value={offerForm.termYears} onChange={e => setOfferForm(f => ({ ...f, termYears: e.target.value }))} placeholder="0" data-testid="offer-term" />
+                  <Input type="number" min="0" value={offerForm.termYears} onChange={e => setOfferForm(f => ({ ...f, termYears: e.target.value }))} placeholder="0" data-testid="offer-term" />
                 </div>
                 <div>
                   <Label className="text-xs">Break Option</Label>
@@ -1921,7 +2210,7 @@ function MarketingFilesDialog({
 }
 
 function UnitFormDialog({
-  open, onOpenChange, title, form, setForm, properties, bgpUsers, onSubmit, isPending,
+  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, onSubmit, isPending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -1929,21 +2218,89 @@ function UnitFormDialog({
   form: UnitFormState;
   setForm: (f: UnitFormState) => void;
   properties: CrmProperty[];
+  propertyUnits?: PropertyUnit[];
   bgpUsers: { id: string; name: string }[];
   onSubmit: () => void;
   isPending: boolean;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
+  const [unitPickerOpen, setUnitPickerOpen] = useState(false);
+
+  // Tenancy schedule is the canonical unit source. When a property
+  // is picked, we fetch its tenancy rows and let the user pick from
+  // there — picking pre-fills sqft/use from the tenancy row, and the
+  // server stamps tenancy_unit_id on the new available_units row.
+  // Falls back to property_units for legacy properties without a
+  // tenancy schedule yet.
+  const { data: tenancyUnits = [] } = useQuery<Array<{
+    id: string | number; unit_number: string; premises: string | null;
+    permitted_use: string | null; nia_sqft: number | null; gia_sqft: number | null;
+    floor_level: string | null; status: string | null; tenant_name: string | null;
+  }>>({
+    queryKey: ["/api/tenancy-schedule/property", form.propertyId],
+    queryFn: async () => {
+      if (!form.propertyId) return [];
+      const r = await fetch(`/api/tenancy-schedule/property/${form.propertyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!form.propertyId && open,
+    staleTime: 60_000,
+  });
+
+  // Merge tenancy + property_units into one canonical list, tenancy
+  // first. De-dupe by lowercased unit name so a property_units row
+  // that already appears in tenancy doesn't double up.
+  const pickerOptions = (() => {
+    const seen = new Set<string>();
+    const out: Array<{ id: string; name: string; floor: string | null; sqft: number | null; useClass: string | null; source: "tenancy" | "property"; vacant?: boolean }> = [];
+    for (const t of tenancyUnits) {
+      const key = (t.unit_number || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const isVacant = (t.status || "").toLowerCase() === "vacant" || (t.tenant_name || "").toLowerCase() === "vacant";
+      out.push({
+        id: String(t.id),
+        name: t.unit_number,
+        floor: t.floor_level || t.premises,
+        sqft: t.nia_sqft || t.gia_sqft,
+        useClass: t.permitted_use,
+        source: "tenancy",
+        vacant: isVacant,
+      });
+    }
+    const legacyUnits = form.propertyId ? propertyUnits.filter(pu => pu.propertyId === form.propertyId) : [];
+    for (const pu of legacyUnits) {
+      const key = (pu.unitName || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: pu.id,
+        name: pu.unitName,
+        floor: pu.floor || null,
+        sqft: pu.sqft ?? null,
+        useClass: pu.useClass || null,
+        source: "property",
+      });
+    }
+    return out;
+  })();
+  const matchedExistingUnit = pickerOptions.find(
+    pu => pu.name.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            Saving will auto-create a linked Leasing deal on the <a href="/deals" className="underline">deals board</a>.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
-            <Label>Property (Instruction)</Label>
+            <Label>Property *</Label>
             <Select value={form.propertyId} onValueChange={v => upd("propertyId", v)}>
               <SelectTrigger data-testid="select-property">
                 <SelectValue placeholder="Select property..." />
@@ -1956,8 +2313,77 @@ function UnitFormDialog({
             </Select>
           </div>
           <div>
-            <Label>Unit Name / Number</Label>
-            <Input value={form.unitName} onChange={e => upd("unitName", e.target.value)} placeholder="e.g. Unit 3, Ground Floor" data-testid="input-unit-name" />
+            <Label>Deal Type *</Label>
+            <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
+              <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
+              <SelectContent>
+                {CRM_OPTIONS.dealType.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Unit Name / Number *</Label>
+            <Popover open={unitPickerOpen} onOpenChange={setUnitPickerOpen}>
+              <PopoverTrigger asChild>
+                <div>
+                  <Input
+                    value={form.unitName}
+                    onChange={e => upd("unitName", e.target.value)}
+                    onFocus={() => pickerOptions.length > 0 && setUnitPickerOpen(true)}
+                    placeholder={form.propertyId ? "Pick from tenancy schedule or type a new name" : "Select a property first"}
+                    disabled={!form.propertyId}
+                    data-testid="input-unit-name"
+                  />
+                  {form.unitName && !matchedExistingUnit && pickerOptions.length > 0 && (
+                    <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created. Add to the tenancy schedule next so it lives on the spine.</p>
+                  )}
+                  {matchedExistingUnit?.source === "tenancy" && (
+                    <p className="text-[10px] text-purple-700 mt-0.5">Tenancy schedule unit — canonical link will be stamped.</p>
+                  )}
+                  {matchedExistingUnit?.source === "property" && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Legacy property_units row — add to the tenancy schedule to make it canonical.</p>
+                  )}
+                </div>
+              </PopoverTrigger>
+              {pickerOptions.length > 0 && (
+                <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+                  <Command>
+                    <CommandInput placeholder="Search units..." />
+                    <CommandList>
+                      <CommandEmpty>No matches. Keep typing to create a new unit.</CommandEmpty>
+                      <CommandGroup heading={`Tenancy schedule (${pickerOptions.filter(o => o.source === "tenancy").length}) · Legacy (${pickerOptions.filter(o => o.source === "property").length})`}>
+                        {pickerOptions.map(pu => (
+                          <CommandItem
+                            key={`${pu.source}-${pu.id}`}
+                            value={pu.name}
+                            onSelect={() => {
+                              setForm({
+                                ...form,
+                                unitName: pu.name,
+                                floor: pu.floor || form.floor,
+                                sqft: pu.sqft != null ? String(pu.sqft) : form.sqft,
+                                useClass: pu.useClass || form.useClass,
+                              });
+                              setUnitPickerOpen(false);
+                            }}
+                          >
+                            <span className="text-sm">{pu.name}</span>
+                            {pu.source === "tenancy" && (
+                              <Badge variant="outline" className="ml-1.5 text-[9px] border-purple-300 text-purple-700">tenancy</Badge>
+                            )}
+                            {pu.vacant && (
+                              <Badge variant="outline" className="ml-1 text-[9px] border-amber-300 text-amber-700">vacant</Badge>
+                            )}
+                            {pu.floor && <span className="text-xs text-muted-foreground ml-2">{pu.floor}</span>}
+                            {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sqft</span>}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              )}
+            </Popover>
           </div>
           <div>
             <Label>Floor</Label>
@@ -1989,7 +2415,7 @@ function UnitFormDialog({
             <CurrencyInput value={form.serviceChargePa} onChange={v => upd("serviceChargePa", v)} placeholder="e.g. 15,000" prefix="£" />
           </div>
           <div>
-            <Label>Asset Class</Label>
+            <Label>Use Class</Label>
             <Select value={form.useClass} onValueChange={v => upd("useClass", v)}>
               <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
               <SelectContent>
@@ -2033,10 +2459,10 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Marketing Status</Label>
-            <Select value={form.marketingStatus} onValueChange={v => upd("marketingStatus", v)}>
+            <Select value={legacyToCode(form.marketingStatus) || "AVA"} onValueChange={v => upd("marketingStatus", v)}>
               <SelectTrigger><SelectValue placeholder="Status..." /></SelectTrigger>
               <SelectContent>
-                {MARKETING_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {MARKETING_STATUSES.map(s => <SelectItem key={s} value={s}>{DEAL_STATUS_LABELS[s]}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -2049,7 +2475,7 @@ function UnitFormDialog({
             <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
           </div>
           <div className="col-span-2">
-            <Label>Agents</Label>
+            <Label>BGP Contact *</Label>
             <div className="flex flex-wrap gap-1.5 p-2 border rounded-md min-h-[38px]">
               {bgpUsers.map(u => {
                 const selected = form.agentUserIds.includes(u.id);
@@ -2083,7 +2509,7 @@ function UnitFormDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId}>
+          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType || form.agentUserIds.length === 0} title={!form.dealType ? "Pick a deal type" : form.agentUserIds.length === 0 ? "Pick at least one BGP agent" : ""}>
             {isPending ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

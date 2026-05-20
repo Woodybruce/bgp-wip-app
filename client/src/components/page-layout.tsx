@@ -38,7 +38,7 @@ export function PageLayout({
         data-testid={testId}
       >
         {/* Header */}
-        <div className="border-b px-4 sm:px-6 py-4 flex-shrink-0">
+        <div className="px-4 sm:px-6 pt-4 sm:pt-6 flex-shrink-0">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-center gap-3">
               {Icon && (
@@ -47,7 +47,7 @@ export function PageLayout({
                 </div>
               )}
               <div>
-                <h1 className="text-xl font-semibold" data-testid="text-page-title">
+                <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
                   {title}
                 </h1>
                 {subtitle && (
@@ -91,7 +91,7 @@ export function PageLayout({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto flex flex-col">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-6 pb-4 sm:pb-6 pt-4">
           {children}
         </div>
       </div>

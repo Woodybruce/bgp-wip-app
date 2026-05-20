@@ -1,16 +1,26 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
+import DOMPurify from "dompurify";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PropertyImageryPicker } from "@/components/property-imagery-picker";
+import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
+import { RetailContextPlanEditor } from "@/components/retail-context-plan-editor";
+import { usePropertyContext } from "@/lib/property-context";
+import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
   FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
   Copy, Paperclip, Loader2, Maximize2, Briefcase, FileSpreadsheet, MessageSquare,
+  ZoomIn, ZoomOut,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -60,8 +70,15 @@ export default function PropertyPathway() {
   const [selectedRun, setSelectedRun] = useState<PathwayRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [advancing, setAdvancing] = useState(false);
-  const [newAddress, setNewAddress] = useState("");
-  const [newPostcode, setNewPostcode] = useState("");
+  const ctxProperty = usePropertyContext();
+  const [newAddress, setNewAddress] = useState(ctxProperty?.name || "");
+  const [newPostcode, setNewPostcode] = useState(ctxProperty?.postcode || "");
+  // When the parent Property Intelligence page resolves a different property,
+  // freshen the New-investigation inputs so they line up with the selection.
+  useEffect(() => {
+    if (ctxProperty?.name && !newAddress) setNewAddress(ctxProperty.name);
+    if (ctxProperty?.postcode && !newPostcode) setNewPostcode(ctxProperty.postcode);
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runIdFromUrl = (() => {
     try {
@@ -101,7 +118,7 @@ export default function PropertyPathway() {
       Object.values(r.stageStatus || {}).some((s) => s === "running"),
     );
     if (!anyRunning) return;
-    const id = setInterval(() => loadRuns(), 8000);
+    const id = setInterval(() => loadRuns(), 30_000);
     return () => clearInterval(id);
   }, [runs]);
 
@@ -109,6 +126,13 @@ export default function PropertyPathway() {
   // server keeps running stages in the background even if the user navigates
   // away, so on re-entry (or a refresh) we pick up progress without needing
   // the user to manually re-click the advance button.
+  //
+  // NOTE: keep the interval generous (10s+). Stages take minutes, so 1-2
+  // second polls just hammer the API and stack up while Anthropic is busy.
+  // The dep array used to also watch JSON.stringify(stageStatus), which
+  // re-created the interval on every poll response — gone now, so the
+  // interval lives for the lifetime of the runId rather than churning
+  // every few seconds.
   useEffect(() => {
     if (!selectedRun?.id) return;
     const anyRunning = Object.values((selectedRun as any).stageStatus || {}).some(
@@ -118,31 +142,27 @@ export default function PropertyPathway() {
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
-      let polled: any = null;
       try {
         const res = await fetch(`/api/property-pathway/${selectedRun.id}`, {
           headers: getAuthHeaders(),
           credentials: "include",
         });
         if (res.ok) {
-          polled = await res.json();
+          const polled = await res.json();
           if (!cancelled) setSelectedRun(polled);
         }
       } catch (err: any) {
         console.error("[pathway] polling error:", err?.message);
       }
-      if (!cancelled) {
-        const latestStatus = polled?.stageStatus || (selectedRun as any).stageStatus || {};
-        const stillRunning = Object.values(latestStatus).some((s) => s === "running");
-        if (stillRunning) loadRuns();
-      }
+      // No inner loadRuns() — the background loadRuns interval above
+      // already refreshes the list. Calling it here doubled every poll.
     };
-    const id = setInterval(tick, 4000);
+    const id = setInterval(tick, 10_000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [selectedRun?.id, JSON.stringify((selectedRun as any)?.stageStatus || {})]);
+  }, [selectedRun?.id]);
 
   async function loadRuns() {
     setLoading(true);
@@ -161,14 +181,16 @@ export default function PropertyPathway() {
     } catch {}
   }
 
-  async function startRun() {
-    if (!newAddress.trim()) return;
+  async function startRun(addressOverride?: string, postcodeOverride?: string) {
+    const addr = (addressOverride ?? newAddress).trim();
+    if (!addr) return;
+    const pc = (postcodeOverride ?? newPostcode).trim();
     try {
       const res = await fetch("/api/property-pathway/start", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
-        body: JSON.stringify({ address: newAddress.trim(), postcode: newPostcode.trim() || undefined }),
+        body: JSON.stringify({ address: addr, postcode: pc || undefined }),
       });
       if (!res.ok) throw new Error("Failed to start");
       const { run, existing } = await res.json();
@@ -210,6 +232,14 @@ export default function PropertyPathway() {
   async function advanceRun(runId: string, stage?: number) {
     setAdvancing(true);
     try {
+      const currentRun = selectedRun?.id === runId ? selectedRun : null;
+      const targetStage = stage ?? (currentRun?.currentStage ?? 1);
+      // Auto-chain end-to-end through to Excel Model. Stage 6 (Business Plan)
+      // auto-drafts; Stage 7 (Excel Model) now uses that draft if no agreed
+      // version exists, marking the model as autoPiloted so the user can
+      // review and lock before exporting Why Buy. Stops before Stage 8
+      // (Image Studio) so the user sees the model and can decide.
+      const autoChainTo = targetStage < 8 ? 8 : undefined;
       const res = await fetch(`/api/property-pathway/${runId}/advance`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -217,7 +247,7 @@ export default function PropertyPathway() {
         // Always async: Railway's HTTP edge timeout is 45s; stages 2/4/6/7 can
         // take 2-3 minutes (Claude analysis + Companies House + Idox scrape +
         // accounts PDF). Server returns 202 immediately and the client polls.
-        body: JSON.stringify({ ...(stage ? { stage } : {}), async: true }),
+        body: JSON.stringify({ ...(stage ? { stage } : {}), async: true, ...(autoChainTo ? { autoChainTo } : {}) }),
       });
       if (!res.ok) {
         let errMsg = "";
@@ -235,40 +265,69 @@ export default function PropertyPathway() {
 
       const body = await res.json();
 
-      // Async mode: stage is running in background, poll for completion
+      // Async mode: stage(s) running in background — poll until done.
       if (body.async) {
-        const targetStage = body.targetStage;
-        const stageKey = `stage${targetStage}`;
-        toast({ title: `Stage ${targetStage} running in background`, description: "This usually takes 30-90 seconds. Watching for completion..." });
+        const targetStageResp: number = body.targetStage;
+        const chainEnd: number | null = body.autoChainTo ?? null;
+        const stageKey = `stage${targetStageResp}`;
+
+        if (chainEnd) {
+          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "End-to-end through to Excel Model. Stage 6 auto-drafts the business plan; the model is generated from that draft (review + agree to lock before Why Buy)." });
+        } else {
+          toast({ title: `Stage ${targetStageResp} running in background`, description: "Usually 30–90 seconds. Watching for completion…" });
+        }
 
         const pollStart = Date.now();
-        const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+        // Chains of 5 stages can take 5–10 minutes; single stage caps at 5.
+        const POLL_TIMEOUT_MS = chainEnd ? 15 * 60 * 1000 : 5 * 60 * 1000;
+        let lastPolled: any = null;
         let lastStatus: string | undefined;
+        let failedStage: number | null = null;
 
         while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((r) => setTimeout(r, 6000));
           try {
             const pollRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
             if (!pollRes.ok) continue;
             const polled = await pollRes.json();
             setSelectedRun(polled);
-            lastStatus = polled.stageStatus?.[stageKey];
-            if (lastStatus === "completed" || lastStatus === "failed" || lastStatus === "skipped") {
-              break;
+            lastPolled = polled;
+
+            // Check for failure on any stage in the chain range — abort if so
+            if (chainEnd) {
+              for (let s = targetStageResp; s < chainEnd; s++) {
+                if (polled.stageStatus?.[`stage${s}`] === "failed") {
+                  failedStage = s;
+                  break;
+                }
+              }
+              if (failedStage) break;
+              if (polled.currentStage >= chainEnd) break;
+            } else {
+              lastStatus = polled.stageStatus?.[stageKey];
+              if (lastStatus === "completed" || lastStatus === "failed" || lastStatus === "skipped") break;
             }
           } catch {}
         }
 
         loadRuns();
-        const finalResults = (selectedRun as any)?.stageResults?.[stageKey] || {};
-        if (lastStatus === "skipped") {
-          toast({ title: `Stage ${targetStage} skipped`, description: finalResults?.reason || "Stage was skipped — see board for details." });
-        } else if (lastStatus === "failed") {
-          toast({ title: `Stage ${targetStage} failed`, description: finalResults?.reason || finalResults?.summary || "See server logs.", variant: "destructive" });
-        } else if (lastStatus === "completed") {
-          toast({ title: `Stage ${targetStage} complete`, description: finalResults?.summary ? String(finalResults.summary).slice(0, 200) : "Findings added to board." });
+        if (failedStage) {
+          const fr = lastPolled?.stageResults?.[`stage${failedStage}`];
+          toast({ title: `Stage ${failedStage} failed`, description: fr?.reason || fr?.summary || "Chain halted — see server logs.", variant: "destructive" });
+        } else if (chainEnd) {
+          const reached = lastPolled?.currentStage ?? targetStageResp;
+          toast({ title: `Stages ${targetStageResp}–${Math.min(reached - 1, chainEnd - 1)} complete`, description: "Ready for the Business Plan when you are." });
         } else {
-          toast({ title: "Still running", description: "Stage is taking longer than usual. Check the board in a minute.", variant: "destructive" });
+          const finalResults = lastPolled?.stageResults?.[stageKey] || {};
+          if (lastStatus === "skipped") {
+            toast({ title: `Stage ${targetStageResp} skipped`, description: finalResults?.reason || "Stage was skipped — see board for details." });
+          } else if (lastStatus === "failed") {
+            toast({ title: `Stage ${targetStageResp} failed`, description: finalResults?.reason || finalResults?.summary || "See server logs.", variant: "destructive" });
+          } else if (lastStatus === "completed") {
+            toast({ title: `Stage ${targetStageResp} complete`, description: finalResults?.summary ? String(finalResults.summary).slice(0, 200) : "Findings added to board." });
+          } else {
+            toast({ title: "Still running", description: "Stage is taking longer than usual. Check the board in a minute.", variant: "destructive" });
+          }
         }
         return;
       }
@@ -342,18 +401,21 @@ export default function PropertyPathway() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Start a new investigation</CardTitle>
         </CardHeader>
-        <CardContent className="flex gap-2 items-end">
-          <div className="flex-1">
-            <label className="text-xs text-muted-foreground mb-1 block">Address</label>
-            <Input value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder="e.g. 18-22 Haymarket" className="h-9" />
-          </div>
-          <div className="w-32">
-            <label className="text-xs text-muted-foreground mb-1 block">Postcode</label>
-            <Input value={newPostcode} onChange={e => setNewPostcode(e.target.value)} placeholder="SW1Y 4DG" className="h-9" />
-          </div>
-          <Button onClick={startRun} disabled={!newAddress.trim()} className="h-9 gap-1.5">
-            <Plus className="w-4 h-4" /> Start
-          </Button>
+        <CardContent>
+          {/* Resolver-canonical entry point: Google Places autocomplete →
+              OS Places UPRN → auto-start investigation. The user picks a
+              suggestion and the run kicks off — no separate Start button.
+              If they want to revisit / edit, they can re-run from the
+              recent investigations list below. */}
+          <PropertyResolverBar
+            current={newAddress ? { id: "", name: newAddress, postcode: newPostcode || null } : null}
+            onResolve={(_id, prop) => {
+              setNewAddress(prop.name || "");
+              setNewPostcode(prop.postcode || "");
+              startRun(prop.name || "", prop.postcode || "");
+            }}
+            placeholder="Type any address — Google suggests, OS confirms, investigation starts…"
+          />
         </CardContent>
       </Card>
 
@@ -408,6 +470,7 @@ export default function PropertyPathway() {
 }
 
 function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, onDelete }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void; onDelete: () => void }) {
+  const [, navigate] = useLocation();
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
@@ -420,6 +483,13 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const nextStage = Math.min(run.currentStage, 9);
   const [tenantInput, setTenantInput] = useState("");
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
+  const [emailSortSummary, setEmailSortSummary] = useState<string | null>(null);
+  const [manualOwnershipOpen, setManualOwnershipOpen] = useState(false);
+  // Re-analyse via the focused investigator returns its own emailHits — keep
+  // them so [E#] citations in the fresh markdown reference the right messages
+  // (the saved s1.emailHits may be older / different).
+  const [emailSortHits, setEmailSortHits] = useState<any[] | null>(null);
+  const [emailSorting, setEmailSorting] = useState(false);
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-4">
@@ -430,6 +500,25 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           {run.postcode && <p className="text-sm text-muted-foreground">{run.postcode}</p>}
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const params = new URLSearchParams({
+                create: "1",
+                source: "Pathway",
+                sourceUrl: `/property-pathway?runId=${run.id}`,
+                sourceTitle: `Pathway: ${run.address}`,
+                name: run.address,
+              });
+              navigate(`/comps?${params.toString()}`);
+            }}
+            title="Create a leasing comp pre-filled with this pathway as the source"
+            data-testid="button-create-comp-from-pathway"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            Create comp
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => onAdvance(1)} disabled={advancing} title="Re-scan for new emails, attachments, SharePoint items, and regenerate the briefing">
             {advancing ? <Clock className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
             Refresh
@@ -440,12 +529,18 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           <Button onClick={() => onAdvance(nextStage)} disabled={advancing || run.currentStage > 9} className="gap-1.5">
             {advancing ? <Clock className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
             {(() => {
+              // Stages 1–5 auto-chain to Business Plan, so the button label
+              // reflects the chain rather than a single stage.
+              if (nextStage < 6) {
+                switch (nextStage) {
+                  case 1: return "Run Investigation → Business Plan";
+                  case 2: return "Continue → Business Plan";
+                  case 3: return "Continue → Business Plan";
+                  case 4: return "Continue → Business Plan";
+                  case 5: return "Continue → Business Plan";
+                }
+              }
               switch (nextStage) {
-                case 1: return "Run Initial Search";
-                case 2: return "Run Brand Intelligence";
-                case 3: return "Review & Confirm";
-                case 4: return "Purchase Property Intelligence";
-                case 5: return "Build Investigation Board";
                 case 6: return "Draft Business Plan";
                 case 7: return "Generate Model Studio";
                 case 8: return "Run Studio Time";
@@ -484,6 +579,10 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           </div>
         </CardContent>
       </Card>
+
+      {/* CRM + SharePoint folders for this building. One CRM record per
+          building (auto-created/linked at Stage 1) — never duplicates. */}
+      <PathwayFoldersPanel run={run} />
 
       {/* Stage 1 — Initial Search findings */}
       {s1 && (
@@ -599,13 +698,41 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
                   return (
                     <div className="border rounded p-2 bg-muted/20">
-                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Ownership</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Ownership</p>
+                        <button
+                          type="button"
+                          onClick={() => setManualOwnershipOpen(true)}
+                          className="text-[10px] text-primary hover:underline"
+                          data-testid="btn-edit-ownership"
+                        >
+                          {s1.initialOwnership?.manualLock ? "Edit manual title" : (s1.initialOwnership?.titleVerified === false ? "Pick / enter title" : "Override title")}
+                        </button>
+                      </div>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                         <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
                         {ownerCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{ownerCommentary}</div>}
                         {ownerCoCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">Other proprietors noted: {ownerCoCommentary}</div>}
-                        <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Title:</span> <span className="break-words">{titleEl}</span></div>
+                        <div className="col-span-2 min-w-0">
+                          <span className="text-muted-foreground">Title:</span>{" "}
+                          <span className="break-words">{titleEl}</span>
+                          {titleNum && s1.initialOwnership?.manualLock && (
+                            <Badge variant="outline" className="text-[9px] py-0 ml-1 border-emerald-400 text-emerald-700 bg-emerald-50">
+                              Manual
+                            </Badge>
+                          )}
+                          {titleNum && !s1.initialOwnership?.manualLock && s1.initialOwnership?.titleVerified === false && (
+                            <Badge variant="outline" className="text-[9px] py-0 ml-1 border-amber-400 text-amber-700 bg-amber-50">
+                              Unverified · {s1.initialOwnership?.titleSource || "fallback"}
+                            </Badge>
+                          )}
+                        </div>
                         {titleCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{titleCommentary}</div>}
+                        {titleNum && !s1.initialOwnership?.manualLock && s1.initialOwnership?.titleVerified === false && (
+                          <div className="col-span-2 min-w-0 text-[10px] text-amber-700 leading-snug">
+                            This title was {s1.initialOwnership?.titleSource === "street_number" ? "matched on a street-number filter, not a UPRN lookup" : s1.initialOwnership?.titleSource === "ai" ? "proposed by the AI investigator and not verified against PropertyData" : "from a fallback source"}. Click <strong>Pick / enter title</strong> above to confirm or correct.
+                          </div>
+                        )}
                         <div className="min-w-0"><span className="text-muted-foreground">Paid:</span> <span className="font-medium break-words">{paid || "—"}</span></div>
                         <div className="min-w-0"><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
                         {s1.aiFacts?.refurbCost && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Refurb spend:</span> <span className="font-medium break-words">{s1.aiFacts.refurbCost}</span></div>}
@@ -1064,27 +1191,78 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
           </div>
 
-          {/* Emails — full list at bottom, scrollable so all hits fit.
-              Click opens in-app viewer (dialog) so users can read the email
-              and download attachments without being bounced to Outlook Web. */}
-          {s1.emailHits && s1.emailHits.length > 0 && (
+          {/* Emails — ChatBGP-generated commentary. We hide the raw
+              `emailHits` list when commentary is present because those
+              hits come from the legacy keyword sweep (just words from
+              the address) — they don't match what ChatBGP actually found
+              and reading both side-by-side is misleading. The commentary
+              is the source of truth; for specifics, ask ChatBGP directly
+              via the chat panel. */}
+          {(s1.emailCommentary?.markdown || (s1.emailHits && s1.emailHits.length > 0)) && (
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2 max-h-[250px] overflow-y-auto">
-                {s1.emailHits.map((h: any, i: number) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => h.mailboxEmail ? setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail }) : null}
-                    disabled={!h.mailboxEmail}
-                    className="text-left border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer disabled:cursor-default disabled:opacity-60"
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Search className="w-4 h-4" /> Emails
+                    {s1.emailCommentary?.generatedAt && (
+                      <span className="text-[10px] text-muted-foreground font-normal">
+                        — analysed {new Date(s1.emailCommentary.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      </span>
+                    )}
+                  </CardTitle>
+                  <Button
+                    variant="outline" size="sm"
+                    className="h-6 text-[10px] gap-1"
+                    disabled={emailSorting}
+                    onClick={async () => {
+                      setEmailSorting(true);
+                      try {
+                        const r = await fetch("/api/pathway/email-sort", {
+                          method: "POST", credentials: "include",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            address: run?.address,
+                            postcode: run?.postcode,
+                            emailHits: s1.emailHits,
+                            hints: {
+                              tenant: s1.tenant?.name || s1.aiFacts?.mainTenants?.[0],
+                              owner: s1.initialOwnership?.proprietorName,
+                              proprietorCompany: s1.initialOwnership?.proprietorCompanyNumber,
+                            },
+                          }),
+                        });
+                        const d = await r.json();
+                        setEmailSortSummary(d.markdown || d.summary || "No summary returned.");
+                        if (Array.isArray(d.emailHits)) setEmailSortHits(d.emailHits);
+                      } catch { setEmailSortSummary("Failed to analyse emails."); }
+                      finally { setEmailSorting(false); }
+                    }}
                   >
-                    <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
-                    <p className="text-muted-foreground text-[10px]">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
-                  </button>
-                ))}
+                    {emailSorting ? "Analysing…" : "Re-analyse"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="pb-2">
+                {(() => {
+                  const md = emailSortSummary || s1.emailCommentary?.markdown;
+                  const hitsForCitations = emailSortHits ?? s1.emailHits ?? [];
+                  if (!md) {
+                    return (
+                      <p className="text-[11px] text-muted-foreground italic">
+                        No AI commentary yet — click <strong>Re-analyse</strong> to ask ChatBGP what's in the inboxes for this property.
+                      </p>
+                    );
+                  }
+                  return (
+                    <div className="max-h-[480px] overflow-y-auto pr-1">
+                      <EmailCommentary
+                        markdown={md}
+                        emailHits={hitsForCitations}
+                        onOpenEmail={(h) => setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail })}
+                      />
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}
@@ -1097,6 +1275,13 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               onClose={() => setOpenEmail(null)}
             />
           )}
+          {/* Manual ownership / title-pick dialog */}
+          <ManualTitleDialog
+            run={run}
+            open={manualOwnershipOpen}
+            onOpenChange={setManualOwnershipOpen}
+            onSaved={onReload}
+          />
         </>
       )}
 
@@ -1235,29 +1420,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           </CardHeader>
           <CardContent className="text-sm space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-              {/* 01 Ownership — InfoTrack placeholder slots */}
-              <div className="border rounded p-2.5 bg-muted/10">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">01 Ownership</p>
-                <div className="space-y-1 text-[11px]">
-                  {[
-                    { label: "Title Register (OC1)", kind: "OC1" },
-                    { label: "Title Plan (OC2)", kind: "OC2" },
-                    { label: "Filed Leases", kind: "LEASES" },
-                  ].map((slot) => (
-                    <div key={slot.kind} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                      <span className="text-muted-foreground truncate">{slot.label}</span>
-                      <button
-                        type="button"
-                        disabled
-                        title="InfoTrack credentials required"
-                        className="text-[10px] px-1.5 py-0.5 rounded border bg-muted/20 text-muted-foreground cursor-not-allowed"
-                      >
-                        Order
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* 01 Ownership — order Title Register / Plan via PropertyData */}
+              <OwnershipCard titleNumber={s1?.initialOwnership?.titleNumber} />
 
               {/* 02 Companies House KYC — summary only; full report lives in Clouseau */}
               <div className="border rounded p-2.5 bg-muted/10">
@@ -1337,11 +1501,14 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 )}
               </div>
 
-              {/* 03 Planning */}
-              <PlanningCard apps={s4.planningApplications || []} />
+              {/* 03 Planning — hidden by request (the apps feed PlanningDocsCard
+                  below which already surfaces the same data). */}
 
-              {/* 04 Planning Documents (floor plans, drawings, decision notices — scraped PDFs per application) */}
+              {/* 04 Planning Documents — spans 2 columns at xl so it fills
+                  the row alongside Ownership + Companies House (with 03
+                  hidden), and full width at md. */}
               <PlanningDocsCard
+                className="md:col-span-2 xl:col-span-2"
                 apps={s4.planningApplications || []}
                 planningDocs={s4.planningDocs || []}
                 legacyUrls={s4.floorPlanUrls || []}
@@ -1363,13 +1530,25 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
       {/* Stage 8 — Image Studio */}
       {s8 && (
-        <ImageStudioCard runId={run.id} stage8={s8} onReload={onReload} />
+        <ImageStudioCard
+          runId={run.id}
+          stage8={s8}
+          onReload={onReload}
+          propertyId={run.propertyId || null}
+          runAddress={run.address || ""}
+          runPostcode={run.postcode || ""}
+          runLat={(run as any).lat ?? (run as any).latitude}
+          runLng={(run as any).lng ?? (run as any).longitude}
+        />
       )}
 
       {/* Stage 9 — Why Buy */}
       {s9 && (
-        <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} />
+        <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} propertyId={run.propertyId || null} />
       )}
+
+      {/* Related Lease Advisory matters — same property anchor */}
+      {run.propertyId && <RelatedLeaseAdvisoryMatters propertyId={run.propertyId} />}
 
     </div>
   );
@@ -1643,6 +1822,535 @@ function statusTone(status: string): string {
   return "bg-slate-100 text-slate-700";
 }
 
+/**
+ * Linked-CRM + SharePoint folder tree on the pathway page. Surfaces the
+ * CRM property the pathway is anchored to (auto-created at Stage 1 by
+ * `ensureCrmPropertyLink` if no match was found) and renders its folder
+ * tree using the same `PropertyFoldersPanel` the property detail page uses.
+ *
+ * Rules:
+ *  - If `run.propertyId` is set → fetch that CRM record, render its
+ *    folders. There's only ever one CRM property per building (the auto-
+ *    create logic dedupes via crm_lookup), so we never spawn a second
+ *    folder tree from the pathway.
+ *  - If `run.propertyId` is null (only happens on a fresh run before
+ *    Stage 1 has completed) → prompt the user to run Stage 1, which
+ *    auto-creates the CRM + links it.
+ *  - Folder tree itself is created on-demand via the existing
+ *    SetUpFoldersDialog (POST /api/microsoft/property-folders) — same UX
+ *    as the property detail page's "Set Up Folders" button.
+ */
+function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [relinkOpen, setRelinkOpen] = useState(false);
+
+  const { data: property, isLoading } = useQuery<any>({
+    queryKey: ["/api/crm/properties", run.propertyId],
+    queryFn: async () => {
+      if (!run.propertyId) return null;
+      const r = await fetch(`/api/crm/properties/${run.propertyId}`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: !!run.propertyId,
+  });
+
+  if (!run.propertyId) {
+    return (
+      <>
+        <RelinkCrmDialog runId={run.id} open={relinkOpen} onOpenChange={setRelinkOpen} initialQuery={run.address} />
+        <Card>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <FolderOpen className="w-4 h-4" /> CRM & Folders
+            </CardTitle>
+            <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setRelinkOpen(true)}>
+              Link to CRM
+            </Button>
+          </CardHeader>
+          <CardContent className="text-[12px] text-muted-foreground">
+            <p>This investigation isn't linked to a CRM property yet.</p>
+            <p className="mt-1">Run Stage 1 — it auto-creates a CRM record (or links to an existing one for this address) — or click <strong>Link to CRM</strong> above to pick the right record manually.</p>
+          </CardContent>
+        </Card>
+      </>
+    );
+  }
+
+  if (isLoading || !property) {
+    return (
+      <Card>
+        <CardContent className="p-3 space-y-2">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-20 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const folderTeams: string[] = property.folderTeams || [];
+  const hasFolderTree = folderTeams.length > 0;
+
+  return (
+    <>
+      <SetUpFoldersDialog
+        propertyId={property.id}
+        propertyName={property.name}
+        folderTeams={folderTeams}
+        open={folderDialogOpen}
+        onOpenChange={setFolderDialogOpen}
+      />
+      <RelinkCrmDialog runId={run.id} open={relinkOpen} onOpenChange={setRelinkOpen} initialQuery={run.address} />
+      <Card>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <FolderOpen className="w-4 h-4" />
+            <Link href={`/properties/${property.id}`}>
+              <span className="text-primary hover:underline cursor-pointer inline-flex items-center gap-1">
+                {property.name}
+                <ExternalLink className="w-3 h-3" />
+              </span>
+            </Link>
+            {!hasFolderTree && (
+              <Badge variant="outline" className="text-[9px] py-0">No folders yet</Badge>
+            )}
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => setRelinkOpen(true)}
+              title="Link this pathway to a different CRM property"
+            >
+              Wrong building?
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] gap-1"
+              onClick={() => setFolderDialogOpen(true)}
+            >
+              <FolderOpen className="w-3 h-3" />
+              {hasFolderTree ? "Manage folders" : "Set up folders"}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {hasFolderTree ? (
+            <PropertyFoldersPanel
+              propertyName={property.name}
+              folderTeams={folderTeams}
+              sharepointFolderUrl={property.sharepointFolderUrl}
+            />
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              No SharePoint folders set up for this building yet. Click <strong>Set up folders</strong> above to create the standard folder tree (Legal & Title, Due Diligence, KYC & AML, Comparables, etc.) — you can then save scraped planning PDFs and other investigation files into it.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function RelinkCrmDialog({
+  runId,
+  open,
+  onOpenChange,
+  initialQuery,
+}: {
+  runId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  initialQuery: string;
+}) {
+  const [query, setQuery] = useState(initialQuery);
+  const [submitting, setSubmitting] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (open) setQuery(initialQuery);
+  }, [open, initialQuery]);
+
+  const { data: results, isFetching } = useQuery<any[]>({
+    queryKey: ["/api/crm/properties", { search: query.trim() }],
+    queryFn: async () => {
+      const q = query.trim();
+      if (q.length < 2) return [];
+      const r = await fetch(`/api/crm/properties?search=${encodeURIComponent(q)}&limit=20`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data) ? data : data.data || [];
+    },
+    enabled: open && query.trim().length >= 2,
+  });
+
+  async function relink(propertyId: string | null) {
+    setSubmitting(true);
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/relink-crm`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ propertyId }),
+      });
+      if (!r.ok) throw new Error(`Relink failed: ${r.status}`);
+      await queryClient.invalidateQueries({ queryKey: ["/api/property-pathway"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: propertyId ? "Re-linked" : "Unlinked", description: "Folders will refresh from the new CRM record." });
+      onOpenChange(false);
+    } catch (err: any) {
+      toast({ title: "Re-link failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Link pathway to a CRM property</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input
+            placeholder="Search by address, postcode, or name…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+          />
+          <div className="max-h-72 overflow-y-auto border rounded-md divide-y">
+            {isFetching && <p className="text-[12px] text-muted-foreground p-3">Searching…</p>}
+            {!isFetching && (results || []).length === 0 && query.trim().length >= 2 && (
+              <p className="text-[12px] text-muted-foreground p-3">No matches.</p>
+            )}
+            {(results || []).map((p: any) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={submitting}
+                onClick={() => relink(p.id)}
+                className="w-full text-left p-2 hover:bg-muted/50 disabled:opacity-50 transition-colors"
+              >
+                <div className="text-[13px] font-medium">{p.name}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {p.postcode || (p.address as any)?.formatted || ""}
+                  {p.assetClass ? ` · ${p.assetClass}` : ""}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-between gap-2 pt-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={submitting}
+              onClick={() => relink(null)}
+            >
+              Unlink
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Manual title override. Used when the resolver couldn't UPRN-verify the
+// title — the user picks one from the candidate list (resolver matched +
+// fallback + postcode neighbours) or types one in. Saves to the pathway
+// stage1.initialOwnership with manualLock so Stage 1 re-runs preserve it,
+// and mirrors title + proprietor onto the linked CRM property.
+function ManualTitleDialog({
+  run,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  run: PathwayRun;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [titleNumber, setTitleNumber] = useState("");
+  const [proprietorName, setProprietorName] = useState("");
+  const [proprietorCo, setProprietorCo] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const existing = (run.stageResults as any)?.stage1?.initialOwnership;
+  const existingTitle = (existing?.titleNumber || "").trim();
+  const existingTitleClean = existingTitle && existingTitle !== "unknown" ? existingTitle : "";
+
+  // Pre-fill from whatever's currently set when the dialog opens.
+  useEffect(() => {
+    if (!open) return;
+    setTitleNumber(existingTitleClean);
+    setProprietorName((existing?.proprietorName || "").trim());
+    setProprietorCo((existing?.proprietorCompanyNumber || "").trim());
+  }, [open, existingTitleClean, existing?.proprietorName, existing?.proprietorCompanyNumber]);
+
+  // Re-run the resolver (skipPersist on the server side via /resolve writes
+  // a row, but it dedupes by user/run — fine to call) to populate candidate
+  // lists. Cached by react-query so reopening the dialog is instant.
+  const { data: candidates, isFetching } = useQuery<any>({
+    queryKey: ["/api/land-registry/resolve", run.address, run.postcode, run.propertyId],
+    queryFn: async () => {
+      const r = await fetch("/api/land-registry/resolve", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        // propertyId → server looks up the resolver-canonical UPRN so
+        // PropertyData uprn-title returns titles for THIS building, not
+        // every freehold in the postcode.
+        body: JSON.stringify({ address: run.address, postcode: run.postcode, source: "pathway-manual", pathwayRunId: run.id, propertyId: run.propertyId || undefined }),
+      });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  function pick(row: any) {
+    setTitleNumber(row.title_number || row.titleNumber || "");
+    setProprietorName(row.proprietor_name_1 || row.proprietor || "");
+  }
+
+  async function save() {
+    setSubmitting(true);
+    try {
+      const r = await fetch(`/api/property-pathway/${run.id}/ownership`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          titleNumber: titleNumber.trim(),
+          proprietorName: proprietorName.trim() || undefined,
+          proprietorCompanyNumber: proprietorCo.trim() || undefined,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || `Save failed (${r.status})`);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["/api/property-pathway"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Title saved", description: "Manual override locked — Stage 1 re-runs will preserve it." });
+      onOpenChange(false);
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function clearOverride() {
+    setSubmitting(true);
+    try {
+      const r = await fetch(`/api/property-pathway/${run.id}/ownership`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ clear: true }),
+      });
+      if (!r.ok) throw new Error(`Clear failed (${r.status})`);
+      await queryClient.invalidateQueries({ queryKey: ["/api/property-pathway"] });
+      toast({ title: "Override cleared", description: "Re-run Stage 1 to refresh ownership." });
+      onOpenChange(false);
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Clear failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const matched: any[] = candidates?.matched?.freeholds || [];
+  const fallback: any[] = candidates?.fallback?.freeholds || [];
+  const context: any[] = candidates?.context?.freeholds || [];
+
+  const renderRow = (row: any, label?: string) => (
+    <button
+      key={`${row.title_number}-${label}`}
+      type="button"
+      disabled={submitting}
+      onClick={() => pick(row)}
+      className="w-full text-left p-2 hover:bg-muted/50 disabled:opacity-50 transition-colors border-b last:border-b-0"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[12px] font-mono font-semibold">{row.title_number}</span>
+        {label && <Badge variant="outline" className="text-[8px] py-0 px-1">{label}</Badge>}
+      </div>
+      <div className="text-[11px] text-muted-foreground truncate">{row.proprietor_name_1 || "(no proprietor)"}</div>
+      {row.property && (
+        <div className="text-[10px] text-muted-foreground/80 truncate">
+          {Array.isArray(row.property) ? row.property.join(", ") : row.property}
+        </div>
+      )}
+    </button>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Set the official title for {run.address}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-[12px] text-muted-foreground">
+            Pick a candidate from the list below or type/paste the title number you have from another source. The override is mirrored onto the linked CRM property and locks Stage 1 from overwriting it on a re-run.
+          </p>
+
+          <div className="border rounded-md max-h-56 overflow-y-auto">
+            {isFetching && <p className="text-[12px] text-muted-foreground p-3">Loading candidates…</p>}
+            {!isFetching && matched.length === 0 && fallback.length === 0 && context.length === 0 && (
+              <p className="text-[12px] text-muted-foreground p-3">No candidates returned by the resolver — type the title manually below.</p>
+            )}
+            {matched.map(r => renderRow(r, "UPRN match"))}
+            {fallback.map(r => renderRow(r, "Street-number match"))}
+            {context.slice(0, 8).map(r => renderRow(r, "Same postcode"))}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="sm:col-span-2">
+              <label className="text-[11px] text-muted-foreground">Title number</label>
+              <Input value={titleNumber} onChange={(e) => setTitleNumber(e.target.value.toUpperCase())} placeholder="e.g. NGL939200" data-testid="input-title-number" />
+            </div>
+            <div>
+              <label className="text-[11px] text-muted-foreground">Proprietor name</label>
+              <Input value={proprietorName} onChange={(e) => setProprietorName(e.target.value)} placeholder="e.g. Amsprop Estates Ltd" />
+            </div>
+            <div>
+              <label className="text-[11px] text-muted-foreground">Co. number (optional)</label>
+              <Input value={proprietorCo} onChange={(e) => setProprietorCo(e.target.value.toUpperCase())} placeholder="e.g. 01690503" />
+            </div>
+          </div>
+
+          <div className="flex justify-between gap-2 pt-1">
+            {existing?.manualLock ? (
+              <Button variant="ghost" size="sm" disabled={submitting} onClick={clearOverride}>
+                Clear manual override
+              </Button>
+            ) : <span />}
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
+              <Button size="sm" onClick={save} disabled={submitting || !titleNumber.trim()}>
+                {submitting ? "Saving…" : "Save & lock"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function OwnershipCard({ titleNumber }: { titleNumber?: string | null }) {
+  const { toast } = useToast();
+  const [ordering, setOrdering] = useState<string | null>(null);
+
+  // Stage 1's AI sometimes stuffs commentary into titleNumber; pull the bare ref.
+  const cleanTitle = (raw?: string | null): string => {
+    if (!raw) return "";
+    const m = String(raw).match(/\b([A-Z]{1,3}\d{3,7})\b/);
+    return m ? m[1] : "";
+  };
+  const title = cleanTitle(titleNumber);
+
+  const orderDoc = async (docType: "register" | "plan") => {
+    if (!title) return;
+    setOrdering(docType);
+    try {
+      const res = await fetch("/api/title-search/download-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ title, document: docType }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: "Order unavailable", description: data.error || "Could not order document", variant: "destructive" });
+        return;
+      }
+      if (data.documentUrl) {
+        window.open(data.documentUrl, "_blank");
+        const priceStr = data.price?.total_gbp ? ` (£${data.price.total_gbp} inc. VAT)` : "";
+        const docLabel = docType === "plan" ? "Title Plan" : "Title Register";
+        toast({ title: "Document ready", description: `${docLabel} for ${title} opened${priceStr}` });
+      } else {
+        toast({ title: "Document not ready", description: data.documentStatus || "Please try again shortly" });
+      }
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setOrdering(null);
+    }
+  };
+
+  const slots: Array<{ label: string; kind: "register" | "plan" | "leases" }> = [
+    { label: "Title Register (OC1)", kind: "register" },
+    { label: "Title Plan (OC2)", kind: "plan" },
+    { label: "Filed Leases", kind: "leases" },
+  ];
+
+  return (
+    <div className="border rounded p-2.5 bg-muted/10">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">01 Ownership</p>
+        {title && <span className="text-[10px] text-muted-foreground font-mono">{title}</span>}
+      </div>
+      <div className="space-y-1 text-[11px]">
+        {slots.map((slot) => {
+          const isOrderable = slot.kind === "register" || slot.kind === "plan";
+          const enabled = isOrderable && !!title && ordering === null;
+          const isLoading = ordering === slot.kind;
+          const tooltip = !title
+            ? "No title number resolved at Stage 1 yet"
+            : !isOrderable
+              ? "Filed leases not available via PropertyData"
+              : `Order ${slot.label} from PropertyData (£7.50 + VAT)`;
+          return (
+            <div key={slot.kind} className="flex items-center justify-between py-1 border-b last:border-b-0">
+              <span className="text-muted-foreground truncate">{slot.label}</span>
+              <button
+                type="button"
+                disabled={!enabled}
+                onClick={isOrderable ? () => orderDoc(slot.kind as "register" | "plan") : undefined}
+                title={tooltip}
+                className={`text-[10px] px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ${
+                  enabled
+                    ? "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
+                    : "bg-muted/20 text-muted-foreground cursor-not-allowed"
+                }`}
+              >
+                {isLoading && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                {isLoading ? "Ordering" : "Order"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {!title && (
+        <p className="mt-1.5 text-[10px] text-muted-foreground italic">Run Stage 1 to resolve a title number first.</p>
+      )}
+    </div>
+  );
+}
+
 function PlanningRow({ p }: { p: any }) {
   const [expanded, setExpanded] = useState(false);
   const dateStr = p.decidedAt || p.receivedAt || p.date || "";
@@ -1653,15 +2361,15 @@ function PlanningRow({ p }: { p: any }) {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-start gap-1.5 py-1 px-0.5 hover:bg-muted/30 text-left"
+        className="w-full flex items-start gap-2 py-2 px-1 hover:bg-muted/30 text-left leading-relaxed"
       >
-        {expanded ? <ChevronDown className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" />}
-        <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{dateStr ? dateStr.slice(0, 10) : ""}</span>
-        {lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-px" title={p.lpa}>{lpa}</span>}
+        {expanded ? <ChevronDown className="w-3 h-3 mt-1 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 mt-1 shrink-0 text-muted-foreground" />}
+        <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{dateStr ? dateStr.slice(0, 10) : ""}</span>
+        {lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-0.5" title={p.lpa}>{lpa}</span>}
         <span className="flex-1 min-w-0">
           <span className="font-medium break-all">{p.reference}</span>
-          {p.status && <span className={`ml-1 text-[9px] px-1 py-px rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}
-          <span className="block text-muted-foreground truncate">{p.description || ""}</span>
+          {p.status && <span className={`ml-1 text-[9px] px-1 py-0.5 rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}
+          <span className="block text-muted-foreground truncate mt-0.5">{p.description || ""}</span>
         </span>
       </button>
       {expanded && (
@@ -1721,85 +2429,868 @@ function fmtPsf(v?: number): string {
   return `£${v.toFixed(v < 10 ? 2 : 0)}/sqft`;
 }
 
-function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; onReload: () => void }) {
-  const { toast } = useToast();
-  const [gammaBusy, setGammaBusy] = useState(false);
-  const gamma = stage9?.gamma || {};
-  const gammaRunning = gamma.status === "running" || gammaBusy;
-
-  useEffect(() => {
-    if (gamma.status !== "running") return;
-    const t = setInterval(onReload, 5000);
-    return () => clearInterval(t);
-  }, [gamma.status, onReload]);
-
-  const generateGamma = async (exportAs: "pdf" | "pptx") => {
-    setGammaBusy(true);
-    try {
-      const res = await fetch(`/api/property-pathway/${runId}/why-buy-gamma/generate`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ exportAs }),
+/**
+ * RelatedLeaseAdvisoryMatters — lists any PLA matters that share the same
+ * canonical property as this Pathway run. Stops Pathway being blind to
+ * an existing rent-review / dilapidations / lease-renewal advisory matter
+ * already open against this asset.
+ */
+function RelatedLeaseAdvisoryMatters({ propertyId }: { propertyId: string }) {
+  const { data: matters = [] } = useQuery<Array<{ id: string; matterType: string; status: string; actingFor: string | null; updatedAt: string }>>({
+    queryKey: ["/api/pla/matters", { propertyId, includeClosed: true }],
+    queryFn: async () => {
+      const r = await fetch(`/api/pla/matters?propertyId=${propertyId}&includeClosed=true`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
       });
-      if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Gamma started", description: `Generating ${exportAs.toUpperCase()} — watch the card for the link.` });
-      setTimeout(onReload, 2000);
-    } catch (err: any) {
-      toast({ title: "Gamma failed to start", description: err?.message || "Error", variant: "destructive" });
-    } finally {
-      setGammaBusy(false);
-    }
-  };
-
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  if (matters.length === 0) return null;
   return (
     <Card>
-      <CardHeader className="pb-3 flex flex-row items-center justify-between">
-        <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
-        <div className="flex items-center gap-2">
-          {(stage9?.sharepointUrl || stage9?.documentUrl) && (
-            <a href={stage9.sharepointUrl || stage9.documentUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-              <Download className="w-3 h-3" /> Open Why Buy PDF
-            </a>
-          )}
-          <Button size="sm" variant="outline" onClick={() => generateGamma("pdf")} disabled={gammaRunning} className="gap-1.5">
-            {gammaRunning ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Try Gamma (PDF)
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => generateGamma("pptx")} disabled={gammaRunning} className="gap-1.5">
-            {gammaRunning ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Try Gamma (PPTX)
-          </Button>
-        </div>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2"><Briefcase className="w-4 h-4" /> Related Lease Advisory matters · {matters.length}</CardTitle>
       </CardHeader>
-      <CardContent className="text-sm space-y-2">
-        <p className="text-muted-foreground">4-page PE-style investment memo generated from the agreed business plan + agreed Excel model.</p>
-        {gamma.status === "running" && (
-          <p className="text-xs text-muted-foreground">Gamma generating {(gamma.exportAs || "pdf").toUpperCase()}… this usually takes ~60–90s.</p>
-        )}
-        {gamma.status === "failed" && (
-          <p className="text-xs text-destructive">Gamma failed: {gamma.error || "unknown error"}</p>
-        )}
-        {gamma.status === "completed" && (
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <span className="text-muted-foreground">Gamma {(gamma.exportAs || "pdf").toUpperCase()}:</span>
-            {(gamma.sharepointUrl || gamma.documentUrl) && (
-              <a href={gamma.sharepointUrl || gamma.documentUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
-                <Download className="w-3 h-3" /> Download
-              </a>
-            )}
-            {gamma.gammaUrl && (
-              <a href={gamma.gammaUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
-                <ExternalLink className="w-3 h-3" /> Edit in Gamma
-              </a>
-            )}
-          </div>
-        )}
+      <CardContent className="text-sm space-y-1">
+        {matters.map((m) => (
+          <a
+            key={m.id}
+            href={`/pla/matters/${m.id}`}
+            className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-accent border-b border-border last:border-0"
+          >
+            <span className="capitalize">{m.matterType.replace(/_/g, " ")}</span>
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              {m.actingFor && <Badge variant="outline" className="capitalize">{m.actingFor}</Badge>}
+              <Badge variant="outline" className="capitalize">{m.status.replace(/_/g, " ")}</Badge>
+            </span>
+          </a>
+        ))}
       </CardContent>
     </Card>
   );
 }
 
-function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: any; onReload: () => void }) {
+function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; stage9: any; onReload: () => void; propertyId: string | null }) {
+  return (
+    <Card>
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm space-y-3">
+        <p className="text-muted-foreground">In-app, Claude-designed pitch deck — generated from the agreed business plan + agreed Excel model. Iterate by prompt or click any image / headline to edit inline.</p>
+
+        {/* Imagery — pinned candidates per kind feed Claude design's brief */}
+        {propertyId && (
+          <div className="border rounded-md p-3 bg-muted/20">
+            <PropertyImageryPicker
+              propertyId={propertyId}
+              pathwayRunId={runId}
+              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card"]}
+            />
+          </div>
+        )}
+
+        <ClaudeDesignPane runId={runId} />
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Claude Design — in-app deck designer for Why Buy ─────────────────────────
+function ClaudeDesignPane({ runId }: { runId: string }) {
+  const { toast } = useToast();
+  const [versions, setVersions] = useState<Array<{ id: string; version: number; prompt: string | null; created_at: string }>>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [iteratePrompt, setIteratePrompt] = useState("");
+  const [busy, setBusy] = useState<"generate" | "iterate" | "edit" | null>(null);
+  const [pickerEditId, setPickerEditId] = useState<string | null>(null);
+  // Zoom for the iframe preview. 1.0 = native; values below 1 shrink the
+  // deck so the whole thing (all slides) fits in the preview box, values
+  // above 1 magnify a slice. Clamped to 0.4–2.0 so the controls can't
+  // produce something unusable.
+  const [zoom, setZoom] = useState(1);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design`);
+      if (!r.ok) return;
+      const data = await r.json();
+      setVersions(data);
+      if (!activeId && data.length > 0) setActiveId(data[0].id);
+    } catch { /* ignore */ }
+  }, [runId, activeId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // PATCH a single editable element. Auto-save: server returns a new
+  // version, we switch to it. Undo = go back one.
+  const patchElement = useCallback(async (editId: string, type: "image" | "text", value: string) => {
+    if (!activeId) return;
+    setBusy("edit");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/${activeId}/element`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ editId, type, value }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      toast({ title: "Saved", description: d.label });
+    } catch (e: any) {
+      toast({ title: "Edit failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  }, [activeId, runId, reload, toast]);
+
+  // Undo — switch active to the previous version (one row older in the
+  // list, which is sorted version DESC). Doesn't delete; the newer
+  // version stays in history so the user can redo via the dropdown.
+  const undo = useCallback(() => {
+    if (!activeId || versions.length < 2) return;
+    const idx = versions.findIndex(v => v.id === activeId);
+    if (idx < 0 || idx >= versions.length - 1) return;
+    setActiveId(versions[idx + 1].id);
+  }, [activeId, versions]);
+  const canUndo = (() => {
+    if (!activeId || versions.length < 2) return false;
+    const idx = versions.findIndex(v => v.id === activeId);
+    return idx >= 0 && idx < versions.length - 1;
+  })();
+
+  // Iframe overlay — attach hover/click handlers to data-edit-id
+  // elements inside the rendered deck. The iframe is same-origin
+  // (sandbox="allow-same-origin") so the parent can manipulate its DOM.
+  // Click an <img> → open picker. Click any other tagged element →
+  // contentEditable inline; auto-save on blur.
+  const onIframeLoad = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    // Inject hover/edit styles
+    let style = doc.getElementById("__bgp_editor_styles") as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = "__bgp_editor_styles";
+      style.textContent = `
+        [data-edit-id] { cursor: pointer; transition: outline 0.12s ease, background 0.12s ease; }
+        [data-edit-id]:hover { outline: 2px dashed #15616D; outline-offset: 3px; }
+        [data-edit-id].__bgp_editing { outline: 2px solid #FF7D00; outline-offset: 3px; background: rgba(255,125,0,0.04); cursor: text; }
+        @media print { [data-edit-id] { outline: none !important; cursor: default !important; } }
+      `;
+      doc.head.appendChild(style);
+    }
+    // Attach handlers
+    doc.querySelectorAll<HTMLElement>("[data-edit-id]").forEach((el) => {
+      if ((el as any).__bgp_wired) return;
+      (el as any).__bgp_wired = true;
+      const editId = el.getAttribute("data-edit-id")!;
+      el.addEventListener("click", (e) => {
+        if (el.classList.contains("__bgp_editing")) return; // mid-edit, ignore
+        e.preventDefault();
+        e.stopPropagation();
+        if (el.tagName === "IMG") {
+          setPickerEditId(editId);
+          return;
+        }
+        // Inline text edit
+        el.classList.add("__bgp_editing");
+        el.contentEditable = "true";
+        el.focus();
+        // Select all on focus for easy overwrite
+        const range = doc.createRange();
+        range.selectNodeContents(el);
+        const sel = doc.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        const original = el.textContent || "";
+        const finish = () => {
+          el.contentEditable = "false";
+          el.classList.remove("__bgp_editing");
+          const newText = (el.textContent || "").replace(/\s+/g, " ").trim();
+          el.removeEventListener("blur", finish);
+          el.removeEventListener("keydown", onKey);
+          if (newText && newText !== original.trim()) {
+            patchElement(editId, "text", newText);
+          } else {
+            // Restore original (in case user deleted everything then bailed)
+            el.textContent = original;
+          }
+        };
+        const onKey = (ke: KeyboardEvent) => {
+          if (ke.key === "Enter" && !ke.shiftKey) {
+            ke.preventDefault();
+            (el as HTMLElement).blur();
+          } else if (ke.key === "Escape") {
+            ke.preventDefault();
+            el.textContent = original;
+            (el as HTMLElement).blur();
+          }
+        };
+        el.addEventListener("blur", finish);
+        el.addEventListener("keydown", onKey);
+      });
+    });
+  }, [patchElement]);
+
+  const generate = async () => {
+    setBusy("generate");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/generate`, { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      toast({ title: "Deck generated", description: `Version ${d.version} ready` });
+    } catch (e: any) {
+      toast({ title: "Generation failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  const iterate = async () => {
+    if (!iteratePrompt.trim()) return;
+    setBusy("iterate");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/iterate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: iteratePrompt, baseVersionId: activeId }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      setIteratePrompt("");
+      toast({ title: "Updated", description: `Version ${d.version}` });
+    } catch (e: any) {
+      toast({ title: "Iteration failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border bg-gradient-to-br from-violet-50/40 to-amber-50/40 dark:from-violet-950/20 dark:to-amber-950/20 p-3 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-violet-600" />
+          <span className="text-sm font-semibold">Claude design — in-app deck</span>
+          <span className="text-[10px] text-muted-foreground">live HTML preview · iterate by prompt · print to PDF</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {versions.length > 1 && (
+            <select
+              value={activeId || ""}
+              onChange={(e) => setActiveId(e.target.value)}
+              className="h-7 text-xs rounded-md border bg-background px-2"
+            >
+              {versions.map(v => (
+                <option key={v.id} value={v.id}>v{v.version} · {v.prompt ? v.prompt.slice(0, 30) : "initial"}</option>
+              ))}
+            </select>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={undo}
+            disabled={!canUndo || busy !== null}
+            className="h-7 text-xs"
+            title="Go back to the previous version"
+          >
+            ↶ Undo
+          </Button>
+          <Button size="sm" variant="outline" onClick={generate} disabled={busy !== null} className="h-7 text-xs">
+            {busy === "generate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+            {versions.length === 0 ? "Generate" : "Re-generate"}
+          </Button>
+          {versions.length > 0 && (
+            <div className="flex items-center gap-0.5 ml-1 pl-1 border-l">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setZoom(z => Math.max(0.4, +(z - 0.1).toFixed(2)))}
+                disabled={zoom <= 0.4}
+                className="h-7 w-7 p-0"
+                title="Zoom out"
+                data-testid="btn-deck-zoom-out"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </Button>
+              <button
+                type="button"
+                onClick={() => setZoom(1)}
+                className="text-[11px] font-mono px-1.5 h-7 rounded hover:bg-muted/60 min-w-[42px]"
+                title="Reset zoom"
+                data-testid="btn-deck-zoom-reset"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setZoom(z => Math.min(2, +(z + 0.1).toFixed(2)))}
+                disabled={zoom >= 2}
+                className="h-7 w-7 p-0"
+                title="Zoom in"
+                data-testid="btn-deck-zoom-in"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          )}
+          {activeId && (
+            <a href={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`} target="_blank" rel="noreferrer">
+              <Button size="sm" variant="ghost" className="h-7 text-xs">
+                <ExternalLink className="w-3.5 h-3.5 mr-1" /> Open / print
+              </Button>
+            </a>
+          )}
+        </div>
+      </div>
+
+      {versions.length === 0 ? (
+        <div className="text-xs text-muted-foreground italic text-center py-6">
+          Click <strong>Generate</strong> — Claude builds a Why Buy deck from this pathway run's brief (property, tenant, model outputs, comps). You can then iterate by typing things like "make slide 2 punchier" or "swap the colour scheme".
+        </div>
+      ) : (
+        <>
+          <div className="text-[10px] text-muted-foreground italic px-1">
+            Click any image, headline, or KPI in the deck below to edit it inline. Edits auto-save as a new version — use Undo to step back.
+          </div>
+          {/* Zoom is applied via CSS transform on the iframe. To keep
+              the iframe filling its outer container regardless of
+              zoom, we set its width/height to 100/zoom% then scale
+              the rendering back down. zoom=0.5 → iframe is 200%
+              size internally, scaled to 50% visually = you see 2x
+              the slides. zoom=1.5 → 66.7% size, scaled up = closer
+              look at a portion. overflow-auto on the wrapper lets
+              the user pan when zoomed in past the box. */}
+          <div className="rounded-md overflow-auto border bg-white" style={{ height: 600 }}>
+            {activeId && (
+              <iframe
+                ref={iframeRef}
+                src={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`}
+                className="border-0 block"
+                style={{
+                  width: `${100 / zoom}%`,
+                  height: `${100 / zoom}%`,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top left",
+                }}
+                title="Why Buy preview"
+                sandbox="allow-same-origin"
+                onLoad={onIframeLoad}
+              />
+            )}
+          </div>
+        </>
+      )}
+
+      {versions.length > 0 && (
+        <form onSubmit={(e) => { e.preventDefault(); iterate(); }} className="flex gap-2">
+          <input
+            value={iteratePrompt}
+            onChange={(e) => setIteratePrompt(e.target.value)}
+            placeholder="Iterate — e.g. 'add a comp slide', 'use BGP teal', 'shorten the risks section'"
+            className="flex-1 h-8 rounded-md border bg-background px-2.5 text-sm"
+            disabled={busy !== null}
+          />
+          <Button size="sm" type="submit" disabled={busy !== null || !iteratePrompt.trim()} className="h-8">
+            {busy === "iterate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+            Iterate
+          </Button>
+        </form>
+      )}
+
+      <HouseStylePanel scope="why_buy" />
+
+      {pickerEditId && (
+        <ImageStudioPicker
+          runId={runId}
+          onPick={(url) => {
+            const id = pickerEditId;
+            setPickerEditId(null);
+            if (id) patchElement(id, "image", url);
+          }}
+          onClose={() => setPickerEditId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal that lists all images discovered for this pathway run (Stage 8 —
+// Street View, Retail Context Plan, additional, collections) so the user
+// can swap one into the deck without leaving the page.
+// ImageStudioPicker — grouped picker that doubles as a property's image
+// inventory manager. Reads from the canonical property_imagery_assets
+// manifest (any image attached to this property, from any source) so
+// captures + uploads done elsewhere in Image Studio show up automatically.
+//
+// Per-image actions:
+//   • Use   — swap into the deck slot the user clicked (calls onPick)
+//   • ⭐    — toggle hero tag (PATCH kind=hero)
+//   • 📷   — open Image Studio for this property (deep link)
+//   • ✕    — soft-delete (PATCH hidden=true)
+//
+// Plus + New Street View capture (inline dialog, reuses StreetViewPanoramaCapture)
+// and + Upload (multi-file). Both link the result to the property automatically
+// so it appears in this picker on next refresh — no separate Discover step.
+type Asset = {
+  id: string;
+  kind: string;
+  source: string;
+  thumbnail: string | null;     // base64
+  imageStudioId: string | null;
+  caption: string | null;
+  pinned: boolean;
+  score: number;
+};
+
+function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: (url: string) => void; onClose: () => void }) {
+  const { toast } = useToast();
+  const [propertyId, setPropertyId] = useState<string | null>(null);
+  const [propertyAddress, setPropertyAddress] = useState<string>("");
+  const [propertyPostcode, setPropertyPostcode] = useState<string>("");
+  const [propertyLat, setPropertyLat] = useState<number | undefined>(undefined);
+  const [propertyLng, setPropertyLng] = useState<number | undefined>(undefined);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [planEditorOpen, setPlanEditorOpen] = useState(false);
+  const [pov, setPov] = useState<{ heading: number; pitch: number; fov: number }>({ heading: 0, pitch: 0, fov: 90 });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadManifest = useCallback(async (pid: string) => {
+    try {
+      const r = await fetch(`/api/property-imagery/${pid}/manifest`);
+      if (!r.ok) return;
+      const data = await r.json();
+      const merged: Asset[] = [];
+      const byKind = data?.byKind || {};
+      for (const k of Object.keys(byKind)) {
+        for (const c of byKind[k]) merged.push({
+          id: c.id, kind: c.kind, source: c.source,
+          thumbnail: c.thumbnail, imageStudioId: c.imageStudioId,
+          caption: c.caption, pinned: !!c.pinned, score: c.score ?? 0.5,
+        });
+      }
+      setAssets(merged);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/property-pathway/${runId}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        const pid = data?.propertyId || data?.property_id || null;
+        const addr = data?.address || "";
+        const pc = data?.postcode || "";
+        const stage1 = data?.stageResults?.stage1 || data?.stage_results?.stage1 || {};
+        const lat = stage1?.coordinates?.lat ?? data?.lat;
+        const lng = stage1?.coordinates?.lng ?? data?.lng;
+        if (!cancelled) {
+          setPropertyId(pid);
+          setPropertyAddress(addr);
+          setPropertyPostcode(pc);
+          if (typeof lat === "number") setPropertyLat(lat);
+          if (typeof lng === "number") setPropertyLng(lng);
+        }
+        if (pid) await loadManifest(pid);
+      } catch { /* ignore */ }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [runId, loadManifest]);
+
+  const refresh = useCallback(() => {
+    if (propertyId) loadManifest(propertyId);
+  }, [propertyId, loadManifest]);
+
+  // Source / kind grouping for display. Hero is its own group; Plans
+  // covers the composed/generated (retail context plan, comps chart, etc.);
+  // Street View is photos from Google Street View; Map is google_static.
+  const groups: Array<{ key: string; label: string; predicate: (a: Asset) => boolean }> = [
+    { key: "hero", label: "Hero", predicate: (a) => a.kind === "hero" },
+    { key: "plans", label: "Plans (Retail Context, Comps, ERV)", predicate: (a) => a.kind !== "hero" && (a.kind === "location_plan" || a.kind === "comps_chart" || a.kind === "erv_walk" || a.kind === "covenant_card") },
+    { key: "street_view", label: "Street View", predicate: (a) => a.kind !== "hero" && a.source === "street_view" },
+    { key: "map", label: "Map view", predicate: (a) => a.kind !== "hero" && a.source === "google_static" },
+    { key: "other", label: "Other", predicate: (a) => a.kind !== "hero" && a.kind !== "location_plan" && a.kind !== "comps_chart" && a.kind !== "erv_walk" && a.kind !== "covenant_card" && a.source !== "street_view" && a.source !== "google_static" },
+  ];
+
+  const tagAsHero = async (assetId: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/property-imagery/asset/${assetId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "hero", pinned: true }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+      toast({ title: "Tagged as hero" });
+    } catch (e: any) {
+      toast({ title: "Couldn't tag", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const hideAsset = async (assetId: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/property-imagery/asset/${assetId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden: true }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Couldn't hide", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const captureStreetView = async () => {
+    if (!propertyAddress) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/image-studio/capture-streetview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location: propertyAddress,
+          heading: pov.heading,
+          pitch: pov.pitch,
+          fov: pov.fov,
+          propertyId,
+          kind: "secondary_external",
+        }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+      setCaptureOpen(false);
+      toast({ title: "Captured", description: `Heading ${pov.heading}° saved` });
+    } catch (e: any) {
+      toast({ title: "Capture failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const handleUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !propertyId) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      for (let i = 0; i < files.length; i++) fd.append("images", files[i]);
+      fd.append("propertyId", propertyId);
+      fd.append("kind", "secondary_external");
+      fd.append("category", "Property Photos");
+      if (propertyAddress) fd.append("address", propertyAddress);
+      const r = await fetch("/api/image-studio/upload", { method: "POST", body: fd });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+      toast({ title: "Uploaded", description: `${files.length} image(s) added` });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const fullUrl = (a: Asset) => `/api/image-studio/${a.imageStudioId}/full`;
+  const thumbSrc = (a: Asset) => a.thumbnail ? `data:image/jpeg;base64,${a.thumbnail}` : `/api/image-studio/${a.imageStudioId}/thumbnail`;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-background rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-sm">Pick an image</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              All images linked to {propertyAddress || "this property"}. Click <strong>Use</strong> to swap into the deck.
+              Tag a different one as ⭐ to make it the hero. ✕ to hide. 📷 to edit in Image Studio.
+            </p>
+          </div>
+          <div className="flex items-center gap-1">
+            {propertyId && (
+              <a
+                href={`/image-studio?propertyId=${propertyId}&property=${encodeURIComponent(propertyAddress)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-muted-foreground hover:text-foreground border rounded px-2 py-1"
+                title="Open Image Studio with this property"
+              >
+                Open Image Studio ↗
+              </a>
+            )}
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none ml-2">✕</button>
+          </div>
+        </div>
+
+        <div className="p-3 border-b flex items-center gap-2 flex-wrap">
+          <Button size="sm" variant="outline" onClick={() => setCaptureOpen(true)} disabled={busy || !propertyAddress} className="h-7 text-xs">
+            + New Street View
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setPlanEditorOpen(true)} disabled={busy || !propertyId} className="h-7 text-xs">
+            + Retail Context Plan
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busy || !propertyId} className="h-7 text-xs">
+            + Upload
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => { handleUpload(e.target.files); e.target.value = ""; }}
+          />
+          {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+        </div>
+
+        <div className="p-4 overflow-y-auto flex-1 space-y-5">
+          {loading ? (
+            <div className="text-xs text-muted-foreground italic text-center py-12">Loading…</div>
+          ) : !propertyId ? (
+            <div className="text-xs text-muted-foreground italic text-center py-12">
+              This pathway run isn't linked to a CRM property yet — Stage 1 needs to resolve the address first.
+            </div>
+          ) : assets.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic text-center py-12">
+              No images yet for this property. Use <strong>+ New Street View</strong> or <strong>+ Upload</strong> above to add some.
+            </div>
+          ) : (
+            groups.map(({ key, label, predicate }) => {
+              const items = assets.filter(predicate);
+              if (items.length === 0) return null;
+              return (
+                <section key={key}>
+                  <h4 className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">
+                    {label} ({items.length})
+                  </h4>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {items.map((a) => (
+                      <div
+                        key={a.id}
+                        className="group relative aspect-[4/3] rounded-md overflow-hidden border bg-muted"
+                      >
+                        <img src={thumbSrc(a)} alt={a.caption || ""} className="w-full h-full object-cover" />
+                        {a.kind === "hero" && (
+                          <span className="absolute top-1 left-1 bg-amber-500 text-white text-[9px] px-1 rounded">⭐ HERO</span>
+                        )}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/45 transition-colors flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
+                          <button
+                            onClick={() => onPick(fullUrl(a))}
+                            className="bg-primary text-primary-foreground text-[10px] px-2 py-1 rounded hover:opacity-90"
+                            title="Use this image in the deck"
+                          >
+                            Use
+                          </button>
+                          {a.kind !== "hero" && (
+                            <button
+                              onClick={() => tagAsHero(a.id)}
+                              disabled={busy}
+                              className="bg-amber-500 text-white text-[10px] px-1.5 py-1 rounded hover:opacity-90"
+                              title="Tag as the hero shot"
+                            >
+                              ⭐
+                            </button>
+                          )}
+                          <a
+                            href={`/image-studio?propertyId=${propertyId}&property=${encodeURIComponent(propertyAddress)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="bg-white/90 text-foreground text-[10px] px-1.5 py-1 rounded hover:opacity-90"
+                            title="Edit in Image Studio"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            📷
+                          </a>
+                          <button
+                            onClick={() => hideAsset(a.id)}
+                            disabled={busy}
+                            className="bg-destructive text-destructive-foreground text-[10px] px-1.5 py-1 rounded hover:opacity-90"
+                            title="Hide this image"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {a.caption && (
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[9px] p-1 leading-tight pointer-events-none truncate">
+                            {a.caption}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {planEditorOpen && propertyId && (
+        <RetailContextPlanEditor
+          propertyId={propertyId}
+          address={propertyAddress}
+          postcode={propertyPostcode}
+          initialLat={propertyLat}
+          initialLng={propertyLng}
+          onClose={() => setPlanEditorOpen(false)}
+          onChange={refresh}
+        />
+      )}
+
+      {captureOpen && propertyAddress && (
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={() => setCaptureOpen(false)}>
+          <div className="bg-background rounded-lg shadow-2xl w-full max-w-3xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="p-3 border-b flex items-center justify-between">
+              <h4 className="text-sm font-semibold">New Street View capture</h4>
+              <button onClick={() => setCaptureOpen(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="rounded-md overflow-hidden border" style={{ height: 360 }}>
+                <StreetViewPanoramaCapture
+                  address={propertyAddress}
+                  lat={propertyLat}
+                  lng={propertyLng}
+                  onPovChange={setPov}
+                />
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                Pan to the angle you want, then click Capture. The image saves to Image Studio AND links to this property.
+              </div>
+            </div>
+            <div className="p-3 border-t flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setCaptureOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={captureStreetView} disabled={busy}>
+                {busy && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
+                Capture
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Inline "House style" panel — free-text preferences that flow into every
+// Why Buy generation/iteration as prompt context. Same data is editable
+// via ChatBGP (sql_write into document_design_preferences) — keeping
+// Claude's design fluid rather than locking it down with rigid fields.
+function HouseStylePanel({ scope }: { scope: string }) {
+  const { toast } = useToast();
+  const [prefs, setPrefs] = useState<Array<{ id: string; preference: string; category: string | null; added_at: string }>>([]);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/document-design-preferences?scope=${encodeURIComponent(scope)}`);
+      if (!r.ok) return;
+      const data = await r.json();
+      setPrefs(data);
+    } catch { /* ignore */ }
+  }, [scope]);
+
+  useEffect(() => { if (open) reload(); }, [open, reload]);
+
+  const add = async () => {
+    if (!draft.trim()) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/document-design-preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, preference: draft.trim() }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setDraft("");
+      await reload();
+      toast({ title: "House style updated", description: "Will apply to the next generation." });
+    } catch (e: any) {
+      toast({ title: "Couldn't save", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const disable = async (id: string) => {
+    try {
+      const r = await fetch(`/api/document-design-preferences/${id}/disable`, { method: "PATCH" });
+      if (!r.ok) throw new Error(await r.text());
+      await reload();
+    } catch (e: any) {
+      toast({ title: "Couldn't disable", description: e?.message || "", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div className="border-t pt-2 mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-[11px] font-medium text-muted-foreground hover:text-foreground flex items-center gap-1.5"
+      >
+        <span>{open ? "▼" : "▶"}</span>
+        House style ({prefs.length})
+        <span className="text-[10px] opacity-60">— preferences applied to every deck</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          {prefs.length === 0 ? (
+            <div className="text-[11px] text-muted-foreground italic">
+              No house preferences yet. Add one below — or ask ChatBGP "remember to ___ on Why Buy decks" and it will save the same way.
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {prefs.map((p) => (
+                <li key={p.id} className="flex items-start justify-between gap-2 text-[11px] bg-background/60 rounded px-2 py-1 border">
+                  <span className="flex-1">{p.preference}</span>
+                  <button
+                    onClick={() => disable(p.id)}
+                    className="text-muted-foreground hover:text-destructive text-[10px]"
+                    title="Remove this preference"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form onSubmit={(e) => { e.preventDefault(); add(); }} className="flex gap-1.5">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="e.g. Always use the brochure hero on the cover"
+              className="flex-1 h-7 rounded-md border bg-background px-2 text-[11px]"
+              disabled={busy}
+            />
+            <Button size="sm" type="submit" disabled={busy || !draft.trim()} className="h-7 text-[11px] px-2">
+              Add
+            </Button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImageStudioCard({ runId, stage8, onReload, propertyId, runAddress, runPostcode, runLat, runLng }: {
+  runId: string;
+  stage8: any;
+  onReload: () => void;
+  propertyId?: string | null;
+  runAddress?: string;
+  runPostcode?: string;
+  runLat?: number;
+  runLng?: number;
+}) {
   const { toast } = useToast();
   const [retrying, setRetrying] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [planEditorOpen, setPlanEditorOpen] = useState(false);
   const thumbUrl = (imageId: string) =>
     `/api/property-pathway/${runId}/image/${imageId}?thumb=1`;
   const fullUrl = (imageId: string) =>
@@ -1828,7 +3319,17 @@ function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: a
         <CardTitle className="text-base flex items-center gap-2">
           <ImageIcon className="w-4 h-4" /> Image Studio
         </CardTitle>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {propertyId && (
+            <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)} className="h-7 text-xs gap-1">
+              <ImageIcon className="w-3.5 h-3.5" /> Manage images
+            </Button>
+          )}
+          {propertyId && (
+            <Button size="sm" variant="outline" onClick={() => setPlanEditorOpen(true)} className="h-7 text-xs gap-1">
+              🗺 Edit Retail Plan
+            </Button>
+          )}
           <a
             href={collections[0]?.id ? `/image-studio?collection=${encodeURIComponent(collections[0].id)}` : "/image-studio"}
             target="_blank"
@@ -1890,6 +3391,30 @@ function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: a
           </div>
         )}
       </CardContent>
+
+      {/* Picker — full image management for the property (capture, upload,
+          tag as hero, edit in Image Studio, soft-delete) */}
+      {pickerOpen && (
+        <ImageStudioPicker
+          runId={runId}
+          onPick={() => { /* not used here — this entry point is for management not swap */ }}
+          onClose={() => { setPickerOpen(false); onReload(); }}
+        />
+      )}
+
+      {/* Retail Context Plan editor — map + radius + category filter,
+          regenerate, mark canonical */}
+      {planEditorOpen && propertyId && (
+        <RetailContextPlanEditor
+          propertyId={propertyId}
+          address={runAddress || ""}
+          postcode={runPostcode || ""}
+          initialLat={runLat}
+          initialLng={runLng}
+          onClose={() => setPlanEditorOpen(false)}
+          onChange={onReload}
+        />
+      )}
     </Card>
   );
 }
@@ -1947,9 +3472,10 @@ function PropertyDataMarketCard({ tone }: { tone: any }) {
 // file via a UK residential IP — Idox (Westminster and similar) blocks direct
 // browser fetches via referer/IP checks and the raw URL often returns an HTML
 // viewer rather than the PDF bytes.
-function planningPdfProxy(rawUrl: string): string {
+function planningPdfProxy(rawUrl: string, refererUrl?: string): string {
   if (!rawUrl) return rawUrl;
-  return `/api/planning-docs/download?url=${encodeURIComponent(rawUrl)}`;
+  const base = `/api/planning-docs/download?url=${encodeURIComponent(rawUrl)}`;
+  return refererUrl ? `${base}&referer=${encodeURIComponent(refererUrl)}` : base;
 }
 
 function classifyDocType(text: string): { label: string; tone: string } {
@@ -2004,6 +3530,7 @@ function PlanningDocsCard({
   apps,
   planningDocs,
   legacyUrls,
+  className,
 }: {
   apps: any[];
   planningDocs: Array<{
@@ -2015,6 +3542,7 @@ function PlanningDocsCard({
     docs: Array<{ url: string; date: string; description: string; type: string; drawingNumber?: string; category: string; label: string }>;
   }>;
   legacyUrls: string[];
+  className?: string;
 }) {
   const [showDialog, setShowDialog] = useState(false);
   const scrapedRefs = new Set(planningDocs.map((p) => p.ref));
@@ -2024,7 +3552,7 @@ function PlanningDocsCard({
   const unscraped = apps.filter((a: any) => a.documentUrl && !scrapedRefs.has(a.reference));
 
   return (
-    <div className="border rounded p-2.5 bg-muted/10">
+    <div className={`border rounded p-2.5 bg-muted/10${className ? ` ${className}` : ""}`}>
       <div className="flex items-center justify-between mb-1.5">
         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
           04 Planning Documents
@@ -2043,29 +3571,29 @@ function PlanningDocsCard({
             <div key={ai} className="border rounded bg-background">
               {/* App-grouping header: one line to match the doc rows below.
                   Full description + long refs are available via Expand. */}
-              <div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30 text-[11px]">
+              <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-muted/30 text-[11px]">
                 <span className="text-[10px] text-muted-foreground shrink-0 w-16">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
-                {app.lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                {app.lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
                 <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline truncate min-w-0 flex-1" title={app.ref + (app.description ? ` — ${app.description}` : "")}>{app.ref}</a>
-                <span className="text-[9px] px-1 py-px rounded bg-sky-100 text-sky-800 shrink-0">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+                <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
               </div>
               <div className="divide-y">
                 {app.docs.slice(0, 40).map((d, di) => (
                   <a
                     key={di}
-                    href={planningPdfProxy(d.url)}
+                    href={planningPdfProxy(d.url, app.docsUrl)}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"
+                    className="flex items-start gap-2 py-2 px-2 hover:bg-muted/30 text-[11px] leading-relaxed"
                     title={d.description}
                   >
-                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{d.date ? d.date.slice(0, 10) : ""}</span>
-                    <span className={`text-[9px] px-1 py-px rounded uppercase tracking-wide shrink-0 mt-px ${docCategoryTone(d.category)}`}>{d.label}</span>
+                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{d.date ? d.date.slice(0, 10) : ""}</span>
+                    <span className={`text-[9px] px-1 py-0.5 rounded uppercase tracking-wide shrink-0 mt-0.5 ${docCategoryTone(d.category)}`}>{d.label}</span>
                     <span className="flex-1 min-w-0">
                       <span className="block truncate">{d.description}</span>
-                      {d.drawingNumber && <span className="block text-muted-foreground text-[10px] truncate">Drawing {d.drawingNumber}</span>}
+                      {d.drawingNumber && <span className="block text-muted-foreground text-[10px] truncate mt-0.5">Drawing {d.drawingNumber}</span>}
                     </span>
-                    <Download className="w-3 h-3 shrink-0 text-muted-foreground mt-px" />
+                    <Download className="w-3 h-3 shrink-0 text-muted-foreground mt-1" />
                   </a>
                 ))}
                 {app.docs.length > 40 && (
@@ -2089,14 +3617,14 @@ function PlanningDocsCard({
                     href={p.documentUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"
+                    className="flex items-start gap-2 py-2 px-2 hover:bg-muted/30 text-[11px] leading-relaxed"
                   >
-                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
+                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
                     <span className="flex-1 min-w-0">
                       <span className="font-medium break-all text-primary">{p.reference}</span>
-                      {p.description && <span className="block text-muted-foreground text-[10px] truncate">{p.description}</span>}
+                      {p.description && <span className="block text-muted-foreground text-[10px] truncate mt-0.5">{p.description}</span>}
                     </span>
-                    <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-px" />
+                    <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-1" />
                   </a>
                 ))}
               </div>
@@ -2118,20 +3646,20 @@ function PlanningDocsCard({
                   href={p.documentUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-start gap-1.5 py-1 px-0.5 border-b last:border-b-0 hover:bg-muted/30"
+                  className="flex items-start gap-2 py-2 px-1 border-b last:border-b-0 hover:bg-muted/30 leading-relaxed"
                 >
-                  <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
-                  <span className={`text-[9px] px-1 py-px rounded uppercase tracking-wide shrink-0 mt-px ${cat.tone}`}>{cat.label}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
+                  <span className={`text-[9px] px-1 py-0.5 rounded uppercase tracking-wide shrink-0 mt-0.5 ${cat.tone}`}>{cat.label}</span>
                   <span className="flex-1 min-w-0">
                     <span className="font-medium break-all text-primary">{p.reference}</span>
-                    {p.description && <span className="block text-muted-foreground text-[10px] truncate">{p.description}</span>}
+                    {p.description && <span className="block text-muted-foreground text-[10px] truncate mt-0.5">{p.description}</span>}
                   </span>
-                  <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-px" />
+                  <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-1" />
                 </a>
               );
             })}
             {legacyUrls.filter((u) => !apps.some((a: any) => a.documentUrl === u)).slice(0, 10).map((u, i) => (
-              <a key={`legacy-${i}`} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 py-1 px-0.5 border-b last:border-b-0 hover:bg-muted/30 text-[10px] text-muted-foreground">
+              <a key={`legacy-${i}`} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-2 px-1 border-b last:border-b-0 hover:bg-muted/30 text-[10px] text-muted-foreground">
                 <ExternalLink className="w-2.5 h-2.5 shrink-0" />
                 <span className="truncate">{u}</span>
               </a>
@@ -2197,7 +3725,7 @@ function PlanningDocsDialog({
                 {app.docs.map((d, di) => (
                   <a
                     key={di}
-                    href={planningPdfProxy(d.url)}
+                    href={planningPdfProxy(d.url, app.docsUrl)}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-start gap-2 py-1.5 px-3 hover:bg-muted/30 text-[12px]"
@@ -2318,6 +3846,110 @@ interface EmailDetail {
   hasAttachments: boolean;
   webLink: string | null;
   attachments: Array<{ id: string; name: string; size: number; contentType: string }>;
+}
+
+/**
+ * Renders the AI-generated email triage markdown with inline [E#] tokens
+ * turned into clickable buttons that open the in-app EmailViewerDialog
+ * for that exact message. Supports a small subset of markdown (h1/h2/h3,
+ * bold, lists, blockquotes) — written inline rather than pulling
+ * react-markdown to avoid a new dependency.
+ */
+function EmailCommentary({
+  markdown,
+  emailHits,
+  onOpenEmail,
+}: {
+  markdown: string;
+  emailHits: Array<{ msgId: string; mailboxEmail?: string; subject?: string; from?: string }>;
+  onOpenEmail: (h: { msgId: string; mailboxEmail: string }) => void;
+}) {
+  const handleOpen = (oneBasedIdx: number) => {
+    const h = emailHits[oneBasedIdx - 1];
+    if (h?.mailboxEmail && h?.msgId) onOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail });
+  };
+
+  // Inline parser — splits a line into [E#] buttons, **bold**, and plain text spans.
+  let keyCounter = 0;
+  const parseInline = (text: string): ReactNode[] => {
+    const out: ReactNode[] = [];
+    const re = /(\[E(\d+)\])|(\*\*([^*]+)\*\*)|(`([^`]+)`)/g;
+    let cursor = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > cursor) {
+        out.push(<span key={`s-${keyCounter++}`}>{text.slice(cursor, m.index)}</span>);
+      }
+      if (m[1]) {
+        const idx = parseInt(m[2], 10);
+        const h = emailHits[idx - 1];
+        const title = h ? `${h.subject || ""} — ${h.from || ""}` : `Email #${idx}`;
+        const disabled = !h?.mailboxEmail || !h?.msgId;
+        out.push(
+          <button
+            key={`e-${keyCounter++}`}
+            type="button"
+            disabled={disabled}
+            onClick={() => handleOpen(idx)}
+            title={title}
+            className={`inline-flex items-center text-[10px] font-mono px-1 py-0 mx-0.5 rounded border ${
+              disabled
+                ? "bg-muted/40 text-muted-foreground border-muted cursor-not-allowed"
+                : "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 cursor-pointer"
+            }`}
+          >
+            E{idx}
+          </button>
+        );
+      } else if (m[3]) {
+        out.push(<strong key={`b-${keyCounter++}`}>{m[4]}</strong>);
+      } else if (m[5]) {
+        out.push(<code key={`c-${keyCounter++}`} className="text-[10px] bg-muted px-1 py-px rounded">{m[6]}</code>);
+      }
+      cursor = m.index + m[0].length;
+    }
+    if (cursor < text.length) {
+      out.push(<span key={`s-${keyCounter++}`}>{text.slice(cursor)}</span>);
+    }
+    return out;
+  };
+
+  // Block-level parser — line-by-line, batches consecutive bullets into <ul>.
+  const lines = markdown.split("\n");
+  const blocks: ReactNode[] = [];
+  let listBuffer: ReactNode[] = [];
+  const flushList = () => {
+    if (listBuffer.length) {
+      blocks.push(<ul key={`ul-${blocks.length}`} className="list-disc ml-5 my-1 space-y-0.5">{listBuffer}</ul>);
+      listBuffer = [];
+    }
+  };
+
+  lines.forEach((line, i) => {
+    if (/^### /.test(line)) {
+      flushList();
+      blocks.push(<h3 key={i} className="text-[12px] font-semibold mt-2 mb-0.5">{parseInline(line.slice(4))}</h3>);
+    } else if (/^## /.test(line)) {
+      flushList();
+      blocks.push(<h2 key={i} className="text-[13px] font-semibold mt-3 mb-1">{parseInline(line.slice(3))}</h2>);
+    } else if (/^# /.test(line)) {
+      flushList();
+      blocks.push(<h1 key={i} className="text-sm font-semibold mt-3 mb-1">{parseInline(line.slice(2))}</h1>);
+    } else if (/^> /.test(line)) {
+      flushList();
+      blocks.push(<blockquote key={i} className="border-l-2 border-primary/40 pl-2 py-0.5 my-1 text-muted-foreground italic">{parseInline(line.slice(2))}</blockquote>);
+    } else if (/^[-*] /.test(line)) {
+      listBuffer.push(<li key={i}>{parseInline(line.slice(2))}</li>);
+    } else if (line.trim() === "") {
+      flushList();
+    } else {
+      flushList();
+      blocks.push(<p key={i} className="my-1 leading-relaxed">{parseInline(line)}</p>);
+    }
+  });
+  flushList();
+
+  return <div className="text-[11px]">{blocks}</div>;
 }
 
 function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; mailboxEmail: string; onClose: () => void }) {
@@ -2456,7 +4088,7 @@ function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; ma
               {email.bodyContentType === "html" && email.bodyHtml ? (
                 <div
                   className="text-sm prose prose-sm max-w-none dark:prose-invert [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_table]:border-collapse"
-                  dangerouslySetInnerHTML={{ __html: email.bodyHtml }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(email.bodyHtml, { FORBID_TAGS: ["script", "style", "iframe", "object", "embed"], FORBID_ATTR: ["onerror", "onload", "onclick"] }) }}
                 />
               ) : (
                 <pre className="text-sm whitespace-pre-wrap font-sans">{email.bodyText || "(No body content)"}</pre>

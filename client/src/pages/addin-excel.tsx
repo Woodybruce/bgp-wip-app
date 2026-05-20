@@ -966,64 +966,76 @@ async function buildModelInWorkbook(
       cellsWritten, totalCells, formulasWritten, namedRangesSet,
     });
 
-    // Batch write: process cells in chunks via single Excel.run calls
+    // Batch write: process cells in chunks via single Excel.run calls.
+    // If a chunked sync() throws (one bad formula/format rejects the whole
+    // batch in Excel), we fall back to cell-by-cell so only the specific
+    // bad cells are lost rather than all 50 in the chunk.
     const BATCH_SIZE = 50;
+    const applyCellOps = (sheet: any, cellDef: any) => {
+      const range = sheet.getRange(cellDef.cell);
+      if (cellDef.formula) {
+        const f = cellDef.formula.startsWith("=") ? cellDef.formula : `=${cellDef.formula}`;
+        range.formulas = [[f]];
+      } else if (cellDef.value !== undefined) {
+        range.values = [[cellDef.value]];
+      }
+      if (cellDef.numberFormat) range.numberFormat = [[cellDef.numberFormat]];
+      if (cellDef.bold) range.format.font.bold = true;
+      if (cellDef.fontColor) range.format.font.color = argbToHex(cellDef.fontColor);
+      if (cellDef.fillColor) range.format.fill.color = argbToHex(cellDef.fillColor);
+      if (cellDef.fontSize) range.format.font.size = cellDef.fontSize;
+      if (cellDef.horizontalAlignment) range.format.horizontalAlignment = cellDef.horizontalAlignment;
+      if (cellDef.borders) {
+        const styleMap: Record<string, string> = { thin: "Thin", medium: "Medium", thick: "Thick" };
+        const style = styleMap[cellDef.borders] || "Thin";
+        const border = range.format.borders;
+        for (const edge of ["EdgeTop", "EdgeBottom", "EdgeLeft", "EdgeRight"]) {
+          const b = border.getItem(edge);
+          b.style = style;
+          b.color = "#B0BEC5";
+        }
+      }
+      if (cellDef.merge) {
+        const mergeRange = sheet.getRange(cellDef.merge);
+        mergeRange.merge();
+      }
+    };
+
     for (let batchStart = 0; batchStart < sheetDef.cells.length; batchStart += BATCH_SIZE) {
       const batch = sheetDef.cells.slice(batchStart, batchStart + BATCH_SIZE);
+      let batchWritten = 0;
+      let batchFormulas = 0;
       try {
         await window.Excel.run(async (context: any) => {
           const sheet = context.workbook.worksheets.getItem(sheetDef.name);
           for (const cellDef of batch) {
-            const range = sheet.getRange(cellDef.cell);
-
-            // Set value or formula
-            if (cellDef.formula) {
-              const f = cellDef.formula.startsWith("=") ? cellDef.formula : `=${cellDef.formula}`;
-              range.formulas = [[f]];
-              formulasWritten++;
-            } else if (cellDef.value !== undefined) {
-              range.values = [[cellDef.value]];
-            }
-
-            // Apply number format
-            if (cellDef.numberFormat) {
-              range.numberFormat = [[cellDef.numberFormat]];
-            }
-
-            // Apply formatting
-            if (cellDef.bold) range.format.font.bold = true;
-            if (cellDef.fontColor) range.format.font.color = argbToHex(cellDef.fontColor);
-            if (cellDef.fillColor) range.format.fill.color = argbToHex(cellDef.fillColor);
-            if (cellDef.fontSize) range.format.font.size = cellDef.fontSize;
-            if (cellDef.horizontalAlignment) range.format.horizontalAlignment = cellDef.horizontalAlignment;
-
-            // Borders
-            if (cellDef.borders) {
-              const styleMap: Record<string, string> = { thin: "Thin", medium: "Medium", thick: "Thick" };
-              const style = styleMap[cellDef.borders] || "Thin";
-              const border = range.format.borders;
-              for (const edge of ["EdgeTop", "EdgeBottom", "EdgeLeft", "EdgeRight"]) {
-                const b = border.getItem(edge);
-                b.style = style;
-                b.color = "#B0BEC5";
-              }
-            }
-
-            // Merge
-            if (cellDef.merge) {
-              const mergeRange = sheet.getRange(cellDef.merge);
-              mergeRange.merge();
-            }
-
-            cellsWritten++;
+            applyCellOps(sheet, cellDef);
+            batchWritten++;
+            if (cellDef.formula) batchFormulas++;
           }
           await context.sync();
         });
+        cellsWritten += batchWritten;
+        formulasWritten += batchFormulas;
       } catch (e: any) {
-        console.warn(`[build-model] Batch error on ${sheetDef.name}:`, e?.message);
+        console.warn(`[build-model] Batch failed on ${sheetDef.name} (cells ${batchStart}-${batchStart + batch.length}). Retrying cell-by-cell:`, e?.message);
+        // Per-cell fallback — slow but guarantees one bad cell only loses
+        // itself, not the 49 healthy neighbours.
+        for (const cellDef of batch) {
+          try {
+            await window.Excel.run(async (context: any) => {
+              const sheet = context.workbook.worksheets.getItem(sheetDef.name);
+              applyCellOps(sheet, cellDef);
+              await context.sync();
+            });
+            cellsWritten++;
+            if (cellDef.formula) formulasWritten++;
+          } catch (cellErr: any) {
+            console.warn(`[build-model] Dropped cell ${sheetDef.name}!${cellDef.cell}: ${cellErr?.message}${cellDef.formula ? ` (formula: ${cellDef.formula})` : ""}`);
+          }
+        }
       }
 
-      // Progress update after each batch
       onProgress({
         phase: "Writing cells",
         sheetName: sheetDef.name,
@@ -1068,6 +1080,19 @@ interface ExcelAction {
   value?: string | number;
 }
 
+// Whitelist of action types the add-in actually implements. The AI sometimes
+// hallucinates richer actions (highlightCell, mergeCells, applyFormat, etc) —
+// those silently produce no effect after the user clicks Apply, which is
+// confusing. We filter them out at the parser so they don't even render as
+// buttons. Update this list when adding new Office.js action handlers below.
+const SUPPORTED_EXCEL_ACTIONS = new Set(["writeValue", "writeFormula"]);
+
+// How many columns of the active sheet to package up and send to the model.
+// Was 30 — bumped after the Landsec tenancy export (43 cols) couldn't see
+// past column AD. Trade-off is payload size on chat-with-files calls; 100
+// covers virtually every real-world export without breaking the cache.
+const EXCEL_MAX_COLS = 100;
+
 function parseExcelActions(content: string): ExcelAction[] {
   const actions: ExcelAction[] = [];
   // Parse JSON action blocks
@@ -1076,9 +1101,9 @@ function parseExcelActions(content: string): ExcelAction[] {
   while ((match = jsonBlockRegex.exec(content)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (parsed.action && parsed.sheet && parsed.cell) {
-        actions.push(parsed);
-      }
+      if (!parsed.action || !parsed.sheet || !parsed.cell) continue;
+      if (!SUPPORTED_EXCEL_ACTIONS.has(parsed.action)) continue;
+      actions.push(parsed);
     } catch {}
   }
   // Parse excel code blocks for formulas
@@ -1200,7 +1225,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
 
       for (const info of rangeInfos) {
         if (!info.usedRange.isNullObject && info.usedRange.columnCount > 0) {
-          const colCount = Math.min(info.usedRange.columnCount, 30);
+          const colCount = Math.min(info.usedRange.columnCount, EXCEL_MAX_COLS);
           info.headerRange = info.sheet.getRangeByIndexes(0, 0, 1, colCount);
           info.headerRange.load("values");
         }
@@ -1241,7 +1266,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
         activeUsedRange.load(["values", "rowCount", "columnCount", "address"]);
         await context.sync();
         if (!activeUsedRange.isNullObject && activeUsedRange.values) {
-          activeSheetData = valuesToCsv(activeUsedRange.values, 200, 30);
+          activeSheetData = valuesToCsv(activeUsedRange.values, 200, EXCEL_MAX_COLS);
         }
       } catch {}
 
@@ -1288,7 +1313,7 @@ async function readExcelSelection(): Promise<string> {
       if (!rows || rows.length === 0 || (rows.length === 1 && rows[0].length === 1 && !rows[0][0])) return "";
 
       let csv = `\n=== CURRENT SELECTION: ${range.address} (${range.rowCount} rows x ${range.columnCount} cols) ===\n`;
-      csv += valuesToCsv(rows, 100, 30);
+      csv += valuesToCsv(rows, 100, EXCEL_MAX_COLS);
       return csv;
     });
   } catch (err) {

@@ -31,7 +31,7 @@ import { Search, Building2, AlertCircle, ExternalLink, X, Handshake, FolderTree,
 import { useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { CrmProperty, CrmDeal, CrmCompany, User } from "@shared/schema";
 import { InlineText, InlineSelect, InlineLabelSelect, InlineNumber } from "@/components/inline-edit";
@@ -76,16 +76,17 @@ const TENURE_COLORS: Record<string, string> = {
   "Leasehold": "bg-orange-500",
   "Virtual Freehold": "bg-cyan-500",
 };
-const TEAM_OPTIONS = ["Investment", "London Leasing", "National Leasing", "Lease Advisory", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAM_OPTIONS = CRM_OPTIONS.dealTeam;
 const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
-  "London Leasing": "bg-zinc-700",
+  "London F&B": "bg-rose-500",
+  "London Retail": "bg-teal-500",
   "National Leasing": "bg-violet-500",
   "Lease Advisory": "bg-indigo-500",
-  "Tenant Rep": "bg-rose-500",
+  "Tenant Rep": "bg-pink-500",
   "Development": "bg-orange-500",
   "Office / Corporate": "bg-slate-500",
-  "Landsec": "bg-rose-500",
+  "Landsec": "bg-amber-500",
 };
 
 function getInitials(name: string): string {
@@ -154,7 +155,7 @@ function InlineAgents({
   allUsers: User[];
 }) {
   const { toast } = useToast();
-  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => l.userId);
+  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => String(l.userId));
   const assignedUsers = allUsers.filter(u => assignedUserIds.includes(String(u.id)));
   const unassignedUsers = allUsers.filter(u => !assignedUserIds.includes(String(u.id)));
 
@@ -305,7 +306,7 @@ function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => { toast({ title: "Failed to link deal", description: err.message, variant: "destructive" }); },
   });
@@ -316,7 +317,7 @@ function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => { toast({ title: "Failed to unlink deal", description: err.message, variant: "destructive" }); },
   });
@@ -441,7 +442,7 @@ function InlineTenants({
   );
 }
 
-const TEAMS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAMS = CRM_OPTIONS.dealTeam;
 
 interface FolderTemplate {
   team: string;
@@ -1056,7 +1057,7 @@ function InstructionsList({
   });
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="instructions-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="instructions-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -1164,8 +1165,8 @@ function InstructionsList({
         )}
       </div>
 
-      <Card>
-        <CardContent className="p-0">
+      <Card className="flex-1 min-h-0 flex flex-col">
+        <CardContent className="p-0 flex-1 min-h-0 flex flex-col">
           {isLoading ? (
             <div className="p-4 space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (

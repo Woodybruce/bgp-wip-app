@@ -10,6 +10,50 @@ import { users as usersTable } from "@shared/schema";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
+// Top BGP team members by interaction count — used by the InteractionsBoard
+// banner. Returns 90-day count visible, all-time count for hover tooltip.
+// Scope = "contact" → ranks by interactions touching that contactId.
+// Scope = "company" → ranks by interactions touching any contact at companyId.
+async function computeTopBgpContacts(opts: {
+  scope: "contact" | "company";
+  id: string;
+  since90d: Date;
+}): Promise<Array<{ email: string; name: string; count90d: number; countAll: number }>> {
+  try {
+    const column = opts.scope === "contact" ? "contact_id" : "company_id";
+    const { rows } = await pool.query<{ bgp_user: string; count_90d: string; count_all: string; user_name: string | null }>(
+      `SELECT
+         i.bgp_user,
+         COUNT(*) FILTER (WHERE i.interaction_date >= $2)::text AS count_90d,
+         COUNT(*)::text AS count_all,
+         u.name AS user_name
+       FROM crm_interactions i
+       LEFT JOIN users u ON lower(u.email) = lower(i.bgp_user) OR lower(u.username) = lower(i.bgp_user)
+       WHERE i.${column} = $1
+         AND i.bgp_user IS NOT NULL
+         AND i.bgp_user <> ''
+       GROUP BY i.bgp_user, u.name
+       ORDER BY count_90d DESC, count_all DESC
+       LIMIT 4`,
+      [opts.id, opts.since90d]
+    );
+    return rows.map(r => ({
+      email: r.bgp_user,
+      name: r.user_name || prettifyBgpEmail(r.bgp_user),
+      count90d: Number(r.count_90d || 0),
+      countAll: Number(r.count_all || 0),
+    }));
+  } catch (e: any) {
+    console.warn(`[interactions] computeTopBgpContacts(${opts.scope}/${opts.id}) failed: ${e?.message}`);
+    return [];
+  }
+}
+
+function prettifyBgpEmail(email: string): string {
+  const local = email.includes("@") ? email.split("@")[0] : email;
+  return local.replace(/\b\w/g, c => c.toUpperCase());
+}
+
 async function getBgpEmails(): Promise<string[]> {
   try {
     const result = await db
@@ -889,10 +933,17 @@ export function registerInteractionRoutes(app: Express) {
         .orderBy(desc(crmInteractions.interactionDate))
         .limit(1);
 
+      // Top BGP contacts — who's been most active with this person.
+      // 90-day count visible, all-time on hover (returned together).
+      const ninetyDaysAgo = new Date(now.getTime() - 90 * 86400000);
+      const topBgpContacts = await computeTopBgpContacts({ scope: "contact", id: contactId, since90d: ninetyDaysAgo });
+
       res.json({
         interactions,
         nextMeeting: nextMeeting[0] || null,
         lastInteraction: lastInteraction[0] || null,
+        nextInteraction: nextMeeting[0] || null,        // alias for InteractionsBoard
+        topBgpContacts,
         total: totalCount[0]?.count || 0,
       });
     } catch (e: any) {
@@ -913,7 +964,30 @@ export function registerInteractionRoutes(app: Express) {
         .orderBy(desc(crmInteractions.interactionDate))
         .limit(limit);
 
-      res.json({ interactions, total: interactions.length });
+      const now = new Date();
+      const ninetyDaysAgo = new Date(now.getTime() - 90 * 86400000);
+
+      const nextMeeting = await db
+        .select()
+        .from(crmInteractions)
+        .where(
+          and(
+            eq(crmInteractions.companyId, companyId),
+            eq(crmInteractions.type, "meeting"),
+            gte(crmInteractions.interactionDate, now)
+          )
+        )
+        .orderBy(crmInteractions.interactionDate)
+        .limit(1);
+
+      const topBgpContacts = await computeTopBgpContacts({ scope: "company", id: companyId, since90d: ninetyDaysAgo });
+
+      res.json({
+        interactions,
+        nextInteraction: nextMeeting[0] || null,
+        topBgpContacts,
+        total: interactions.length,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

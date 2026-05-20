@@ -15,13 +15,14 @@ import { TeamProvider, useTeam } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
-import { ChatBGPProvider } from "@/contexts/chatbgp-context";
+import { ChatBGPProvider, useChatBGPState } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationCenter } from "@/components/notification-center";
+import { GlobalDropZone } from "@/components/global-drop-zone";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import bgpLogoLight from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import LoginPage from "@/pages/login";
@@ -43,6 +44,7 @@ const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
 const News = lazy(() => import("@/pages/news"));
 const PeoplePage = lazy(() => import("@/pages/people"));
+const LandlordsPage = lazy(() => import("@/pages/landlords"));
 const SharePoint = lazy(() => import("@/pages/sharepoint"));
 const Calendar = lazy(() => import("@/pages/calendar"));
 const Mail = lazy(() => import("@/pages/mail"));
@@ -52,8 +54,11 @@ const DocumentTemplates = lazy(() => import("@/pages/document-templates"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
+const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
+const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
 const Leads = lazy(() => import("@/pages/leads"));
 const Subscriptions = lazy(() => import("@/pages/subscriptions"));
+const ExperianAudit = lazy(() => import("@/pages/experian-audit"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
 const Instructions = lazy(() => import("@/pages/instructions"));
 const Enrichment = lazy(() => import("@/pages/enrichment"));
@@ -61,6 +66,7 @@ const LandRegistry = lazy(() => import("@/pages/land-registry"));
 const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const BoardReport = lazy(() => import("@/pages/board-report"));
 const LeasingSchedule = lazy(() => import("@/pages/leasing-schedule"));
+const TenancyScheduleFull = lazy(() => import("@/pages/tenancy-schedule-full"));
 const UploadPage = lazy(() => import("@/pages/upload"));
 const MarketingFilesPage = lazy(() => import("@/pages/marketing-files"));
 const AddinOutlook = lazy(() => import("@/pages/addin-outlook"));
@@ -70,6 +76,8 @@ const AddinPowerPoint = lazy(() => import("@/pages/addin-powerpoint"));
 const AddinAdobe = lazy(() => import("@/pages/addin-adobe"));
 const ImageStudio = lazy(() => import("@/pages/image-studio"));
 const AddinsPage = lazy(() => import("@/pages/addins"));
+const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
+const MyExpenses = lazy(() => import("@/pages/my-expenses"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
@@ -82,10 +90,30 @@ const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
+const MapBgp = lazy(() => import("@/pages/map-bgp"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
+const TenantRep = lazy(() => import("@/pages/tenant-rep"));
+const PlaMatters = lazy(() => import("@/pages/pla-matters"));
+const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
+const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
+const HRPage = lazy(() => import("@/pages/hr"));
+const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
+const TeamPage = lazy(() => import("@/pages/team"));
+
+function PublicKycUploadRoute() {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          <Route path="/kyc-upload/:token" component={KycUploadPage} />
+        </Switch>
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
 
 
 function PageLoader() {
@@ -125,6 +153,13 @@ function Router() {
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
+      <Route path="/tenant-rep" component={TenantRep} />
+      <Route path="/pla/matters" component={PlaMatters} />
+      <Route path="/pla/matters/:id" component={PlaMatters} />
+      <Route path="/westminster-restaurants" component={WestminsterRestaurants} />
+      <Route path="/document-briefs" component={DocumentBriefs} />
+      <Route path="/hunters/letting" component={HuntersLetting} />
+      <Route path="/hunters/investment" component={HuntersInvestment} />
       <Route path="/today" component={TodayPage} />
       <Route path="/news" component={News} />
       <Route path="/diary" component={DiaryRedirect} />
@@ -132,6 +167,7 @@ function Router() {
       <Route path="/companies/:id" component={PeoplePage} />
       <Route path="/contacts" component={PeoplePage} />
       <Route path="/contacts/:id" component={PeoplePage} />
+      <Route path="/landlords" component={LandlordsPage} />
       <Route path="/sharepoint" component={SharePoint} />
       <Route path="/calendar" component={Calendar} />
       <Route path="/mail" component={Mail} />
@@ -145,6 +181,7 @@ function Router() {
       <Route path="/investment-comps" component={InvestmentComps} />
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />
+      <Route path="/experian-audit" component={ExperianAudit} />
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
       <Route path="/admin/dedupe" component={AdminDedupe} />
@@ -154,12 +191,14 @@ function Router() {
       <Route path="/reporting" component={Reporting} />
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
+      <Route path="/tenancy-schedule/:propertyId" component={TenancyScheduleFull} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
       <Route path="/lease-events" component={LeaseEvents} />
       {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
           Legacy tool routes redirect here so old links keep working. */}
       <Route path="/property-intelligence" component={PropertyIntelligence} />
+      <Route path="/map-bgp" component={MapBgp} />
       <Route path="/land-registry" component={PropertyIntelligence} />
       <Route path="/business-rates" component={PropertyIntelligence} />
       {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
@@ -172,6 +211,7 @@ function Router() {
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
       <Route path="/property-pathway" component={PropertyPathway} />
+      <Route path="/team" component={TeamPage} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />
@@ -180,6 +220,10 @@ function Router() {
       <Route path="/marketing-files" component={MarketingFilesPage} />
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
+      <Route path="/expenses" component={ExpensesAdmin} />
+      <Route path="/my-expenses" component={MyExpenses} />
+      <Route path="/hr" component={HRPage} />
+      <Route path="/hr/:userId">{(params) => <HRPage />}</Route>
       <Route component={NotFound} />
     </Switch>
     </Suspense>
@@ -190,7 +234,10 @@ function Router() {
 function AuthenticatedApp() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const [chatOpen, setChatOpen] = useState(true);
+  // Chat panel open/close state is shared via ChatBGPContext so other
+  // pages can read it (e.g. property-detail hides its inner sidebar
+  // when chat is consuming the right side of the screen).
+  const { panelOpen: chatOpen, setPanelOpen: setChatOpen } = useChatBGPState();
   const [aiChatRequested, setAiChatRequested] = useState(false);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
@@ -340,6 +387,7 @@ function AuthenticatedApp() {
   const isForceDesktop = getForceDesktop();
 
   return (
+    <GlobalDropZone>
     <SidebarProvider style={style as React.CSSProperties}>
       {/* ChatBGPProvider is hoisted to AppContent so the full-page /chatbgp
           view and the side panel share the same messages / activeThreadId —
@@ -387,6 +435,7 @@ function AuthenticatedApp() {
         </button>
       )}
     </SidebarProvider>
+    </GlobalDropZone>
   );
 }
 
@@ -421,11 +470,16 @@ function AppContent() {
   // the initial pathname in iframe contexts (Office task panes).
   const isAddin = location.startsWith("/addin/") ||
     (typeof window !== "undefined" && window.location.pathname.startsWith("/addin/"));
+  // Public KYC upload portal — no BGP login required, the URL token is the
+  // auth. Skip the /api/auth/me probe so external customers don't get bounced
+  // to the login page.
+  const isPublicKycUpload = location.startsWith("/kyc-upload/") ||
+    (typeof window !== "undefined" && window.location.pathname.startsWith("/kyc-upload/"));
   const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
-    enabled: !isAddin,
+    enabled: !isAddin && !isPublicKycUpload,
   });
 
   useEffect(() => {
@@ -443,6 +497,10 @@ function AppContent() {
 
   if (isAddin) {
     return <AddinRouter />;
+  }
+
+  if (isPublicKycUpload) {
+    return <PublicKycUploadRoute />;
   }
 
   if (isLoading) {

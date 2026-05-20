@@ -95,7 +95,7 @@ export async function getSharedMailboxMessages(
     ? `/users/${SHARED_MAILBOX}/mailFolders/${folderId}/messages`
     : `/users/${SHARED_MAILBOX}/messages`;
   const data = await graphRequest(
-    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   const messages = data?.value || [];
   for (const msg of messages) {
@@ -109,11 +109,31 @@ export async function getSharedMailboxMessages(
 export async function getSharedMailboxMessageById(messageId: string): Promise<any | null> {
   try {
     const data = await graphRequest(
-      `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+      `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,conversationId,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
     );
     return data;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Fetch every prior message in the same email thread (conversation), newest
+ * first, capped at 12 to keep prompts compact. Powers the email-thread
+ * memory feature so ChatBGP doesn't ask "what are you referring to?" on
+ * a reply.
+ */
+export async function getSharedMailboxConversation(conversationId: string, excludeMessageId?: string): Promise<any[]> {
+  if (!conversationId) return [];
+  try {
+    const data = await graphRequest(
+      `/users/${SHARED_MAILBOX}/messages?$filter=conversationId eq '${conversationId}'&$select=id,subject,bodyPreview,from,toRecipients,receivedDateTime,hasAttachments&$orderby=receivedDateTime desc&$top=12`
+    );
+    const all = Array.isArray(data?.value) ? data.value : [];
+    return excludeMessageId ? all.filter((m: any) => m.id !== excludeMessageId) : all;
+  } catch (err: any) {
+    console.warn(`[shared-mailbox] conversation fetch failed: ${err?.message}`);
+    return [];
   }
 }
 
@@ -190,6 +210,12 @@ export async function replyToSharedMailboxMessage(
   ccRecipients?: string[],
   attachments?: EmailAttachment[]
 ): Promise<void> {
+  // Use createReply to get a draft with the original message already
+  // quoted by Outlook, then patch the body so our content sits ABOVE
+  // the auto-generated quote block — exactly like a normal Outlook
+  // reply. The previous approach (POST /reply with message.body) replaced
+  // the entire body, dropping the conversation history and making
+  // replies look like one-off automated bursts.
   const ccArray = ccRecipients?.map((email) => ({
     emailAddress: { address: email },
   }));
@@ -201,15 +227,63 @@ export async function replyToSharedMailboxMessage(
     contentBytes: a.contentBytes,
   }));
 
-  await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/reply`, {
+  // 1. Create the draft reply — Graph auto-populates the body with the
+  //    quoted original message and recipients.
+  const draft = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/createReply`, {
     method: "POST",
-    body: JSON.stringify({
-      message: {
-        body: { contentType: "HTML", content: body },
-        ...(ccArray && ccArray.length > 0 && { ccRecipients: ccArray }),
-        ...(graphAttachments && graphAttachments.length > 0 && { attachments: graphAttachments }),
-      },
-    }),
+    body: JSON.stringify({}),
+  });
+  const draftId = draft?.id;
+  if (!draftId) throw new Error("createReply returned no draft id");
+
+  // 2. Prepend our content above the existing quoted body. Graph's
+  //    default body content looks like:
+  //      <html><body><br><br>
+  //        <div style="border:none;border-top:solid #B5C4DF 1.0pt;...">
+  //          <b>From:</b> ...<br>
+  //          ...original message...
+  //        </div>
+  //      </body></html>
+  //    We splice our content in just after the opening <body> so the
+  //    quote stays intact below it.
+  const existing: string = draft?.body?.content || "";
+  const splice = (html: string, insert: string) => {
+    const m = html.match(/<body[^>]*>/i);
+    if (m) {
+      const idx = (m.index ?? 0) + m[0].length;
+      return html.slice(0, idx) + insert + html.slice(idx);
+    }
+    return insert + html;
+  };
+  const merged = existing
+    ? splice(existing, body)
+    : `<html><body>${body}</body></html>`;
+
+  // 3. Patch the draft with the merged body + cc + attachments.
+  const patchBody: any = {
+    body: { contentType: "HTML", content: merged },
+  };
+  if (ccArray && ccArray.length > 0) patchBody.ccRecipients = ccArray;
+
+  await graphRequest(`/users/${SHARED_MAILBOX}/messages/${draftId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patchBody),
+  });
+
+  // Attachments need their own POST per Graph's API contract — they
+  // can't be set via PATCH on a draft.
+  if (graphAttachments && graphAttachments.length > 0) {
+    for (const att of graphAttachments) {
+      await graphRequest(`/users/${SHARED_MAILBOX}/messages/${draftId}/attachments`, {
+        method: "POST",
+        body: JSON.stringify(att),
+      });
+    }
+  }
+
+  // 4. Send the draft.
+  await graphRequest(`/users/${SHARED_MAILBOX}/messages/${draftId}/send`, {
+    method: "POST",
   });
 }
 
@@ -222,7 +296,7 @@ export async function markMessageRead(messageId: string, isRead = true): Promise
 
 export async function getMessageDetail(messageId: string): Promise<any> {
   const msg = await graphRequest(
-    `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   if (msg?.["@odata.type"] === "#microsoft.graph.eventMessage") {
     try {
@@ -262,7 +336,7 @@ export async function getUserMailMessages(
     ? `/users/${userEmail}/mailFolders/${folderId}/messages`
     : `/users/${userEmail}/messages`;
   const data = await graphRequest(
-    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   const messages = data?.value || [];
   for (const msg of messages) {
@@ -289,7 +363,7 @@ export async function getUserMailFolderChildren(userEmail: string, folderId: str
 
 export async function getUserMessageDetail(userEmail: string, messageId: string): Promise<any> {
   const msg = await graphRequest(
-    `/users/${userEmail}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `/users/${userEmail}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   if (msg?.["@odata.type"] === "#microsoft.graph.eventMessage") {
     try {

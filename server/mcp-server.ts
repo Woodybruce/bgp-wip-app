@@ -14,7 +14,7 @@ import {
   excelTemplates,
   excelModelRuns,
 } from "@shared/schema";
-import { ilike, or, eq, desc, sql } from "drizzle-orm";
+import { ilike, or, eq, desc, sql, inArray } from "drizzle-orm";
 import type { Express, Request, Response } from "express";
 import { getAppToken } from "./shared-mailbox";
 import {
@@ -444,9 +444,8 @@ function createBgpMcpServer(): McpServer {
         .from(crmDeals)
         .where(
           or(
-            eq(crmDeals.status, "Active"),
-            eq(crmDeals.status, "Under Offer"),
-            eq(crmDeals.status, "Exchanged")
+            // Canonical codes (post-migration) plus their legacy strings
+            inArray(crmDeals.status, ["NEG", "SOL", "EXC", "Active", "Under Offer", "Exchanged"])
           )
         )
         .limit(100);

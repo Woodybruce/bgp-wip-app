@@ -91,7 +91,7 @@ export function registerChatRoutes(app: Express): void {
 
       // Stream response from Gemini
       const stream = await ai.models.generateContentStream({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: chatMessages,
         config: { maxOutputTokens: 8192 },
       });

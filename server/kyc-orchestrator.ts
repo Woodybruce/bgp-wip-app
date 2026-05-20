@@ -28,6 +28,8 @@ import { discoverUltimateParent } from "./companies-house";
 import { createVeriffSession } from "./veriff";
 import { adverseMediaSearch, isPerplexityConfigured } from "./perplexity";
 import { screenNames as complyAdvantageScreen, isComplyAdvantageConfigured } from "./comply-advantage";
+import { findHistoricalKycMatches, hasFreshHistoricalPack, type HistoricalKycMatch } from "./aml-historical";
+import { fetchAmlMarketData, hasMarketSignals } from "./aml-market";
 
 const router = Router();
 
@@ -38,6 +40,9 @@ type TickSource =
   | "companies_house"
   | "perplexity"
   | "comply_advantage"
+  | "sharepoint_history"
+  | "yahoo_finance"
+  | "creditsafe"
   | "manual"
   | "system";
 
@@ -271,6 +276,8 @@ export async function runAllAmlChecks(
     summary?: string;
     findingCount?: number;
   };
+  historicalKyc: HistoricalKycMatch[];
+  marketData: Awaited<ReturnType<typeof fetchAmlMarketData>> | null;
   checklistTicked: string[];
   warnings: string[];
 }> {
@@ -314,6 +321,24 @@ export async function runAllAmlChecks(
         (s: any) => s.status === "strong_match" || s.status === "potential_match",
       );
 
+      // Experian commercial credit — non-fatal, augments the investigation
+      let experianReport: any = null;
+      try {
+        const { fetchCommercialCredit, isExperianConfigured, persistExperianTurnover } = await import("./experian");
+        if (isExperianConfigured()) {
+          experianReport = await fetchCommercialCredit(company.companies_house_number);
+          if (experianReport && experianReport.turnover != null && experianReport.turnover > 0) {
+            await persistExperianTurnover(pool, {
+              companyId: company.id,
+              companyName: companyData.profile?.company_name || company.name,
+              report: experianReport,
+            });
+          }
+        }
+      } catch (e: any) {
+        warnings.push(`Experian credit lookup failed: ${e?.message || "unknown"}`);
+      }
+
       investigationResult = {
         subject: {
           name: companyData.profile?.company_name || company.name,
@@ -327,6 +352,7 @@ export async function runAllAmlChecks(
         filingHistory: (companyData.filings || []).slice(0, 20),
         insolvencyHistory: companyData.insolvency,
         sanctionsScreening: sanctionsResult,
+        experian: experianReport,
         riskScore: assessed.score,
         riskLevel: assessed.level,
         flags: assessed.flags,
@@ -579,6 +605,60 @@ export async function runAllAmlChecks(
     }
   }
 
+  // 4a. Historical KYC pack on file — check the BGP SharePoint KYC folder for
+  // a prior pass on this entity. If one exists in the last 12 months, mark
+  // company_cert ticked from sharepoint_history and stash the matches so the
+  // panel can deep-link to the file.
+  let historicalKyc: HistoricalKycMatch[] = [];
+  try {
+    historicalKyc = await findHistoricalKycMatches(company.name || "");
+    if (hasFreshHistoricalPack(historicalKyc)) {
+      const newest = historicalKyc[0];
+      const updates = await tickChecklistItems(companyId, {
+        company_cert: {
+          source: "sharepoint_history",
+          evidence: {
+            file: newest.name,
+            webUrl: newest.webUrl,
+            ageDays: newest.ageDays,
+            totalMatches: historicalKyc.length,
+          },
+          notes: `Prior KYC pack on file (${newest.ageDays} days old) — ${newest.name}`,
+        },
+      });
+      checklistTicked = [...checklistTicked, ...updates];
+    }
+  } catch (e: any) {
+    warnings.push(`Historical KYC lookup failed: ${e?.message || "unknown"}`);
+  }
+
+  // 4b. Market data overlay — Yahoo Finance for listed counterparties,
+  // Creditsafe/RFA when a key is configured. Cheap signals that confirm
+  // financial health or flag concerns to look at.
+  let marketData: Awaited<ReturnType<typeof fetchAmlMarketData>> | null = null;
+  try {
+    marketData = await fetchAmlMarketData(company.name || "", company.companies_house_number || null);
+    if (marketData && hasMarketSignals(marketData)) {
+      // Stash on the deal for the AmlAiPanel to display
+      if (dealId) {
+        await pool.query(
+          `UPDATE crm_deals SET aml_market_data = $1 WHERE id = $2`,
+          [marketData, dealId],
+        ).catch(() => {});
+      }
+      // Sharp drop / halts are signals to flag, not to auto-tick anything off.
+      if (marketData.signals.sharpDrop || marketData.signals.halted) {
+        warnings.push(
+          marketData.signals.halted
+            ? `Listed share appears halted — verify before completion`
+            : `Share price down 30%+ over 52 weeks — sense-check covenant`
+        );
+      }
+    }
+  } catch (e: any) {
+    warnings.push(`Market data lookup failed: ${e?.message || "unknown"}`);
+  }
+
   // 5. Deal event trail — so the audit log carries the whole sweep
   if (dealId) {
     await pool.query(
@@ -594,6 +674,8 @@ export async function runAllAmlChecks(
           veriffLaunched,
           veriffSkipped,
           adverseMedia,
+          historicalKyc: historicalKyc.slice(0, 5),
+          marketData,
           checklistTicked,
           warnings,
         }),
@@ -611,6 +693,8 @@ export async function runAllAmlChecks(
     veriffLaunched,
     veriffSkipped,
     adverseMedia,
+    historicalKyc,
+    marketData,
     checklistTicked,
     warnings,
   };
@@ -724,12 +808,15 @@ router.post("/api/kyc/run-all-checks", requireAuth, async (req: Request, res: Re
       targets.push(companyId);
     } else if (dealId && bothSides) {
       const d = await pool.query(
-        `SELECT tenant_id, landlord_id FROM crm_deals WHERE id = $1`,
+        `SELECT tenant_id, landlord_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1`,
         [dealId],
       );
       if (!d.rows[0]) return res.status(404).json({ error: "Deal not found" });
-      if (d.rows[0].tenant_id) targets.push(d.rows[0].tenant_id);
-      if (d.rows[0].landlord_id) targets.push(d.rows[0].landlord_id);
+      // Dedupe — same company can sit in multiple roles.
+      const seen = new Set<string>();
+      for (const id of [d.rows[0].tenant_id, d.rows[0].landlord_id, d.rows[0].vendor_id, d.rows[0].purchaser_id]) {
+        if (id && !seen.has(id)) { seen.add(id); targets.push(id); }
+      }
     } else {
       return res.status(400).json({ error: "Provide companyId, or dealId with bothSides=true" });
     }
@@ -746,6 +833,94 @@ router.post("/api/kyc/run-all-checks", requireAuth, async (req: Request, res: Re
   } catch (err: any) {
     console.error("[kyc-orch] run-all-checks error:", err?.message);
     res.status(500).json({ error: err?.message || "Orchestrator failed" });
+  }
+});
+
+/**
+ * POST /api/kyc/backfill-deals
+ * One-click backfill: walks every active deal that has at least one
+ * counterparty linked, and fires runAllAmlChecks for each landlord/tenant/
+ * vendor/purchaser whose company hasn't been screened in the last 30 days.
+ * Idempotent (the orchestrator already preserves existing checklist items)
+ * and budget-aware (cooldown skip).
+ *
+ * Returns a streaming-style summary so the admin can see what got picked up.
+ */
+router.post("/api/kyc/backfill-deals", requireAuth, async (req: any, res: Response) => {
+  try {
+    const userId = req.session?.userId || req.tokenUserId || null;
+    const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+    if (adminCheck.rows[0]?.is_admin !== true) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+
+    // Pull every active deal that's got at least one counterparty company.
+    const { rows: deals } = await pool.query(
+      `SELECT id, name, landlord_id, tenant_id, vendor_id, purchaser_id
+       FROM crm_deals
+       WHERE COALESCE(status, '') NOT IN ('ARCH','WIT','LOST','DEAD')
+         AND (landlord_id IS NOT NULL OR tenant_id IS NOT NULL OR vendor_id IS NOT NULL OR purchaser_id IS NOT NULL)`,
+    );
+
+    // Build a unique set of (companyId, anyDealId) tuples — sweep each
+    // company once even if it sits across multiple deals.
+    const companyToDeal = new Map<string, string>();
+    for (const d of deals) {
+      for (const cid of [d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id]) {
+        if (cid && !companyToDeal.has(cid)) companyToDeal.set(cid, d.id);
+      }
+    }
+
+    // 30-day cooldown — pull last update timestamps so we skip anything
+    // recently swept.
+    const recentlySwept = new Set<string>();
+    if (companyToDeal.size > 0) {
+      const ids = Array.from(companyToDeal.keys());
+      const { rows: recent } = await pool.query(
+        `SELECT id FROM crm_companies
+         WHERE id = ANY($1::varchar[])
+           AND aml_checklist IS NOT NULL
+           AND updated_at > NOW() - INTERVAL '30 days'`,
+        [ids],
+      );
+      for (const r of recent) recentlySwept.add(r.id);
+    }
+
+    const toSweep = Array.from(companyToDeal.entries()).filter(([cid]) => !recentlySwept.has(cid));
+    const swept: Array<{ companyId: string; dealId: string; risk?: string; warnings?: number }> = [];
+    const failed: Array<{ companyId: string; reason: string }> = [];
+
+    // Concurrency cap of 3 — don't blast Companies House / Comply Advantage
+    // / Perplexity all at once.
+    const concurrency = 3;
+    const queue = [...toSweep];
+    async function worker() {
+      while (queue.length) {
+        const next = queue.shift();
+        if (!next) break;
+        const [cid, did] = next;
+        try {
+          const r = await runAllAmlChecks(cid, did, userId);
+          swept.push({ companyId: cid, dealId: did, risk: r.risk?.level, warnings: r.warnings?.length || 0 });
+        } catch (e: any) {
+          failed.push({ companyId: cid, reason: e?.message?.slice(0, 200) || "unknown" });
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+    res.json({
+      dealsScanned: deals.length,
+      companiesFound: companyToDeal.size,
+      skippedRecent: recentlySwept.size,
+      swept: swept.length,
+      failed: failed.length,
+      sweptDetail: swept.slice(0, 50),
+      failures: failed.slice(0, 10),
+    });
+  } catch (err: any) {
+    console.error("[kyc-orch] backfill-deals error:", err?.message);
+    res.status(500).json({ error: err?.message || "Backfill failed" });
   }
 });
 

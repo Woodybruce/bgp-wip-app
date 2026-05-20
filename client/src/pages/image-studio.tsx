@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useSearch } from "wouter";
+import { useSearch, Link as WouterLink } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ImageStudioImage } from "@shared/schema";
@@ -43,6 +43,8 @@ import {
   FolderPlus,
   Library,
   Link,
+  RotateCcw,
+  ExternalLink,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
@@ -176,6 +178,8 @@ export default function ImageStudio() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [streetViewDialogOpen, setStreetViewDialogOpen] = useState(false);
   const [stockSearchOpen, setStockSearchOpen] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const [uploadCategory, setUploadCategory] = useState("Uncategorised");
   const [uploadArea, setUploadArea] = useState("");
@@ -235,6 +239,7 @@ export default function ImageStudio() {
   const [aiEditPrompt, setAiEditPrompt] = useState("");
   const [aiEditImageId, setAiEditImageId] = useState<string | null>(null);
   const [aiEditImageName, setAiEditImageName] = useState("");
+  const [imageVersions, setImageVersions] = useState<Record<string, number>>({});
 
   // Bulk tag state
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
@@ -335,15 +340,20 @@ export default function ImageStudio() {
 
   const bulkCategorizeMutation = useMutation({
     mutationFn: async ({ ids, category }: { ids: string[]; category: string }) => {
+      const count = ids.length;
       await apiRequest("PATCH", "/api/image-studio/bulk-categorize", { ids, category });
+      return { count };
     },
-    onSuccess: () => {
+    onSuccess: ({ count }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
       setSelectedIds(new Set());
       setSelectMode(false);
       setBulkCategory("");
-      toast({ title: "Categorised", description: `${selectedIds.size} images updated` });
+      toast({ title: "Categorised", description: `${count} image${count === 1 ? "" : "s"} updated` });
+    },
+    onError: (e: any) => {
+      toast({ title: "Categorise failed", description: e?.message || "Unknown error", variant: "destructive" });
     },
   });
 
@@ -374,10 +384,36 @@ export default function ImageStudio() {
     onError: (e: Error) => toast({ title: "Assign Failed", description: e.message, variant: "destructive" }),
   });
 
-  // Properties list for the assign dialog
+  // Properties list for the assign dialog. Also feeds the lookup maps
+  // below so image tiles can render their CRM link as a clickable chip
+  // pointing at the property page, not just a passive address string.
   const { data: properties = [] } = useQuery<any[]>({
     queryKey: ["/api/projects"],
   });
+
+  // Brands list — needed to turn an image's brand_name (free text) into
+  // a clickable link to the brand profile. Keyed by lowercased name so
+  // "BLUEWATER" / "bluewater" / "Bluewater" all resolve.
+  const { data: crmCompanies = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/companies"],
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const propertyLookup = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>();
+    for (const p of properties) {
+      if (p?.id) m.set(p.id, { id: p.id, name: p.name || p.address || "Property" });
+    }
+    return m;
+  }, [properties]);
+
+  const brandLookup = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>();
+    for (const c of crmCompanies) {
+      if (c?.id && c?.name) m.set(c.name.toLowerCase().trim(), { id: c.id, name: c.name });
+    }
+    return m;
+  }, [crmCompanies]);
 
   // Collections queries
   const { data: collections = [], isLoading: collectionsLoading } = useQuery<any[]>({
@@ -502,16 +538,37 @@ export default function ImageStudio() {
       const res = await apiRequest("POST", "/api/image-studio/ai-edit", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
-      toast({ title: "Edited", description: "AI touch-up created as new image" });
+      // Bump the version so the lightbox re-fetches the updated image (bypasses browser cache)
+      setImageVersions(prev => ({ ...prev, [variables.imageId]: Date.now() }));
+      toast({ title: "Image updated", description: "AI touch-up applied — you can keep amending it" });
       setAiEditOpen(false);
       setAiEditPrompt("");
       setAiEditImageId(null);
     },
     onError: (err: any) => {
       toast({ title: "Edit failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const revertMutation = useMutation({
+    mutationFn: async (imageId: string) => {
+      const res = await apiRequest("POST", `/api/image-studio/${imageId}/revert`);
+      return res.json();
+    },
+    onSuccess: (_data, imageId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      setImageVersions(prev => {
+        const next = { ...prev };
+        delete next[imageId];
+        return next;
+      });
+      toast({ title: "Reverted", description: "Image restored to original" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Revert failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -599,6 +656,63 @@ export default function ImageStudio() {
     },
     [uploadCategory, uploadArea, uploadTags, uploadAddress, uploadBrandName, uploadBrandSector, uploadPropertyType, uploadMutation]
   );
+
+  // Page-level drag-and-drop. Drop a JPEG / PNG / WebP anywhere on the
+  // Image Studio and it lands in the library straight away — no dialog,
+  // no category picker first. Picks up the currently-active category
+  // filter as the destination so dropping while viewing "Brands" tags
+  // the image as Brands.
+  const handleFilesDrop = useCallback(
+    (files: FileList | File[]) => {
+      const imageFiles = Array.from(files).filter(f =>
+        f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name)
+      );
+      if (imageFiles.length === 0) {
+        toast({
+          title: "Images only",
+          description: "Drop JPEG / PNG / WebP files. PDFs go under Brochures on a property.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const formData = new FormData();
+      imageFiles.forEach(f => formData.append("images", f));
+      // Default to the current filter category so drops land where the
+      // user expects. "All" → Uncategorised so they show up immediately
+      // in any filter.
+      const dropCategory = selectedCategory === "All" ? "Uncategorised" : selectedCategory;
+      formData.append("category", dropCategory);
+      formData.append("area", "");
+      formData.append("tags", "");
+      uploadMutation.mutate(formData);
+    },
+    [selectedCategory, uploadMutation, toast]
+  );
+
+  const onPageDragEnter = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    dragDepthRef.current++;
+    setIsDraggingFile(true);
+  };
+  const onPageDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current--;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setIsDraggingFile(false);
+    }
+  };
+  const onPageDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+  };
+  const onPageDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDraggingFile(false);
+    if (e.dataTransfer?.files?.length) handleFilesDrop(e.dataTransfer.files);
+  };
 
   const captureStreetViewMutation = useMutation({
     mutationFn: async () => {
@@ -745,6 +859,22 @@ export default function ImageStudio() {
       fullHeight
       testId="image-studio-page"
     >
+      <div
+        className="flex flex-col flex-1 min-h-0 relative"
+        onDragEnter={onPageDragEnter}
+        onDragOver={onPageDragOver}
+        onDragLeave={onPageDragLeave}
+        onDrop={onPageDrop}
+      >
+        {isDraggingFile && (
+          <div className="absolute inset-0 z-50 bg-blue-50/95 border-4 border-dashed border-blue-500 rounded-lg flex items-center justify-center pointer-events-none">
+            <div className="text-center">
+              <Upload className="w-12 h-12 mx-auto mb-2 text-blue-600" />
+              <p className="text-base font-semibold text-blue-900">Drop image{`${selectedCategory !== "All" ? `s into ${selectedCategory}` : "s"}`}</p>
+              <p className="text-xs text-blue-700 mt-1">JPEG, PNG, WebP, GIF, HEIC</p>
+            </div>
+          </div>
+        )}
       {/* Section tabs */}
       <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-shrink-0">
         <button
@@ -940,6 +1070,7 @@ export default function ImageStudio() {
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
                       aiTagging={aiTagMutation.isPending}
+                      crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                     />
                   ))}
                 </div>
@@ -1153,7 +1284,8 @@ export default function ImageStudio() {
                         fileSize: img.file_size,
                         width: img.width,
                         height: img.height,
-                        thumbnailData: img.thumbnail_data,
+                        thumbnailData: img.thumbnail_data || null,
+                        hasThumbnail: !!img.has_thumbnail,
                         sharepointItemId: img.sharepoint_item_id,
                         sharepointDriveId: img.sharepoint_drive_id,
                         localPath: img.local_path,
@@ -1176,6 +1308,7 @@ export default function ImageStudio() {
                             aiTagging={aiTagMutation.isPending}
                             selectMode={false}
                             selected={false}
+                            crmLinks={resolveCrmLinks(imageObj as any, propertyLookup, brandLookup)}
                           />
                         </div>
                       );
@@ -1278,7 +1411,7 @@ export default function ImageStudio() {
                       >
                         <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-white dark:ring-gray-800 shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
                           <img
-                            src={person.coverImage.thumbnailData || `/api/image-studio/${person.coverImage.id}/full`}
+                            src={person.coverImage.thumbnailData || ((person.coverImage as any).hasThumbnail ? `/api/image-studio/${person.coverImage.id}/thumb` : `/api/image-studio/${person.coverImage.id}/full`)}
                             alt={person.name}
                             className="w-full h-full object-cover"
                             loading="lazy"
@@ -1323,6 +1456,7 @@ export default function ImageStudio() {
                       selectMode={selectMode}
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
+                      crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                     />
                   ))}
                 </div>
@@ -1373,6 +1507,7 @@ export default function ImageStudio() {
                     selectMode={selectMode}
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
+                    crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                   />
                 ))}
               </div>
@@ -1400,6 +1535,7 @@ export default function ImageStudio() {
                     selectMode={selectMode}
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
+                    crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                   />
                 ))}
               </div>
@@ -1758,6 +1894,7 @@ export default function ImageStudio() {
                   setStreetViewFov(90);
                 }}
                 placeholder="Start typing an address..."
+                resolveProperty
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Drag the panorama to aim the camera, then save. We capture exactly the view you see.
@@ -2056,7 +2193,7 @@ export default function ImageStudio() {
             onClick={(e) => e.stopPropagation()}
           >
             <img
-              src={`/api/image-studio/${selectedImage.id}/full`}
+              src={`/api/image-studio/${selectedImage.id}/full${imageVersions[selectedImage.id] ? `?v=${imageVersions[selectedImage.id]}` : ""}`}
               alt={selectedImage.fileName}
               className="max-w-full max-h-[75vh] object-contain rounded"
               data-testid="img-lightbox-full"
@@ -2072,6 +2209,15 @@ export default function ImageStudio() {
               </div>
               {(selectedImage as any).address && (
                 <p className="text-xs text-white/60"><MapPin className="h-3 w-3 inline mr-1" />{(selectedImage as any).address}</p>
+              )}
+              {(selectedImage as any).propertyId && (
+                <a
+                  href={`/properties/${(selectedImage as any).propertyId}`}
+                  className="text-xs text-blue-300 hover:underline inline-flex items-center gap-1"
+                  data-testid="link-lightbox-property"
+                >
+                  <ExternalLink className="h-3 w-3" /> Open property page
+                </a>
               )}
               {selectedImage.description && (
                 <p className="text-sm text-white/70 max-w-lg">{selectedImage.description}</p>
@@ -2091,8 +2237,19 @@ export default function ImageStudio() {
                 }} data-testid="button-lightbox-ai-edit">
                   <Sparkles className="h-3 w-3 mr-1" /> AI Touch Up
                 </Button>
+                {imageVersions[selectedImage.id] && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => revertMutation.mutate(selectedImage.id)}
+                    disabled={revertMutation.isPending}
+                    data-testid="button-lightbox-undo"
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" /> Undo
+                  </Button>
+                )}
                 <a
-                  href={`/api/image-studio/${selectedImage.id}/full`}
+                  href={`/api/image-studio/${selectedImage.id}/full${imageVersions[selectedImage.id] ? `?v=${imageVersions[selectedImage.id]}` : ""}`}
                   download={selectedImage.fileName}
                   className="inline-flex"
                 >
@@ -2230,7 +2387,61 @@ export default function ImageStudio() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </PageLayout>
+  );
+}
+
+// Resolve the CRM rows this image is linked to. Returns an array of
+// {label, href} for clickable chips — property first (strong signal:
+// the image was directly assigned), brand second (resolved by name
+// from crm_companies). Used by both the grid card and list row so
+// link rendering stays consistent.
+function resolveCrmLinks(
+  image: ImageStudioImage,
+  propertyLookup: Map<string, { id: string; name: string }>,
+  brandLookup: Map<string, { id: string; name: string }>,
+): Array<{ kind: "property" | "brand"; label: string; href: string }> {
+  const out: Array<{ kind: "property" | "brand"; label: string; href: string }> = [];
+  const propertyId = (image as any).propertyId || (image as any).property_id;
+  if (propertyId) {
+    const p = propertyLookup.get(propertyId);
+    if (p) out.push({ kind: "property", label: p.name, href: `/properties/${p.id}` });
+    else if ((image as any).address) out.push({ kind: "property", label: (image as any).address, href: `/properties/${propertyId}` });
+  }
+  const brandName = (image as any).brandName || (image as any).brand_name;
+  if (brandName) {
+    const b = brandLookup.get(String(brandName).toLowerCase().trim());
+    if (b) out.push({ kind: "brand", label: b.name, href: `/companies/${b.id}` });
+  }
+  return out;
+}
+
+function CrmLinkChip({
+  link, dark = false, onClick,
+}: {
+  link: { kind: "property" | "brand"; label: string; href: string };
+  dark?: boolean;
+  onClick?: (e: React.MouseEvent) => void;
+}) {
+  const isProp = link.kind === "property";
+  // Property chips use building icon + amber tint, brand chips use tag + emerald.
+  // On the dark hover overlay we use translucent backgrounds; on the row /
+  // light card we use bright pill colours so the link reads as clickable.
+  const cls = dark
+    ? `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-500/85 text-white hover:bg-amber-500" : "bg-emerald-600/85 text-white hover:bg-emerald-600"}`
+    : `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100" : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"}`;
+  return (
+    <WouterLink
+      href={link.href}
+      onClick={(e) => { e.stopPropagation(); onClick?.(e); }}
+      className={cls}
+      data-testid={`crm-link-${link.kind}`}
+      title={`Open ${link.kind === "property" ? "property page" : "brand profile"}`}
+    >
+      {isProp ? <Building2 className="w-2.5 h-2.5 shrink-0" /> : <Tag className="w-2.5 h-2.5 shrink-0" />}
+      <span className="truncate max-w-[140px]">{link.label}</span>
+    </WouterLink>
   );
 }
 
@@ -2245,6 +2456,7 @@ function ImageCard({
   selectMode = false,
   selected = false,
   onToggleSelect,
+  crmLinks = [],
 }: {
   image: ImageStudioImage;
   onView: () => void;
@@ -2256,6 +2468,7 @@ function ImageCard({
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
 }) {
   return (
     <div
@@ -2269,26 +2482,47 @@ function ImageCard({
         </div>
       )}
       <div className="aspect-square" onClick={selectMode ? undefined : onView}>
-        {image.thumbnailData ? (
-          <img
-            src={image.thumbnailData}
-            alt={image.fileName}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-muted">
-            <ImageIconLucide className="h-8 w-8 text-muted-foreground/30" />
-          </div>
-        )}
+        <img
+          src={image.thumbnailData || ((image as any).hasThumbnail ? `/api/image-studio/${image.id}/thumb` : `/api/image-studio/${image.id}/full`)}
+          alt={image.fileName}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          onError={(e) => {
+            const t = e.currentTarget;
+            if (!t.dataset.fallback) {
+              t.dataset.fallback = "1";
+              t.src = `/api/image-studio/${image.id}/full`;
+            } else {
+              t.style.display = "none";
+              const parent = t.parentElement;
+              if (parent && !parent.querySelector(".img-fallback-icon")) {
+                const div = document.createElement("div");
+                div.className = "img-fallback-icon w-full h-full flex items-center justify-center bg-muted";
+                div.innerHTML = '<svg class="h-8 w-8 text-muted-foreground/30" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+                parent.appendChild(div);
+              }
+            }
+          }}
+        />
       </div>
       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+      {/* Always-visible CRM link chips. Property / brand the image is
+          linked to render as clickable amber / emerald pills in the
+          top-left corner so the link is obvious without hovering. The
+          stop-propagation on the chip's click means navigating doesn't
+          also trigger the tile's onView. */}
+      {crmLinks.length > 0 && (
+        <div className="absolute top-1.5 left-1.5 z-10 flex flex-col items-start gap-1 max-w-[80%]">
+          {crmLinks.map((l, i) => (
+            <CrmLinkChip key={i} link={l} dark />
+          ))}
+        </div>
+      )}
       <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <p className="text-white text-xs font-medium truncate">{(image as any).brandName || image.fileName}</p>
         <div className="flex items-center gap-1 mt-1 flex-wrap">
           <Badge variant="secondary" className="text-[10px] h-4 px-1">{image.category}</Badge>
           {image.area && <Badge variant="outline" className="text-[10px] h-4 px-1 text-white border-white/30">{image.area}</Badge>}
-          {(image as any).address && <Badge variant="outline" className="text-[10px] h-4 px-1 text-white/70 border-white/20 truncate max-w-[120px]">{(image as any).address}</Badge>}
         </div>
       </div>
       <div className="absolute top-1 left-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex justify-end gap-0.5 flex-wrap">
@@ -2322,6 +2556,7 @@ function ImageListRow({
   selectMode = false,
   selected = false,
   onToggleSelect,
+  crmLinks = [],
 }: {
   image: ImageStudioImage;
   onView: () => void;
@@ -2332,6 +2567,7 @@ function ImageListRow({
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
 }) {
   return (
     <div
@@ -2345,8 +2581,13 @@ function ImageListRow({
         </div>
       )}
       <div className="h-12 w-12 rounded overflow-hidden flex-shrink-0">
-        {image.thumbnailData ? (
-          <img src={image.thumbnailData} alt={image.fileName} className="h-full w-full object-cover" />
+        {image.thumbnailData || (image as any).hasThumbnail ? (
+          <img
+            src={image.thumbnailData || `/api/image-studio/${image.id}/thumb`}
+            alt={image.fileName}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="h-full w-full bg-muted flex items-center justify-center">
             <ImageIconLucide className="h-4 w-4 text-muted-foreground/30" />
@@ -2356,9 +2597,13 @@ function ImageListRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{(image as any).brandName || image.fileName}</p>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+          {/* CRM links first so the relationship is the first thing
+              the eye lands on. Clicking opens the property page or
+              brand profile — the row's own click handler is bypassed
+              by CrmLinkChip's stopPropagation. */}
+          {crmLinks.map((l, i) => <CrmLinkChip key={i} link={l} />)}
           <Badge variant="secondary" className="text-[10px] h-4 px-1">{image.category}</Badge>
           {image.area && <Badge variant="outline" className="text-[10px] h-4 px-1">{image.area}</Badge>}
-          {(image as any).address && <Badge variant="outline" className="text-[10px] h-4 px-1 truncate max-w-[150px]">{(image as any).address}</Badge>}
           {image.source && image.source !== "upload" && (
             <Badge variant="outline" className="text-[10px] h-4 px-1">{image.source}</Badge>
           )}

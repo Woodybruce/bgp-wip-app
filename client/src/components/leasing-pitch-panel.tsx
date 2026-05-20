@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -84,6 +84,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
       const res = await fetch(`/api/leasing-pitch/${propertyId}/recommend-mix`, {
         method: "POST",
         credentials: "include",
+        headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error(await res.text());
       return res.json() as Promise<MixResponse>;
