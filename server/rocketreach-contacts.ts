@@ -131,9 +131,19 @@ async function searchRocketReach(opts: {
     page_size: 25,
     start: 1,
   };
-  if (opts.domain) body.query.current_employer_domain = [opts.domain];
-  else if (opts.companyName) body.query.current_employer = [opts.companyName];
-  if (opts.country && opts.country.length > 0) body.query.location_country = opts.country;
+  // Field names per RocketReach v2 search API. They renamed
+  // current_employer_domain → current_employer_website and
+  // location_country → country some months back, which is what the
+  // "invalid fields: current_employer_domain, location_country" 400
+  // we were getting in prod is complaining about. Domain search now
+  // accepts the bare hostname (no protocol).
+  if (opts.domain) {
+    const cleanDomain = opts.domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+    body.query.current_employer_website = [cleanDomain];
+  } else if (opts.companyName) {
+    body.query.current_employer = [opts.companyName];
+  }
+  if (opts.country && opts.country.length > 0) body.query.country = opts.country;
 
   const res = await fetch("https://api.rocketreach.co/v2/api/search", {
     method: "POST",
