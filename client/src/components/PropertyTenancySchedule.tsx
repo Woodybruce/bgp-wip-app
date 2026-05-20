@@ -830,6 +830,166 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   );
 }
 
+// Brand-only picker for Tenant + Trading As columns. Replaces the
+// free-text InlineEdit so every value in the tenancy schedule resolves
+// to a row in crm_companies (the Brand Explorer source of truth). If
+// the brand isn't in CRM yet, the picker offers a "+ Create new brand"
+// shortcut that POSTs a new crm_companies row with company_type='Tenant'
+// and immediately links it to the unit by name. On save the parent
+// inlineUpdate runs the same PUT /api/tenancy-schedule/unit/:id flow,
+// which the server resolver then maps to tenant_company_id.
+function TenantBrandPicker({
+  value, field, unitId, onSave, isVacant,
+}: {
+  value: string;
+  field: "tenant_name" | "trading_name";
+  unitId: string | number;
+  onSave: (id: string | number, field: string, val: string) => void;
+  isVacant?: boolean;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState(value || "");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const { data: allCompanies = [] } = useQuery<Array<{ id: string; name: string; company_type?: string | null; domain?: string | null }>>({
+    queryKey: ["/api/crm/companies-basic"],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      const data = await res.json();
+      const arr = Array.isArray(data) ? data : (data.companies || []);
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name, company_type: c.companyType || c.company_type, domain: c.domainUrl || c.domain }));
+    },
+    staleTime: 120000,
+  });
+
+  const matches = (() => {
+    if (!search.trim()) return allCompanies.slice(0, 12);
+    const s = search.toLowerCase();
+    return allCompanies
+      .filter(c => c.name.toLowerCase().includes(s))
+      .slice(0, 12);
+  })();
+
+  const exactMatch = matches.find(c => c.name.toLowerCase() === search.trim().toLowerCase());
+
+  useEffect(() => {
+    if (open && searchRef.current) {
+      searchRef.current.focus();
+      searchRef.current.select();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch(value || "");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, value]);
+
+  const pick = (name: string) => {
+    onSave(unitId, field, name);
+    setOpen(false);
+  };
+
+  const createBrandMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType: "Tenant",
+        isTrackedBrand: true,
+      });
+      return r.json();
+    },
+    onSuccess: (created: any, name: string) => {
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      pick(created?.name || name);
+      toast({ title: "Brand created", description: `${created?.name || name} added to Brand Explorer.` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Couldn't create brand", description: err?.message || "Try again.", variant: "destructive" });
+    },
+  });
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={`w-full text-left text-xs hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 ${value ? "" : "text-gray-400 italic"} ${field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}`}
+        data-testid={`tenant-brand-picker-${field}-${unitId}`}
+      >
+        {value || (field === "tenant_name" ? "Set tenant" : "Set trading as")}
+      </button>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        ref={searchRef}
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setOpen(false); setSearch(value || ""); }
+          if (e.key === "Enter" && exactMatch) { pick(exactMatch.name); }
+        }}
+        placeholder="Search brand…"
+        className="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-indigo-400"
+      />
+      <div className="absolute z-[60] mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl ring-1 ring-black/5 w-[280px] left-0 max-h-[280px] overflow-y-auto">
+        {matches.length === 0 && !search.trim() && (
+          <div className="px-3 py-2 text-[11px] text-muted-foreground">No brands in CRM yet — type to search or create one below.</div>
+        )}
+        {matches.map(c => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => pick(c.name)}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-50 dark:hover:bg-indigo-950/40 flex items-center gap-2"
+            data-testid={`tenant-brand-option-${c.id}-${field}-${unitId}`}
+          >
+            <Building2 className="w-3 h-3 text-gray-400 shrink-0" />
+            <span className="truncate flex-1 min-w-0">{c.name}</span>
+            {c.company_type && <span className="text-[9px] text-gray-400 shrink-0">{c.company_type}</span>}
+          </button>
+        ))}
+        {search.trim() && !exactMatch && (
+          <button
+            type="button"
+            disabled={createBrandMutation.isPending}
+            onClick={() => createBrandMutation.mutate(search.trim())}
+            className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+            data-testid={`tenant-brand-create-${field}-${unitId}`}
+          >
+            {createBrandMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            Create brand "{search.trim()}"
+          </button>
+        )}
+        {value && (
+          <button
+            type="button"
+            onClick={() => { onSave(unitId, field, ""); setOpen(false); }}
+            className="w-full text-left px-3 py-1.5 text-xs border-t hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center gap-2 text-red-600"
+            data-testid={`tenant-brand-clear-${field}-${unitId}`}
+          >
+            <X className="w-3 h-3" /> Clear
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
   unit: TenancyUnit;
   columns: Col[];
@@ -980,34 +1140,19 @@ function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
               </td>
             );
           }
-          // Unresolved — let the user edit the name. Show a tiny CRM
-          // search shortcut for when they want to manually find it.
+          // Unresolved — show the brand picker so the user can only
+          // select an existing brand or create one. Free-text input is
+          // intentionally not offered: tenant rows must reference the
+          // Brand Explorer CRM as the single source of truth.
           return (
             <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
-              <div className="flex items-center gap-1">
-                <InlineEdit
-                  value={displayVal}
-                  field={c.field as string}
-                  unitId={unit.id}
-                  onSave={onUpdate}
-                  type={editType}
-                  className={c.field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}
-                />
-                {displayVal && !isVacant && (
-                  <Link
-                    href={`/companies?q=${encodeURIComponent(displayVal)}`}
-                    title="Find this tenant in CRM (no match yet)"
-                    onClick={(e: any) => e.stopPropagation()}
-                  >
-                    <span
-                      className="inline-flex items-center text-gray-400 hover:text-indigo-500 cursor-pointer"
-                      data-testid={`tenancy-tenant-search-${c.field}-${unit.id}`}
-                    >
-                      <Search className="w-2.5 h-2.5" />
-                    </span>
-                  </Link>
-                )}
-              </div>
+              <TenantBrandPicker
+                value={displayVal}
+                field={c.field as "tenant_name" | "trading_name"}
+                unitId={unit.id}
+                onSave={onUpdate}
+                isVacant={isVacant}
+              />
             </td>
           );
         }
@@ -1090,8 +1235,24 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <Input placeholder="Unit Number" value={form.unit_number} onChange={e => setForm({ ...form, unit_number: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-unit-number" />
-        <Input placeholder="Tenant Name" value={form.tenant_name} onChange={e => setForm({ ...form, tenant_name: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-tenant" />
-        <Input placeholder="Trading Name" value={form.trading_name} onChange={e => setForm({ ...form, trading_name: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-trading" />
+        {/* Tenant + Trading As use the brand picker so new units land
+            already linked to a Brand Explorer row. No free text. */}
+        <div className="text-xs">
+          <TenantBrandPicker
+            value={form.tenant_name}
+            field="tenant_name"
+            unitId="new"
+            onSave={(_id, _f, val) => setForm({ ...form, tenant_name: val })}
+          />
+        </div>
+        <div className="text-xs">
+          <TenantBrandPicker
+            value={form.trading_name}
+            field="trading_name"
+            unitId="new"
+            onSave={(_id, _f, val) => setForm({ ...form, trading_name: val })}
+          />
+        </div>
         <Input placeholder="Permitted Use" value={form.permitted_use} onChange={e => setForm({ ...form, permitted_use: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-use" />
         <Input placeholder="Zone/Premises" value={form.premises} onChange={e => setForm({ ...form, premises: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-premises" />
         <Input placeholder="NIA sqft" value={form.nia_sqft} onChange={e => setForm({ ...form, nia_sqft: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-sqft" />
