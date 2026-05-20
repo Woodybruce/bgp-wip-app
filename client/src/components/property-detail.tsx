@@ -557,7 +557,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       removed. Sq Ft + Competitor Agent moved to a
                       dedicated 'Area & agent' row below Ownership
                       so the bottom of the card isn't empty. */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 min-w-0">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-2 min-w-0">
                     <div>
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
                       <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
@@ -600,8 +600,8 @@ export function PropertyDetail({ id }: { id: string }) {
                         // No ownership recorded yet — show one inline
                         // row to start with (Freeholder) so the team
                         // can click to add without an extra step.
-                        <div className="grid grid-cols-[90px,1fr] items-center gap-2 text-[11px]">
-                          <span className="text-muted-foreground leading-tight truncate">{empty[0].label}</span>
+                        <div className="grid grid-cols-[110px,1fr] items-center gap-2 text-[11px]">
+                          <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
                             <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
                           </div>
@@ -609,8 +609,8 @@ export function PropertyDetail({ id }: { id: string }) {
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                           {filled.map(row => (
-                            <div key={row.field} className="grid grid-cols-[90px,1fr] items-center gap-2">
-                              <span className="text-muted-foreground leading-tight truncate">{row.label}</span>
+                            <div key={row.field} className="grid grid-cols-[110px,1fr] items-center gap-2">
+                              <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
                                 <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
                               </div>
@@ -621,8 +621,8 @@ export function PropertyDetail({ id }: { id: string }) {
                             // slot. The InlineOwnerLink itself renders
                             // a "+ Add" UI when companyId is null, so
                             // we just show the first empty row here.
-                            <div className="grid grid-cols-[90px,1fr] items-center gap-2">
-                              <span className="text-muted-foreground leading-tight truncate">{empty[0].label}</span>
+                            <div className="grid grid-cols-[110px,1fr] items-center gap-2">
+                              <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                               <div className="min-w-0">
                                 <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
                               </div>

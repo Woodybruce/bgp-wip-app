@@ -4241,7 +4241,10 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
           <div className="flex items-center gap-2 min-w-0">
             <Newspaper className="h-4 w-4 text-primary shrink-0" />
             <span className="text-sm font-semibold shrink-0">News Feed</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 truncate max-w-[180px]" title={propertyName}>{propertyName}</Badge>
+            {/* Property name in the badge is redundant with the page
+                header — only render it when there's plenty of room
+                (xl+) so narrow viewports don't truncate it to "Bluewa…". */}
+            <Badge variant="secondary" className="hidden xl:inline-flex text-[10px] px-1.5 py-0 truncate max-w-[180px]" title={propertyName}>{propertyName}</Badge>
           </div>
           <Button
             variant="ghost"
