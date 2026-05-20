@@ -16,7 +16,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { db } from "./db";
-import { stripeCardholders, stripeCards, expenses, expenseReceipts } from "@shared/schema";
+import { stripeCardholders, stripeCards, expenses, expenseReceipts, users as usersTable } from "@shared/schema";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
@@ -368,6 +368,12 @@ async function userCanAccessExpense(req: Request, expenseId: string): Promise<bo
 }
 
 export function setupStripeIssuingRoutes(app: Express) {
+  // Relax stripe_cardholder_id from NOT NULL on boot so the receipts-only
+  // flow can create card-less submitter rows.
+  import("./expense-from-receipt").then(({ ensureCardlessCardholderColumn }) =>
+    ensureCardlessCardholderColumn().catch(err => console.warn("[stripe-issuing] cardless migration:", err?.message))
+  );
+
   // Startup diagnostic — log every env var name containing "stripe" (case-insensitive)
   // plus length & first/last 4 chars so we can see if the var is reaching the process.
   const allKeys = Object.keys(process.env);
@@ -648,6 +654,46 @@ export function setupStripeIssuingRoutes(app: Express) {
       });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Submit a receipt that creates a fresh expense — no Stripe transaction
+  // required. Used by the team to claim spend on personal cards. Parses
+  // the receipt with Claude vision, infers category, posts to Xero
+  // automatically when confidence + category line up.
+  const submitUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+  app.post("/api/expenses/submit", requireAuth, submitUpload.single("receipt"), async (req: Request, res: Response) => {
+    try {
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "No receipt uploaded — attach the file as 'receipt'." });
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+      if (!user) return res.status(401).json({ error: "User not found" });
+
+      const { createExpenseFromReceipt } = await import("./expense-from-receipt");
+      const result = await createExpenseFromReceipt({
+        receiptBytes: file.buffer,
+        mimeType: file.mimetype,
+        filename: file.originalname,
+        submitter: {
+          userId: user.id,
+          email: user.email || undefined,
+          phone: user.phone || undefined,
+          displayName: user.name,
+        },
+        caption: typeof req.body?.note === "string" ? req.body.note : undefined,
+        source: "dashboard",
+        category: typeof req.body?.category === "string" ? req.body.category : undefined,
+        businessPurpose: typeof req.body?.businessPurpose === "string" ? req.body.businessPurpose : undefined,
+        attendees: typeof req.body?.attendees === "string" ? req.body.attendees : undefined,
+        transactionDate: req.body?.transactionDate ? new Date(req.body.transactionDate) : undefined,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[expenses] submit route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

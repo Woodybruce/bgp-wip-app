@@ -2686,7 +2686,7 @@ export const stripeCardholders = pgTable("stripe_cardholders", {
   userName: text("user_name").notNull(),
   email: text("email").notNull(),
   phone: text("phone"),
-  stripeCardholderId: text("stripe_cardholder_id").notNull().unique(),
+  stripeCardholderId: text("stripe_cardholder_id").unique(),       // null for receipts-only submitters (no card issued)
   monthlyLimit: integer("monthly_limit").notNull().default(100000),  // pence
   dailyLimit: integer("daily_limit").notNull().default(25000),       // pence
   singleTxLimit: integer("single_tx_limit").notNull().default(25000),// pence
