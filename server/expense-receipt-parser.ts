@@ -1,8 +1,16 @@
 /**
  * Receipt parsing via Claude vision.
  * Takes a receipt image, returns structured expense data.
+ *
+ * Receipts arrive in three shapes:
+ *   - regular image (jpg/png/webp/gif) — straight to Claude
+ *   - PDF — rasterise first page via poppler, send as JPEG
+ *   - HEIC / other — convert to JPEG via sharp
+ * Claude vision only accepts jpeg/png/webp/gif, so anything else gets
+ * normalised here rather than 400'ing the upstream call.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { rasterisePdfPage } from "./pdf-image-extract";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -97,8 +105,8 @@ export async function parseReceiptImage(args: {
   imageBytes: Buffer;
   mimeType?: string;
 }): Promise<ParsedReceipt> {
-  const mediaType = (args.mimeType || "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
-  const base64 = args.imageBytes.toString("base64");
+  const { buffer, mediaType } = await normaliseForClaude(args.imageBytes, args.mimeType);
+  const base64 = buffer.toString("base64");
 
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
@@ -138,4 +146,43 @@ export async function parseReceiptImage(args: {
     confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "medium",
     rawText: text,
   };
+}
+
+// Claude vision only accepts these four. Anything else has to be
+// converted before the API call or we get a 400.
+type ClaudeImageMime = "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+const CLAUDE_MIMES = new Set<string>(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+async function normaliseForClaude(
+  bytes: Buffer,
+  mimeType: string | undefined,
+): Promise<{ buffer: Buffer; mediaType: ClaudeImageMime }> {
+  const mt = (mimeType || "").toLowerCase();
+
+  // PDF receipt — rasterise the first page as a JPEG.
+  if (mt.includes("pdf") || isPdfByMagic(bytes)) {
+    const rendered = await rasterisePdfPage({ pdfBuffer: bytes, page: 1, dpi: 180 });
+    if (!rendered) throw new Error("Couldn't render PDF receipt — pdftoppm not available or file unreadable.");
+    return { buffer: rendered, mediaType: "image/jpeg" };
+  }
+
+  // Already a Claude-supported image and not too big — pass through.
+  if (CLAUDE_MIMES.has(mt) && bytes.length < 5 * 1024 * 1024) {
+    return { buffer: bytes, mediaType: mt as ClaudeImageMime };
+  }
+
+  // Everything else (HEIC from iPhone, oversized photos, weird MIMEs) →
+  // convert via sharp. Resize to 1600px max so we don't blow Claude's
+  // 5MB image cap. failOn:"none" lets sharp swallow weird metadata.
+  const sharpMod = (await import("sharp")).default;
+  const jpeg = await sharpMod(bytes, { failOn: "none" })
+    .rotate()
+    .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82, mozjpeg: true })
+    .toBuffer();
+  return { buffer: jpeg, mediaType: "image/jpeg" };
+}
+
+function isPdfByMagic(b: Buffer): boolean {
+  return b.length >= 5 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 && b[4] === 0x2d;
 }
