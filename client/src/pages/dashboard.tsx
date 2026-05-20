@@ -1117,7 +1117,7 @@ export default function Dashboard() {
             content: (
               <Card className="h-full">
                 <CardContent className="p-3 h-full">
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 h-full">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 h-full">
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800" data-testid="kpi-properties">
                       <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium uppercase tracking-wider">Properties</p>
                       <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{stats.totalProperties}</p>

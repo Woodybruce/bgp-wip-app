@@ -648,7 +648,7 @@ function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSe
                         {l.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
                       </div>
                     )}
-                    <span className="flex-1 truncate text-xs">{l.name}</span>
+                    <span className="flex-1 truncate min-w-0 text-xs">{l.name}</span>
                     <span className="text-xs font-semibold tabular-nums">{l.weekPoints}</span>
                   </button>
                 );
@@ -1216,7 +1216,7 @@ function CalendarWidget() {
                       {b.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
                     </div>
                   )}
-                  <span className="flex-1 truncate">{b.name}</span>
+                  <span className="flex-1 truncate min-w-0">{b.name}</span>
                   <Badge variant={b.daysUntil === 0 ? "default" : "outline"} className="text-[9px] h-4 px-1.5">
                     {b.daysUntil === 0 ? "Today" : b.daysUntil === 1 ? "Tomorrow" : `${b.daysUntil}d`}
                   </Badge>
@@ -1275,7 +1275,7 @@ function CalendarWidget() {
               {upcomingMarketing.map(m => (
                 <div key={m.id} className="flex items-center gap-2 text-xs">
                   <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
-                  <span className="flex-1 truncate">{m.title}</span>
+                  <span className="flex-1 truncate min-w-0">{m.title}</span>
                   <span className="text-[10px] text-muted-foreground shrink-0">{m.starts_at ? new Date(m.starts_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}</span>
                 </div>
               ))}

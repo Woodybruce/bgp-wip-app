@@ -2176,7 +2176,7 @@ function CompanySearchPicker({
     return (
       <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
         <Building2 className="w-4 h-4 text-blue-500 shrink-0" />
-        <span className="text-sm font-medium flex-1 truncate">{selectedName}</span>
+        <span className="text-sm font-medium flex-1 truncate min-w-0">{selectedName}</span>
         {company?.companyType && (
           <Badge variant="outline" className="text-[10px] shrink-0">{company.companyType}</Badge>
         )}
@@ -2218,7 +2218,7 @@ function CompanySearchPicker({
                 data-testid={`option-company-${c.id}`}
               >
                 <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{c.name}</span>
+                <span className="flex-1 truncate min-w-0">{c.name}</span>
                 {c.companyType && (
                   <Badge variant="outline" className="text-[10px] shrink-0">{c.companyType}</Badge>
                 )}
@@ -2425,7 +2425,7 @@ function DealSearchPicker({
       return (
         <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
           <FileText className="w-4 h-4 text-blue-500 shrink-0" />
-          <span className="text-sm font-medium flex-1 truncate">{deal.name}</span>
+          <span className="text-sm font-medium flex-1 truncate min-w-0">{deal.name}</span>
           {deal.status && (
             <Badge variant="outline" className="text-[10px] shrink-0">{deal.status}</Badge>
           )}
@@ -2468,7 +2468,7 @@ function DealSearchPicker({
                 data-testid={`option-deal-${d.id}`}
               >
                 <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{d.name}</span>
+                <span className="flex-1 truncate min-w-0">{d.name}</span>
                 {d.status && (
                   <Badge variant="outline" className="text-[10px] shrink-0">{d.status}</Badge>
                 )}

@@ -3401,7 +3401,7 @@ export default function Comps() {
                         <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         <a
                           href={`/api/comp-files/${f.id}/download`}
-                          className="flex-1 truncate hover:text-primary transition-colors font-medium"
+                          className="flex-1 truncate min-w-0 hover:text-primary transition-colors font-medium"
                           target="_blank"
                           rel="noopener"
                           data-testid={`link-download-file-${f.id}`}

@@ -2742,7 +2742,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
           <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">5 Priorities</div>
           <div className="space-y-1">
             {view.fivePriorities.map((p, i) => (
-              <div key={i} className="grid grid-cols-[80px_1fr] gap-2 items-start">
+              <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
                 <span className="text-muted-foreground">Priority {["One", "Two", "Three", "Four", "Five"][i]}</span>
                 {editing ? (
                   <Input className="h-7 text-[11px]" value={p.text} onChange={e => { const next = [...(draft!.fivePriorities)]; next[i] = { ...next[i], text: e.target.value }; update({ fivePriorities: next }); }} />
@@ -2759,7 +2759,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
           <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">Top Three Strategic Priorities</div>
           <div className="space-y-1">
             {view.topThree.map((p, i) => (
-              <div key={i} className="grid grid-cols-[80px_1fr] gap-2 items-start">
+              <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
                 <span className="text-muted-foreground">Priority {["One", "Two", "Three"][i]}</span>
                 {editing ? (
                   <Input
