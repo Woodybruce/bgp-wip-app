@@ -118,7 +118,7 @@ export default function PropertyPathway() {
       Object.values(r.stageStatus || {}).some((s) => s === "running"),
     );
     if (!anyRunning) return;
-    const id = setInterval(() => loadRuns(), 8000);
+    const id = setInterval(() => loadRuns(), 30_000);
     return () => clearInterval(id);
   }, [runs]);
 
@@ -126,6 +126,13 @@ export default function PropertyPathway() {
   // server keeps running stages in the background even if the user navigates
   // away, so on re-entry (or a refresh) we pick up progress without needing
   // the user to manually re-click the advance button.
+  //
+  // NOTE: keep the interval generous (10s+). Stages take minutes, so 1-2
+  // second polls just hammer the API and stack up while Anthropic is busy.
+  // The dep array used to also watch JSON.stringify(stageStatus), which
+  // re-created the interval on every poll response — gone now, so the
+  // interval lives for the lifetime of the runId rather than churning
+  // every few seconds.
   useEffect(() => {
     if (!selectedRun?.id) return;
     const anyRunning = Object.values((selectedRun as any).stageStatus || {}).some(
@@ -135,31 +142,27 @@ export default function PropertyPathway() {
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
-      let polled: any = null;
       try {
         const res = await fetch(`/api/property-pathway/${selectedRun.id}`, {
           headers: getAuthHeaders(),
           credentials: "include",
         });
         if (res.ok) {
-          polled = await res.json();
+          const polled = await res.json();
           if (!cancelled) setSelectedRun(polled);
         }
       } catch (err: any) {
         console.error("[pathway] polling error:", err?.message);
       }
-      if (!cancelled) {
-        const latestStatus = polled?.stageStatus || (selectedRun as any).stageStatus || {};
-        const stillRunning = Object.values(latestStatus).some((s) => s === "running");
-        if (stillRunning) loadRuns();
-      }
+      // No inner loadRuns() — the background loadRuns interval above
+      // already refreshes the list. Calling it here doubled every poll.
     };
-    const id = setInterval(tick, 4000);
+    const id = setInterval(tick, 10_000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [selectedRun?.id, JSON.stringify((selectedRun as any)?.stageStatus || {})]);
+  }, [selectedRun?.id]);
 
   async function loadRuns() {
     setLoading(true);
@@ -282,7 +285,7 @@ export default function PropertyPathway() {
         let failedStage: number | null = null;
 
         while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((r) => setTimeout(r, 6000));
           try {
             const pollRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
             if (!pollRes.ok) continue;
