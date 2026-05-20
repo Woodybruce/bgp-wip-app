@@ -598,28 +598,60 @@ export function setupWhatsAppRoutes(app: Express) {
                 continue;
               }
 
-              // Plain document (no import-intent caption) — save into
-              // chat-media storage and hand off to ChatBGP with a pointer.
-              // ChatBGP's read_document tool then pulls text + rasterised
-              // page images (for vision), so brochures that are mostly
-              // images instead of text still land properly. The old path
-              // relied on pdf-parse alone, which returned empty for most
-              // marketing brochures and made the assistant say "I can't
-              // read it" — the universal reader fixes that.
+              // Plain document (no import-intent caption) — first try the
+              // direct brochure pipeline (PDF, 3+ pages → property
+              // match-or-create + bespoke ingest). If it's not a
+              // brochure, fall back to ChatBGP via read_document.
               if (msg.type === "document" && mediaObj?.id && config.token) {
                 (async () => {
                   let docFilename = msg.document?.filename || `document`;
-                  let chatMediaKey: string | null = null;
+                  let bytes: Buffer | null = null;
+                  let mimeType = "application/octet-stream";
                   try {
-                    const { bytes, mimeType, filename } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
-                    docFilename = msg.document?.filename || filename;
-                    const safeName = docFilename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
-                    const stamped = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`;
-                    chatMediaKey = `chat-media/${stamped}`;
-                    const { saveFile } = await import("./file-storage");
-                    await saveFile(chatMediaKey, bytes, mimeType || "application/octet-stream", docFilename);
+                    const dl = await downloadWhatsAppMedia(mediaObj.id, config.token!);
+                    bytes = dl.bytes;
+                    mimeType = dl.mimeType;
+                    docFilename = msg.document?.filename || dl.filename;
                   } catch (err: any) {
-                    console.error(`[whatsapp-ai] Document save failed: ${err?.message}`);
+                    console.error(`[whatsapp-ai] Document download failed: ${err?.message}`);
+                  }
+
+                  if (bytes) {
+                    // Try direct brochure ingest (PDF + 3+ pages). Returns
+                    // handled=true if we kicked off the bespoke pipeline;
+                    // we then return without engaging ChatBGP.
+                    try {
+                      const { tryIngestBrochure } = await import("./whatsapp-brochure-pipeline");
+                      const resolved = await resolveUserIdFromPhone(fromNumber);
+                      const matchingUser = resolved.matched ? { id: resolved.userId, name: resolved.userName } : null;
+                      const result = await tryIngestBrochure({
+                        bytes,
+                        mimeType,
+                        filename: docFilename,
+                        source: "whatsapp",
+                        userId: matchingUser?.id || null,
+                        caption: mediaCaption,
+                        sendReply: (text) => sendWhatsAppText(config, fromNumber, text),
+                      });
+                      if (result.handled) return;
+                    } catch (err: any) {
+                      console.error(`[whatsapp-ai] Brochure pipeline failed: ${err?.message}`);
+                    }
+                  }
+
+                  // Fallback — save to chat-media + hand to ChatBGP. The
+                  // universal read_document tool then takes over.
+                  let chatMediaKey: string | null = null;
+                  if (bytes) {
+                    try {
+                      const safeName = docFilename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+                      const stamped = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`;
+                      chatMediaKey = `chat-media/${stamped}`;
+                      const { saveFile } = await import("./file-storage");
+                      await saveFile(chatMediaKey, bytes, mimeType || "application/octet-stream", docFilename);
+                    } catch (err: any) {
+                      console.error(`[whatsapp-ai] Document save failed: ${err?.message}`);
+                    }
                   }
                   const intro = mediaCaption || "(see attached document)";
                   const aiBody = chatMediaKey

@@ -41,6 +41,32 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
       try {
         const detail = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/attachments/${att.id}`);
         const bytes = Buffer.from(detail.contentBytes, "base64");
+
+        // Try brochure pipeline first for PDFs — match/create the property,
+        // file the brochure under it, run bespoke ingest. If it's not a
+        // brochure (single-page receipt etc.), fall through to ingestBytes.
+        const isPdf = /\.pdf$/i.test(att.name) || /pdf/i.test(att.contentType || "");
+        if (isPdf) {
+          const messages: string[] = [];
+          try {
+            const { tryIngestBrochure } = await import("./whatsapp-brochure-pipeline");
+            const result = await tryIngestBrochure({
+              bytes,
+              mimeType: att.contentType || "application/pdf",
+              filename: att.name,
+              source: "email",
+              userId: null,
+              sendReply: async (text: string) => { messages.push(text); },
+            });
+            if (result.handled) {
+              summaries.push(`**${att.name}**\n${messages.join("\n")}`);
+              continue;
+            }
+          } catch (err: any) {
+            console.warn(`[email-ingest] brochure pipeline failed for ${att.name}: ${err?.message}`);
+          }
+        }
+
         const result = await ingestBytes({ bytes, filename: att.name, userId: fromEmail, userName: fromEmail });
         summaries.push(`**${att.name}**: ${result.narrative}`);
       } catch (err: any) {
