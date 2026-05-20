@@ -598,38 +598,33 @@ export function setupWhatsAppRoutes(app: Express) {
                 continue;
               }
 
-              // Plain document (no import-intent caption) — extract text and
-              // pass to ChatBGP so it can read and reply naturally. ChatBGP can
-              // still call CRM tools if the user asks it to.
+              // Plain document (no import-intent caption) — save into
+              // chat-media storage and hand off to ChatBGP with a pointer.
+              // ChatBGP's read_document tool then pulls text + rasterised
+              // page images (for vision), so brochures that are mostly
+              // images instead of text still land properly. The old path
+              // relied on pdf-parse alone, which returned empty for most
+              // marketing brochures and made the assistant say "I can't
+              // read it" — the universal reader fixes that.
               if (msg.type === "document" && mediaObj?.id && config.token) {
                 (async () => {
-                  let extractedText = "";
                   let docFilename = msg.document?.filename || `document`;
+                  let chatMediaKey: string | null = null;
                   try {
-                    const { bytes, filename } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
+                    const { bytes, mimeType, filename } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
                     docFilename = msg.document?.filename || filename;
-                    const fs = await import("fs");
-                    const path = await import("path");
-                    const os = await import("os");
-                    const tmpPath = path.join(os.tmpdir(), `wa-${Date.now()}-${docFilename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
-                    fs.writeFileSync(tmpPath, bytes);
-                    try {
-                      const { extractTextFromFile } = await import("./chatbgp");
-                      extractedText = await extractTextFromFile(tmpPath, docFilename);
-                    } finally {
-                      try { fs.unlinkSync(tmpPath); } catch {}
-                    }
+                    const safeName = docFilename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+                    const stamped = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`;
+                    chatMediaKey = `chat-media/${stamped}`;
+                    const { saveFile } = await import("./file-storage");
+                    await saveFile(chatMediaKey, bytes, mimeType || "application/octet-stream", docFilename);
                   } catch (err: any) {
-                    console.error(`[whatsapp-ai] Document extract failed: ${err?.message}`);
-                    extractedText = "";
+                    console.error(`[whatsapp-ai] Document save failed: ${err?.message}`);
                   }
-                  const truncated = extractedText.length > 30000
-                    ? extractedText.slice(0, 30000) + "\n…[truncated]"
-                    : extractedText;
-                  const intro = mediaCaption || "(attached document)";
-                  const aiBody = truncated
-                    ? `${intro}\n\n--- Attached file: ${docFilename} ---\n${truncated}`
-                    : `${intro}\n\n[Attached file: ${docFilename} — couldn't extract text from it.]`;
+                  const intro = mediaCaption || "(see attached document)";
+                  const aiBody = chatMediaKey
+                    ? `${intro}\n\n[Attached file: "${docFilename}" — saved at ${chatMediaKey}. Call read_document with chatMediaFilename="${chatMediaKey.replace(/^chat-media\//, "")}" to read it, then file anything useful into the CRM per the auto-ingest rules.]`
+                    : `${intro}\n\n[Attached file: "${docFilename}" — couldn't be saved, skip.]`;
                   runChatBgpWhatsAppReply(aiBody, fromNumber, contactName, conversation.id, config).catch(
                     (err: any) => console.error("[whatsapp-ai] Document follow-up error:", err?.message),
                   );
