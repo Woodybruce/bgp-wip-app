@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
@@ -830,14 +831,11 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   );
 }
 
-// Brand-only picker for Tenant + Trading As columns. Replaces the
-// free-text InlineEdit so every value in the tenancy schedule resolves
-// to a row in crm_companies (the Brand Explorer source of truth). If
-// the brand isn't in CRM yet, the picker offers a "+ Create new brand"
-// shortcut that POSTs a new crm_companies row with company_type='Tenant'
-// and immediately links it to the unit by name. On save the parent
-// inlineUpdate runs the same PUT /api/tenancy-schedule/unit/:id flow,
-// which the server resolver then maps to tenant_company_id.
+// Brand-only picker for Tenant + Trading As columns. Thin wrapper
+// around the shared CrmEntityPicker so the tenancy schedule uses the
+// exact same affordance as every other CRM picker in the app. Saves
+// the brand NAME into tenant_name/trading_name; the server resolver
+// then links tenant_company_id by name on next read.
 function TenantBrandPicker({
   value, field, unitId, onSave, isVacant,
 }: {
@@ -849,143 +847,47 @@ function TenantBrandPicker({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState(value || "");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
-  const { data: allCompanies = [] } = useQuery<Array<{ id: string; name: string; company_type?: string | null; domain?: string | null }>>({
+  const { data: allCompanies = [] } = useQuery<Array<{ id: string; name: string; meta: string | null }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
       const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);
-      return arr.map((c: any) => ({ id: String(c.id), name: c.name, company_type: c.companyType || c.company_type, domain: c.domainUrl || c.domain }));
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name, meta: c.companyType || c.company_type || null }));
     },
     staleTime: 120000,
   });
 
-  const matches = (() => {
-    if (!search.trim()) return allCompanies.slice(0, 12);
-    const s = search.toLowerCase();
-    return allCompanies
-      .filter(c => c.name.toLowerCase().includes(s))
-      .slice(0, 12);
-  })();
-
-  const exactMatch = matches.find(c => c.name.toLowerCase() === search.trim().toLowerCase());
-
-  useEffect(() => {
-    if (open && searchRef.current) {
-      searchRef.current.focus();
-      searchRef.current.select();
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setSearch(value || "");
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open, value]);
-
-  const pick = (name: string) => {
-    onSave(unitId, field, name);
-    setOpen(false);
-  };
-
-  const createBrandMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const r = await apiRequest("POST", "/api/crm/companies", {
-        name: name.trim(),
-        companyType: "Tenant",
-        isTrackedBrand: true,
-      });
-      return r.json();
-    },
-    onSuccess: (created: any, name: string) => {
-      qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
-      qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-      pick(created?.name || name);
-      toast({ title: "Brand created", description: `${created?.name || name} added to Brand Explorer.` });
-    },
-    onError: (err: any) => {
-      toast({ title: "Couldn't create brand", description: err?.message || "Try again.", variant: "destructive" });
-    },
-  });
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={`w-full text-left text-xs hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 ${value ? "" : "text-gray-400 italic"} ${field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}`}
-        data-testid={`tenant-brand-picker-${field}-${unitId}`}
-      >
-        {value || (field === "tenant_name" ? "Set tenant" : "Set trading as")}
-      </button>
-    );
-  }
-
+  // We don't carry an id for tenant_name yet (the server resolves it
+  // by name) — pass null as `value` and supply the name via valueName
+  // so the closed-state shows what's currently saved.
   return (
-    <div ref={containerRef} className="relative">
-      <input
-        ref={searchRef}
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") { setOpen(false); setSearch(value || ""); }
-          if (e.key === "Enter" && exactMatch) { pick(exactMatch.name); }
+    <div className={`${field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}`}>
+      <CrmEntityPicker
+        value={null}
+        valueName={value}
+        options={allCompanies}
+        kind="company"
+        searchPlaceholder="Search brand…"
+        emptyLabel={field === "tenant_name" ? "Set tenant" : "Set trading as"}
+        testIdPrefix={`tenant-brand-picker-${field}-${unitId}`}
+        onSelect={(opt) => onSave(unitId, field, opt.name)}
+        onClear={value ? () => onSave(unitId, field, "") : undefined}
+        onCreate={async (name) => {
+          const r = await apiRequest("POST", "/api/crm/companies", {
+            name: name.trim(),
+            companyType: "Tenant",
+            isTrackedBrand: true,
+          });
+          const created = await r.json();
+          qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+          qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+          toast({ title: "Brand created", description: `${created?.name || name} added to Brand Explorer.` });
+          return { id: String(created.id), name: created.name, meta: created.companyType || created.company_type || null };
         }}
-        placeholder="Search brand…"
-        className="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-indigo-400"
       />
-      <div className="absolute z-[60] mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl ring-1 ring-black/5 w-[280px] left-0 max-h-[280px] overflow-y-auto">
-        {matches.length === 0 && !search.trim() && (
-          <div className="px-3 py-2 text-[11px] text-muted-foreground">No brands in CRM yet — type to search or create one below.</div>
-        )}
-        {matches.map(c => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => pick(c.name)}
-            className="w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-50 dark:hover:bg-indigo-950/40 flex items-center gap-2"
-            data-testid={`tenant-brand-option-${c.id}-${field}-${unitId}`}
-          >
-            <Building2 className="w-3 h-3 text-gray-400 shrink-0" />
-            <span className="truncate flex-1 min-w-0">{c.name}</span>
-            {c.company_type && <span className="text-[9px] text-gray-400 shrink-0">{c.company_type}</span>}
-          </button>
-        ))}
-        {search.trim() && !exactMatch && (
-          <button
-            type="button"
-            disabled={createBrandMutation.isPending}
-            onClick={() => createBrandMutation.mutate(search.trim())}
-            className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
-            data-testid={`tenant-brand-create-${field}-${unitId}`}
-          >
-            {createBrandMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-            Create brand "{search.trim()}"
-          </button>
-        )}
-        {value && (
-          <button
-            type="button"
-            onClick={() => { onSave(unitId, field, ""); setOpen(false); }}
-            className="w-full text-left px-3 py-1.5 text-xs border-t hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center gap-2 text-red-600"
-            data-testid={`tenant-brand-clear-${field}-${unitId}`}
-          >
-            <X className="w-3 h-3" /> Clear
-          </button>
-        )}
-      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
+import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -743,52 +744,40 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
   targetBrands: string;
   onUpdate: (id: string, field: string, value: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
 
   let ids: string[] = [];
   try { ids = JSON.parse(targetCompanyIds || "[]"); } catch { ids = []; }
 
-  const { data: allCompanies } = useQuery<CrmCompanyBasic[]>({
+  const { data: allCompanies = [] } = useQuery<CrmCompanyBasic[]>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
       const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);
-      return arr.map((c: any) => ({ id: String(c.id), name: c.name }));
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name, meta: c.companyType || c.company_type || null }));
     },
     staleTime: 120000,
   });
 
-  const linkedCompanies = useMemo(() => {
-    if (!allCompanies || ids.length === 0) return [];
-    return ids.map(id => allCompanies.find(c => c.id === id)).filter(Boolean) as CrmCompanyBasic[];
-  }, [allCompanies, ids]);
-
-  const filtered = useMemo(() => {
-    if (!allCompanies || !search.trim()) return [];
-    const s = search.toLowerCase();
-    return allCompanies.filter(c => !ids.includes(c.id) && c.name.toLowerCase().includes(s)).slice(0, 8);
-  }, [allCompanies, search, ids]);
-
-  const addCompany = (companyId: string) => {
-    const newIds = [...ids, companyId];
-    onUpdate(unitId, "target_company_ids", JSON.stringify(newIds));
-    setSearch("");
+  // Multi-select via the shared picker — clicking an existing option
+  // toggles it; the green "Create brand" row at the bottom creates a
+  // tracked brand inline and immediately adds it to the target list.
+  const toggleId = (newId: string) => {
+    const nextIds = ids.includes(newId) ? ids.filter(i => i !== newId) : [...ids, newId];
+    onUpdate(unitId, "target_company_ids", JSON.stringify(nextIds));
   };
 
-  const removeCompany = (companyId: string) => {
-    const newIds = ids.filter(id => id !== companyId);
-    onUpdate(unitId, "target_company_ids", JSON.stringify(newIds));
-  };
+  const linkedCompanies = useMemo(
+    () => ids.map(id => allCompanies.find(c => c.id === id)).filter(Boolean) as CrmCompanyBasic[],
+    [allCompanies, ids],
+  );
 
-  useEffect(() => {
-    if (open && searchRef.current) searchRef.current.focus();
-  }, [open]);
-
+  // Closed state matches the previous bespoke chip rendering so existing
+  // tests + visual expectations keep working.
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -798,72 +787,57 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  return (
-    <div ref={containerRef} className="relative">
-      <div
-        onClick={() => setOpen(true)}
-        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 min-h-[18px] flex flex-wrap gap-0.5"
-        data-testid={`target-companies-${unitId}`}
-      >
-        {linkedCompanies.length > 0 ? (
-          linkedCompanies.map(c => (
-            <Link key={c.id} href={`/companies/${c.id}`} onClick={e => e.stopPropagation()}>
-              <Badge variant="outline" className="text-[10px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
-                {c.name}
-              </Badge>
-            </Link>
-          ))
-        ) : targetBrands ? (
-          <span className="text-[11px] text-gray-500">{targetBrands}</span>
-        ) : (
-          <span className="text-gray-300 italic text-[11px]">+ Target</span>
-        )}
-      </div>
-      {open && (
-        // z-[60] keeps the dropdown above sticky table headers and any
-        // tooltips that share z-50. Opaque shadow + ring stops table
-        // rows behind it from bleeding through visually.
-        <div className="absolute z-[60] mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl ring-1 ring-black/5 w-[220px] left-0" data-testid={`target-picker-${unitId}`}>
-          <div className="p-1.5">
-            <div className="flex flex-wrap gap-0.5 mb-1">
-              {linkedCompanies.map(c => (
-                <Badge key={c.id} variant="outline" className="text-[10px] border-teal-300 text-teal-700 bg-teal-50 pl-1.5 pr-0.5 py-0 gap-0.5">
+  if (!open) {
+    return (
+      <div ref={containerRef} className="relative">
+        <div
+          onClick={() => setOpen(true)}
+          className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 min-h-[18px] flex flex-wrap gap-0.5"
+          data-testid={`target-companies-${unitId}`}
+        >
+          {linkedCompanies.length > 0 ? (
+            linkedCompanies.map(c => (
+              <Link key={c.id} href={`/companies/${c.id}`} onClick={e => e.stopPropagation()}>
+                <Badge variant="outline" className="text-[10px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
                   {c.name}
-                  <button onClick={() => removeCompany(c.id)} className="hover:text-red-500 ml-0.5 p-0.5" data-testid={`remove-target-${c.id}-${unitId}`}>
-                    <X className="w-2.5 h-2.5" />
-                  </button>
                 </Badge>
-              ))}
-            </div>
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search companies..."
-              className="w-full bg-transparent border rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-teal-400"
-              data-testid={`target-search-${unitId}`}
-            />
-          </div>
-          {filtered.length > 0 && (
-            <div className="border-t max-h-[160px] overflow-y-auto">
-              {filtered.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => addCompany(c.id)}
-                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-1.5"
-                  data-testid={`target-option-${c.id}-${unitId}`}
-                >
-                  <Building2 className="w-3 h-3 text-gray-400 shrink-0" />
-                  <span className="truncate">{c.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {search.trim() && filtered.length === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground border-t">No companies found</div>
+              </Link>
+            ))
+          ) : targetBrands ? (
+            <span className="text-[11px] text-gray-500">{targetBrands}</span>
+          ) : (
+            <span className="text-gray-300 italic text-[11px]">+ Target</span>
           )}
         </div>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <CrmEntityPicker
+        value={ids}
+        options={allCompanies as any}
+        multi
+        alwaysOpen
+        kind="company"
+        searchPlaceholder="Search brands…"
+        emptyLabel="+ Target"
+        panelWidth={240}
+        testIdPrefix={`target-picker-${unitId}`}
+        onSelect={(opt) => toggleId(opt.id)}
+        onCreate={async (name) => {
+          const r = await apiRequest("POST", "/api/crm/companies", {
+            name: name.trim(),
+            companyType: "Tenant",
+            isTrackedBrand: true,
+          });
+          const created = await r.json();
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+          return { id: String(created.id), name: created.name, meta: created.companyType || created.company_type || null };
+        }}
+      />
     </div>
   );
 }
