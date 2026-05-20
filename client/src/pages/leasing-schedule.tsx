@@ -761,6 +761,15 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
     staleTime: 120000,
   });
 
+  // Target picker is brand-only — exclude landlords / agents / solicitors
+  // so the dropdown shows only the kinds of rows that can sensibly be
+  // pitched into a unit.
+  const TARGET_EXCLUDE = new Set(["Landlord", "Landlord / Client", "Client", "Agent", "Solicitor", "Investor", "Vendor", "Purchaser"]);
+  const brandOptions = useMemo(
+    () => (allCompanies as any[]).filter(c => !c.meta || !TARGET_EXCLUDE.has(c.meta)),
+    [allCompanies],
+  );
+
   // Multi-select via the shared picker — clicking an existing option
   // toggles it; the green "Create brand" row at the bottom creates a
   // tracked brand inline and immediately adds it to the target list.
@@ -817,7 +826,7 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
     <div ref={containerRef} className="relative">
       <CrmEntityPicker
         value={ids}
-        options={allCompanies as any}
+        options={brandOptions as any}
         multi
         alwaysOpen
         kind="company"

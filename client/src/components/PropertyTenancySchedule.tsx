@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -860,6 +860,16 @@ function TenantBrandPicker({
     staleTime: 120000,
   });
 
+  // Tenant column should only see brand-shaped rows — landlords, agents,
+  // solicitors and other counterparties don't belong here. We exclude
+  // by company_type; rows without a type set are kept (most brands
+  // don't have it filled in yet).
+  const TENANT_EXCLUDE = new Set(["Landlord", "Landlord / Client", "Client", "Agent", "Solicitor", "Investor", "Vendor", "Purchaser"]);
+  const tenantOptions = useMemo(
+    () => allCompanies.filter(c => !c.meta || !TENANT_EXCLUDE.has(c.meta)),
+    [allCompanies],
+  );
+
   // We don't carry an id for tenant_name yet (the server resolves it
   // by name) — pass null as `value` and supply the name via valueName
   // so the closed-state shows what's currently saved.
@@ -868,7 +878,7 @@ function TenantBrandPicker({
       <CrmEntityPicker
         value={null}
         valueName={value}
-        options={allCompanies}
+        options={tenantOptions}
         kind="company"
         searchPlaceholder="Search brand…"
         emptyLabel={field === "tenant_name" ? "Set tenant" : "Set trading as"}

@@ -1,5 +1,5 @@
 import ReactDOM from "react-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useTeam } from "@/lib/team-context";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1208,12 +1208,38 @@ function InlineCompanyPicker({
   navigate: (to: string) => void;
   testIdPrefix: string;
 }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Inline-create capability mirrors the TenantBrandPicker / CrmEntityPicker
+  // shape: when the user types a name that doesn't match any existing
+  // company, a green 'Create company "X"' row appears at the bottom of
+  // the dropdown. POSTs to /api/crm/companies, then selects the new
+  // row so the requirement is linked straight away.
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType: "Tenant",
+        isTrackedBrand: true,
+      });
+      return r.json();
+    },
+    onSuccess: (created: any) => {
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+      onSelect(String(created.id), created.name);
+      setEditing(false);
+      toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create company", description: e?.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     if (!editing) return;
@@ -1307,7 +1333,7 @@ function InlineCompanyPicker({
               <X className="w-3 h-3 inline mr-1" /> Remove company link
             </button>
           )}
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !search.trim() ? (
             <div className="p-3 text-xs text-muted-foreground text-center">No companies found</div>
           ) : (
             filtered.map((c) => (
@@ -1325,6 +1351,18 @@ function InlineCompanyPicker({
                 )}
               </button>
             ))
+          )}
+          {search.trim() && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
+            <button
+              type="button"
+              disabled={createMutation.isPending}
+              className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+              onClick={() => createMutation.mutate(search.trim())}
+              data-testid={`${testIdPrefix}-create`}
+            >
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Create company "{search.trim()}"
+            </button>
           )}
         </div>,
         document.body
@@ -1636,12 +1674,36 @@ function InlineContactPicker({
   navigate: (to: string) => void;
   testIdPrefix: string;
 }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Same inline-create pattern as InlineCompanyPicker. Requires a
+  // companyId so the contact lands attached to the right company —
+  // without it we just hide the create row, since an orphan contact
+  // is rarely useful.
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      if (!companyId) throw new Error("Pick a company first");
+      const r = await apiRequest("POST", "/api/crm/contacts", {
+        name: name.trim(),
+        companyId,
+      });
+      return r.json();
+    },
+    onSuccess: (created: any) => {
+      qc.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      onSelect(String(created.id));
+      setEditing(false);
+      toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create contact", description: e?.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     if (!editing) return;
@@ -1754,7 +1816,7 @@ function InlineContactPicker({
               <X className="w-3 h-3 inline mr-1" /> Remove contact
             </button>
           )}
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !search.trim() ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">No contacts found</div>
           ) : (
             filtered.map((c) => (
@@ -1775,6 +1837,18 @@ function InlineContactPicker({
                 </div>
               </button>
             ))
+          )}
+          {search.trim() && companyId && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
+            <button
+              type="button"
+              disabled={createMutation.isPending}
+              className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+              onClick={() => createMutation.mutate(search.trim())}
+              data-testid={`${testIdPrefix}-create`}
+            >
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Create contact "{search.trim()}"
+            </button>
           )}
         </div>,
         document.body
