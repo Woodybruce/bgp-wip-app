@@ -42,6 +42,7 @@ import { newsArticles } from "@shared/schema";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
+import { setupRevolutRoutes } from "./revolut";
 import { setupHrRoutes } from "./hr-routes";
 import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { setupDocumentPreferencesRoutes } from "./document-preferences";
@@ -6322,6 +6323,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   registerIngestRoutes(app);
   registerGenericCrmRoutes(app);
   setupStripeIssuingRoutes(app);
+  setupRevolutRoutes(app);
   setupHrRoutes(app);
   setupWhyBuyDesignRoutes(app);
   setupDocumentPreferencesRoutes(app);
