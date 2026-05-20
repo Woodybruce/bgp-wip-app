@@ -5795,22 +5795,48 @@ async function executeCrmToolRaw(
         return { data: { success: false, error: "Please provide a more detailed image description." } };
       }
       const { GoogleGenAI, Modality } = await import("@google/genai");
-      const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+      // Match the fallback chain used by server/image-studio.ts so this
+      // tool works whenever any of the standard Gemini keys is set —
+      // previously this only checked AI_INTEGRATIONS_GEMINI_API_KEY,
+      // so it 503'd on environments that only had GEMINI_API_KEY or
+      // GOOGLE_API_KEY configured. base_url is optional (the SDK
+      // defaults to Google's public endpoint).
+      const apiKey =
+        process.env.GEMINI_API_KEY ||
+        process.env.AI_INTEGRATIONS_GEMINI_API_KEY ||
+        process.env.GOOGLE_AI_API_KEY ||
+        process.env.GOOGLE_API_KEY;
       const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-      if (!apiKey || !baseUrl) {
-        return { data: { success: false, error: "Image generation not configured" } };
+      if (!apiKey) {
+        return { data: { success: false, error: "Image generation not configured — no Gemini key set" } };
       }
-      const ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
+      const ai = baseUrl
+        ? new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } })
+        : new GoogleGenAI({ apiKey });
       const styleHint = fnArgs.style === "illustration" ? "digital illustration style, " :
                         fnArgs.style === "architectural" ? "architectural rendering style, " :
                         "photorealistic, professional photography, ";
       const fullPrompt = `${styleHint}${prompt}. High quality, professional, suitable for property marketing materials.`;
       console.log("[chatbgp] Generating image with Nano Banana:", fullPrompt.substring(0, 100));
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-image",
-        contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-        config: { responseModalities: [Modality.TEXT, Modality.IMAGE] },
-      });
+      // Same model-fallback chain as image-studio.ts — try the current
+      // preview model first, then fall back if the API rejects it.
+      const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+      let response: any = null;
+      let lastErr: any = null;
+      for (const model of MODELS) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+            config: { responseModalities: [Modality.TEXT, Modality.IMAGE] },
+          });
+          if (response) break;
+        } catch (err: any) {
+          lastErr = err;
+          if (!/not found|unsupported|invalid model/i.test(err?.message || "")) throw err;
+        }
+      }
+      if (!response) throw lastErr || new Error("All Gemini image models rejected the request");
       const candidate = response.candidates?.[0];
       const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
       if (!imagePart?.inlineData?.data) {
