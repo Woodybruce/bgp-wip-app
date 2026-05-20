@@ -730,6 +730,33 @@ function SimplifiedCreateBody({
   // BGP contacts (internalAgent multi-select) sorted alphabetically.
   const sortedUsers = [...users].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
+  // Inline-create handler factory — same shape as TenantBrandPicker /
+  // CrmEntityPicker but for the cmdk-based EntityCombobox. Each picker
+  // gets a curried function that POSTs to /api/crm/companies with the
+  // right companyType, invalidates caches, and returns the new option.
+  const { toast: comboToast } = useToast();
+  const makeCompanyCreator = (companyType: string) => async (name: string) => {
+    try {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType,
+        isTrackedBrand: companyType.startsWith("Tenant"),
+      });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+      comboToast({ title: `${companyType} created`, description: `${created.name} added to CRM.` });
+      return { id: String(created.id), label: created.name, subLabel: created.companyType };
+    } catch (e: any) {
+      comboToast({ title: "Couldn't create", description: e?.message, variant: "destructive" });
+      throw e;
+    }
+  };
+  const createLandlord = makeCompanyCreator("Landlord");
+  const createTenant = makeCompanyCreator("Tenant");
+  const createVendor = makeCompanyCreator("Vendor");
+  const createPurchaser = makeCompanyCreator("Purchaser");
+
   const toComboItems = (list: CrmCompany[]) =>
     list.map(c => ({
       id: c.id,
@@ -802,6 +829,8 @@ function SimplifiedCreateBody({
             value={form.landlordId}
             items={toComboItems(landlordOptions)}
             onChange={(v) => set("landlordId", v)}
+            onCreate={createLandlord}
+            createLabel="landlord"
           />
         </div>
       )}
@@ -816,6 +845,8 @@ function SimplifiedCreateBody({
               value={form.landlordId}
               items={toComboItems(landlordOptions)}
               onChange={(v) => set("landlordId", v)}
+              onCreate={createLandlord}
+              createLabel="landlord"
             />
           </div>
           <div>
@@ -827,6 +858,8 @@ function SimplifiedCreateBody({
               value={form.tenantId}
               items={toComboItems(tenantOptions)}
               onChange={(v) => set("tenantId", v)}
+              onCreate={createTenant}
+              createLabel="tenant"
             />
           </div>
         </>
@@ -841,6 +874,8 @@ function SimplifiedCreateBody({
             value={form.vendorId}
             items={toComboItems(vendorOptions)}
             onChange={(v) => set("vendorId", v)}
+            onCreate={createVendor}
+            createLabel="vendor"
           />
         </div>
       )}
@@ -854,6 +889,8 @@ function SimplifiedCreateBody({
             value={form.purchaserId}
             items={toComboItems(purchaserOptions)}
             onChange={(v) => set("purchaserId", v)}
+            onCreate={createPurchaser}
+            createLabel="purchaser"
           />
         </div>
       )}
@@ -868,6 +905,8 @@ function SimplifiedCreateBody({
               value={form.landlordId}
               items={toComboItems(landlordOptions)}
               onChange={(v) => set("landlordId", v)}
+              onCreate={createLandlord}
+              createLabel="landlord"
             />
           </div>
           <div>
@@ -879,6 +918,8 @@ function SimplifiedCreateBody({
               value={form.tenantId}
               items={toComboItems(tenantOptions)}
               onChange={(v) => set("tenantId", v)}
+              onCreate={createTenant}
+              createLabel="tenant"
             />
           </div>
         </div>

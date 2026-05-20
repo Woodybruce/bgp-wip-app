@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Check, ChevronsUpDown, X } from "lucide-react";
+import { Check, ChevronsUpDown, X, Plus, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,14 @@ interface EntityComboboxProps {
   loading?: boolean;
   className?: string;
   testId?: string;
+  /**
+   * Optional inline-create. When supplied, the dropdown shows a green
+   * "Create <createLabel> '<typed name>'" row at the bottom whenever
+   * the search has no exact-match item. Must POST the new row and
+   * return the new EntityComboboxItem so the combobox can select it.
+   */
+  onCreate?: (name: string) => Promise<EntityComboboxItem>;
+  createLabel?: string;
 }
 
 // Inline combobox — renders the cmdk Command list directly under the trigger
@@ -51,9 +59,34 @@ export function EntityCombobox({
   loading = false,
   className,
   testId,
+  onCreate,
+  createLabel = "entity",
 }: EntityComboboxProps) {
   const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
+  const [creating, setCreating] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
+
+  // Trim once + lowercase for cheap comparisons below.
+  const searchKey = search.trim().toLowerCase();
+  const exactMatch = React.useMemo(
+    () => items.find((it) => it.label.toLowerCase() === searchKey),
+    [items, searchKey],
+  );
+  const handleCreate = async () => {
+    if (!onCreate || !searchKey || creating) return;
+    setCreating(true);
+    try {
+      const created = await onCreate(search.trim());
+      onChange(created.id);
+      setSearch("");
+      setOpen(false);
+    } catch {
+      // Caller should toast — we just clear the busy flag.
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const selected = React.useMemo(
     () => items.find((it) => it.id === value) ?? null,
@@ -142,9 +175,32 @@ export function EntityCombobox({
               return 0;
             }}
           >
-            <CommandInput placeholder={searchPlaceholder} autoFocus />
+            <CommandInput
+              placeholder={searchPlaceholder}
+              autoFocus
+              value={search}
+              onValueChange={setSearch}
+            />
             <CommandList>
-              <CommandEmpty>{loading ? "Loading…" : emptyText}</CommandEmpty>
+              <CommandEmpty>
+                {loading ? "Loading…" : (onCreate && searchKey ? "No matches — create below?" : emptyText)}
+              </CommandEmpty>
+              {onCreate && searchKey && !exactMatch && (
+                // Inline create row — same green pill treatment as
+                // CrmEntityPicker / TenantBrandPicker so the affordance
+                // is recognisable across every CRM picker.
+                <CommandGroup>
+                  <CommandItem
+                    value={`__create__ ${search}`}
+                    onSelect={handleCreate}
+                    disabled={creating}
+                    className="bg-emerald-50/60 dark:bg-emerald-950/30 data-[selected=true]:bg-emerald-100 dark:data-[selected=true]:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-medium"
+                  >
+                    {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    <span>Create {createLabel} "{search.trim()}"</span>
+                  </CommandItem>
+                </CommandGroup>
+              )}
               <CommandGroup>
                 {items.map((it) => {
                   const cleanKeywords = (it.keywords ?? []).filter(
