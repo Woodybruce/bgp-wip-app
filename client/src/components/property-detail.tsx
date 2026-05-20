@@ -557,7 +557,15 @@ export function PropertyDetail({ id }: { id: string }) {
                       removed. Sq Ft + Competitor Agent moved to a
                       dedicated 'Area & agent' row below Ownership
                       so the bottom of the card isn't empty. */}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-2 min-w-0">
+                  {/* Status / Asset Class / Team / Website — kept at
+                      2-col only. The previous 4-col upgrade fired on
+                      viewport width but the actual Asset Owner card
+                      is by design a narrow column (~280-340px in
+                      the top-row split), so 4-col gave each pill
+                      ~70px and 'BGP Instruction' truncated to 'B…'.
+                      Two columns gives each pill ~140px which fits
+                      every label comfortably. */}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
                     <div>
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
                       <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
@@ -600,16 +608,22 @@ export function PropertyDetail({ id }: { id: string }) {
                         // No ownership recorded yet — show one inline
                         // row to start with (Freeholder) so the team
                         // can click to add without an extra step.
-                        <div className="grid grid-cols-[110px,1fr] items-center gap-2 text-[11px]">
+                        <div className="grid grid-cols-[130px,1fr] items-center gap-2 text-[11px]">
                           <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
                             <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
                           </div>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                        // Ownership rows always stacked vertically inside
+                        // the Asset Owner card. Previously sm:grid-cols-2
+                        // put two rows side-by-side, but the card is in a
+                        // narrow grid cell — so each row got ~140px total,
+                        // leaving only ~30px for the value column after
+                        // the 130px label. Stack instead.
+                        <div className="grid grid-cols-1 gap-y-1 text-[11px]">
                           {filled.map(row => (
-                            <div key={row.field} className="grid grid-cols-[110px,1fr] items-center gap-2">
+                            <div key={row.field} className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
                                 <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
@@ -617,11 +631,7 @@ export function PropertyDetail({ id }: { id: string }) {
                             </div>
                           ))}
                           {empty.length > 0 && (
-                            // One affordance to add the next missing
-                            // slot. The InlineOwnerLink itself renders
-                            // a "+ Add" UI when companyId is null, so
-                            // we just show the first empty row here.
-                            <div className="grid grid-cols-[110px,1fr] items-center gap-2">
+                            <div className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                               <div className="min-w-0">
                                 <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
