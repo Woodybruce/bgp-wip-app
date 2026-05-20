@@ -102,21 +102,43 @@ function fmtPct(n: number | null | undefined) {
   return `${n.toFixed(2)}%`;
 }
 
-function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
+function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onCreate, createKind }: {
   items: { id: string; name: string }[];
   value: string;
   valueName: string;
   onSelect: (id: string, name: string) => void;
   placeholder: string;
   testId: string;
+  /** Inline-create handler. Returns the new row so the picker can select it. */
+  onCreate?: (name: string) => Promise<{ id: string; name: string }>;
+  /** Label used in the green Create row ("company", "contact", …). */
+  createKind?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
   const filtered = useMemo(() => {
     if (!search) return items.slice(0, 50);
     const q = search.toLowerCase();
     return items.filter(i => i.name.toLowerCase().includes(q)).slice(0, 50);
   }, [items, search]);
+  const searchKey = search.trim().toLowerCase();
+  const exactMatch = items.find(i => i.name.toLowerCase() === searchKey);
+
+  const handleCreate = async () => {
+    if (!onCreate || !searchKey || creating) return;
+    setCreating(true);
+    try {
+      const created = await onCreate(search.trim());
+      onSelect(created.id, created.name);
+      setOpen(false);
+      setSearch("");
+    } catch {
+      // Caller toasts — nothing more to do here.
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -132,7 +154,20 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
         <Command shouldFilter={false}>
           <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} value={search} onValueChange={setSearch} />
           <CommandList>
-            <CommandEmpty>No results</CommandEmpty>
+            <CommandEmpty>{onCreate && searchKey ? "No matches — create below?" : "No results"}</CommandEmpty>
+            {onCreate && searchKey && !exactMatch && (
+              <CommandGroup>
+                <CommandItem
+                  value={`__create__ ${search}`}
+                  onSelect={handleCreate}
+                  disabled={creating}
+                  className="bg-emerald-50/60 dark:bg-emerald-950/30 data-[selected=true]:bg-emerald-100 dark:data-[selected=true]:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-medium"
+                >
+                  {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  <span>Create {createKind || "row"} "{search.trim()}"</span>
+                </CommandItem>
+              </CommandGroup>
+            )}
             <CommandGroup>
               {value && (
                 <CommandItem onSelect={() => { onSelect("", ""); setOpen(false); setSearch(""); }} className="text-muted-foreground text-xs">
@@ -307,6 +342,27 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ company: "", contact: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
 
+  // CRM rows feeding the picker — same source as the rest of the app so
+  // creating a row here surfaces it everywhere else immediately.
+  const { data: crmCompanies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"] });
+  const { data: crmContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  const companyItems = useMemo(() => crmCompanies.map(c => ({ id: c.id, name: c.name })), [crmCompanies]);
+  const contactItems = useMemo(() => crmContacts.map(c => ({ id: c.id, name: c.name })), [crmContacts]);
+  const createCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType: "Investor" });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+  const createContact = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+
   const { data: viewings = [] } = useQuery<InvestmentViewing[]>({
     queryKey: ["/api/investment-tracker", trackerId, "viewings"],
     queryFn: () => fetch(`/api/investment-tracker/${trackerId}/viewings`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
@@ -362,8 +418,36 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
           {adding ? (
             <Card className="p-3 space-y-2">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">Company</Label><Input value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} className="h-8 text-xs" /></div>
-                <div><Label className="text-xs">Contact</Label><Input value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} className="h-8 text-xs" /></div>
+                <div>
+                  <Label className="text-xs">Company</Label>
+                  <div className="border rounded-md h-8 flex items-center">
+                    <CrmPicker
+                      items={companyItems}
+                      value=""
+                      valueName={form.company}
+                      onSelect={(_id, name) => setForm({ ...form, company: name })}
+                      placeholder="Pick or create company"
+                      testId="viewing-company"
+                      onCreate={createCompany}
+                      createKind="company"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Contact</Label>
+                  <div className="border rounded-md h-8 flex items-center">
+                    <CrmPicker
+                      items={contactItems}
+                      value=""
+                      valueName={form.contact}
+                      onSelect={(_id, name) => setForm({ ...form, contact: name })}
+                      placeholder="Pick or create contact"
+                      testId="viewing-contact"
+                      onCreate={createContact}
+                      createKind="contact"
+                    />
+                  </div>
+                </div>
                 <div><Label className="text-xs">Date</Label><Input type="datetime-local" value={form.viewingDate} onChange={e => setForm({ ...form, viewingDate: e.target.value })} className="h-8 text-xs" /></div>
                 <div><Label className="text-xs">Attendees</Label><Input value={form.attendees} onChange={e => setForm({ ...form, attendees: e.target.value })} className="h-8 text-xs" /></div>
                 <div><Label className="text-xs">Outcome</Label><Input value={form.outcome} onChange={e => setForm({ ...form, outcome: e.target.value })} className="h-8 text-xs" /></div>
@@ -389,6 +473,26 @@ function OffersDialog({ trackerId, assetName, open, onClose }: { trackerId: stri
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ company: "", contact: "", offerDate: "", offerPrice: "", niy: "", conditions: "", status: "Pending", notes: "" });
+
+  // CRM-backed search + inline create (mirrors ViewingsDialog above).
+  const { data: crmCompanies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"] });
+  const { data: crmContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  const companyItems = useMemo(() => crmCompanies.map(c => ({ id: c.id, name: c.name })), [crmCompanies]);
+  const contactItems = useMemo(() => crmContacts.map(c => ({ id: c.id, name: c.name })), [crmContacts]);
+  const createCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType: "Investor" });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+  const createContact = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
 
   const { data: offers = [] } = useQuery<InvestmentOffer[]>({
     queryKey: ["/api/investment-tracker", trackerId, "offers"],
@@ -451,8 +555,18 @@ function OffersDialog({ trackerId, assetName, open, onClose }: { trackerId: stri
           {adding ? (
             <Card className="p-3 space-y-2">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">Company</Label><Input value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} className="h-8 text-xs" /></div>
-                <div><Label className="text-xs">Contact</Label><Input value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} className="h-8 text-xs" /></div>
+                <div>
+                  <Label className="text-xs">Company</Label>
+                  <div className="border rounded-md h-8 flex items-center">
+                    <CrmPicker items={companyItems} value="" valueName={form.company} onSelect={(_id, name) => setForm({ ...form, company: name })} placeholder="Pick or create company" testId="offer-company" onCreate={createCompany} createKind="company" />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Contact</Label>
+                  <div className="border rounded-md h-8 flex items-center">
+                    <CrmPicker items={contactItems} value="" valueName={form.contact} onSelect={(_id, name) => setForm({ ...form, contact: name })} placeholder="Pick or create contact" testId="offer-contact" onCreate={createContact} createKind="contact" />
+                  </div>
+                </div>
                 <div><Label className="text-xs">Date</Label><Input type="date" value={form.offerDate} onChange={e => setForm({ ...form, offerDate: e.target.value })} className="h-8 text-xs" /></div>
                 <div><Label className="text-xs">Offer Price (£)</Label><Input type="number" value={form.offerPrice} onChange={e => setForm({ ...form, offerPrice: e.target.value })} className="h-8 text-xs" /></div>
                 <div><Label className="text-xs">NIY (%)</Label><Input type="number" step="0.01" value={form.niy} onChange={e => setForm({ ...form, niy: e.target.value })} className="h-8 text-xs" /></div>
@@ -491,6 +605,26 @@ function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerI
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ contactName: "", companyName: "", sentDate: "", method: "Email", documentType: "", response: "", notes: "" });
+
+  // CRM-backed search + inline create.
+  const { data: crmCompanies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"] });
+  const { data: crmContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  const companyItems = useMemo(() => crmCompanies.map(c => ({ id: c.id, name: c.name })), [crmCompanies]);
+  const contactItems = useMemo(() => crmContacts.map(c => ({ id: c.id, name: c.name })), [crmContacts]);
+  const createCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType: "Investor" });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+  const createContact = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
 
   const { data: distributions = [] } = useQuery<InvestmentDistribution[]>({
     queryKey: ["/api/investment-tracker", trackerId, "distributions"],
@@ -580,8 +714,18 @@ function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerI
           {adding ? (
             <Card className="p-3 space-y-2">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">Contact Name</Label><Input value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} className="h-8 text-xs" /></div>
-                <div><Label className="text-xs">Company</Label><Input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} className="h-8 text-xs" /></div>
+                <div>
+                  <Label className="text-xs">Contact Name</Label>
+                  <div className="border rounded-md h-8 flex items-center">
+                    <CrmPicker items={contactItems} value="" valueName={form.contactName} onSelect={(_id, name) => setForm({ ...form, contactName: name })} placeholder="Pick or create contact" testId="distribution-contact" onCreate={createContact} createKind="contact" />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Company</Label>
+                  <div className="border rounded-md h-8 flex items-center">
+                    <CrmPicker items={companyItems} value="" valueName={form.companyName} onSelect={(_id, name) => setForm({ ...form, companyName: name })} placeholder="Pick or create company" testId="distribution-company" onCreate={createCompany} createKind="company" />
+                  </div>
+                </div>
                 <div><Label className="text-xs">Sent Date</Label><Input type="date" value={form.sentDate} onChange={e => setForm({ ...form, sentDate: e.target.value })} className="h-8 text-xs" /></div>
                 <div>
                   <Label className="text-xs">Method</Label>
