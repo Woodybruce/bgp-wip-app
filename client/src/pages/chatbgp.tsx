@@ -2365,13 +2365,20 @@ export default function ChatBGP() {
       };
       return attemptSend(1);
     },
-    onSuccess: async (data: { reply: string; action?: any }) => {
+    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean }) => {
       setProgressLabel("");
       setStreamingContent("");
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
-        await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+        // Server already wrote the assistant reply via sendResult ->
+        // storage.createChatMessage and tells us so with savedToThread.
+        // Don't double-save here — otherwise the same reply ends up on
+        // the thread twice and shows up duplicated whenever the thread
+        // gets reloaded (or any consumer refetches /chat/threads/:id).
+        if (!data.savedToThread) {
+          await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+        }
         apiRequest("POST", `/api/chat/threads/${threadId}/auto-title`, {})
           .then(() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }))
           .catch(() => {});
@@ -2522,7 +2529,18 @@ export default function ChatBGP() {
           content: m.content,
           userId: m.userId,
         }));
-        setMessages(loaded);
+        // Defensive dedup — older threads have consecutive identical
+        // assistant replies from the double-save bug (server + client
+        // both wrote the same reply). Collapse them so old threads
+        // render cleanly. New replies don't hit this path because the
+        // double-save was fixed at source.
+        const deduped: LocalMessage[] = [];
+        for (const m of loaded) {
+          const last = deduped[deduped.length - 1];
+          if (last && last.role === m.role && last.content === m.content) continue;
+          deduped.push(m);
+        }
+        setMessages(deduped);
       }
     } catch {
       setMessages([]);
