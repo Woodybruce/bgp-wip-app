@@ -1890,8 +1890,15 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
               )}
             </button>
             {isZoneExpanded(zone) && (
-              <div className="overflow-x-auto">
-                <table className="w-full" style={{ tableLayout: "fixed", minWidth: `${LEASING_TABLE_MIN_WIDTH}px` }} data-testid={`zone-table-${zone}`}>
+              <div className="overflow-x-auto min-w-0">
+                {/* Width pinned to the colgroup total (not w-full) so the
+                    columns stay at their declared sizes when the chat
+                    dock opens/closes. With w-full, table-layout: fixed
+                    was stretching/compressing each <col> proportionally
+                    to the wrapper width, which caused the 'columns get
+                    squashed' look when ChatBGP took 340px. Pinning
+                    means the wrapper just scrolls horizontally. */}
+                <table className="text-xs" style={{ tableLayout: "fixed", width: `${LEASING_TABLE_MIN_WIDTH}px` }} data-testid={`zone-table-${zone}`}>
                   <LeasingColgroup />
                   <thead>
                     <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b text-left text-sm">
@@ -2530,8 +2537,8 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                 <span className="text-[10px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
               </button>
               {isExpanded && (
-                <div className="overflow-x-auto">
-                  <table className="w-full" style={{ tableLayout: "fixed", minWidth: `${LEASING_TABLE_MIN_WIDTH}px` }}>
+                <div className="overflow-x-auto min-w-0">
+                  <table className="text-xs" style={{ tableLayout: "fixed", width: `${LEASING_TABLE_MIN_WIDTH}px` }}>
                     <LeasingColgroup />
                     <thead>
                       <tr className="bg-gray-50/30 border-b text-left text-sm">
