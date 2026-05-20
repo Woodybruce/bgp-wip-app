@@ -802,7 +802,9 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
               })}
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Status</th>
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
-              <th className="text-center p-2 font-medium w-10"></th>
+              {/* Sticky right so the delete button is always visible
+                  without horizontal scrolling to the end of the table. */}
+              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-slate-800 z-10"></th>
             </tr>
           </thead>
           <tbody>
@@ -1138,9 +1140,17 @@ function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
           </button>
         </div>
       </td>
-      <td className="p-1 text-center">
-        <button onClick={onDelete} className="text-red-400 hover:text-red-600 p-0.5" data-testid={`tenancy-delete-${unit.id}`}>
-          <Trash2 className="w-3 h-3" />
+      <td className="p-1 text-center sticky right-0 bg-background border-l shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)] z-[5]">
+        <button
+          onClick={() => {
+            const label = unit.unit_number || unit.tenant_name || "this unit";
+            if (confirm(`Delete ${label}? This removes the tenancy row — undo by re-importing.`)) onDelete();
+          }}
+          className="text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 p-1 rounded transition-colors"
+          title="Delete tenancy row"
+          data-testid={`tenancy-delete-${unit.id}`}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
         </button>
       </td>
     </tr>
