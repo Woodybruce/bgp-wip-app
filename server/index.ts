@@ -2433,7 +2433,17 @@ const apiLimiter = rateLimit({
       // Brand logo thumbnails fire ~200 per Brand Explorer page load.
       // Already cached by the browser for 24h on 404, and the rendered
       // page is unusable if we 429 them.
-      p.startsWith("/api/brand-logo")
+      p.startsWith("/api/brand-logo") ||
+      // Image-studio thumb/full + entity images + HR photos + property
+      // brochure files: all browser-cached static-ish image / pdf reads
+      // that legitimately fire dozens-hundreds in parallel on a page
+      // load. Rate-limiting them just blanks the gallery on first paint
+      // and there's no abuse vector worth defending against.
+      p.startsWith("/api/image-studio") ||
+      p.startsWith("/api/entity-images") ||
+      p.startsWith("/api/hr/photo") ||
+      /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file/.test(p) ||
+      /^\/api\/properties\/[^/]+\/plans\/[^/]+\/file/.test(p)
     );
   },
   message: { message: "Too many requests. Please slow down and try again." },
