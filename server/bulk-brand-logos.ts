@@ -1,12 +1,15 @@
 // Bulk-import brand logos from free public sources, save to Image Studio's
 // brand library. Run once to populate the library; afterwards the brand
 // thumbnails on Brand Explorer / brand profile / property page resolve to
-// our local cache rather than the deprecated Clearbit.
+// our local cache.
 //
 // Sources tried in order per brand (first hit wins):
 //   1. logo.dev — requires LOGO_DEV_TOKEN env (free signup at logo.dev)
-//   2. Clearbit — deprecated but still works for many domains until Dec 2025
-//   3. DuckDuckGo icons — works free, no token, lower quality
+//   2. Google s2 favicons — free, no token, sz=128 usually serves a real logo
+//
+// We deliberately stopped using Clearbit (dead since Mar 2025) and
+// DuckDuckGo (low quality, often the wrong icon) — rather have nothing
+// than a rubbish logo, so callers can spot the gap and fix the domain.
 //
 // Endpoint:
 //   POST /api/admin/import-brand-logos { limit?: number, skipExisting?: bool }
@@ -57,18 +60,12 @@ async function fetchLogoForDomain(domain: string): Promise<{ buffer: Buffer; mim
     const hit = await tryFetch(`https://img.logo.dev/${encodeURIComponent(domain)}?token=${logoDevToken}&size=512&format=png`);
     if (hit) return { ...hit, source: "logo.dev" };
   }
-  // 2. Clearbit — HubSpot deprecated this March 2025 and is killing it
-  //    completely Dec 2025. Most domains 404 now but a few still serve.
-  const cb = await tryFetch(`https://logo.clearbit.com/${encodeURIComponent(domain)}?size=512`);
-  if (cb) return { ...cb, source: "clearbit" };
-  // 3. Google's favicon API — high-res (sz=128) often serves a real logo, not
-  //    just the tiny favicon. Free, no key. Better hit rate than DuckDuckGo.
+  // 2. Google's favicon API — high-res (sz=128) often serves a real logo,
+  //    not just the tiny favicon. Free, no key. Rather than fall back to
+  //    Clearbit (dead) or DuckDuckGo (rubbish), return null when this
+  //    misses so the caller can see the gap and fix the domain.
   const google = await tryFetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`);
   if (google && google.buffer.length > 300) return { ...google, source: "google" };
-  // 4. DuckDuckGo icons — last resort. Lowered threshold to 100 bytes so a
-  //    small but valid ico still gets through.
-  const ddg = await tryFetch(`https://icons.duckduckgo.com/ip3/${encodeURIComponent(domain)}.ico`);
-  if (ddg && ddg.buffer.length > 100) return { ...ddg, source: "duckduckgo" };
   return null;
 }
 
@@ -173,7 +170,7 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
       missed: 0,
       errors: 0,
       errorSamples: [],
-      sourceCounts: { "logo.dev": 0, clearbit: 0, google: 0, duckduckgo: 0 },
+      sourceCounts: { "logo.dev": 0, google: 0 },
       total: brands.length,
       logoDevConfigured: !!process.env.LOGO_DEV_TOKEN,
       lastBrand: null,

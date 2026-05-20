@@ -346,60 +346,14 @@ async function requireAdmin(req: Request, res: Response, next: Function) {
   }
 }
 
-/**
- * Capture a Google Street View image for an address and save to image_studio_images.
- * Exposed for the property-pathway orchestrator (Stage 8 — Studio Time).
- */
-export async function captureStreetViewForAddress(args: { address: string; propertyId?: string | null; heading?: number; pitch?: number; fov?: number }): Promise<{ id: string; localPath: string }> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY not configured");
-
-  const params = new URLSearchParams({
-    size: "1200x800",
-    location: args.address,
-    heading: String(args.heading ?? 0),
-    pitch: String(args.pitch ?? 0),
-    fov: String(args.fov ?? 90),
-    key: apiKey,
-  });
-  const resp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
-  if (!resp.ok) throw new Error(`Street View fetch failed: ${resp.status}`);
-  const buffer = Buffer.from(await resp.arrayBuffer());
-  const safeName = args.address.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-").slice(0, 80);
-  const filename = `streetview-${safeName}-${crypto.randomUUID().slice(0, 8)}.jpg`;
-  const filePath = path.join(IMAGE_DIR, filename);
-  fs.writeFileSync(filePath, buffer);
-
-  const { thumbnail, width, height } = await generateThumbnail(buffer);
-
-  const [inserted] = await db.insert(imageStudioImages).values({
-    fileName: `Street View — ${args.address}`,
-    category: "Street Views",
-    tags: ["Street View", "Google", "Exterior", "pathway"],
-    description: `Google Street View capture of ${args.address} (auto — property pathway Stage 8)`,
-    source: "streetview",
-    propertyId: args.propertyId || undefined,
-    address: args.address,
-    mimeType: "image/jpeg",
-    fileSize: buffer.length,
-    width,
-    height,
-    thumbnailData: thumbnail,
-    localPath: filePath,
-  }).returning();
-
-  return { id: inserted.id, localPath: filePath };
-}
-
 // ─── Stage 8 bulk image sweep ─────────────────────────────────────────────
-// Runs after the business plan and Excel model are agreed. Sweeps every
-// source we have — Street View (4 headings + ±offsets along the street),
-// Google Places photos, Clearbit logos for tenants — and files the results
-// into three named collections on the run: Building / Tenants / Area.
-//
-// Nothing here is expensive enough to gate on — API keys burn a few hundred
-// quota points per run, not dollars. No image generation (Flux/DALL-E) is
-// triggered; we only harvest real photography.
+// Runs after the business plan and Excel model are agreed. Harvests Google
+// Places photos of the building + neighbours and any embedded images from
+// uploaded brochures, then files them into three named collections on the
+// run: Building / Tenants / Area. Street View auto-capture was removed —
+// it filled folders with low-quality drive-by shots; users can grab a
+// specific Street View via the manual capture button in Image Studio if
+// they actually want one.
 
 type StoredImage = { id: string; localPath: string };
 
@@ -487,32 +441,6 @@ async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: n
   }
 }
 
-async function streetViewBuffer(args: { lat?: number; lng?: number; address?: string; heading: number; pitch?: number; apiKey: string }): Promise<Buffer | null> {
-  const params = new URLSearchParams({
-    size: "1200x800",
-    heading: String(args.heading),
-    pitch: String(args.pitch ?? 0),
-    fov: "90",
-    key: args.apiKey,
-  });
-  if (args.lat != null && args.lng != null) {
-    params.set("location", `${args.lat},${args.lng}`);
-  } else if (args.address) {
-    params.set("location", args.address);
-  } else return null;
-  try {
-    const r = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
-    if (!r.ok) return null;
-    const buf = Buffer.from(await r.arrayBuffer());
-    // Google returns a tiny generic "Sorry, we have no imagery here" for blind
-    // locations (~2-6KB). Filter those.
-    if (buf.length < 7000) return null;
-    return buf;
-  } catch {
-    return null;
-  }
-}
-
 async function placeDetailsPhotos(placeId: string, apiKey: string, max = 15): Promise<string[]> {
   try {
     const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=photos&key=${apiKey}`;
@@ -578,23 +506,6 @@ async function nearbyPlaces(lat: number, lng: number, apiKey: string, radius = 8
   }
 }
 
-async function clearbitLogoBuffer(companyName: string): Promise<{ buffer: Buffer; domain: string } | null> {
-  try {
-    const sugResp = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`);
-    if (!sugResp.ok) return null;
-    const suggestions: any[] = await sugResp.json().catch(() => []);
-    const domain = suggestions?.[0]?.domain;
-    if (!domain) return null;
-    const logoResp = await fetch(`https://logo.clearbit.com/${domain}?size=512`);
-    if (!logoResp.ok) return null;
-    const buf = Buffer.from(await logoResp.arrayBuffer());
-    if (buf.length < 400) return null;
-    return { buffer: buf, domain };
-  } catch {
-    return null;
-  }
-}
-
 export async function sweepStage8ImagesForRun(args: {
   runId: string;
   address: string;
@@ -608,7 +519,6 @@ export async function sweepStage8ImagesForRun(args: {
   tenantsCollectionId?: string;
   areaCollectionId?: string;
   imagesAdded: number;
-  streetViewImageId?: string;
   collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }>;
 }> {
   const apiKey = process.env.GOOGLE_API_KEY;
@@ -628,33 +538,10 @@ export async function sweepStage8ImagesForRun(args: {
   const buildingImages: string[] = [];
   const tenantImages: string[] = [];
   const areaImages: string[] = [];
-  let firstStreetViewImageId: string | undefined;
 
   const geo = await geocodeAddress(args.address, apiKey);
 
-  // ─── Building: 4-heading street view + Places photos of the building ────
-  for (const heading of [0, 90, 180, 270]) {
-    const buf = await streetViewBuffer({ lat: geo?.lat, lng: geo?.lng, address: args.address, heading, apiKey });
-    if (!buf) continue;
-    try {
-      const stored = await storeImageFromBuffer({
-        buffer: buf,
-        fileName: `Street View ${heading}° — ${args.address}`,
-        category: "Street Views",
-        tags: ["Street View", "Building", "Exterior", "pathway", `heading-${heading}`],
-        description: `Google Street View of ${args.address} at ${heading}° heading (auto — pathway Stage 8).`,
-        source: "streetview",
-        propertyId: args.propertyId,
-        address: args.address,
-        filenameHint: `${args.address}-${heading}`,
-      });
-      buildingImages.push(stored.id);
-      if (!firstStreetViewImageId) firstStreetViewImageId = stored.id;
-    } catch (err: any) {
-      console.warn(`[pathway sweep] SV ${heading}° failed:`, err?.message);
-    }
-  }
-
+  // ─── Building: Places photos of the building ────────────────────────────
   if (geo?.placeId) {
     const refs = await placeDetailsPhotos(geo.placeId, apiKey, 15);
     let idx = 0;
@@ -667,9 +554,8 @@ export async function sweepStage8ImagesForRun(args: {
           buffer: buf,
           fileName: `Place photo ${idx} — ${args.address}`,
           category: "Places",
-          // Google building photos are overwhelmingly interior. Tag them that
-          // way so Why Buy / Image Studio filters can favour exteriors
-          // (Street View) when an exterior is needed.
+          // Google building photos are overwhelmingly interior; tag as such
+          // so Why Buy / Image Studio filters can favour brochure exteriors.
           tags: ["Google Places", "Building", "Interior-likely", "pathway"],
           description: `Google Places photo ${idx} of ${args.address} (auto — pathway Stage 8).`,
           source: "places",
@@ -682,34 +568,12 @@ export async function sweepStage8ImagesForRun(args: {
     }
   }
 
-  // ─── Tenants: Clearbit logos + Places photos of flagship stores ─────────
+  // ─── Tenants: Places photos of flagship stores ──────────────────────────
   const uniqueTenants = Array.from(new Set((args.tenantNames || []).map(t => t.trim()).filter(t => t && t.length > 1)));
   for (const tenant of uniqueTenants.slice(0, 6)) {
-    // Clearbit logo
-    try {
-      const logo = await clearbitLogoBuffer(tenant);
-      if (logo) {
-        const stored = await storeImageFromBuffer({
-          buffer: logo.buffer,
-          fileName: `${tenant} — Logo`,
-          category: "Brands",
-          tags: ["Logo", "Tenant", tenant, "pathway"],
-          description: `Clearbit logo for ${tenant} (${logo.domain}) — pathway Stage 8.`,
-          source: "clearbit",
-          propertyId: args.propertyId,
-          brandName: tenant,
-          mimeType: "image/png",
-          filenameHint: tenant,
-        });
-        tenantImages.push(stored.id);
-      }
-    } catch (err: any) {
-      console.warn(`[pathway sweep] Clearbit ${tenant} failed:`, err?.message);
-    }
-
-    // Places findplace → photos + shopfront Street View. Bias the search
-    // to the subject building so we resolve the correct branch (e.g. the
-    // Haymarket Pret, not a Pret 5 miles away).
+    // Places findplace → photos. Bias the search to the subject building so
+    // we resolve the correct branch (e.g. the Haymarket Pret, not a Pret 5
+    // miles away).
     try {
       const bias = geo ? { lat: geo.lat, lng: geo.lng, radiusM: 250 } : undefined;
       const place = await findPlaceByText(`${tenant}`, apiKey, bias)
@@ -736,64 +600,14 @@ export async function sweepStage8ImagesForRun(args: {
           });
           tenantImages.push(stored.id);
         }
-        // Guaranteed shopfront exterior via Street View at the tenant's own
-        // coord. Pull two headings so one reads well even if facing away.
-        if (place.lat && place.lng) {
-          for (const heading of [0, 180]) {
-            const svBuf = await streetViewBuffer({ lat: place.lat, lng: place.lng, heading, apiKey });
-            if (!svBuf) continue;
-            try {
-              const stored = await storeImageFromBuffer({
-                buffer: svBuf,
-                fileName: `${tenant} — Shopfront ${heading}°`,
-                category: "Street Views",
-                tags: ["Street View", "Tenant", "Brand", "Exterior", "Shopfront", tenant, `brand:${tenant}`, "pathway"],
-                description: `Street View shopfront of ${place.name} (tenant: ${tenant}) at ${heading}° — pathway Stage 8.`,
-                source: "streetview",
-                propertyId: args.propertyId,
-                brandName: tenant,
-                filenameHint: `${tenant}-shopfront-${heading}`,
-              });
-              tenantImages.push(stored.id);
-            } catch {}
-          }
-        }
       }
     } catch (err: any) {
       console.warn(`[pathway sweep] Places ${tenant} failed:`, err?.message);
     }
   }
 
-  // ─── Area: street view ± offsets along the street + nearby places ───────
+  // ─── Area: nearby place photos ──────────────────────────────────────────
   if (geo) {
-    // 30m and 60m offsets in four cardinal directions
-    const M_IN_DEG_LAT = 1 / 111_000;
-    const M_IN_DEG_LNG = 1 / (111_000 * Math.cos((geo.lat * Math.PI) / 180));
-    const offsets: Array<{ dLat: number; dLng: number; heading: number; label: string }> = [
-      { dLat:  30 * M_IN_DEG_LAT, dLng: 0,                        heading: 180, label: "+30m N" },
-      { dLat: -30 * M_IN_DEG_LAT, dLng: 0,                        heading: 0,   label: "-30m S" },
-      { dLat: 0,                   dLng:  30 * M_IN_DEG_LNG,      heading: 270, label: "+30m E" },
-      { dLat: 0,                   dLng: -30 * M_IN_DEG_LNG,      heading: 90,  label: "-30m W" },
-    ];
-    for (const off of offsets) {
-      const buf = await streetViewBuffer({ lat: geo.lat + off.dLat, lng: geo.lng + off.dLng, heading: off.heading, apiKey });
-      if (!buf) continue;
-      try {
-        const stored = await storeImageFromBuffer({
-          buffer: buf,
-          fileName: `Area SV ${off.label} — ${args.address}`,
-          category: "Street Views",
-          tags: ["Street View", "Area", "Context", "pathway"],
-          description: `Street View ${off.label} from ${args.address} — pathway Stage 8.`,
-          source: "streetview",
-          propertyId: args.propertyId,
-          address: args.address,
-          filenameHint: `${args.address}-${off.label}`,
-        });
-        areaImages.push(stored.id);
-      } catch {}
-    }
-
     const neighbours = await nearbyPlaces(geo.lat, geo.lng, apiKey, 80, 6);
     for (const p of neighbours) {
       // skip the building's own place_id
@@ -874,7 +688,6 @@ export async function sweepStage8ImagesForRun(args: {
     tenantsCollectionId: tenantsId,
     areaCollectionId: areaId,
     imagesAdded: buildingAdded + tenantAdded + areaAdded,
-    streetViewImageId: firstStreetViewImageId,
     collections,
   };
 }

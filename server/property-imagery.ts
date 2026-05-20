@@ -39,7 +39,6 @@ import {
   type PropertyImageryAsset,
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { captureStreetViewForAddress } from "./image-studio";
 import { composeLocationPlan, composeCompsChart, composeErvWalk, composeCovenantCard } from "./property-imagery-composers";
 import { plaMatters, crmCompanies, brandStores } from "@shared/schema";
 
@@ -125,7 +124,6 @@ export async function discoverImagery(args: {
   const wanted = new Set<ImagerySource>(args.sources || [
     "image_studio",
     "sharepoint",
-    "street_view",
     // brochure / planning / os_ngd / google_static / edozo land in follow-ups
   ]);
 
@@ -135,12 +133,7 @@ export async function discoverImagery(args: {
     await ingestExistingImageStudio(args.propertyId, args.pathwayRunId, args.matterId);
   }
 
-  // 2. Street View — capture if we have an address and don't already have one.
-  if (wanted.has("street_view")) {
-    await ingestStreetView(property, args.pathwayRunId, args.matterId, args.userId);
-  }
-
-  // 3. SharePoint property folder — if the property has sharepointFolderUrl,
+  // 2. SharePoint property folder — if the property has sharepointFolderUrl,
   //    walk it for image files. (Implementation in follow-up commit; needs
   //    Microsoft Graph token from the request context.)
   // if (wanted.has("sharepoint")) await ingestSharePoint(...);
@@ -310,68 +303,6 @@ function scoreStudioImage(img: typeof imageStudioImages.$inferSelect, kind: Imag
     else if (px < 640 * 480) base -= 0.1;
   }
   return Math.max(0, Math.min(1, base));
-}
-
-/**
- * Ensure we have at least one Street View image for this property.
- */
-async function ingestStreetView(
-  property: typeof crmProperties.$inferSelect,
-  pathwayRunId?: string,
-  matterId?: string,
-  userId?: string,
-): Promise<void> {
-  if (!process.env.GOOGLE_API_KEY) return;
-  // Skip if we already have a Street View asset for this property
-  const existing = await db
-    .select()
-    .from(propertyImageryAssets)
-    .where(
-      and(
-        eq(propertyImageryAssets.propertyId, property.id),
-        eq(propertyImageryAssets.source, "street_view"),
-        eq(propertyImageryAssets.hidden, false),
-      ),
-    )
-    .limit(1);
-  if (existing.length > 0) return;
-
-  // Build address string from whatever we have
-  const addressLine = formatAddressForStreetView(property);
-  if (!addressLine) return;
-
-  try {
-    const captured = await captureStreetViewForAddress({
-      address: addressLine,
-      propertyId: property.id,
-    });
-    // captureStreetViewForAddress already wrote to image_studio_images;
-    // create the curation row pointing at it.
-    await db.insert(propertyImageryAssets).values({
-      propertyId: property.id,
-      kind: "secondary_external",       // hero promotion is a manual decision
-      source: "street_view",
-      imageStudioId: captured.id,
-      caption: `Google Street View — ${addressLine}`,
-      score: 0.6,
-      pathwayRunId: pathwayRunId || null,
-      matterId: matterId || null,
-      generatedBy: userId || null,
-    });
-  } catch (err: any) {
-    console.warn(`[property-imagery] Street View capture failed for ${property.id}:`, err?.message);
-  }
-}
-
-function formatAddressForStreetView(property: typeof crmProperties.$inferSelect): string | null {
-  // Prefer structured address.formatted, fall back to name + postcode
-  const addr = property.address as any;
-  if (addr && typeof addr === "object" && addr.formatted) {
-    return addr.formatted;
-  }
-  if (addr && typeof addr === "string") return addr;
-  const parts = [property.name, property.postcode].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 // ─── Retrieval ───────────────────────────────────────────────────────────────

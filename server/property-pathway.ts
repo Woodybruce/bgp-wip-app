@@ -4516,9 +4516,8 @@ async function runStage8(runId: string, req: Request): Promise<void> {
     console.warn("[pathway stage8] brochure prefetch skipped:", err?.message);
   }
 
-  // 8a. Bulk image sweep — SV 4 headings + area offsets, Places photos,
-  // Clearbit logos, brochure-extracted images — filed into
-  // Building / Tenants / Area collections.
+  // 8a. Bulk image sweep — Places photos + brochure-extracted images —
+  // filed into Building / Tenants / Area collections.
   try {
     const { sweepStage8ImagesForRun } = await import("./image-studio");
     const sweep = await sweepStage8ImagesForRun({
@@ -4530,7 +4529,6 @@ async function runStage8(runId: string, req: Request): Promise<void> {
       userId: (run as any).startedBy || undefined,
       brochurePdfs,
     });
-    patch.streetViewImageId = sweep.streetViewImageId;
     patch.collections = sweep.collections;
     // Auto-fold the freshly-swept images into property_imagery_assets so
     // they surface in the picker on the Property Intelligence Imagery
