@@ -34,6 +34,7 @@ import { searchPipnetRequirements } from "./pipnet";
 import { xeroApi, refreshXeroToken } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
+import { parseRequirementBrochure } from "./requirement-vision-parser";
 
 import { randomUUID } from "crypto";
 import type { Pool } from "pg";
@@ -3479,7 +3480,43 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const filePath = `/api/crm/landlord-packs/${uniqueName}`;
       const originalName = req.file.originalname;
       const landlordPack = JSON.stringify({ url: filePath, name: originalName, size: req.file.size });
-      const updated = await storage.updateCrmRequirementLeasing(req.params.id, { landlordPack });
+
+      const updates: Record<string, any> = { landlordPack };
+
+      // Vision-parse PDF packs: read the brochure images with Claude and merge
+      // into Use / Type / Size / Locations / Comments. Only fills empty fields
+      // (or anything, when vision confidence is high) so manual edits survive.
+      if (ext === ".pdf") {
+        try {
+          const existing = await storage.getCrmRequirementLeasing(req.params.id);
+          const vision = await parseRequirementBrochure({ pdfBuffer: req.file.buffer });
+          if (vision) {
+            console.log(`[landlord-pack vision] ${req.params.id} (${vision.confidence}): use=${vision.useCategories?.length}, type=${vision.typeCategory}, size=${vision.sizeRange}, locs=${vision.locations?.length}`);
+            const visionWins = vision.confidence === "high";
+            const isEmpty = (v: any) => v == null || (Array.isArray(v) && v.length === 0) || (typeof v === "string" && !v.trim());
+
+            if (vision.useCategories?.length && (isEmpty(existing?.use) || visionWins)) {
+              updates.use = vision.useCategories;
+            }
+            if (vision.typeCategory && (isEmpty(existing?.requirementType) || visionWins)) {
+              updates.requirementType = [vision.typeCategory];
+            }
+            if (vision.sizeRange && (isEmpty(existing?.size) || visionWins)) {
+              updates.size = [vision.sizeRange];
+            }
+            if (vision.locations?.length && (isEmpty(existing?.requirementLocations) || visionWins)) {
+              updates.requirementLocations = vision.locations;
+            }
+            if (vision.summary && (isEmpty(existing?.comments) || visionWins)) {
+              updates.comments = vision.summary;
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[landlord-pack vision] parse failed for ${req.params.id}: ${e?.message}`);
+        }
+      }
+
+      const updated = await storage.updateCrmRequirementLeasing(req.params.id, updates);
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
