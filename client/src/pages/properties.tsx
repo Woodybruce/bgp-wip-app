@@ -845,15 +845,15 @@ export function InlineOwnerLink({
 
   if (company) {
     return (
-      <div className="flex items-center gap-1">
-        <Link href={`/companies/${company.id}`}>
-          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted">
-            <Building2 className="w-3 h-3 mr-1 text-muted-foreground" />
-            {company.name}
+      <div className="flex items-center gap-1 min-w-0 max-w-full">
+        <Link href={`/companies/${company.id}`} className="min-w-0 max-w-full">
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={company.name}>
+            <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
+            <span className="truncate">{company.name}</span>
           </Badge>
         </Link>
         <button
-          className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
+          className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0"
           onClick={() => updateMutation.mutate(null)}
         >
           <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
