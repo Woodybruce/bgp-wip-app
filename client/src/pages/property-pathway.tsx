@@ -20,6 +20,7 @@ import {
   FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
   Copy, Paperclip, Loader2, Maximize2, Briefcase, FileSpreadsheet, MessageSquare,
+  ZoomIn, ZoomOut,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -2502,6 +2503,11 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
   const [iteratePrompt, setIteratePrompt] = useState("");
   const [busy, setBusy] = useState<"generate" | "iterate" | "edit" | null>(null);
   const [pickerEditId, setPickerEditId] = useState<string | null>(null);
+  // Zoom for the iframe preview. 1.0 = native; values below 1 shrink the
+  // deck so the whole thing (all slides) fits in the preview box, values
+  // above 1 magnify a slice. Clamped to 0.4–2.0 so the controls can't
+  // produce something unusable.
+  const [zoom, setZoom] = useState(1);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const reload = useCallback(async () => {
@@ -2694,6 +2700,41 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
             {busy === "generate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
             {versions.length === 0 ? "Generate" : "Re-generate"}
           </Button>
+          {versions.length > 0 && (
+            <div className="flex items-center gap-0.5 ml-1 pl-1 border-l">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setZoom(z => Math.max(0.4, +(z - 0.1).toFixed(2)))}
+                disabled={zoom <= 0.4}
+                className="h-7 w-7 p-0"
+                title="Zoom out"
+                data-testid="btn-deck-zoom-out"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </Button>
+              <button
+                type="button"
+                onClick={() => setZoom(1)}
+                className="text-[11px] font-mono px-1.5 h-7 rounded hover:bg-muted/60 min-w-[42px]"
+                title="Reset zoom"
+                data-testid="btn-deck-zoom-reset"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setZoom(z => Math.min(2, +(z + 0.1).toFixed(2)))}
+                disabled={zoom >= 2}
+                className="h-7 w-7 p-0"
+                title="Zoom in"
+                data-testid="btn-deck-zoom-in"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          )}
           {activeId && (
             <a href={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`} target="_blank" rel="noreferrer">
               <Button size="sm" variant="ghost" className="h-7 text-xs">
@@ -2713,12 +2754,26 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
           <div className="text-[10px] text-muted-foreground italic px-1">
             Click any image, headline, or KPI in the deck below to edit it inline. Edits auto-save as a new version — use Undo to step back.
           </div>
-          <div className="rounded-md overflow-hidden border bg-white" style={{ height: 600 }}>
+          {/* Zoom is applied via CSS transform on the iframe. To keep
+              the iframe filling its outer container regardless of
+              zoom, we set its width/height to 100/zoom% then scale
+              the rendering back down. zoom=0.5 → iframe is 200%
+              size internally, scaled to 50% visually = you see 2x
+              the slides. zoom=1.5 → 66.7% size, scaled up = closer
+              look at a portion. overflow-auto on the wrapper lets
+              the user pan when zoomed in past the box. */}
+          <div className="rounded-md overflow-auto border bg-white" style={{ height: 600 }}>
             {activeId && (
               <iframe
                 ref={iframeRef}
                 src={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`}
-                className="w-full h-full border-0"
+                className="border-0 block"
+                style={{
+                  width: `${100 / zoom}%`,
+                  height: `${100 / zoom}%`,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top left",
+                }}
                 title="Why Buy preview"
                 sandbox="allow-same-origin"
                 onLoad={onIframeLoad}
