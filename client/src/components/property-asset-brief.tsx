@@ -153,7 +153,7 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
     : `${tr.resolved}/${tr.total} tenants linked to brand${gapTotal > 0 ? ` · ${gapTotal} integrity gap${gapTotal === 1 ? "" : "s"}` : ""}`;
 
   return (
-    <div className="flex items-center gap-3 text-xs">
+    <div className="flex items-center gap-x-3 gap-y-1 text-xs flex-wrap">
       {data.owner ? (
         <Link href={`/companies/${data.owner.id}`} className="flex items-center gap-1.5 min-w-0 hover:underline">
           <img

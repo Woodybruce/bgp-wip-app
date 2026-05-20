@@ -532,7 +532,14 @@ export function PropertyDetail({ id }: { id: string }) {
                 more breathing room than 50/50 — typical news
                 content (image + 3-4 headlines) wants a wider column.
                 Stacks 1-col on smaller screens. */}
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
+            {/* Top row splits Asset Owner+Weekly Focus | News+Risk at
+                xl (1280px) instead of lg (1024px). At lg the main
+                column is already sharing space with the 320px right
+                aside, leaving ~700px to split — and nested grids
+                inside (Status/Asset/Team/Website at 4-col) overflowed
+                their cells. Single column at lg means each card gets
+                full main-col width before the side-by-side kicks in. */}
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
               {/* Left column stack: Asset Owner card + Weekly Focus
                   beneath. h-full lets the grid cell stretch and the
                   inner flex-1 on Weekly Focus compute properly. */}
@@ -550,7 +557,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       removed. Sq Ft + Competitor Agent moved to a
                       dedicated 'Area & agent' row below Ownership
                       so the bottom of the card isn't empty. */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 min-w-0">
                     <div>
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
                       <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
@@ -696,7 +703,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 the top strip. Brochures swapped down from the top-right
                 slot; Risk Register went up so the operational watch
                 list reads alongside the news ticker. */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               <ErrorBoundary compact name="Property brochures">
                 <PropertyBrochuresPanel propertyId={property.id} />
               </ErrorBoundary>
@@ -737,7 +744,7 @@ export function PropertyDetail({ id }: { id: string }) {
             <BgpCommentaryWrapper propertyId={property.id} />
 
             {streetViewExpanded ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                 <StreetViewSection
                   address={formatAddress(property.address) || property.name}
                   propertyId={property.id}
