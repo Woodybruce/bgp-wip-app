@@ -9,6 +9,11 @@
  *      sender's phone matches a BGP user (we'll auto-create a card-less
  *      cardholder), or the sender isn't on the team and we bail out so
  *      the photo flows to ChatBGP.
+ *
+ * Discriminating receipts from non-receipts: only PDFs with ≤2 pages OR
+ * images go down the receipt path. Multi-page PDFs (brochures, leases,
+ * HoTs, anything substantial) fall straight through to ChatBGP /
+ * document handling — receipts are never multi-page in practice.
  */
 import { db } from "./db";
 import { stripeCardholders, expenses, expenseReceipts, users } from "@shared/schema";
@@ -25,6 +30,28 @@ interface MatchArgs {
   caption: string;
   config: { token?: string; phoneNumberId?: string };
   sendReply: (text: string) => Promise<any>;
+}
+
+// Receipts are single-page in the real world. Anything bigger is almost
+// certainly a brochure / lease / HoT and should flow to other handlers.
+const RECEIPT_MAX_PAGES = 2;
+
+async function looksLikeReceipt(bytes: Buffer, mimeType: string | undefined): Promise<boolean> {
+  const mt = (mimeType || "").toLowerCase();
+  // Images: always plausible as a receipt. PDFs: only if 1-2 pages.
+  if (mt.startsWith("image/") || mt === "image" || mt === "" || /^image\//i.test(mt)) {
+    return true;
+  }
+  // PDF magic %PDF- or explicit mime.
+  const isPdf = mt.includes("pdf") || (bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46);
+  if (!isPdf) return true;        // unknown format — let the parser try
+  try {
+    const { PDFDocument } = await import("pdf-lib");
+    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    return doc.getPageCount() <= RECEIPT_MAX_PAGES;
+  } catch {
+    return true;                  // can't read it — let the parser have a go
+  }
 }
 
 export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean> {
@@ -66,9 +93,19 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
       return false;
     }
 
-    await args.sendReply("📸 Got it — reading the receipt...");
+    // Pull the bytes once; we need them for both the receipt sniff and
+    // the parse (and we'll save a redundant Graph download).
     const { downloadWhatsAppMedia } = await import("./whatsapp");
     const { bytes, mimeType } = await downloadWhatsAppMedia(args.mediaId, args.config.token!);
+
+    // Filter out obvious non-receipts (multi-page PDFs are brochures /
+    // leases / HoTs / pitch decks). Fall through so the document
+    // pipeline handles them.
+    if (!(await looksLikeReceipt(bytes, mimeType))) {
+      return false;
+    }
+
+    await args.sendReply("📸 Got it — reading the receipt...");
     const result = await createExpenseFromReceipt({
       receiptBytes: bytes,
       mimeType,
@@ -85,8 +122,11 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
     });
 
     if (!result.ok) {
-      await args.sendReply(`❌ Couldn't process that receipt: ${result.error || "unknown error"}`);
-      return true;        // we handled it (with a fail message) — don't fall through
+      // Soft failure ("no total" etc.) — almost certainly means the
+      // document isn't actually a receipt. Fall through silently so
+      // ChatBGP / brochure ingest get a shot at it.
+      console.warn(`[expense-receipt] soft-fail, falling through: ${result.error}`);
+      return false;
     }
     if (result.duplicateOf) {
       await args.sendReply(`👍 Already logged — same merchant + amount went in moments ago.`);
