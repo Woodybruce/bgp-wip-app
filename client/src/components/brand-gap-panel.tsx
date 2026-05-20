@@ -215,10 +215,10 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
                   <Link
                     key={b.brand_company_id}
                     href={`/companies/${b.brand_company_id}`}
-                    className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
+                    className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 min-w-0"
                   >
-                    <span className="font-medium truncate flex-1">{b.brand_name}</span>
-                    <Badge variant="outline" className="text-[9px] shrink-0">
+                    <span className="font-medium truncate flex-1 min-w-0">{b.brand_name}</span>
+                    <Badge variant="outline" className="text-[9px] shrink-0 whitespace-nowrap">
                       {b.total_stores} UK store{b.total_stores === 1 ? "" : "s"}
                     </Badge>
                     {b.rollout_status === "scaling" && (

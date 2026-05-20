@@ -268,7 +268,7 @@ export function InlineEngagement({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px]" data-testid="inline-engagement-trigger">
+        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
           {current.length === 0 ? (
             <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
               <Plus className="w-3 h-3" />
@@ -276,7 +276,7 @@ export function InlineEngagement({
             </span>
           ) : (
             current.map(v => (
-              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white ${colorMap[v] || "bg-gray-500"}`}>
+              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white whitespace-nowrap max-w-full truncate ${colorMap[v] || "bg-gray-500"}`} title={v}>
                 {v}
               </Badge>
             ))
@@ -4237,16 +4237,16 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
   return (
     <Card data-testid="property-news-panel">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Newspaper className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">News Feed</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{propertyName}</Badge>
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <Newspaper className="h-4 w-4 text-primary shrink-0" />
+            <span className="text-sm font-semibold shrink-0">News Feed</span>
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 truncate max-w-[180px]" title={propertyName}>{propertyName}</Badge>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1"
+            className="h-7 text-xs gap-1 shrink-0"
             onClick={() => refetch()}
             disabled={isFetching}
             data-testid="button-refresh-news"

@@ -328,13 +328,14 @@ export function InlineLabelSelect({ value, options, colorMap, labelMap, onSave, 
   const bg = value && colorMap?.[value] ? colorMap[value] : value ? "bg-gray-500" : "";
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 max-w-full">
       {value ? (
         <button
           ref={triggerRef}
           onClick={openDropdown}
-          className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
+          className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap overflow-hidden text-ellipsis max-w-full inline-block align-middle ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
           data-testid="inline-label-display"
+          title={(value && labelMap?.[value]) || value}
         >
           {(value && labelMap?.[value]) || value}
         </button>
