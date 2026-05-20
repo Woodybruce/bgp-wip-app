@@ -260,7 +260,7 @@ async function extractTextFromBuffer(buffer: Buffer, fileName: string): Promise<
   }
 }
 
-async function summarizeAndIndex(
+export async function summarizeAndIndex(
   fileName: string, filePath: string, fileUrl: string | null, folderUrl: string,
   content: string, sizeBytes: number, lastModified: Date | null, source: string
 ): Promise<boolean> {

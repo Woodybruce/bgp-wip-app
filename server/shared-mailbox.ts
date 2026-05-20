@@ -210,6 +210,12 @@ export async function replyToSharedMailboxMessage(
   ccRecipients?: string[],
   attachments?: EmailAttachment[]
 ): Promise<void> {
+  // Use createReply to get a draft with the original message already
+  // quoted by Outlook, then patch the body so our content sits ABOVE
+  // the auto-generated quote block — exactly like a normal Outlook
+  // reply. The previous approach (POST /reply with message.body) replaced
+  // the entire body, dropping the conversation history and making
+  // replies look like one-off automated bursts.
   const ccArray = ccRecipients?.map((email) => ({
     emailAddress: { address: email },
   }));
@@ -221,15 +227,63 @@ export async function replyToSharedMailboxMessage(
     contentBytes: a.contentBytes,
   }));
 
-  await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/reply`, {
+  // 1. Create the draft reply — Graph auto-populates the body with the
+  //    quoted original message and recipients.
+  const draft = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/createReply`, {
     method: "POST",
-    body: JSON.stringify({
-      message: {
-        body: { contentType: "HTML", content: body },
-        ...(ccArray && ccArray.length > 0 && { ccRecipients: ccArray }),
-        ...(graphAttachments && graphAttachments.length > 0 && { attachments: graphAttachments }),
-      },
-    }),
+    body: JSON.stringify({}),
+  });
+  const draftId = draft?.id;
+  if (!draftId) throw new Error("createReply returned no draft id");
+
+  // 2. Prepend our content above the existing quoted body. Graph's
+  //    default body content looks like:
+  //      <html><body><br><br>
+  //        <div style="border:none;border-top:solid #B5C4DF 1.0pt;...">
+  //          <b>From:</b> ...<br>
+  //          ...original message...
+  //        </div>
+  //      </body></html>
+  //    We splice our content in just after the opening <body> so the
+  //    quote stays intact below it.
+  const existing: string = draft?.body?.content || "";
+  const splice = (html: string, insert: string) => {
+    const m = html.match(/<body[^>]*>/i);
+    if (m) {
+      const idx = (m.index ?? 0) + m[0].length;
+      return html.slice(0, idx) + insert + html.slice(idx);
+    }
+    return insert + html;
+  };
+  const merged = existing
+    ? splice(existing, body)
+    : `<html><body>${body}</body></html>`;
+
+  // 3. Patch the draft with the merged body + cc + attachments.
+  const patchBody: any = {
+    body: { contentType: "HTML", content: merged },
+  };
+  if (ccArray && ccArray.length > 0) patchBody.ccRecipients = ccArray;
+
+  await graphRequest(`/users/${SHARED_MAILBOX}/messages/${draftId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patchBody),
+  });
+
+  // Attachments need their own POST per Graph's API contract — they
+  // can't be set via PATCH on a draft.
+  if (graphAttachments && graphAttachments.length > 0) {
+    for (const att of graphAttachments) {
+      await graphRequest(`/users/${SHARED_MAILBOX}/messages/${draftId}/attachments`, {
+        method: "POST",
+        body: JSON.stringify(att),
+      });
+    }
+  }
+
+  // 4. Send the draft.
+  await graphRequest(`/users/${SHARED_MAILBOX}/messages/${draftId}/send`, {
+    method: "POST",
   });
 }
 

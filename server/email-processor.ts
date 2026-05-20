@@ -232,14 +232,14 @@ Return JSON:
   "summary": "What was done"
 }
 
-REPLY STYLE — STRICT RULES (these are work emails, act accordingly):
-- Professional, neutral tone. Plain business English.
-- NO emojis. NO emoticons. NO exclamation marks except in direct quotes from the sender.
-- NO jokes, banter, commentary, or colloquialisms (no "Ha!", "Nice try", "Enjoy the day off", "crack on", etc.).
-- NO meta-commentary on whether the email "meets a threshold" or was "formal enough" — never lecture the sender.
-- 1-3 short sentences. If you did actions, state them factually. If you did nothing because there was no actionable request, reply with: "Received. No action taken — no specific request identified. Reply with a clearer instruction if you need something done."
-- Never infer personal context (leave, cover, social events) or reference it in the reply. Stick to what you actually did.
-- Sign-off: no signature. The system appends "— ChatBGP" automatically.`;
+REPLY STYLE:
+- Write like a competent colleague replying inside an active email thread, NOT a help-desk bot. The recipient will see your reply on top of the original Outlook conversation — don't pretend the thread doesn't exist or ask them to "resend the full chain". If the body looks truncated, do your best with what you've got and ask one specific follow-up question if anything's missing.
+- Professional but warm. Business English. Contractions OK ("I've", "we'll"). No emojis, no exclamation marks, no jokes.
+- 2-5 sentences. Lead with what you did or what you found, then any caveats or asks. Don't pad with "Thanks for forwarding" / "Happy to help" boilerplate.
+- If you took CRM actions (logged an interaction, created a deal etc.), mention them in one short sentence inline — don't dump a bullet list of "Actions taken" at the bottom.
+- Never write "This is an automated response" or anything like it — the system doesn't append a footer any more.
+- Never lecture about what wasn't included, what threshold the request met, etc.
+- Sign off with "ChatBGP" on its own line. No corporate signature, no disclaimers — the recipient already has BGP's signature in the thread below.`;
 
 interface EmailClassification {
   classification: string;
@@ -917,6 +917,32 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
       const toRecipients = (msg.toRecipients || []).map((r: any) => r.emailAddress?.address || "");
       const ccRecipients = (msg.ccRecipients || []).map((r: any) => r.emailAddress?.address || "");
 
+      // Index every incoming email body into the knowledge base so the
+      // archivist surface (search, "what did Jack say about TCR?",
+      // chatbgp recall) can quote from it later. Skipped if the body
+      // is essentially empty or under the 50-char threshold the
+      // archivist itself enforces. Fire-and-forget — failure here
+      // must not block the reply path.
+      const kbContent = `From: ${fromName || fromEmail} <${fromEmail}>\nDate: ${receivedAt.toISOString()}\nSubject: ${subject}\n\n${bodyText}`;
+      const kbPath = `email://shared/${messageId}`;
+      (async () => {
+        try {
+          const { summarizeAndIndex } = await import("./archivist");
+          await summarizeAndIndex(
+            `Email: ${subject}`,
+            kbPath,
+            msg.webLink || null,
+            "email://shared",
+            kbContent,
+            kbContent.length,
+            receivedAt,
+            "email",
+          );
+        } catch (kbErr: any) {
+          console.warn(`[email-processor] KB index failed for ${messageId}:`, kbErr?.message || kbErr);
+        }
+      })();
+
       try {
         const classification = await classifyEmail(subject, bodyText, fromEmail, toRecipients, ccRecipients);
         console.log(`[email-processor] ${subject} → ${classification.classification} (${classification.urgency})`);
@@ -1099,32 +1125,15 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
   return { processed, errors };
 }
 
-function formatReplyHtml(reply: string, actions: ProcessedAction[]): string {
-  // Filter out internal diagnostic results that aren't useful to a recipient.
-  // "Action type X acknowledged …", "Found 0 contacts …", URGENT-flagged
-  // internal notes, etc. — these are AI bookkeeping, not customer copy.
-  // Surface only results that genuinely report an outcome (sent X,
-  // scheduled Y, drafted Z) — and even then keep them collapsed in a
-  // small note so the email reads like a person, not a logfile.
-  const VISIBLE_PREFIXES = ["Sent ", "Drafted ", "Scheduled ", "Created ", "Updated ", "Logged ", "Filed "];
-  const visibleActions = actions
-    .filter((a) => a.success && a.result)
-    .filter((a) => VISIBLE_PREFIXES.some((p) => a.result.startsWith(p)));
-
-  const actionList = visibleActions.map((a) => `<li>${a.result}</li>`).join("");
-
-  return `
-    <div style="font-family: Arial, Helvetica, sans-serif; color: #333;">
-      <p>${reply.replace(/\n/g, "<br>")}</p>
-      ${actionList ? `
-        <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-        <p style="color: #666; font-size: 12px; margin: 0 0 4px 0;">Logged in BGP:</p>
-        <ul style="color: #666; font-size: 12px; margin: 0;">${actionList}</ul>
-      ` : ""}
-      <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-      <p style="color: #999; font-size: 11px;">This is an automated response from ChatBGP. For complex requests, please use the <a href="https://bgp-wip-app-production-efac.up.railway.app/chatbgp">ChatBGP dashboard</a>.</p>
-    </div>
-  `;
+function formatReplyHtml(reply: string, _actions: ProcessedAction[]): string {
+  // Strip everything that made the reply read like a bot: the "Logged
+  // in BGP" bullet list and the "This is an automated response" footer.
+  // The reply body alone — written by the Claude prompt as a normal
+  // email — is what we send. Outlook's quoted thread is appended by
+  // replyToSharedMailboxMessage below, so the recipient sees a clean
+  // human-style reply on top of the conversation history they expect.
+  const escapedHtml = reply.replace(/\n/g, "<br>");
+  return `<div style="font-family: Arial, Helvetica, sans-serif; color: #222;">${escapedHtml}</div>`;
 }
 
 let processingInterval: ReturnType<typeof setInterval> | null = null;
