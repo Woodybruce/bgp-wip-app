@@ -1130,6 +1130,34 @@ import { pool } from "./db";
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
 
+    // Scheduled jobs — ChatBGP can author rows via sql_write; the worker
+    // in server/scheduled-jobs.ts polls every minute. Migration 0013 is
+    // the canonical version; mirrored here so a DB that lost track of
+    // that migration (or never ran it) still gets the table on boot
+    // rather than logging "relation scheduled_jobs does not exist"
+    // every 60 seconds. Idempotent — IF NOT EXISTS throughout.
+    `CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      name            TEXT NOT NULL,
+      description     TEXT,
+      schedule_kind   TEXT NOT NULL,
+      schedule_value  TEXT NOT NULL,
+      action_kind     TEXT NOT NULL,
+      action_payload  JSONB NOT NULL,
+      enabled         BOOLEAN NOT NULL DEFAULT true,
+      created_by      VARCHAR,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      next_run_at     TIMESTAMPTZ NOT NULL,
+      last_run_at     TIMESTAMPTZ,
+      last_run_status TEXT,
+      last_run_output TEXT,
+      last_run_ms     INTEGER,
+      run_count       INTEGER NOT NULL DEFAULT 0,
+      error_count     INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE INDEX IF NOT EXISTS scheduled_jobs_next_run_idx
+       ON scheduled_jobs (next_run_at) WHERE enabled = true`,
+
     // Tenant Rep status board
     `CREATE TABLE IF NOT EXISTS tenant_rep_searches (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1156,10 +1184,11 @@ import { pool } from "./db";
     // so the board read "112 active searches" but every column was empty.
     // Drop the rows that don't belong to a Tenant Rep deal, then relabel the
     // genuine ones so they appear in the Brief Received column.
+    // crm_deals.team is text[] — array membership check, not string compare.
     `DELETE FROM tenant_rep_searches s
        USING crm_deals d
       WHERE s.deal_id = d.id
-        AND LOWER(COALESCE(d.team, '')) <> 'tenant rep'`,
+        AND (d.team IS NULL OR NOT ('Tenant Rep' = ANY(d.team)))`,
     `UPDATE tenant_rep_searches SET status = 'Brief Received' WHERE status = 'In Progress'`,
 
     // Document Studio run history — created lazily here because it's not in
