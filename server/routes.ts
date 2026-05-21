@@ -10,7 +10,6 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import crypto from "crypto";
-import { saveFile, getFile } from "./file-storage";
 import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
@@ -472,6 +471,31 @@ export async function registerRoutes(
 
   app.get("/api/config/maps-key", requireAuth, (_req, res) => {
     res.json({ key: process.env.GOOGLE_API_KEY || "" });
+  });
+
+  const GOAD_DIR = path.join(process.cwd(), "data", "goad");
+  const GOAD_LAYERS: Record<string, string> = {
+    lg: "9033MM_LG_WGS84.geojson",
+    gf: "9033MM_GF_WGS84.geojson",
+    f1: "9033MM_F1_WGS84.geojson",
+    f2: "9033MM_F2_WGS84.geojson",
+  };
+  app.get("/api/goad/layers", requireAuth, (_req, res) => {
+    const layers = Object.entries(GOAD_LAYERS).map(([id, file]) => {
+      const p = path.join(GOAD_DIR, file);
+      const exists = fs.existsSync(p);
+      return { id, file, exists, sizeBytes: exists ? fs.statSync(p).size : 0 };
+    });
+    res.json({ centreCode: "9033MM", centreName: "London West End", layers });
+  });
+  app.get("/api/goad/:layer", requireAuth, (req, res) => {
+    const file = GOAD_LAYERS[req.params.layer.toLowerCase()];
+    if (!file) return res.status(404).json({ message: "Unknown Goad layer" });
+    const diskPath = path.join(GOAD_DIR, file);
+    if (!fs.existsSync(diskPath)) return res.status(404).json({ message: "Goad layer file not found" });
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("Content-Type", "application/geo+json");
+    return res.sendFile(diskPath);
   });
 
   app.get("/api/users", requireAuth, async (_req, res) => {

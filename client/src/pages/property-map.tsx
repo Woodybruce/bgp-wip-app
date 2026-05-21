@@ -26,10 +26,12 @@ import {
   Ruler,
   Trash2,
   Crosshair,
+  Layers,
 } from "lucide-react";
 import { Link } from "wouter";
 import type { CrmProperty } from "@shared/schema";
 import { loadGoogleMaps, isGoogleMapsLoaded } from "@/lib/google-maps-loader";
+import { getAuthHeaders } from "@/lib/queryClient";
 
 const STATUS_COLORS: Record<string, string> = {
   "BGP Active": "bg-emerald-500",
@@ -51,6 +53,40 @@ const MARKER_COLORS: Record<string, string> = {
 
 const DEFAULT_CENTER = { lat: 51.4995, lng: -0.1527 };
 const DEFAULT_ZOOM = 14;
+
+const GOAD_LAYER_IDS = ["lg", "gf", "f1", "f2"] as const;
+type GoadLayerId = typeof GOAD_LAYER_IDS[number];
+
+// Goad polygon colour palette by Category attribute (matches the Experian "Goad code" groupings).
+function goadCategoryColor(category: string | null | undefined): string {
+  if (!category) return "#9ca3af";
+  const c = category.toUpperCase();
+  if (c.startsWith("VACANT")) return "#ef4444"; // red — vacant
+  if (c === "OFFICES") return "#3b82f6"; // blue
+  if (c === "ENTRANCE & STORES") return "#cbd5e1"; // light slate — back of house
+  if (
+    c === "RESTAURANTS" || c === "CAFES" || c === "PUBLIC HOUSES" ||
+    c === "BARS & WINE BARS" || c === "FAST FOOD & TAKE AWAY" ||
+    c === "BAKERS & CONFECTIONERS"
+  ) return "#f59e0b"; // amber — F&B
+  if (c === "HEALTH & BEAUTY" || c === "TOILETRIES, COSMETICS & BEAUTY PRODUCTS") return "#ec4899"; // pink
+  if (
+    c === "LADIES & MENS WEAR & ACC." || c === "FOOTWEAR" ||
+    c === "JEWELLERY, WATCHES & SILVER" || c === "ART & ART DEALERS"
+  ) return "#8b5cf6"; // violet — fashion / luxury
+  if (c === "HOTELS & GUEST HOUSES") return "#0ea5e9"; // sky
+  return "#10b981"; // emerald — everything else
+}
+
+const GOAD_LEGEND: Array<{ label: string; color: string }> = [
+  { label: "Vacant", color: "#ef4444" },
+  { label: "F&B", color: "#f59e0b" },
+  { label: "Fashion/Luxury", color: "#8b5cf6" },
+  { label: "Health & Beauty", color: "#ec4899" },
+  { label: "Offices", color: "#3b82f6" },
+  { label: "Hotels", color: "#0ea5e9" },
+  { label: "Other retail", color: "#10b981" },
+];
 
 const RADIUS_OPTIONS = [
   { label: "50m", value: 50 },
@@ -152,6 +188,16 @@ export default function PropertyMap() {
   const distanceTempMarkerRef = useRef<google.maps.Marker | null>(null);
   const radiusClickListenerRef = useRef<google.maps.MapsEventListener | null>(null);
   const distanceClickListenerRef = useRef<google.maps.MapsEventListener | null>(null);
+
+  const [goadEnabled, setGoadEnabled] = useState(false);
+  const [goadLoading, setGoadLoading] = useState(false);
+  const [goadError, setGoadError] = useState<string | null>(null);
+  const [goadFeatureCount, setGoadFeatureCount] = useState(0);
+  // google.maps.Data class+namespace merging trips up TS in the installed
+  // @types version — these layer/event refs are typed as any. Runtime is fine.
+  const goadLayersRef = useRef<any[]>([]);
+  const goadCacheRef = useRef<Map<GoadLayerId, any>>(new Map());
+  const goadInfoWindowRef = useRef<google.maps.InfoWindow | null>(null);
 
   const { data: properties = [], isLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
@@ -626,6 +672,107 @@ export default function PropertyMap() {
     }
   }, []);
 
+  useEffect(() => {
+    const map = googleMapRef.current;
+    if (!map || !scriptReady) return;
+
+    if (!goadEnabled) {
+      goadLayersRef.current.forEach((d) => d.setMap(null));
+      goadLayersRef.current = [];
+      goadInfoWindowRef.current?.close();
+      setGoadFeatureCount(0);
+      setGoadError(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setGoadLoading(true);
+      setGoadError(null);
+      try {
+        const layers: any[] = [];
+        let total = 0;
+        for (const id of GOAD_LAYER_IDS) {
+          let geo = goadCacheRef.current.get(id);
+          if (!geo) {
+            const resp = await fetch(`/api/goad/${id}`, { headers: getAuthHeaders() });
+            if (!resp.ok) {
+              if (resp.status === 404) continue;
+              throw new Error(`Failed to load ${id} layer (${resp.status})`);
+            }
+            geo = await resp.json();
+            goadCacheRef.current.set(id, geo);
+          }
+          if (cancelled) return;
+          const dataLayer = new (google.maps as any).Data({ map });
+          dataLayer.addGeoJson(geo);
+          dataLayer.setStyle((feature: any) => ({
+            fillColor: goadCategoryColor(feature.getProperty("Category") as string),
+            fillOpacity: 0.55,
+            strokeColor: "#1f2937",
+            strokeWeight: 0.5,
+            clickable: true,
+          }));
+          dataLayer.addListener("click", (event: any) => {
+            const f = event.feature;
+            const fascia = (f.getProperty("FasciaMas") || f.getProperty("Fascia") || "").toString();
+            const activity = (f.getProperty("PrimaryAc") || f.getProperty("Activity") || "").toString();
+            const category = (f.getProperty("Category") || "").toString();
+            const useClass = (f.getProperty("UseClass") || "").toString();
+            const num = (f.getProperty("StreetNum") || "").toString();
+            const street = (f.getProperty("StreetName") || "").toString();
+            const postcode = (f.getProperty("Postcode") || "").toString();
+            const holding = (f.getProperty("HoldingCo") || "").toString();
+            const areaFt2 = f.getProperty("Area_ft2");
+            const subclass = (f.getProperty("Subclass") || "").toString();
+            const floorLabel =
+              subclass === "Retailgf" ? "Ground" :
+              subclass === "Retaillg" ? "Lower Ground" :
+              subclass === "Retailf1" ? "First Floor" :
+              subclass === "Retailf2" ? "Second Floor" : "";
+            const tenant = fascia || activity || "(no fascia)";
+            const isVacant = (activity || "").toUpperCase() === "VACANT" || category.toUpperCase().startsWith("VACANT");
+            const html = `
+              <div style="padding:8px;max-width:280px;font-family:system-ui,sans-serif;">
+                <p style="font-weight:600;font-size:14px;margin:0 0 4px;">
+                  ${isVacant ? "<span style='color:#ef4444;'>VACANT — </span>" : ""}${tenant}
+                </p>
+                ${activity && activity !== tenant ? `<p style='font-size:12px;color:#444;margin:0 0 4px;'>${activity}</p>` : ""}
+                ${[num, street].filter(Boolean).join(" ")}${postcode ? `, ${postcode}` : ""}
+                <p style="font-size:11px;color:#666;margin:6px 0 0;">
+                  ${category}${useClass ? ` · Use Class ${useClass}` : ""}
+                </p>
+                ${floorLabel ? `<p style='font-size:11px;color:#666;margin:2px 0 0;'>${floorLabel}${areaFt2 ? ` · ${Number(areaFt2).toLocaleString()} sqft` : ""}</p>` : ""}
+                ${holding && holding !== "NON MULTIPLE" ? `<p style='font-size:11px;color:#888;margin:4px 0 0;'>Parent: ${holding}</p>` : ""}
+              </div>
+            `;
+            if (!goadInfoWindowRef.current) goadInfoWindowRef.current = new google.maps.InfoWindow();
+            const iw = goadInfoWindowRef.current as any;
+            iw.setContent(html);
+            iw.setPosition(event.latLng);
+            iw.open(map);
+          });
+          layers.push(dataLayer);
+          total += (geo?.features?.length || 0);
+        }
+        if (cancelled) {
+          layers.forEach((d) => d.setMap(null));
+          return;
+        }
+        goadLayersRef.current = layers;
+        setGoadFeatureCount(total);
+      } catch (err: any) {
+        setGoadError(err?.message || "Failed to load Goad data");
+      } finally {
+        if (!cancelled) setGoadLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [goadEnabled, scriptReady]);
+
   const statuses = useMemo(() => {
     const s = new Set<string>();
     properties.forEach((p) => p.status && s.add(p.status));
@@ -752,6 +899,19 @@ export default function PropertyMap() {
           <Ruler className="w-3.5 h-3.5 mr-1" /> Distance
         </Button>
 
+        <div className="h-5 w-px bg-border mx-1" />
+
+        <Button
+          variant={goadEnabled ? "default" : "outline"}
+          size="sm"
+          onClick={() => setGoadEnabled((v) => !v)}
+          className={goadEnabled ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}
+          data-testid="button-toggle-goad"
+        >
+          {goadLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Layers className="w-3.5 h-3.5 mr-1" />}
+          Goad {goadEnabled && goadFeatureCount > 0 ? `(${goadFeatureCount.toLocaleString()})` : ""}
+        </Button>
+
         {activeTool === "radius" && (
           <Select
             value={selectedRadius.toString()}
@@ -835,14 +995,32 @@ export default function PropertyMap() {
         </div>
       )}
 
-      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0 flex-wrap">
         {Object.entries(STATUS_COLORS).map(([status, bg]) => (
           <div key={status} className="flex items-center gap-1">
             <div className={`w-2.5 h-2.5 rounded-full ${bg}`} />
             <span>{status}</span>
           </div>
         ))}
+        {goadEnabled && (
+          <>
+            <div className="h-3 w-px bg-border" />
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80">Goad:</span>
+            {GOAD_LEGEND.map((g) => (
+              <div key={g.label} className="flex items-center gap-1">
+                <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: g.color }} />
+                <span>{g.label}</span>
+              </div>
+            ))}
+          </>
+        )}
       </div>
+
+      {goadError && (
+        <div className="px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/30 text-xs text-destructive">
+          Goad layer error: {goadError}
+        </div>
+      )}
 
       <div className={`flex gap-4 flex-1 min-h-0 ${viewMode === "map" ? "" : "flex-col lg:flex-row"}`}>
         {viewMode === "split" && (
