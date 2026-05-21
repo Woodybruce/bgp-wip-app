@@ -512,14 +512,13 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
     const dryRun = req.body?.dryRun === true;
     const limit = Math.min(Number(req.body?.limit) || 200, 500);
 
-    // Find rows that look business-y AND have a UPRN we can re-resolve.
-    // Match criteria mirror the in-flight heuristic in property-resolver.ts
-    // and brand-images.ts: letters present, no digits, no commas, short.
-    const { rows } = await pool.query<{ id: string; name: string; uprn: string }>(
-      `SELECT id, name, uprn
+    // Find rows that look business-y. UPRN no longer required — the
+    // fallback path can derive a name from the property's stored
+    // address jsonb when OS Places can't help (or the UPRN is stale).
+    const { rows } = await pool.query<{ id: string; name: string; uprn: string | null; address: any; postcode: string | null }>(
+      `SELECT id, name, uprn, address, postcode
          FROM crm_properties
-        WHERE uprn IS NOT NULL
-          AND name ~ '[A-Za-z]'
+        WHERE name ~ '[A-Za-z]'
           AND name !~ '[0-9]'
           AND position(',' in name) = 0
           AND char_length(name) < 50
@@ -528,18 +527,66 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
       [limit]
     );
 
-    const samples: { id: string; oldName: string; newName: string }[] = [];
+    const samples: { id: string; oldName: string; newName: string; source: string }[] = [];
+    const skipped: { id: string; oldName: string; reason: string }[] = [];
     let renamed = 0;
     const { osPlacesByUprn } = await import("./os-data");
     const { derivePropertyNameFromDpa } = await import("./property-resolver");
 
-    for (const r of rows) {
+    // Build the same line1-style name from a stored address jsonb when
+    // OS Places isn't available. Splits on comma, picks the first chunk
+    // that looks like a street (number + words), title-cases the result.
+    const deriveFromAddressJsonb = (addr: any): string | null => {
+      if (!addr) return null;
+      const formatted = typeof addr === "string"
+        ? addr
+        : (addr.formatted || addr.line1 || "");
+      if (!formatted) return null;
+      // Reuse the resolver's logic by faking a DPA shape it understands.
       try {
-        const dpa = await osPlacesByUprn(r.uprn);
-        if (!dpa) continue;
-        const newName = (derivePropertyNameFromDpa as any)(dpa) as string;
-        if (!newName || newName === r.name) continue;
-        samples.push({ id: r.id, oldName: r.name, newName });
+        return (derivePropertyNameFromDpa as any)({ address: formatted } as any);
+      } catch {
+        // Last-resort split: first comma-separated chunk title-cased.
+        const first = String(formatted).split(",")[0]?.trim() || "";
+        return first || null;
+      }
+    };
+
+    for (const r of rows) {
+      let newName: string | null = null;
+      let source = "";
+      try {
+        if (r.uprn) {
+          const dpa = await osPlacesByUprn(r.uprn);
+          if (dpa) {
+            const candidate = (derivePropertyNameFromDpa as any)(dpa) as string;
+            if (candidate && candidate !== r.name && candidate !== "Unknown property") {
+              newName = candidate;
+              source = "os-places-uprn";
+            }
+          }
+        }
+        if (!newName) {
+          // Fallback: use the property's stored address jsonb. Salvages
+          // rows whose UPRN is stale / unrecognised by OS Places (or
+          // where the row never had a UPRN, but the address survives).
+          const fromAddr = deriveFromAddressJsonb(r.address);
+          if (fromAddr && fromAddr !== r.name && fromAddr !== "Unknown property") {
+            newName = fromAddr;
+            source = "address-jsonb";
+          }
+        }
+
+        if (!newName) {
+          skipped.push({
+            id: r.id,
+            oldName: r.name,
+            reason: r.uprn ? "OS Places didn't recognise UPRN + no usable address jsonb" : "no UPRN and no usable address jsonb",
+          });
+          continue;
+        }
+
+        samples.push({ id: r.id, oldName: r.name, newName, source });
         if (!dryRun) {
           await pool.query(
             `UPDATE crm_properties SET name = $2, updated_at = NOW() WHERE id = $1`,
@@ -549,10 +596,17 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
         }
       } catch (err: any) {
         console.warn(`[heal-property-names] failed for ${r.id} (${r.name}):`, err?.message);
+        skipped.push({ id: r.id, oldName: r.name, reason: err?.message || "error" });
       }
     }
 
-    res.json({ scanned: rows.length, renamed, dryRun, samples: samples.slice(0, 50) });
+    res.json({
+      scanned: rows.length,
+      renamed,
+      dryRun,
+      samples: samples.slice(0, 50),
+      skipped: skipped.slice(0, 50),
+    });
   } catch (e: any) {
     console.error("[heal-property-names] failed:", e?.message);
     res.status(500).json({ error: e?.message || "heal failed" });
