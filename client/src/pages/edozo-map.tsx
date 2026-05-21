@@ -4292,13 +4292,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           if (Math.min(widthPx, heightPx) < 14 || Math.max(widthPx, heightPx) < 30) {
             // nothing — fall through, no label
           } else {
-            // 2) Choose 0° or 90° based on actual screen orientation.
-            //    (PCA on lng/lat is fine for ground direction, but we
-            //    care about how the unit looks on screen.)
-            const isVertical = heightPx > widthPx * 1.25;
-            const longPx = isVertical ? heightPx : widthPx;
-            const shortPx = isVertical ? widthPx : heightPx;
-            const angle = isVertical ? 90 : 0;
+            // 2) Always horizontal. Woody's Goad-PDF reference uses
+            //    horizontal labels almost everywhere; the 90° snap I had
+            //    was triggering on too many diagonal-street units (e.g.
+            //    Bond Street) and making the map look tilted. Polygons
+            //    too narrow to fit a horizontal label just get hidden by
+            //    the fit-to-shape guard below.
+            const longPx = widthPx;
+            const shortPx = heightPx;
+            const angle = 0;
 
             // 3) Fit text into the long edge. Condensed sans at typical
             //    weight uses ~0.55 of fontSize per char. We pick the
