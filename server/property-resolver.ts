@@ -717,11 +717,41 @@ async function annotateCandidates(results: OsPlacesResult[]): Promise<ResolverCa
     // with "op ANY/ALL (array) requires array on right side". inArray
     // (or sql`... IN ${arr}`) handles the array binding correctly.
     const existing = await db
-      .select({ id: crmProperties.id, uprn: crmProperties.uprn })
+      .select({ id: crmProperties.id, uprn: crmProperties.uprn, name: crmProperties.name })
       .from(crmProperties)
       .where(inArray(crmProperties.uprn, uprns));
+
+    // Auto-heal stale business-name properties at the candidates stage.
+    // The bug we keep hitting: an earlier wrong run stamped a business
+    // tenant name (e.g. "The Pantry Cafe") onto a property at 108
+    // Chiswick. The resolver returns candidates, the client adopts the
+    // existing property directly (bypassing the establishment-name
+    // override that's applied to fully-resolved results), so the wrong
+    // name persists forever.
+    //
+    // Fix: when we discover an existing property at one of these UPRNs
+    // and its name looks like a stale business string, refresh from
+    // the candidate's DPA address before stamping the existingPropertyId.
     for (const e of existing) {
-      if (e.uprn) byUprn.set(e.uprn, e.id);
+      if (!e.uprn) continue;
+      byUprn.set(e.uprn, e.id);
+      const currentName = String(e.name || "").trim();
+      const looksBusinessy = /[A-Za-z]/.test(currentName)
+        && !/\d/.test(currentName)
+        && !currentName.includes(",")
+        && currentName.length < 50;
+      if (!looksBusinessy) continue;
+      const candidate = results.find((r) => r.uprn === e.uprn);
+      if (!candidate?.address) continue;
+      const newName = derivePropertyNameFromDpa(candidate);
+      if (newName && newName !== currentName) {
+        try {
+          console.log(`[resolver] refreshing stale business-name in candidates: "${currentName}" → "${newName}" (UPRN ${e.uprn})`);
+          await db.update(crmProperties).set({ name: newName }).where(eq(crmProperties.id, e.id));
+        } catch (err: any) {
+          console.warn(`[resolver] couldn't refresh candidate name for ${e.id}:`, err?.message);
+        }
+      }
     }
   }
   return results.map((r) => ({
