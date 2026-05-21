@@ -429,6 +429,47 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   if (resolved && resolved.kind === "resolved") {
     console.log(`[resolver] final property id=${(resolved.property as any)?.id} name="${(resolved.property as any)?.name}" uprn=${(resolved.property as any)?.uprn} source=${resolved.source}`);
   }
+
+  // Auto-heal stale business-name properties. The bug: in an earlier
+  // run (before the building-vs-business filter), the establishment-name
+  // override stamped a tenant's business name (e.g. "The Pantry Cafe")
+  // onto a property at 108 Chiswick High Road. The property still has
+  // a real UPRN, so subsequent resolves keep returning it — with the
+  // stale wrong name. Detect that case and refresh from the DPA.
+  //
+  // Trigger conditions (all must hold):
+  //   - We explicitly decided NOT to use an establishment name this time
+  //     (the place is a business or generic address). For genuine
+  //     landmarks (The Shard / Westfield), establishmentName is set and
+  //     handled below — we never enter this branch for them.
+  //   - The stored name looks business-y (letters but no digits, no
+  //     commas, short). "108 Chiswick High Road" has digits so it
+  //     wouldn't trip.
+  //   - We have a UPRN to fetch a fresh DPA from.
+  if (resolved && resolved.kind === "resolved" && !establishmentName) {
+    const property = resolved.property as any;
+    const currentName = String(property.name || "").trim();
+    const looksBusinessy = /[A-Za-z]/.test(currentName)
+      && !/\d/.test(currentName)
+      && !currentName.includes(",")
+      && currentName.length < 50;
+    if (looksBusinessy && property.uprn) {
+      try {
+        const dpa = await osPlacesByUprn(property.uprn);
+        if (dpa) {
+          const newName = derivePropertyNameFromDpa(dpa);
+          if (newName && newName !== currentName) {
+            console.log(`[resolver] refreshing stale business-name property "${currentName}" → "${newName}" (UPRN ${property.uprn})`);
+            await db.update(crmProperties).set({ name: newName }).where(eq(crmProperties.id, property.id));
+            property.name = newName;
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[resolver] couldn't refresh stale name for property ${property.id}:`, e?.message);
+      }
+    }
+  }
+
   // Establishment name (e.g. "The Shard", "Hartsfield Manor", "Westfield
   // London") wins over the street name. Only overwrites the auto-derived
   // line1-style name; never trashes a value a user has already curated.
