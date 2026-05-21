@@ -247,11 +247,16 @@ export function PropertyCombobox({
             />
             <CommandList>
               <CommandEmpty>
-                {search.trim().length < 3
-                  ? "Type 3+ characters to search…"
-                  : googleLoading
-                  ? "Searching addresses…"
-                  : "No matches yet."}
+                {(() => {
+                  const q = search.trim();
+                  if (q.length < 3) return "Type 3+ characters to search…";
+                  if (googleLoading) return "Searching addresses…";
+                  if (!googleReady) return "Address search unavailable — try typing your existing property name.";
+                  // Google ran and returned nothing — usually a typo or
+                  // a place Google doesn't index. Tell the user how to
+                  // recover rather than leave them staring at "no matches".
+                  return `No address matches for "${q}". Check spelling, try a postcode, or include the town (e.g. "Brixton, London").`;
+                })()}
               </CommandEmpty>
 
               {items.length > 0 && (
