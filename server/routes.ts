@@ -48,6 +48,7 @@ import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { setupDocumentPreferencesRoutes } from "./document-preferences";
 import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
+import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
@@ -512,15 +513,18 @@ export async function registerRoutes(
     const holding = String(req.query.holding || "").trim();
     const lat = req.query.lat ? Number(req.query.lat) : undefined;
     const lng = req.query.lng ? Number(req.query.lng) : undefined;
-    if (!postcode && !street) return res.json({ crmProperties: [], deals: [], parentCompany: null, landRegistry: null });
+    if (!postcode && !street) {
+      return res.json({ crmProperties: [], deals: [], parentCompany: null, landRegistry: null, rates: [], planningApplications: [], pathwayRun: null });
+    }
 
     const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
     // Reconstruct the address line for the Land Registry resolver.
     const lrAddress = [streetNum, street, postcode].filter(Boolean).join(" ");
     const userId = req.session?.userId || req.tokenUserId || null;
+    const PD_KEY = process.env.PROPERTYDATA_API_KEY;
 
     try {
-      const [crmRows, dealRows, parentRows, lrResult] = await Promise.all([
+      const [crmRows, dealRows, parentRows, lrResult, planningResult, pathwayRow] = await Promise.all([
         pool.query(
           `SELECT id, name, status, asset_class, sqft, postcode, latitude, longitude,
                   address, monday_item_id, group_name
@@ -565,6 +569,28 @@ export async function registerRoutes(
               skipPersist: true,
             }).catch((err: any) => ({ ok: false, status: 500, error: err?.message || "lr lookup failed" }))
           : Promise.resolve({ ok: false, status: 0, error: "no address" }),
+        // Planning applications via PropertyData (last 7300 days = ~20 yrs;
+        // we'll cap at 10 yrs client-side, but ask for plenty so the cap
+        // bites correctly). Returns nothing if no API key configured.
+        PD_KEY && postcode
+          ? fetch(`https://api.propertydata.co.uk/planning-applications?${new URLSearchParams({ key: PD_KEY, postcode, max_age: "3650" }).toString()}`, { signal: AbortSignal.timeout(8000) })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((j: any) => (Array.isArray(j?.data) ? j.data : []))
+              .catch(() => [] as any[])
+          : Promise.resolve([] as any[]),
+        // Latest Pathway run for this address/postcode — so the panel can
+        // either link to it or surface a "Start Pathway" button.
+        postcode || street
+          ? pool.query(
+              `SELECT id, address, postcode, status, updated_at
+               FROM property_pathway_runs
+               WHERE ($1 <> '' AND REPLACE(UPPER(postcode), ' ', '') = $1)
+                  OR ($2 <> '' AND LOWER(address) LIKE $2)
+               ORDER BY updated_at DESC
+               LIMIT 1`,
+              [postcode.replace(/\s+/g, ""), addressPattern.toLowerCase()],
+            ).then((r) => r.rows[0] || null).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       let landRegistry: any = null;
@@ -573,13 +599,53 @@ export async function registerRoutes(
         landRegistry = {
           resolvedAddress: r.resolvedAddress,
           buildingName: r.buildingName,
-          source: r.source,
-          freeholds: (r.matched?.freeholds || []).slice(0, 8),
-          leaseholds: (r.matched?.leaseholds || []).slice(0, 8),
+          source: r.source, // "uprn" | "street_number" | "postcode_only"
           exact: r.matched?.exact || false,
           uprns: r.uprns || [],
+          matched: {
+            freeholds: (r.matched?.freeholds || []).slice(0, 8),
+            leaseholds: (r.matched?.leaseholds || []).slice(0, 8),
+          },
+          fallback: {
+            freeholds: (r.fallback?.freeholds || []).slice(0, 8),
+            leaseholds: (r.fallback?.leaseholds || []).slice(0, 8),
+            usedStreetNumberMatch: r.fallback?.usedStreetNumberMatch || false,
+          },
         };
       }
+
+      // VOA rates from the SQLite snapshot — by postcode then narrowed by
+      // the Goad street number when present. Returns the actual unit-level
+      // rateable values, not a postcode-wide aggregate.
+      let rates: any[] = [];
+      if (postcode && voaSqliteAvailable()) {
+        const all = lookupVoaByPostcode(postcode, street || undefined, 60);
+        const numTrimmed = streetNum.replace(/\s+/g, "").toLowerCase();
+        if (numTrimmed) {
+          // Match if the VOA address starts with this number (e.g. "188-196 Regent Street" → starts with "188")
+          const head = numTrimmed.split(/[-–—,]/)[0];
+          rates = all.filter((r) => {
+            const addr = (r.address || "").toLowerCase().replace(/\s+/g, " ");
+            return head && (addr.startsWith(head + " ") || addr.startsWith(head + ",") || addr.startsWith(head + "-") || addr.includes(`/${head} `) || addr.startsWith(numTrimmed));
+          });
+          // Fall back to the whole postcode list if filtering nuked everything
+          if (rates.length === 0) rates = all.slice(0, 30);
+        } else {
+          rates = all.slice(0, 30);
+        }
+      }
+
+      // Planning applications: cap at 10 yrs (PD returns dates in d.decided_date / d.received_date)
+      const TEN_YEARS_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - TEN_YEARS_MS;
+      const planningApplications = (planningResult as any[])
+        .filter((a) => {
+          const d = a?.decided_date || a?.received_date || a?.date;
+          if (!d) return true; // keep undated
+          const t = new Date(d).getTime();
+          return Number.isFinite(t) ? t >= cutoff : true;
+        })
+        .slice(0, 20);
 
       res.json({
         crmProperties: crmRows.rows,
@@ -587,6 +653,9 @@ export async function registerRoutes(
         parentCompany: parentRows.rows[0] || null,
         parentCompanyCandidates: parentRows.rows,
         landRegistry,
+        rates,
+        planningApplications,
+        pathwayRun: pathwayRow || null,
       });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to load polygon context" });

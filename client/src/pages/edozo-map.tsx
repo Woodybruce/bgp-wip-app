@@ -3360,7 +3360,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // Goad polygon → combined side panel. Holds the clicked feature's
   // properties plus any joined context fetched via /api/goad/polygon-context.
   const [goadPanelUnit, setGoadPanelUnit] = useState<any | null>(null);
-  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null } | null>(null);
+  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null } | null>(null);
+  const [goadPanelStartingPathway, setGoadPanelStartingPathway] = useState(false);
   const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
@@ -4388,7 +4389,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled) return;
-        setGoadPanelContext(data || { crmProperties: [], deals: [], parentCompany: null, parentCompanyCandidates: [] });
+        setGoadPanelContext(data || { crmProperties: [], deals: [], parentCompany: null, parentCompanyCandidates: [], landRegistry: null, rates: [], planningApplications: [], pathwayRun: null });
       })
       .catch(() => { /* swallow — panel still shows raw Goad data */ })
       .finally(() => { if (!cancelled) setGoadPanelLoading(false); });
@@ -5328,72 +5329,184 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                   </section>
                 )}
 
-                {/* Land Registry — via real Land Registry API through
-                    resolveBuildingTitles(). Shows the freehold proprietor(s)
-                    and any matched leaseholds for this exact building. */}
-                {goadPanelContext?.landRegistry && (
+                {/* Rates — actual unit-level rateable values from the
+                    VOA snapshot, narrowed by the Goad street number. */}
+                {goadPanelContext && goadPanelContext.rates.length > 0 && (
                   <section className="border-t pt-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
-                      <span>Land Registry</span>
-                      {!goadPanelContext.landRegistry.exact && (
-                        <span className="text-[9px] text-amber-600 normal-case font-medium">approx. match</span>
-                      )}
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Rates ({goadPanelContext.rates.length})
                     </div>
-                    {goadPanelContext.landRegistry.freeholds.length === 0 && goadPanelContext.landRegistry.leaseholds.length === 0 ? (
-                      <p className="text-[11px] text-gray-500 italic">No titles matched at this address.</p>
-                    ) : (
-                      <>
-                        {goadPanelContext.landRegistry.freeholds.length > 0 && (
-                          <div className="mb-2">
-                            <div className="text-[10px] text-gray-600 mb-0.5">Freehold</div>
-                            {goadPanelContext.landRegistry.freeholds.map((f: any, i: number) => (
-                              <div key={`fh-${i}`} className="bg-amber-50 border border-amber-200 rounded p-2 mb-1 text-[11px]">
-                                <div className="font-medium text-gray-900">{f.proprietor_name || f.proprietorName || "Unknown proprietor"}</div>
-                                {(f.title_number || f.titleNumber) && (
-                                  <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
-                                )}
-                                {(f.proprietor_address || f.proprietorAddress) && (
-                                  <div className="text-gray-500 text-[10px] mt-0.5 truncate">{f.proprietor_address || f.proprietorAddress}</div>
-                                )}
-                              </div>
-                            ))}
+                    {goadPanelContext.rates.slice(0, 5).map((r: any, i: number) => (
+                      <div key={`rt-${i}`} className="bg-amber-50/40 border border-amber-100 rounded p-2 mb-1 text-[11px]">
+                        <div className="flex items-baseline gap-2">
+                          <span className="font-medium text-gray-900 truncate flex-1">{r.firmName || r.address}</span>
+                          {r.rateableValue != null && (
+                            <span className="font-mono text-[12px] text-amber-700 font-semibold">£{Number(r.rateableValue).toLocaleString()}</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-600 truncate">{r.address}</div>
+                        {r.description && (
+                          <div className="text-[10px] text-gray-500 italic">{r.description}</div>
+                        )}
+                        {(r.baRef || r.uarn || r.effectiveDate) && (
+                          <div className="text-[9px] text-gray-400 font-mono mt-0.5">
+                            {[r.baRef, r.uarn, r.effectiveDate].filter(Boolean).join(" · ")}
                           </div>
                         )}
-                        {goadPanelContext.landRegistry.leaseholds.length > 0 && (
-                          <div>
-                            <div className="text-[10px] text-gray-600 mb-0.5">Leasehold ({goadPanelContext.landRegistry.leaseholds.length})</div>
-                            {goadPanelContext.landRegistry.leaseholds.slice(0, 3).map((l: any, i: number) => (
-                              <div key={`lh-${i}`} className="bg-sky-50 border border-sky-200 rounded p-2 mb-1 text-[11px]">
-                                <div className="font-medium text-gray-900 truncate">{l.proprietor_name || l.proprietorName || "Unknown leaseholder"}</div>
-                                {(l.title_number || l.titleNumber) && (
-                                  <div className="text-gray-600 font-mono text-[10px] mt-0.5">{l.title_number || l.titleNumber}</div>
-                                )}
-                              </div>
-                            ))}
-                            {goadPanelContext.landRegistry.leaseholds.length > 3 && (
-                              <p className="text-[10px] text-gray-500 italic">+{goadPanelContext.landRegistry.leaseholds.length - 3} more leaseholds</p>
-                            )}
-                          </div>
-                        )}
-                      </>
+                      </div>
+                    ))}
+                    {goadPanelContext.rates.length > 5 && (
+                      <p className="text-[10px] text-gray-500 italic">+{goadPanelContext.rates.length - 5} more rating entries on this postcode</p>
                     )}
                   </section>
                 )}
 
-                {/* Actions */}
+                {/* Land Registry — via real LR API through resolveBuildingTitles().
+                    Shows matched (UPRN-locked) titles first; falls back to
+                    street-number matches; the postcode-wide list is never
+                    shown (that was the 'all Unknown' noise). */}
+                {goadPanelContext?.landRegistry && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                      <span>Land Registry</span>
+                      <span className={`text-[9px] normal-case font-medium ${
+                        goadPanelContext.landRegistry.source === "uprn" ? "text-emerald-600" :
+                        goadPanelContext.landRegistry.source === "street_number" ? "text-amber-600" : "text-gray-500"
+                      }`}>
+                        {goadPanelContext.landRegistry.source === "uprn" ? "UPRN-matched" :
+                         goadPanelContext.landRegistry.source === "street_number" ? "by street number" :
+                         "postcode-only"}
+                      </span>
+                    </div>
+                    {(() => {
+                      const lr = goadPanelContext.landRegistry;
+                      const fhs = (lr.matched?.freeholds || []).length > 0 ? lr.matched.freeholds : lr.fallback?.freeholds || [];
+                      const lhs = (lr.matched?.leaseholds || []).length > 0 ? lr.matched.leaseholds : lr.fallback?.leaseholds || [];
+                      if (fhs.length === 0 && lhs.length === 0) {
+                        return <p className="text-[11px] text-gray-500 italic">No titles matched this building. Resolver source: {lr.source || "n/a"}.</p>;
+                      }
+                      return (
+                        <>
+                          {fhs.length > 0 && (
+                            <div className="mb-2">
+                              <div className="text-[10px] text-gray-600 mb-0.5">Freehold ({fhs.length})</div>
+                              {fhs.slice(0, 5).map((f: any, i: number) => (
+                                <div key={`fh-${i}`} className="bg-amber-50 border border-amber-200 rounded p-2 mb-1 text-[11px]">
+                                  <div className="font-medium text-gray-900">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</div>
+                                  {(f.title_number || f.titleNumber) && (
+                                    <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
+                                  )}
+                                  {(f.proprietor_address || f.proprietorAddress) && (
+                                    <div className="text-gray-500 text-[10px] mt-0.5 truncate">{f.proprietor_address || f.proprietorAddress}</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {lhs.length > 0 && (
+                            <div>
+                              <div className="text-[10px] text-gray-600 mb-0.5">Leasehold ({lhs.length})</div>
+                              {lhs.slice(0, 3).map((l: any, i: number) => (
+                                <div key={`lh-${i}`} className="bg-sky-50 border border-sky-200 rounded p-2 mb-1 text-[11px]">
+                                  <div className="font-medium text-gray-900 truncate">{l.proprietor_name || l.proprietorName || l.proprietor_name_1 || "Unknown leaseholder"}</div>
+                                  {(l.title_number || l.titleNumber) && (
+                                    <div className="text-gray-600 font-mono text-[10px] mt-0.5">{l.title_number || l.titleNumber}</div>
+                                  )}
+                                </div>
+                              ))}
+                              {lhs.length > 3 && (
+                                <p className="text-[10px] text-gray-500 italic">+{lhs.length - 3} more leaseholds</p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </section>
+                )}
+
+                {/* Planning applications — last 10 years from PropertyData. */}
+                {goadPanelContext && goadPanelContext.planningApplications.length > 0 && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Planning apps — last 10 yrs ({goadPanelContext.planningApplications.length})
+                    </div>
+                    {goadPanelContext.planningApplications.slice(0, 5).map((a: any, i: number) => {
+                      const dec = (a.decision || a.status || "").toLowerCase();
+                      const dot = dec.includes("approved") || dec.includes("permit") || dec.includes("granted") ? "#10b981" :
+                                  dec.includes("refused") || dec.includes("dismissed") ? "#ef4444" :
+                                  dec.includes("withdrawn") ? "#9ca3af" : "#f59e0b";
+                      const dateStr = a.decided_date || a.received_date || a.date;
+                      return (
+                        <div key={`pa-${i}`} className="text-[11px] py-1 border-b last:border-b-0">
+                          <div className="flex items-start gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: dot }} />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-gray-900 line-clamp-2 leading-tight">{a.description || a.proposal || "(no description)"}</div>
+                              <div className="text-[10px] text-gray-500 mt-0.5">
+                                {[a.decision || a.status, dateStr ? new Date(dateStr).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : null, a.reference || a.ref].filter(Boolean).join(" · ")}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {goadPanelContext.planningApplications.length > 5 && (
+                      <p className="text-[10px] text-gray-500 italic mt-1">+{goadPanelContext.planningApplications.length - 5} more applications</p>
+                    )}
+                  </section>
+                )}
+
+                {/* Pathway run — link to existing run if one exists, else
+                    offer to start one. Replaces the old 'Search in Pathway'
+                    that just dumped the address into the postcode search. */}
                 <section className="border-t pt-3">
-                  {goadPanelUnit.postcode && (
-                    <button
-                      onClick={() => {
-                        setSelectedPostcode(goadPanelUnit.postcode);
-                        setCurrentArea(`${goadPanelUnit.num} ${goadPanelUnit.street}, ${goadPanelUnit.postcode}`);
-                        loadPropertyData(goadPanelUnit.postcode, undefined, `${goadPanelUnit.num} ${goadPanelUnit.street}`.trim());
-                        setGoadPanelUnit(null);
-                      }}
-                      className="w-full text-[11px] bg-gray-900 text-white rounded px-2 py-1.5 hover:bg-gray-800"
-                      data-testid="goad-panel-search-pathway"
+                  {goadPanelContext?.pathwayRun ? (
+                    <a
+                      href={`/property-pathway/${goadPanelContext.pathwayRun.id}`}
+                      className="block w-full text-center text-[11px] bg-emerald-600 text-white rounded px-2 py-1.5 hover:bg-emerald-700"
+                      data-testid="goad-panel-open-pathway"
                     >
-                      Search in Pathway →
+                      Open Pathway run →
+                      <span className="text-[9px] ml-1 opacity-75">
+                        {goadPanelContext.pathwayRun.status || "in progress"}
+                      </span>
+                    </a>
+                  ) : (
+                    <button
+                      disabled={goadPanelStartingPathway || !goadPanelUnit.postcode}
+                      onClick={async () => {
+                        if (!goadPanelUnit.postcode) return;
+                        setGoadPanelStartingPathway(true);
+                        try {
+                          const fullAddress = `${goadPanelUnit.num} ${goadPanelUnit.street}, ${goadPanelUnit.postcode}`.replace(/\s+/g, " ").trim();
+                          const resp = await fetch("/api/property-pathway/start", {
+                            method: "POST",
+                            credentials: "include",
+                            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+                            body: JSON.stringify({ address: fullAddress, postcode: goadPanelUnit.postcode }),
+                          });
+                          if (resp.ok) {
+                            const run = await resp.json();
+                            if (run?.id || run?.runId) {
+                              const id = run.id || run.runId;
+                              window.location.href = `/property-pathway/${id}`;
+                              return;
+                            }
+                          }
+                        } catch { /* ignore */ }
+                        setGoadPanelStartingPathway(false);
+                      }}
+                      className="w-full text-[11px] bg-gray-900 text-white rounded px-2 py-1.5 hover:bg-gray-800 disabled:opacity-60"
+                      data-testid="goad-panel-start-pathway"
+                    >
+                      {goadPanelStartingPathway ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Starting…
+                        </span>
+                      ) : (
+                        "Start Pathway →"
+                      )}
                     </button>
                   )}
                 </section>
