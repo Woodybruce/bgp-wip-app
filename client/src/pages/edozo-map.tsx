@@ -3360,7 +3360,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // Goad polygon → combined side panel. Holds the clicked feature's
   // properties plus any joined context fetched via /api/goad/polygon-context.
   const [goadPanelUnit, setGoadPanelUnit] = useState<any | null>(null);
-  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null } | null>(null);
+  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null; tenantCompany: any | null; tenantCompanyCandidates: any[] } | null>(null);
   const [goadPanelStartingPathway, setGoadPanelStartingPathway] = useState(false);
   const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
@@ -4383,13 +4383,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (goadPanelUnit.num) params.set("streetNum", goadPanelUnit.num);
     if (goadPanelUnit.street) params.set("street", goadPanelUnit.street);
     if (goadPanelUnit.holding) params.set("holding", goadPanelUnit.holding);
+    if (goadPanelUnit.tenant) params.set("fascia", goadPanelUnit.tenant);
     if (goadPanelUnit.lat) params.set("lat", String(goadPanelUnit.lat));
     if (goadPanelUnit.lng) params.set("lng", String(goadPanelUnit.lng));
     fetch(`/api/goad/polygon-context?${params}`, { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled) return;
-        setGoadPanelContext(data || { crmProperties: [], deals: [], parentCompany: null, parentCompanyCandidates: [], landRegistry: null, rates: [], planningApplications: [], pathwayRun: null });
+        setGoadPanelContext(data || { crmProperties: [], deals: [], parentCompany: null, parentCompanyCandidates: [], landRegistry: null, rates: [], planningApplications: [], pathwayRun: null, tenantCompany: null, tenantCompanyCandidates: [] });
       })
       .catch(() => { /* swallow — panel still shows raw Goad data */ })
       .finally(() => { if (!cancelled) setGoadPanelLoading(false); });
@@ -5261,25 +5262,74 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                     <p className="text-[11px] text-gray-500 italic">No BGP property at this postcode.</p>
                   )}
                   {goadPanelContext?.crmProperties.map((p) => (
-                    <a
-                      key={p.id}
-                      href={`/properties/${p.id}`}
-                      className="block bg-emerald-50 border border-emerald-200 rounded p-2 mb-1.5 hover:bg-emerald-100"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-[12px] font-medium text-gray-900 truncate flex-1">{p.name}</span>
-                        {p.status && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white text-emerald-700 border border-emerald-200 font-medium">
-                            {p.status}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-gray-600 mt-0.5">
-                        {[p.asset_class, p.sqft ? `${Number(p.sqft).toLocaleString()} sqft` : null].filter(Boolean).join(" · ")}
-                      </div>
-                    </a>
+                    <div key={p.id} className="bg-emerald-50 border border-emerald-200 rounded p-2 mb-1.5">
+                      <a href={`/properties/${p.id}`} className="block hover:underline">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] font-medium text-gray-900 truncate flex-1">{p.name}</span>
+                          {p.status && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white text-emerald-700 border border-emerald-200 font-medium">
+                              {p.status}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-600 mt-0.5">
+                          {[p.asset_class, p.sqft ? `${Number(p.sqft).toLocaleString()} sqft` : null].filter(Boolean).join(" · ")}
+                        </div>
+                      </a>
+                      {(p.landlord_id || p.freeholder_id) && (
+                        <div className="flex flex-wrap items-center gap-1 mt-1.5 pt-1.5 border-t border-emerald-100">
+                          {p.landlord_id && p.landlord_name && (
+                            <a
+                              href={`/companies/${p.landlord_id}`}
+                              className="text-[10px] inline-flex items-center gap-1 bg-white border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-50"
+                            >
+                              <span className="text-gray-500">Landlord:</span>
+                              <span className="font-medium text-gray-800 truncate max-w-[150px]">{p.landlord_name}</span>
+                            </a>
+                          )}
+                          {p.freeholder_id && p.freeholder_name && p.freeholder_id !== p.landlord_id && (
+                            <a
+                              href={`/companies/${p.freeholder_id}`}
+                              className="text-[10px] inline-flex items-center gap-1 bg-white border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-50"
+                            >
+                              <span className="text-gray-500">Freeholder:</span>
+                              <span className="font-medium text-gray-800 truncate max-w-[150px]">{p.freeholder_name}</span>
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </section>
+
+                {/* Tenant CRM match — looks up the fascia (the brand
+                    currently trading) in crm_companies. Distinct from the
+                    Parent company section below, which uses HoldingCo. */}
+                {goadPanelContext?.tenantCompany && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Tenant (CRM)
+                    </div>
+                    <a
+                      href={`/companies/${goadPanelContext.tenantCompany.id}`}
+                      className="block bg-rose-50 border border-rose-200 rounded p-2 hover:bg-rose-100"
+                    >
+                      <div className="text-[12px] font-medium text-gray-900">{goadPanelContext.tenantCompany.name}</div>
+                      <div className="text-[10px] text-gray-600 mt-0.5">
+                        {[
+                          goadPanelContext.tenantCompany.company_type,
+                          goadPanelContext.tenantCompany.company_number,
+                          goadPanelContext.tenantCompany.status,
+                        ].filter(Boolean).join(" · ")}
+                      </div>
+                    </a>
+                    {goadPanelContext.tenantCompanyCandidates.length > 1 && (
+                      <p className="text-[9px] text-gray-400 italic mt-1">
+                        +{goadPanelContext.tenantCompanyCandidates.length - 1} other possible match{goadPanelContext.tenantCompanyCandidates.length > 2 ? "es" : ""}
+                      </p>
+                    )}
+                  </section>
+                )}
 
                 {/* Recent deals at this address */}
                 {goadPanelContext && goadPanelContext.deals.length > 0 && (

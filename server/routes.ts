@@ -511,10 +511,11 @@ export async function registerRoutes(
     const streetNum = String(req.query.streetNum || "").trim();
     const street = String(req.query.street || "").trim().toUpperCase();
     const holding = String(req.query.holding || "").trim();
+    const fascia = String(req.query.fascia || "").trim();
     const lat = req.query.lat ? Number(req.query.lat) : undefined;
     const lng = req.query.lng ? Number(req.query.lng) : undefined;
     if (!postcode && !street) {
-      return res.json({ crmProperties: [], deals: [], parentCompany: null, landRegistry: null, rates: [], planningApplications: [], pathwayRun: null });
+      return res.json({ crmProperties: [], deals: [], parentCompany: null, landRegistry: null, rates: [], planningApplications: [], pathwayRun: null, tenantCompany: null });
     }
 
     const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
@@ -524,13 +525,19 @@ export async function registerRoutes(
     const PD_KEY = process.env.PROPERTYDATA_API_KEY;
 
     try {
-      const [crmRows, dealRows, parentRows, lrResult, planningResult, pathwayRow] = await Promise.all([
+      const [crmRows, dealRows, parentRows, lrResult, planningResult, pathwayRow, tenantRows] = await Promise.all([
         pool.query(
-          `SELECT id, name, status, asset_class, sqft, postcode, latitude, longitude,
-                  address, monday_item_id, group_name
-           FROM crm_properties
-           WHERE (postcode IS NOT NULL AND UPPER(REPLACE(postcode, ' ', '')) = REPLACE($1, ' ', ''))
-              OR ($2 <> '' AND UPPER(name) LIKE $2)
+          `SELECT p.id, p.name, p.status, p.asset_class, p.sqft, p.postcode, p.latitude, p.longitude,
+                  p.address, p.monday_item_id, p.group_name,
+                  p.landlord_id,
+                  lc.name AS landlord_name, lc.company_type AS landlord_type,
+                  lc.company_number AS landlord_company_number,
+                  fc.id AS freeholder_id, fc.name AS freeholder_name
+           FROM crm_properties p
+           LEFT JOIN crm_companies lc ON lc.id = p.landlord_id
+           LEFT JOIN crm_companies fc ON fc.id = p.freeholder_id
+           WHERE (p.postcode IS NOT NULL AND UPPER(REPLACE(p.postcode, ' ', '')) = REPLACE($1, ' ', ''))
+              OR ($2 <> '' AND UPPER(p.name) LIKE $2)
            LIMIT 8`,
           [postcode, addressPattern],
         ).catch(() => ({ rows: [] as any[] })),
@@ -591,6 +598,21 @@ export async function registerRoutes(
               [postcode.replace(/\s+/g, ""), addressPattern.toLowerCase()],
             ).then((r) => r.rows[0] || null).catch(() => null)
           : Promise.resolve(null),
+        // Tenant CRM match by fascia name. The fascia is the brand
+        // currently trading from the unit (e.g. "BUBALA"), distinct
+        // from HoldingCo (the legal parent). We look for a company
+        // whose name matches the fascia exactly, then loosely.
+        fascia
+          ? pool.query(
+              `SELECT id, name, company_number, company_type, status, website
+               FROM crm_companies
+               WHERE UPPER(name) = UPPER($1)
+                  OR UPPER(name) LIKE UPPER($2)
+               ORDER BY (CASE WHEN UPPER(name) = UPPER($1) THEN 0 ELSE 1 END)
+               LIMIT 3`,
+              [fascia, `%${fascia}%`],
+            ).catch(() => ({ rows: [] as any[] }))
+          : Promise.resolve({ rows: [] as any[] }),
       ]);
 
       let landRegistry: any = null;
@@ -656,6 +678,8 @@ export async function registerRoutes(
         rates,
         planningApplications,
         pathwayRun: pathwayRow || null,
+        tenantCompany: tenantRows.rows[0] || null,
+        tenantCompanyCandidates: tenantRows.rows,
       });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to load polygon context" });
