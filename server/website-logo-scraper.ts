@@ -1,13 +1,17 @@
 // Scrape the highest-quality logo (and a small set of hero images) from
-// a company's own homepage. Most retailer sites publish their brand
-// logo in plain HTML — Open Graph, apple-touch-icon, schema.org JSON-LD,
-// or as the first <img> in the <header>/<nav>. That's almost always
-// better than what logo.dev / Google favicons hand back, but we never
-// looked.
+// a company's own homepage. Most retailer / landlord / developer sites
+// publish their brand logo in plain HTML — Open Graph, apple-touch-icon,
+// schema.org JSON-LD, or as the first <img> in the <header>/<nav>. The
+// homepage hero (product shots, flagship store, building photography)
+// is almost always in the body as a large <img> too. Both are way
+// better than anything logo.dev / Google favicons / brochure scraps
+// hand back, but we never looked.
 //
-// Used as the FIRST source in fetchLogoForDomain (server/bulk-brand-logos.ts)
-// before falling through to logo.dev → Google favicons. Failures here are
-// silent — the next source picks up.
+// Two entry points:
+//   - scrapeLogoFromWebsite(domain) — single best logo, used by the
+//     bulk brand-logo importer + on-demand refresh endpoints.
+//   - scrapeHeroImagesFromWebsite(domain) — up to N large body images
+//     (excluding the logo) for brand-profile / property hero pulls.
 
 const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 const FETCH_TIMEOUT_MS = 8000;
@@ -17,6 +21,15 @@ export interface ScrapedLogo {
   mime: string;
   source: "og" | "apple-touch-icon" | "schema" | "header-img" | "favicon-hires";
   url: string;
+}
+
+export interface ScrapedHeroImage {
+  buffer: Buffer;
+  mime: string;
+  url: string;
+  width?: number;
+  height?: number;
+  alt?: string;
 }
 
 export async function scrapeLogoFromWebsite(domain: string): Promise<ScrapedLogo | null> {
@@ -34,6 +47,37 @@ export async function scrapeLogoFromWebsite(domain: string): Promise<ScrapedLogo
     return { ...fetched, source: cand.source, url: cand.url };
   }
   return null;
+}
+
+// Pull body hero images for the brand/property profile. Skips the
+// header/nav logo, decorative pixels, and SVG icons — we want big
+// editorial / product / building photography. Defaults to 6 images.
+export async function scrapeHeroImagesFromWebsite(domain: string, maxImages = 6): Promise<ScrapedHeroImage[]> {
+  const homepage = await fetchHomepage(domain);
+  if (!homepage) return [];
+  const { html, finalUrl } = homepage;
+
+  const candidates = collectHeroCandidates(html, finalUrl);
+  const out: ScrapedHeroImage[] = [];
+  const seenUrls = new Set<string>();
+  for (const cand of candidates) {
+    if (out.length >= maxImages) break;
+    if (seenUrls.has(cand.url)) continue;
+    seenUrls.add(cand.url);
+    const fetched = await downloadImage(cand.url);
+    if (!fetched) continue;
+    // Reject anything tiny. Marketing hero images are 50KB+ at minimum.
+    if (fetched.buffer.length < 12_000) continue;
+    out.push({
+      buffer: fetched.buffer,
+      mime: fetched.mime,
+      url: cand.url,
+      width: cand.width,
+      height: cand.height,
+      alt: cand.alt,
+    });
+  }
+  return out;
 }
 
 // ─── Homepage fetch ──────────────────────────────────────────────────────
@@ -209,4 +253,78 @@ function absolutise(href: string, baseUrl: string): string {
   } catch {
     return href;
   }
+}
+
+// ─── Hero / body image candidates ───────────────────────────────────────
+
+interface HeroCandidate {
+  url: string;
+  priority: number;       // lower = better
+  width?: number;
+  height?: number;
+  alt?: string;
+}
+
+// Pick body images that look like editorial / product / building hero
+// shots. Skip:
+//   - Anything in <header>/<nav> (that's the logo, already handled)
+//   - Data URIs (placeholders, base64 thumbs)
+//   - SVGs (icons / logos, rarely hero material)
+//   - Anything with width/height < 400px declared
+//   - Tracking pixels (alt names like "pixel", "track", "beacon", "sprite")
+function collectHeroCandidates(html: string, baseUrl: string): HeroCandidate[] {
+  // Strip header/nav so their images don't sneak into hero results.
+  const body = html
+    .replace(/<header[\s\S]*?<\/header>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "");
+
+  const out: HeroCandidate[] = [];
+
+  // og:image counts as a hero candidate too — many sites set it to a
+  // marketing shot rather than a logo.
+  const og = matchAttr(html, /<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i);
+  if (og) {
+    out.push({ url: absolutise(og, baseUrl), priority: 1 });
+  }
+
+  // Walk every <img> tag in the body.
+  const imgRe = /<img\b([^>]+)>/gi;
+  let m;
+  let order = 0;
+  while ((m = imgRe.exec(body)) !== null) {
+    order++;
+    const attrs = m[1];
+    const src = matchAttr(attrs, /(?:^|\s)src=["']([^"']+)["']/i)
+      || matchAttr(attrs, /(?:^|\s)data-src=["']([^"']+)["']/i)
+      || matchAttr(attrs, /(?:^|\s)data-original=["']([^"']+)["']/i);
+    if (!src) continue;
+    if (src.startsWith("data:")) continue;
+    if (/\.svg(\?|$)/i.test(src)) continue;
+    if (/pixel|track|beacon|sprite|logo|icon|avatar|favicon/i.test(src)) continue;
+
+    const widthStr = matchAttr(attrs, /(?:^|\s)width=["']?(\d+)/i);
+    const heightStr = matchAttr(attrs, /(?:^|\s)height=["']?(\d+)/i);
+    const w = widthStr ? parseInt(widthStr, 10) : undefined;
+    const h = heightStr ? parseInt(heightStr, 10) : undefined;
+    if (w && w < 400) continue;
+    if (h && h < 250) continue;
+
+    const alt = matchAttr(attrs, /(?:^|\s)alt=["']([^"']*)["']/i) || undefined;
+
+    // Earlier-in-page images are usually hero / above-the-fold. Priority
+    // is order-based with a tiny bonus for declared dimensions.
+    const priority = 10 + order - (w && w >= 800 ? 2 : 0) - (h && h >= 500 ? 1 : 0);
+    out.push({
+      url: absolutise(src, baseUrl),
+      priority,
+      width: w,
+      height: h,
+      alt: alt?.trim() || undefined,
+    });
+  }
+
+  return out.sort((a, b) => a.priority - b.priority);
 }
