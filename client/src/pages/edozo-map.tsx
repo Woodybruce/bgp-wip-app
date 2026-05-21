@@ -3357,6 +3357,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [excludedRetailCategories, setExcludedRetailCategories] = useState<Set<string>>(new Set());
   const retailMarkersRef = useRef<L.LayerGroup | null>(null);
   const retailLabelLayerRef = useRef<L.LayerGroup | null>(null);
+  // Goad polygon → combined side panel. Holds the clicked feature's
+  // properties plus any joined context fetched via /api/goad/polygon-context.
+  const [goadPanelUnit, setGoadPanelUnit] = useState<any | null>(null);
+  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[] } | null>(null);
+  const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
@@ -4258,37 +4263,87 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         subclass === "Retailf1" ? "First Floor" :
         subclass === "Retailf2" ? "Second Floor" : "";
 
-      polygon.bindPopup(`
-        <div style="font-size:12px;max-width:260px;font-family:system-ui,sans-serif">
-          <strong>${isVacant ? '<span style="color:#dc2626">VACANT — </span>' : ''}${tenant}</strong>
-          ${activity && activity !== tenant ? `<br/><span style="color:#444">${activity}</span>` : ""}
-          ${(num || street) ? `<br/><span style="color:#666">${num} ${street}</span>` : ""}
-          ${postcode ? `<br/><span style="color:#666;font-family:monospace">${postcode}</span>` : ""}
-          <div style="margin-top:6px;font-size:11px;color:#666">
-            ${props.Category || ""}${useClass ? ` · Use Class ${useClass}` : ""}
-          </div>
-          ${floor || sqft ? `<div style="font-size:11px;color:#666">${floor}${floor && sqft ? " · " : ""}${sqft ? `${Number(sqft).toLocaleString()} sqft` : ""}</div>` : ""}
-          ${holding && holding !== "NON MULTIPLE" ? `<div style="font-size:11px;color:#888;margin-top:2px">Parent: ${holding}</div>` : ""}
-          <span style="display:inline-block;margin-top:6px;font-size:10px;background:${style.fill};color:#1f1f1f;padding:1px 6px;border-radius:8px">${style.label}</span>
-        </div>
-      `, { closeButton: false, offset: L.point(0, -5) });
+      polygon.on("click", () => {
+        setGoadPanelUnit({
+          tenant,
+          activity,
+          category: props.Category,
+          band: style.label,
+          bandFill: style.fill,
+          useClass,
+          floor,
+          sqft,
+          holding,
+          num,
+          street,
+          postcode,
+          isVacant,
+          goadNumber: props.GoadNumber,
+          precName: props.PrecName,
+          surveyDate: props.SurveyDate,
+        });
+      });
 
       retailMarkersRef.current.addLayer(polygon);
 
-      // Fascia label: only render at street-level zoom to avoid clutter.
-      // Use the GF layer's published centroid if available, otherwise the
-      // polygon's geometric centroid.
+      // Fascia label: oriented along the unit's long axis (PCA on the
+      // polygon vertices), font size scaled by Area_ft2 so big units read
+      // big and small ones don't overflow. Goad-plan feel.
       if (showLabels && fascia && !isVacant) {
+        const ring: [number, number][] | undefined = feature.geometry?.coordinates?.[0];
         const cx = parseFloat(props.Centroid_X);
         const cy = parseFloat(props.Centroid_Y);
-        if (Number.isFinite(cx) && Number.isFinite(cy)) {
+        if (Array.isArray(ring) && ring.length > 2 && Number.isFinite(cx) && Number.isFinite(cy)) {
+          // PCA: principal axis angle in lng/lat space.
+          // Use one point per vertex (skip the duplicated closing point).
+          const pts = ring.slice(0, -1);
+          let mx = 0, my = 0;
+          for (const [x, y] of pts) { mx += x; my += y; }
+          mx /= pts.length; my /= pts.length;
+          let cxx = 0, cxy = 0, cyy = 0;
+          for (const [x, y] of pts) {
+            // Scale lng by cos(lat) so 1 unit on each axis is comparable distance.
+            const dx = (x - mx) * Math.cos((my * Math.PI) / 180);
+            const dy = y - my;
+            cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
+          }
+          const angleRad = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+          // CSS rotates clockwise with screen-y pointing down; lat-up means we
+          // negate. Keep text upright (never upside-down).
+          let deg = -angleRad * 180 / Math.PI;
+          if (deg > 90) deg -= 180;
+          if (deg < -90) deg += 180;
+
+          // Font size scaled by floor area. Goad gives Area_ft2 — sqrt gives
+          // a typical edge length, mapped onto a sensible pixel range.
+          const ft2 = Math.max(50, Math.min(8000, Number(sqft) || 600));
+          const edgeFt = Math.sqrt(ft2);
+          const fontPx = Math.round(Math.max(7, Math.min(14, edgeFt / 3.2)));
+          // Width budget for the rotated label — long-edge ft × ~0.55 px/ft
+          // at zoom 17 is a workable approximation that lets multi-word
+          // fascias breathe without overflowing tiny units.
+          const widthPx = Math.max(40, Math.min(220, Math.round(edgeFt * 4)));
+
           const label = L.marker([cy, cx], {
             interactive: false,
             icon: L.divIcon({
               className: "",
-              html: `<div style="font-size:9px;font-weight:600;color:#1f1f1f;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;pointer-events:none">${fascia.slice(0, 18)}</div>`,
-              iconSize: [80, 14],
-              iconAnchor: [40, 7],
+              html: `<div style="
+                font-size:${fontPx}px;
+                font-weight:600;
+                color:#1f1f1f;
+                text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;
+                text-align:center;
+                white-space:nowrap;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                pointer-events:none;
+                width:${widthPx}px;
+                transform:rotate(${deg.toFixed(1)}deg);
+                transform-origin:center;
+                line-height:1;">${fascia}</div>`,
+              iconSize: [widthPx, fontPx + 2],
+              iconAnchor: [widthPx / 2, (fontPx + 2) / 2],
             }),
           });
           retailLabelLayerRef.current.addLayer(label);
@@ -4296,6 +4351,31 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       }
     }
   }, [showRetailContext, goadFeatures, excludedRetailCategories, classifyGoadCategory, mapZoom]);
+
+  // When a Goad polygon is clicked, fetch BGP context (CRM properties at
+  // this address, recent deals, parent-company match by HoldingCo).
+  useEffect(() => {
+    if (!goadPanelUnit) {
+      setGoadPanelContext(null);
+      return;
+    }
+    let cancelled = false;
+    setGoadPanelLoading(true);
+    const params = new URLSearchParams();
+    if (goadPanelUnit.postcode) params.set("postcode", goadPanelUnit.postcode);
+    if (goadPanelUnit.num) params.set("streetNum", goadPanelUnit.num);
+    if (goadPanelUnit.street) params.set("street", goadPanelUnit.street);
+    if (goadPanelUnit.holding) params.set("holding", goadPanelUnit.holding);
+    fetch(`/api/goad/polygon-context?${params}`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        setGoadPanelContext(data || { crmProperties: [], deals: [], parentCompany: null, parentCompanyCandidates: [] });
+      })
+      .catch(() => { /* swallow — panel still shows raw Goad data */ })
+      .finally(() => { if (!cancelled) setGoadPanelLoading(false); });
+    return () => { cancelled = true; };
+  }, [goadPanelUnit]);
 
   // ─── OS Data Layers: fetch buildings / sites on map move ─────────
   const [highlightedBuildingLayer, setHighlightedBuildingLayer] = useState<L.GeoJSON | null>(null);
@@ -5062,6 +5142,196 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
             </button>
           </div>
         </div>
+
+        {/* Goad polygon side-panel — slides in from the right when a unit
+            on the Retail Context layer is clicked. Shows Goad attributes
+            up top, joins in BGP CRM + recent deals + parent company below. */}
+        {goadPanelUnit && (
+          <div
+            className="absolute top-3 right-3 bottom-3 z-[1001] w-[340px] bg-white rounded-lg shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+            data-testid="goad-polygon-panel"
+          >
+            <div className="px-4 py-3 border-b flex items-start gap-2" style={{ background: goadPanelUnit.bandFill + "22" }}>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  {goadPanelUnit.isVacant ? "Vacant unit" : goadPanelUnit.band || "Retail"}
+                </div>
+                <div className="text-base font-bold text-gray-900 truncate mt-0.5">
+                  {goadPanelUnit.tenant}
+                </div>
+                {goadPanelUnit.activity && goadPanelUnit.activity !== goadPanelUnit.tenant && (
+                  <div className="text-xs text-gray-600 truncate">{goadPanelUnit.activity}</div>
+                )}
+              </div>
+              <button
+                onClick={() => setGoadPanelUnit(null)}
+                className="text-gray-400 hover:text-gray-700 p-0.5"
+                aria-label="Close"
+                data-testid="goad-panel-close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <ScrollArea className="flex-1">
+              <div className="px-4 py-3 space-y-3">
+                {/* Address + Goad attributes */}
+                <section>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                    Goad
+                  </div>
+                  <div className="space-y-1 text-[12px]">
+                    {(goadPanelUnit.num || goadPanelUnit.street) && (
+                      <div className="text-gray-800">
+                        {goadPanelUnit.num} {goadPanelUnit.street}
+                      </div>
+                    )}
+                    {goadPanelUnit.postcode && (
+                      <div className="font-mono text-gray-700">{goadPanelUnit.postcode}</div>
+                    )}
+                    {goadPanelUnit.precName && (
+                      <div className="text-gray-600 italic">{goadPanelUnit.precName}</div>
+                    )}
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-2">
+                      {goadPanelUnit.category && (
+                        <div>
+                          <span className="text-gray-500">Category:</span>{" "}
+                          <span className="text-gray-800">{goadPanelUnit.category}</span>
+                        </div>
+                      )}
+                      {goadPanelUnit.useClass && (
+                        <div>
+                          <span className="text-gray-500">Use class:</span>{" "}
+                          <span className="text-gray-800">{goadPanelUnit.useClass}</span>
+                        </div>
+                      )}
+                      {goadPanelUnit.floor && (
+                        <div>
+                          <span className="text-gray-500">Floor:</span>{" "}
+                          <span className="text-gray-800">{goadPanelUnit.floor}</span>
+                        </div>
+                      )}
+                      {goadPanelUnit.sqft && (
+                        <div>
+                          <span className="text-gray-500">Area:</span>{" "}
+                          <span className="text-gray-800">{Number(goadPanelUnit.sqft).toLocaleString()} sqft</span>
+                        </div>
+                      )}
+                    </div>
+                    {goadPanelUnit.holding && goadPanelUnit.holding !== "NON MULTIPLE" && (
+                      <div className="pt-1.5">
+                        <span className="text-gray-500">Parent: </span>
+                        <span className="text-gray-800 font-medium">{goadPanelUnit.holding}</span>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                {/* BGP CRM matches */}
+                <section className="border-t pt-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                    <span>BGP CRM</span>
+                    {goadPanelLoading && <Loader2 className="w-3 h-3 animate-spin text-gray-400" />}
+                  </div>
+                  {!goadPanelLoading && goadPanelContext && goadPanelContext.crmProperties.length === 0 && (
+                    <p className="text-[11px] text-gray-500 italic">No BGP property at this postcode.</p>
+                  )}
+                  {goadPanelContext?.crmProperties.map((p) => (
+                    <a
+                      key={p.id}
+                      href={`/properties/${p.id}`}
+                      className="block bg-emerald-50 border border-emerald-200 rounded p-2 mb-1.5 hover:bg-emerald-100"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] font-medium text-gray-900 truncate flex-1">{p.name}</span>
+                        {p.status && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white text-emerald-700 border border-emerald-200 font-medium">
+                            {p.status}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-gray-600 mt-0.5">
+                        {[p.asset_class, p.sqft ? `${Number(p.sqft).toLocaleString()} sqft` : null].filter(Boolean).join(" · ")}
+                      </div>
+                    </a>
+                  ))}
+                </section>
+
+                {/* Recent deals at this address */}
+                {goadPanelContext && goadPanelContext.deals.length > 0 && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Recent deals ({goadPanelContext.deals.length})
+                    </div>
+                    {goadPanelContext.deals.slice(0, 5).map((d) => (
+                      <a
+                        key={d.id}
+                        href={`/deals/${d.id}`}
+                        className="block text-[11px] py-1 border-b last:border-b-0 hover:bg-gray-50"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-gray-800 truncate">{d.name}</span>
+                          {d.deal_type && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 shrink-0">{d.deal_type}</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          {d.status} {d.completed_at ? `· ${new Date(d.completed_at).toLocaleDateString("en-GB")}` : ""}
+                        </div>
+                      </a>
+                    ))}
+                  </section>
+                )}
+
+                {/* Parent company match */}
+                {goadPanelContext?.parentCompany && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Parent company
+                    </div>
+                    <a
+                      href={`/companies/${goadPanelContext.parentCompany.id}`}
+                      className="block bg-violet-50 border border-violet-200 rounded p-2 hover:bg-violet-100"
+                    >
+                      <div className="text-[12px] font-medium text-gray-900">{goadPanelContext.parentCompany.name}</div>
+                      <div className="text-[10px] text-gray-600 mt-0.5">
+                        {[
+                          goadPanelContext.parentCompany.company_number,
+                          goadPanelContext.parentCompany.company_type,
+                          goadPanelContext.parentCompany.status,
+                        ].filter(Boolean).join(" · ")}
+                      </div>
+                    </a>
+                  </section>
+                )}
+
+                {/* Actions */}
+                <section className="border-t pt-3">
+                  {goadPanelUnit.postcode && (
+                    <button
+                      onClick={() => {
+                        setSelectedPostcode(goadPanelUnit.postcode);
+                        setCurrentArea(`${goadPanelUnit.num} ${goadPanelUnit.street}, ${goadPanelUnit.postcode}`);
+                        loadPropertyData(goadPanelUnit.postcode, undefined, `${goadPanelUnit.num} ${goadPanelUnit.street}`.trim());
+                        setGoadPanelUnit(null);
+                      }}
+                      className="w-full text-[11px] bg-gray-900 text-white rounded px-2 py-1.5 hover:bg-gray-800"
+                      data-testid="goad-panel-search-pathway"
+                    >
+                      Search in Pathway →
+                    </button>
+                  )}
+                </section>
+
+                {goadPanelUnit.surveyDate && (
+                  <p className="text-[9px] text-gray-400 text-right">
+                    Goad surveyed {new Date(goadPanelUnit.surveyDate).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
 
         {/* Goad-style building key — floating panel top-right */}
         <div className="absolute top-20 right-3 z-[1000] bg-white/95 backdrop-blur rounded-lg shadow-lg border border-gray-200 p-3 w-[200px]" data-testid="map-key-panel">

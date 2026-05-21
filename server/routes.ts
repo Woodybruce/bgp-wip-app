@@ -499,6 +499,64 @@ export async function registerRoutes(
     return res.sendFile(diskPath);
   });
 
+  // Polygon context: when a user clicks a Goad polygon, hand the side
+  // panel everything BGP already knows about that unit — CRM property,
+  // recent deals, and (cheap) a parent-company hit by HoldingCo name.
+  // VOA / Companies House / Land Registry can be layered on later; this
+  // first cut is the join most useful day-to-day.
+  app.get("/api/goad/polygon-context", requireAuth, async (req, res) => {
+    const postcode = String(req.query.postcode || "").trim().toUpperCase();
+    const streetNum = String(req.query.streetNum || "").trim();
+    const street = String(req.query.street || "").trim().toUpperCase();
+    const holding = String(req.query.holding || "").trim();
+    if (!postcode && !street) return res.json({ crmProperties: [], deals: [], parentCompany: null });
+
+    const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
+
+    try {
+      const [crmRows, dealRows, parentRows] = await Promise.all([
+        pool.query(
+          `SELECT id, name, status, asset_class, sqft, postcode, latitude, longitude,
+                  address, monday_item_id, group_name
+           FROM crm_properties
+           WHERE (postcode IS NOT NULL AND UPPER(REPLACE(postcode, ' ', '')) = REPLACE($1, ' ', ''))
+              OR ($2 <> '' AND UPPER(name) LIKE $2)
+           LIMIT 8`,
+          [postcode, addressPattern],
+        ).catch(() => ({ rows: [] as any[] })),
+        pool.query(
+          `SELECT d.id, d.name, d.deal_type, d.status, d.team, d.fee, d.completed_at, d.created_at,
+                  p.name AS property_name, p.postcode AS property_postcode
+           FROM crm_deals d
+           LEFT JOIN crm_properties p ON p.id = d.property_id
+           WHERE (p.postcode IS NOT NULL AND UPPER(REPLACE(p.postcode, ' ', '')) = REPLACE($1, ' ', ''))
+              OR ($2 <> '' AND UPPER(p.name) LIKE $2)
+           ORDER BY d.created_at DESC NULLS LAST
+           LIMIT 10`,
+          [postcode, addressPattern],
+        ).catch(() => ({ rows: [] as any[] })),
+        holding && holding !== "NON MULTIPLE"
+          ? pool.query(
+              `SELECT id, name, company_number, company_type, status, website
+               FROM crm_companies
+               WHERE UPPER(name) = UPPER($1)
+                  OR UPPER(name) LIKE UPPER($2)
+               LIMIT 3`,
+              [holding, `%${holding}%`],
+            ).catch(() => ({ rows: [] as any[] }))
+          : Promise.resolve({ rows: [] as any[] }),
+      ]);
+      res.json({
+        crmProperties: crmRows.rows,
+        deals: dealRows.rows,
+        parentCompany: parentRows.rows[0] || null,
+        parentCompanyCandidates: parentRows.rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Failed to load polygon context" });
+    }
+  });
+
   app.get("/api/users", requireAuth, async (_req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
