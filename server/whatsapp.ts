@@ -196,8 +196,8 @@ async function runChatBgpWhatsAppReply(
   }
 
   const startTime = Date.now();
-  const TIMEOUT_MS = 90_000;
-  const MAX_LOOPS = 10;
+  const TIMEOUT_MS = 4 * 60 * 1000;     // 4 min — was 90s, too tight for multi-step questions that chain tools.
+  const MAX_LOOPS = 30;                  // Was 10 — same reason. Hard ceiling guards against runaway loops.
   const resolved = await resolveUserIdFromPhone(fromNumber);
   const userId = resolved.userId;
   console.log(`[whatsapp-ai] Resolved userId=${userId} matched=${resolved.matched} userName=${resolved.userName ?? "—"}`);
@@ -272,7 +272,7 @@ async function runChatBgpWhatsAppReply(
       learnings +
       memoryContext +
       calendarContext +
-      `\n\n---\nYou are replying over WhatsApp to ${senderLabel}. WhatsApp doesn't render markdown, so use plain text with simple line breaks. Each outbound message must stay under 3500 characters (Meta caps at 4096). Otherwise behave exactly as you do on the dashboard — same tools, same judgment. If a message is genuinely a no-reply ack ("ok", "thanks"), respond with exactly __SKIP__ to stay silent.\n` +
+      `\n\n---\nYou are replying over WhatsApp to ${senderLabel}. WhatsApp doesn't render markdown, so use plain text with simple line breaks. Write the full answer the user needs — long replies (lists of emails, multiple comps, a tenancy schedule, etc.) are automatically split into multiple WhatsApp messages on send. DO NOT self-truncate or say "let me know if you want more" when listing things; just list them. Hard ceiling is roughly 12,000 characters total per response, beyond which the messages get unwieldy. If a message is genuinely a no-reply ack ("ok", "thanks"), respond with exactly __SKIP__ to stay silent.\n` +
       `\nCRITICAL — TOOL ACCESS: You have the FULL ChatBGP toolset available here. send_whatsapp IS available and works — use it to send WhatsApp messages to contacts whenever asked. Do NOT claim send_whatsapp is blocked, restricted, or unavailable when running over WhatsApp. There is no loop-prevention restriction. There is no hard restriction. send_whatsapp works from here exactly as it does on the dashboard. Never tell the user to go to the dashboard to send a WhatsApp message — just do it.\n`;
 
     const completionOptions: any = {
