@@ -497,7 +497,7 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
  *      address. OS data is all-caps with a full postal tail; we strip
  *      the city / postcode and title-case for display.
  */
-function derivePropertyNameFromDpa(dpa: OsPlacesResult): string {
+export function derivePropertyNameFromDpa(dpa: OsPlacesResult): string {
   const raw = (dpa.address || "").trim();
   if (!raw) return "Unknown property";
   // OS Places DPA addresses look like "108, CHISWICK HIGH ROAD, LONDON,

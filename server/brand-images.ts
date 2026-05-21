@@ -496,6 +496,69 @@ router.get("/api/brand/:companyId/refresh-images/status", requireAuth, async (re
   res.json(status);
 });
 
+// One-shot cleanup — scans crm_properties for business-y names that
+// snuck in from a buggy pre-rule resolver run (e.g. "The Pantry Cafe"
+// stamped onto 108 Chiswick High Road). For each affected row,
+// re-derives the canonical name from its UPRN's OS Places DPA and
+// renames in place. Safe to re-run — only rewrites where the name
+// changes.
+//
+//   POST /api/admin/heal-property-names
+//
+// Body: { dryRun?: boolean, limit?: number }
+// Returns: { scanned, renamed, samples: [{ id, oldName, newName }] }
+router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const dryRun = req.body?.dryRun === true;
+    const limit = Math.min(Number(req.body?.limit) || 200, 500);
+
+    // Find rows that look business-y AND have a UPRN we can re-resolve.
+    // Match criteria mirror the in-flight heuristic in property-resolver.ts
+    // and brand-images.ts: letters present, no digits, no commas, short.
+    const { rows } = await pool.query<{ id: string; name: string; uprn: string }>(
+      `SELECT id, name, uprn
+         FROM crm_properties
+        WHERE uprn IS NOT NULL
+          AND name ~ '[A-Za-z]'
+          AND name !~ '[0-9]'
+          AND position(',' in name) = 0
+          AND char_length(name) < 50
+        ORDER BY updated_at DESC NULLS LAST
+        LIMIT $1`,
+      [limit]
+    );
+
+    const samples: { id: string; oldName: string; newName: string }[] = [];
+    let renamed = 0;
+    const { osPlacesByUprn } = await import("./os-data");
+    const { derivePropertyNameFromDpa } = await import("./property-resolver");
+
+    for (const r of rows) {
+      try {
+        const dpa = await osPlacesByUprn(r.uprn);
+        if (!dpa) continue;
+        const newName = (derivePropertyNameFromDpa as any)(dpa) as string;
+        if (!newName || newName === r.name) continue;
+        samples.push({ id: r.id, oldName: r.name, newName });
+        if (!dryRun) {
+          await pool.query(
+            `UPDATE crm_properties SET name = $2, updated_at = NOW() WHERE id = $1`,
+            [r.id, newName]
+          );
+          renamed++;
+        }
+      } catch (err: any) {
+        console.warn(`[heal-property-names] failed for ${r.id} (${r.name}):`, err?.message);
+      }
+    }
+
+    res.json({ scanned: rows.length, renamed, dryRun, samples: samples.slice(0, 50) });
+  } catch (e: any) {
+    console.error("[heal-property-names] failed:", e?.message);
+    res.status(500).json({ error: e?.message || "heal failed" });
+  }
+});
+
 // Diagnostic — surfaces exactly what's stored for a brand's images and
 // which sources have data. Used to debug "why is this brand returning
 // 204 / no images" without having to query the DB by hand.
