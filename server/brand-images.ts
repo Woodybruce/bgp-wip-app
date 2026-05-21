@@ -496,4 +496,74 @@ router.get("/api/brand/:companyId/refresh-images/status", requireAuth, async (re
   res.json(status);
 });
 
+// Diagnostic — surfaces exactly what's stored for a brand's images and
+// which sources have data. Used to debug "why is this brand returning
+// 204 / no images" without having to query the DB by hand.
+//   GET /api/brand/:companyId/image-diag
+router.get("/api/brand/:companyId/image-diag", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+
+    const { rows: companyRows } = await pool.query<{
+      id: string; name: string; domain: string | null; domain_url: string | null;
+      industry: string | null; company_type: string | null;
+    }>(
+      `SELECT id, name, domain, domain_url, industry, company_type FROM crm_companies WHERE id = $1`,
+      [companyId]
+    );
+    const brand = companyRows[0];
+    if (!brand) return res.status(404).json({ error: "Brand not found" });
+
+    // What did the landlord scraper find?
+    const { rows: landlordRows } = await pool.query<{
+      image_urls: string[] | null;
+      source_urls: any;
+      created_at: Date | null;
+      updated_at: Date | null;
+    }>(
+      `SELECT image_urls, source_urls, created_at, updated_at
+         FROM landlord_website_findings WHERE company_id = $1`,
+      [companyId]
+    ).catch(() => ({ rows: [] }));
+    const landlordImageUrls = Array.isArray(landlordRows[0]?.image_urls) ? landlordRows[0].image_urls : [];
+
+    // What's currently stored in image_studio_images for this brand?
+    const { rows: storedRows } = await pool.query<{ source: string | null; cnt: number }>(
+      `SELECT source, COUNT(*)::int AS cnt
+         FROM image_studio_images
+        WHERE LOWER(brand_name) = LOWER($1)
+          AND 'brand-auto' = ANY(tags)
+        GROUP BY source
+        ORDER BY cnt DESC`,
+      [brand.name]
+    ).catch(() => ({ rows: [] }));
+    const storedTotal = storedRows.reduce((s, r) => s + Number(r.cnt || 0), 0);
+
+    // Last refresh job state.
+    const { getJobStatus } = await import("./brand-jobs");
+    const jobStatus = getJobStatus(`refresh-images:${companyId}`);
+
+    return res.json({
+      brand: {
+        id: brand.id, name: brand.name, type: brand.company_type, industry: brand.industry,
+        domain: brand.domain, domainUrl: brand.domain_url,
+      },
+      landlordScraper: {
+        hasRow: !!landlordRows[0],
+        imageUrlCount: landlordImageUrls.length,
+        sampleUrls: landlordImageUrls.slice(0, 5),
+        lastUpdated: landlordRows[0]?.updated_at || landlordRows[0]?.created_at || null,
+      },
+      storedImages: {
+        total: storedTotal,
+        bySource: Object.fromEntries(storedRows.map(r => [r.source || "(null)", r.cnt])),
+      },
+      lastRefreshJob: jobStatus || { state: "idle" },
+    });
+  } catch (e: any) {
+    console.error("[image-diag] failed:", e?.message);
+    res.status(500).json({ error: e?.message || "diag failed" });
+  }
+});
+
 export default router;
