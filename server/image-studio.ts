@@ -214,7 +214,7 @@ async function persistImage(filePath: string, buffer: Buffer, mimeType: string, 
   }
 }
 
-async function readPersistedImage(localPath: string | null | undefined): Promise<Buffer | null> {
+export async function readPersistedImage(localPath: string | null | undefined): Promise<Buffer | null> {
   if (!localPath) return null;
   try {
     if (fs.existsSync(localPath)) return fs.readFileSync(localPath);

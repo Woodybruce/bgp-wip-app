@@ -1417,10 +1417,18 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
       }
     }
 
-    // 2. Fall back to the highest-quality auto-fetched brand image (press
-    //    kit / Wikipedia / homepage / CSE). Street View is intentionally
-    //    NOT used as a fallback — the road-level snapshots looked terrible
-    //    and dragged the visual quality of brand profiles down.
+    // 2. Fall back to the highest-quality auto-fetched brand image.
+    //    Priority order from best to worst:
+    //      - landlord-website: curated portfolio photos from the brand's
+    //        own /portfolio + /our-places pages (landlord brands)
+    //      - press: official press kit
+    //      - wikipedia: often useful for retail brand flagship shots
+    //      - homepage: basic homepage scrape
+    //      - cse: paid Google Custom Search, last resort
+    //    Street View NOT used — road-level snapshots looked terrible.
+    //    Loop the top matches so we can skip rows whose local file has
+    //    been wiped on a deploy without falling through to 204 when
+    //    other valid images are sitting right behind them.
     const fb = await pool.query(
       `SELECT i.local_path, i.mime_type
          FROM image_studio_images i
@@ -1429,23 +1437,33 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
           AND 'brand-auto' = ANY(i.tags)
         ORDER BY
           CASE
-            WHEN 'press'     = ANY(i.tags) THEN 1
-            WHEN 'wikipedia' = ANY(i.tags) THEN 2
-            WHEN 'cse'       = ANY(i.tags) THEN 3
-            WHEN 'homepage'  = ANY(i.tags) THEN 4
-            ELSE 5
+            WHEN 'landlord-website' = ANY(i.tags) THEN 1
+            WHEN 'press'            = ANY(i.tags) THEN 2
+            WHEN 'wikipedia'        = ANY(i.tags) THEN 3
+            WHEN 'homepage'         = ANY(i.tags) THEN 4
+            WHEN 'cse'              = ANY(i.tags) THEN 5
+            ELSE 6
           END,
           i.created_at DESC
-        LIMIT 1`,
+        LIMIT 8`,
       [companyId]
     );
-    if (fb.rows[0]?.local_path) {
-      try {
-        const fs = await import("fs/promises");
-        const buf = await fs.readFile(fb.rows[0].local_path);
-        return sendImage(buf, fb.rows[0].mime_type || "image/jpeg");
-      } catch (e: any) {
-        console.warn("[brand-flagship] local image read failed:", e?.message);
+    if (fb.rows.length > 0) {
+      // readPersistedImage falls back to a DB-stored copy when the local
+      // file is gone (Railway redeploys can wipe the disk). The old
+      // implementation called fs.readFile directly, so deploy-evicted
+      // images returned 204 even when there were stored fallbacks.
+      const { readPersistedImage } = await import("./image-studio");
+      for (const row of fb.rows) {
+        if (!row.local_path) continue;
+        try {
+          const buf = await readPersistedImage(row.local_path);
+          if (buf) {
+            return sendImage(buf, row.mime_type || "image/jpeg");
+          }
+        } catch (e: any) {
+          console.warn("[brand-flagship] image read failed:", e?.message);
+        }
       }
     }
 
