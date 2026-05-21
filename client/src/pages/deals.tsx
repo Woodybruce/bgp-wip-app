@@ -422,7 +422,10 @@ const emptyForm: DealFormData = {
   name: "",
   groupName: "",
   dealType: "",
-  status: "",
+  // Default to SOL (Solicitors). The Deals CRM is for instructed deals;
+  // anything pre-solicitors (marketing, viewings, negotiating) belongs
+  // on the Letting Tracker via 'Add Unit'.
+  status: "SOL",
   team: [],
   internalAgent: [],
   propertyId: "",
@@ -808,6 +811,16 @@ function SimplifiedCreateBody({
 
   return (
     <div className="space-y-4">
+      {/* The Deals CRM is for Solicitors-stage onwards. Pre-SOL units
+          (marketing, viewings, negotiating) live on the Letting Tracker
+          — adding a unit there auto-creates a backing deal and links
+          them. Flag this up so Layla doesn't add a marketing-stage deal
+          here by mistake. */}
+      <div className="text-[11px] text-muted-foreground bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-md px-3 py-2 leading-snug">
+        New Deal creates a <strong>Solicitors-stage</strong> deal on the CRM kanban.
+        For marketing / viewings / negotiating units, use the{" "}
+        <a href="/deals/letting" className="underline">Letting Tracker → Add Unit</a> instead.
+      </div>
       <div>
         <Label>Property *</Label>
         <PropertyCombobox
@@ -1323,12 +1336,22 @@ export function DealFormDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__clear__">None</SelectItem>
-                  {CRM_OPTIONS.dealStatus.map((s) => (
-                    <SelectItem key={s} value={s} disabled={s === "INV"}>
-                      {DEAL_STATUS_LABELS[s as keyof typeof DEAL_STATUS_LABELS] ?? s}
-                      {s === "INV" ? " (auto)" : ""}
-                    </SelectItem>
-                  ))}
+                  {CRM_OPTIONS.dealStatus.map((s) => {
+                    // Pre-Solicitors statuses don't belong on the Deals
+                    // CRM — those marketing-stage deals live on the
+                    // Letting Tracker. Disable them when creating a new
+                    // deal, but keep them selectable in edit mode so
+                    // existing deals don't get stuck.
+                    const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG"];
+                    const isPreSol = PRE_SOL.includes(s);
+                    return (
+                      <SelectItem key={s} value={s} disabled={s === "INV" || (!isEdit && isPreSol)}>
+                        {DEAL_STATUS_LABELS[s as keyof typeof DEAL_STATUS_LABELS] ?? s}
+                        {s === "INV" ? " (auto)" : ""}
+                        {!isEdit && isPreSol ? " — use Letting Tracker" : ""}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               {isApprovalStatus && !isSenior && (
