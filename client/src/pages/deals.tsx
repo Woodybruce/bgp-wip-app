@@ -1116,6 +1116,19 @@ export function DealFormDialog({
   const [approvalGateOpen, setApprovalGateOpen] = useState(false);
   const [approvalGateMessage, setApprovalGateMessage] = useState("");
 
+  // Reset form whenever the dialog re-opens. Without this, the previous
+  // create attempt's values stick around — Layla hit 'New Deal' after
+  // creating one and saw the old property / counterparty still selected.
+  // Edit mode reloads from the deal prop so any uncommitted edits are
+  // dropped on reopen (acceptable — they weren't saved).
+  useEffect(() => {
+    if (!open) return;
+    setForm(deal ? dealToForm(deal) : { ...emptyForm });
+    setChangeReason("");
+    setLearning("");
+    setShowAllFields(false);
+  }, [open, deal]);
+
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
   const APPROVAL_STATUSES = ["Invoiced", "Completed"];
   const isApprovalStatus = statusChanged && APPROVAL_STATUSES.includes(form.status);
