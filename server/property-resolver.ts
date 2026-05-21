@@ -286,11 +286,14 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
     const streetNumber = streetNumberFromComponents
       ? streetNumberFromComponents.toLowerCase()
       : extractStreetNumber(formatted);
+    console.log(`[resolver] googlePlace ${placeId.slice(0, 12)}… → formatted="${formatted}" postcode=${postcode} streetNumber=${streetNumber} (fromComponents=${streetNumberFromComponents})`);
     if (streetNumber) {
       const all = await osPlacesByPostcode(postcode, 100);
       const matches = filterByStreetNumber(all, streetNumber);
+      console.log(`[resolver] OS postcode lookup at ${postcode} → ${all.length} total UPRNs, ${matches.length} match streetNumber="${streetNumber}"`);
       if (matches.length === 1 && matches[0].uprn) {
         resolved = await resolveByUprn(matches[0].uprn);
+        console.log(`[resolver] primary path resolved via UPRN ${matches[0].uprn} → property name "${(resolved as any)?.property?.name}"`);
       } else if (matches.length > 1) {
         return {
           kind: "candidates",
@@ -332,6 +335,9 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
 
   if (!resolved) {
     const llResult = await resolveByLatLng(lat, lng, 50);
+    const llAddr = llResult.kind === "resolved" ? dpaAddressOf(llResult.property) : null;
+    const llAgrees = llResult.kind === "resolved" ? checkNumberAgrees(llAddr) : null;
+    console.log(`[resolver] lat/lng nearest → kind=${llResult.kind} googleNum=${googleStreetNumber} dpaAddr="${llAddr}" agrees=${llAgrees}`);
     if (llResult.kind === "resolved" && checkNumberAgrees(dpaAddressOf(llResult.property))) {
       resolved = llResult;
     } else if (llResult.kind === "not_found" || (llResult.kind === "resolved" && !checkNumberAgrees(dpaAddressOf(llResult.property)))) {
@@ -366,6 +372,9 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
     }
   }
 
+  if (resolved && resolved.kind === "resolved") {
+    console.log(`[resolver] final property id=${(resolved.property as any)?.id} name="${(resolved.property as any)?.name}" uprn=${(resolved.property as any)?.uprn} source=${resolved.source}`);
+  }
   // Establishment name (e.g. "The Shard", "Hartsfield Manor", "Westfield
   // London") wins over the street name. Only overwrites the auto-derived
   // line1-style name; never trashes a value a user has already curated.
