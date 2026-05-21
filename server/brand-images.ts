@@ -613,6 +613,63 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
   }
 });
 
+// Inspect a single crm_property to decide what to do with it. Returns
+// the row's full state plus a count of linked deals / units / etc so
+// we can decide whether to safely delete + recreate vs rename in place.
+//   GET /api/admin/property-inspect/:id
+router.get("/api/admin/property-inspect/:id", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const { rows: prop } = await pool.query(
+      `SELECT id, name, uprn, postcode, address, latitude, longitude, resolution_status, created_at, updated_at
+         FROM crm_properties WHERE id = $1`,
+      [id]
+    );
+    if (!prop[0]) return res.status(404).json({ error: "not found" });
+
+    // Count incoming references so we know what'd break if we deleted.
+    const dealCount = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM crm_deals WHERE property_id = $1`, [id]);
+    const tenancyCount = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM tenancy_schedule_units WHERE property_id = $1`, [id]);
+    const leasingCount = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM leasing_schedule_units WHERE property_id = $1`, [id]);
+    const availCount = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM available_units WHERE property_id = $1`, [id]);
+    const compCount = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM crm_comps WHERE property_id = $1`, [id]);
+
+    res.json({
+      property: prop[0],
+      links: {
+        deals: dealCount.rows[0]?.n || 0,
+        tenancyUnits: tenancyCount.rows[0]?.n || 0,
+        leasingUnits: leasingCount.rows[0]?.n || 0,
+        availableUnits: availCount.rows[0]?.n || 0,
+        comps: compCount.rows[0]?.n || 0,
+      },
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "inspect failed" });
+  }
+});
+
+// Targeted rename for a single property. Used after /property-inspect
+// confirms there are no surprise references, or to clean up a row
+// the auto-heal couldn't fix (OS Places doesn't recognise its UPRN
+// and there's no stored address jsonb).
+//   POST /api/admin/property-rename  { id, newName }
+router.post("/api/admin/property-rename", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.id || "");
+    const newName = String(req.body?.newName || "").trim();
+    if (!id || !newName) return res.status(400).json({ error: "id and newName required" });
+    const { rows } = await pool.query(
+      `UPDATE crm_properties SET name = $2, updated_at = NOW() WHERE id = $1 RETURNING id, name`,
+      [id, newName]
+    );
+    if (!rows[0]) return res.status(404).json({ error: "property not found" });
+    res.json({ ok: true, property: rows[0] });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "rename failed" });
+  }
+});
+
 // Diagnostic — surfaces exactly what's stored for a brand's images and
 // which sources have data. Used to debug "why is this brand returning
 // 204 / no images" without having to query the DB by hand.
