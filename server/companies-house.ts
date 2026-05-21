@@ -1604,7 +1604,16 @@ router.post("/api/title-search/auto-fill-from-postcode/:propertyId", requireAuth
       .map(t => t.toLowerCase().trim());
 
     const scoredFreeholds = freeholds.map((f: any) => {
-      const titleAddr = (f.address || f.property_address || "").toLowerCase();
+      // Defensive coercion — address fields are usually strings here
+      // (HMLR/land-registry scrape data) but the same shape elsewhere
+      // (crm_properties.address jsonb) caused a runtime crash, so we
+      // serialise non-strings rather than risk another '.toLowerCase
+      // is not a function'.
+      const addrSrc = f.address ?? f.property_address;
+      const titleAddr = (typeof addrSrc === "string"
+        ? addrSrc
+        : addrSrc?.formatted || addrSrc?.line1 || ""
+      ).toLowerCase();
       const propName = (f.proprietor_name_1 || "").toLowerCase();
       let score = 0;
       for (const term of addressTerms) {

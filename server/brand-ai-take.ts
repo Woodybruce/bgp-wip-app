@@ -389,7 +389,14 @@ router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Req
 
     const scored = unitsRows.map((u: any) => {
       let score = 0;
-      const addr = (u.property_address || "").toLowerCase();
+      // crm_properties.address is jsonb (e.g. { formatted, line1, postcode })
+      // — calling .toLowerCase() on the object threw. Coerce to a string
+      // first, preferring the formatted address field when present.
+      const addrSrc = u.property_address;
+      const addr = (typeof addrSrc === "string"
+        ? addrSrc
+        : addrSrc?.formatted || addrSrc?.line1 || ""
+      ).toLowerCase();
       const zone = (u.zone || "").toLowerCase();
       if (reqLocations.some(loc => addr.includes(loc) || zone.includes(loc))) score += 10;
       if (u.optimum_target) score += 5;

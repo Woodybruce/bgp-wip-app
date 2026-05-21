@@ -2532,6 +2532,11 @@ app.use((req, res, next) => {
     // promote sweeps both run many UPDATEs in series — the default
     // 45s timeout cuts them off mid-pass, leaving partial state.
     timeoutMs = 180000;
+  } else if (req.path === '/api/interactions/sync' || req.path === '/api/interactions/discover-contacts') {
+    // Sync iterates ~18 BGP staff mailboxes × email + calendar via
+    // paginated Graph API calls. Routinely 45s+. Don't 504 it mid-pass
+    // and leave half the users unsynced.
+    timeoutMs = 180000;
   }
   const timeout = setTimeout(() => {
     if (!res.headersSent) {
