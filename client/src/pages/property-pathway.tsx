@@ -7,7 +7,6 @@ import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { RetailContextPlanEditor } from "@/components/retail-context-plan-editor";
 import { usePropertyContext } from "@/lib/property-context";
-import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -39,6 +38,10 @@ interface PathwayRun {
   startedAt: string;
   updatedAt: string;
   completedAt?: string | null;
+  // Set by GET /api/property-pathway only — joined from crm_properties +
+  // property_imagery_assets so the board can show recognisable cards.
+  propertyName?: string | null;
+  heroImageStudioId?: string | null;
 }
 
 const STAGE_LABELS = [
@@ -68,7 +71,11 @@ export default function PropertyPathway() {
   const { toast } = useToast();
   const [runs, setRuns] = useState<PathwayRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<PathwayRun | null>(null);
-  const [loading, setLoading] = useState(true);
+  // initialLoading: true ONLY for the very first fetch. Subsequent
+  // background refetches (the 30s poll while runs are in progress)
+  // keep the existing cards on screen instead of flashing back to a
+  // "Loading…" state — which is what made the board look glitchy.
+  const [initialLoading, setInitialLoading] = useState(true);
   const [advancing, setAdvancing] = useState(false);
   const ctxProperty = usePropertyContext();
   const [newAddress, setNewAddress] = useState(ctxProperty?.name || "");
@@ -98,8 +105,13 @@ export default function PropertyPathway() {
   })();
 
   useEffect(() => {
-    if (prefilledFromUrl.address && !newAddress) setNewAddress(prefilledFromUrl.address);
-    if (prefilledFromUrl.postcode && !newPostcode) setNewPostcode(prefilledFromUrl.postcode);
+    // The resolver bar is gone, so when callers (Intel strip, edozo-map,
+    // ChatBGP-generated links) deep-link with ?address=X&postcode=Y the
+    // run starts automatically. ?runId=X is the open-existing flow and
+    // is handled by a separate effect below — we skip auto-start then.
+    if (prefilledFromUrl.address && !runIdFromUrl) {
+      startRun(prefilledFromUrl.address, prefilledFromUrl.postcode);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -165,12 +177,11 @@ export default function PropertyPathway() {
   }, [selectedRun?.id]);
 
   async function loadRuns() {
-    setLoading(true);
     try {
       const res = await fetch("/api/property-pathway", { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) setRuns(await res.json());
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   }
 
@@ -391,79 +402,90 @@ export default function PropertyPathway() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Property Pathway</h1>
-        <p className="text-sm text-muted-foreground mt-1">End-to-end investigation: search, brand intelligence, property intelligence, studios, and Why Buy.</p>
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Property Pathway</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Investigations run via ChatBGP — ask it to "start a pathway for 12 Haymarket" and it'll resolve the address and kick the run off. Existing runs appear here.
+          </p>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Start a new investigation</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {/* Resolver-canonical entry point: Google Places autocomplete →
-              OS Places UPRN → auto-start investigation. The user picks a
-              suggestion and the run kicks off — no separate Start button.
-              If they want to revisit / edit, they can re-run from the
-              recent investigations list below. */}
-          <PropertyResolverBar
-            current={newAddress ? { id: "", name: newAddress, postcode: newPostcode || null } : null}
-            onResolve={(_id, prop) => {
-              setNewAddress(prop.name || "");
-              setNewPostcode(prop.postcode || "");
-              startRun(prop.name || "", prop.postcode || "");
-            }}
-            placeholder="Type any address — Google suggests, OS confirms, investigation starts…"
-          />
-        </CardContent>
-      </Card>
-
       <div>
-        <h2 className="text-sm font-medium text-muted-foreground mb-2">Recent investigations</h2>
-        {loading ? (
+        <h2 className="text-sm font-medium text-muted-foreground mb-3">Recent investigations</h2>
+        {initialLoading && runs.length === 0 ? (
           <div className="text-sm text-muted-foreground">Loading…</div>
         ) : runs.length === 0 ? (
-          <div className="text-sm text-muted-foreground">No investigations yet — start one above.</div>
+          <div className="text-sm text-muted-foreground">
+            No investigations yet — open ChatBGP and ask it to start one.
+          </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {runs.map(r => (
-              <div
-                key={r.id}
-                className="group relative p-4 rounded-lg border bg-card hover:bg-muted/40 transition"
-              >
-                <button
-                  onClick={(e) => { e.stopPropagation(); deleteRun(r.id); }}
-                  className="absolute top-2 right-2 p-1.5 rounded hover:bg-destructive/10 text-muted-foreground/50 hover:text-destructive transition"
-                  title="Delete investigation"
-                  data-testid={`button-delete-pathway-${r.id}`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }}
-                  className="text-left w-full"
-                >
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{r.address}</p>
-                      {r.postcode && <p className="text-xs text-muted-foreground mt-0.5">{r.postcode}</p>}
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {STAGE_LABELS.map(s => (
-                      <span key={s.n} className={`text-[10px] px-1.5 py-0.5 rounded ${stageBadgeColor(r.stageStatus?.[`stage${s.n}`])}`}>
-                        {s.n}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mt-2">Updated {new Date(r.updatedAt).toLocaleString("en-GB")}</p>
-                </button>
-              </div>
-            ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {runs.map(r => <PathwayCard key={r.id} run={r} onOpen={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }} onDelete={() => deleteRun(r.id)} />)}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Recent-investigation card: hero shot at the top, building name as the
+// headline, address + last-updated timestamp underneath. No per-stage
+// badges on the card itself — those live on the detail view once the
+// user clicks in. Delete stays on the card (top-right, hover only).
+function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () => void; onDelete: () => void }) {
+  const heading = run.propertyName || run.address || "Untitled";
+  const subline = run.propertyName ? run.address : run.postcode || "";
+  const updated = run.updatedAt ? new Date(run.updatedAt) : null;
+  const updatedStr = updated ? updated.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  // Live-ness: any stage currently running? Used for a subtle pulse
+  // badge so users can spot in-flight runs without the whole card
+  // flashing on refetch.
+  const anyRunning = Object.values(run.stageStatus || {}).some(s => s === "running");
+  const heroUrl = run.heroImageStudioId ? `/api/image-studio/${run.heroImageStudioId}/thumb` : null;
+
+  return (
+    <div
+      className="group relative rounded-xl border bg-card overflow-hidden hover:shadow-md hover:border-foreground/20 transition cursor-pointer"
+      onClick={onOpen}
+      data-testid={`card-pathway-${run.id}`}
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); if (confirm(`Delete pathway run for "${heading}"?`)) onDelete(); }}
+        className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-black/40 text-white opacity-0 group-hover:opacity-100 hover:bg-black/60 transition-opacity"
+        title="Delete investigation"
+        data-testid={`button-delete-pathway-${run.id}`}
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+
+      <div className="aspect-[5/3] bg-muted/40 relative overflow-hidden">
+        {heroUrl ? (
+          <img
+            src={heroUrl}
+            alt={heading}
+            className="w-full h-full object-cover"
+            loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-muted-foreground/40">
+            <Building2 className="w-12 h-12" />
+          </div>
+        )}
+        {anyRunning && (
+          <span className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-600/90 text-white text-[10px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            Running
+          </span>
+        )}
+      </div>
+
+      <div className="p-3">
+        <p className="text-sm font-semibold truncate" title={heading}>{heading}</p>
+        {subline && <p className="text-xs text-muted-foreground truncate mt-0.5" title={subline}>{subline}</p>}
+        {updatedStr && <p className="text-[10px] text-muted-foreground mt-1.5">Updated {updatedStr}</p>}
       </div>
     </div>
   );

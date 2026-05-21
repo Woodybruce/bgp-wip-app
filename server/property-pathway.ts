@@ -5263,15 +5263,47 @@ export function registerPropertyPathwayRoutes(app: Express) {
   app.get("/api/property-pathway", requireAuth, async (req: Request, res: Response) => {
     try {
       const propertyId = typeof req.query.propertyId === "string" ? req.query.propertyId : undefined;
-      const q = db
-        .select()
-        .from(propertyPathwayRuns)
-        .orderBy(desc(propertyPathwayRuns.updatedAt))
-        .limit(50);
       const runs = propertyId
         ? await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.propertyId, propertyId)).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(20)
-        : await q;
-      res.json(runs);
+        : await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(50);
+
+      // Enrich the card view with the canonical building name + a hero
+      // image (if one's been classified for the property). Lets the
+      // board show recognisable cards rather than a wall of addresses.
+      const propertyIds = Array.from(new Set(runs.map(r => r.propertyId).filter((id): id is string => !!id)));
+      const nameById = new Map<string, string>();
+      const heroById = new Map<string, string>();
+      if (propertyIds.length > 0) {
+        const { rows: nameRows } = await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM crm_properties WHERE id = ANY($1::varchar[])`,
+          [propertyIds],
+        );
+        for (const r of nameRows) nameById.set(r.id, r.name);
+
+        // Pinned hero first, then highest-score hero, then highest-score
+        // anything visual. One per property.
+        const { rows: heroRows } = await pool.query<{ property_id: string; image_studio_id: string }>(
+          `SELECT DISTINCT ON (property_id) property_id, image_studio_id
+             FROM property_imagery_assets
+            WHERE property_id = ANY($1::varchar[])
+              AND hidden = FALSE
+              AND image_studio_id IS NOT NULL
+            ORDER BY property_id,
+                     (kind = 'hero') DESC,
+                     pinned DESC NULLS LAST,
+                     score DESC NULLS LAST,
+                     generated_at DESC`,
+          [propertyIds],
+        );
+        for (const r of heroRows) heroById.set(r.property_id, r.image_studio_id);
+      }
+
+      const enriched = runs.map(r => ({
+        ...r,
+        propertyName: r.propertyId ? (nameById.get(r.propertyId) || null) : null,
+        heroImageStudioId: r.propertyId ? (heroById.get(r.propertyId) || null) : null,
+      }));
+      res.json(enriched);
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }
