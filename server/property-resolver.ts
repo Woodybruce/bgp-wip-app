@@ -254,6 +254,13 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   const lng = result?.geometry?.location?.lng;
   const formatted = result?.formatted_address;
   const postcode = (result?.address_components || []).find((c: any) => c.types?.includes("postal_code"))?.long_name;
+  // Pull the street number from address_components — it's always reliable,
+  // unlike formatted_address which sometimes leads with an establishment
+  // or area name (e.g. "Brixton Market, Electric Avenue, ..." → regex
+  // returns null → number-guard defaults to agree → wrong UPRN match).
+  const streetNumberFromComponents: string | null = (result?.address_components || [])
+    .find((c: any) => c.types?.includes("street_number"))?.long_name
+    ?? null;
   // Only treat as an "establishment" if Google flagged it that way. Pure
   // street addresses come back with name === formatted_address; we don't
   // want to prefix those.
@@ -273,7 +280,12 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   // (the building centroid often sits >40m from any entrance UPRN).
   let resolved: ResolveResult | null = null;
   if (postcode && isOsConfigured()) {
-    const streetNumber = extractStreetNumber(formatted);
+    // Prefer the address_components street_number (always reliable) and
+    // fall back to regex-parsing the formatted string. Lower-case it
+    // here to match filterByStreetNumber's expectations.
+    const streetNumber = streetNumberFromComponents
+      ? streetNumberFromComponents.toLowerCase()
+      : extractStreetNumber(formatted);
     if (streetNumber) {
       const all = await osPlacesByPostcode(postcode, 100);
       const matches = filterByStreetNumber(all, streetNumber);
@@ -299,7 +311,9 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   // single-building UPRN and 99 is the nearest neighbour. Better to
   // return candidates / not_found and let the caller fall back to Google
   // data than silently misname the property.
-  const googleStreetNumber = extractStreetNumber(formatted);
+  const googleStreetNumber = streetNumberFromComponents
+    ? streetNumberFromComponents.toLowerCase()
+    : extractStreetNumber(formatted);
   const checkNumberAgrees = (dpaAddress: string | undefined) => {
     if (!googleStreetNumber || !dpaAddress) return true;
     const dpaNum = extractStreetNumber(dpaAddress);
@@ -310,11 +324,17 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
            norm(googleStreetNumber).startsWith(norm(dpaNum));
   };
 
+  // Prefer the property's DPA address.formatted (set by createFromDpa at
+  // insert time) over its display name — name can be hand-edited or
+  // overridden with an establishment, which would defeat the guard.
+  const dpaAddressOf = (prop: any) =>
+    (prop?.address && (prop.address as any).formatted) || prop?.name || "";
+
   if (!resolved) {
     const llResult = await resolveByLatLng(lat, lng, 50);
-    if (llResult.kind === "resolved" && checkNumberAgrees((llResult.property as any)?.name)) {
+    if (llResult.kind === "resolved" && checkNumberAgrees(dpaAddressOf(llResult.property))) {
       resolved = llResult;
-    } else if (llResult.kind === "not_found" || (llResult.kind === "resolved" && !checkNumberAgrees((llResult.property as any)?.name))) {
+    } else if (llResult.kind === "not_found" || (llResult.kind === "resolved" && !checkNumberAgrees(dpaAddressOf(llResult.property)))) {
       // Either nearest-radius failed, or it matched a different number.
       // Try free-text OS Places search on the formatted address — don't
       // re-enter resolveByAddress, which would re-Google and loop.
