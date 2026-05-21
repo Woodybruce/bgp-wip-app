@@ -4290,60 +4290,62 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
       retailMarkersRef.current.addLayer(polygon);
 
-      // Fascia label: oriented along the unit's long axis (PCA on the
-      // polygon vertices), font size scaled by Area_ft2 so big units read
-      // big and small ones don't overflow. Goad-plan feel.
-      if (showLabels && fascia && !isVacant) {
+      // Fascia label — matches Experian Goad-plan style:
+      //   - snap to 0° or 90° (never a diagonal — Goad rule),
+      //   - ALL CAPS condensed,
+      //   - font size scaled by Area_ft2,
+      //   - hide entirely for tiny units that would just create clutter.
+      const ft2Raw = Number(sqft) || 0;
+      if (showLabels && fascia && !isVacant && ft2Raw >= 80) {
         const ring: [number, number][] | undefined = feature.geometry?.coordinates?.[0];
         const cx = parseFloat(props.Centroid_X);
         const cy = parseFloat(props.Centroid_Y);
         if (Array.isArray(ring) && ring.length > 2 && Number.isFinite(cx) && Number.isFinite(cy)) {
-          // PCA: principal axis angle in lng/lat space.
-          // Use one point per vertex (skip the duplicated closing point).
+          // PCA: principal axis angle in lng/lat space. Convert lng to
+          // metres-equivalent at this latitude so the axis is a true
+          // ground direction rather than a stretched one.
           const pts = ring.slice(0, -1);
           let mx = 0, my = 0;
           for (const [x, y] of pts) { mx += x; my += y; }
           mx /= pts.length; my /= pts.length;
           let cxx = 0, cxy = 0, cyy = 0;
           for (const [x, y] of pts) {
-            // Scale lng by cos(lat) so 1 unit on each axis is comparable distance.
             const dx = (x - mx) * Math.cos((my * Math.PI) / 180);
             const dy = y - my;
             cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
           }
           const angleRad = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
-          // CSS rotates clockwise with screen-y pointing down; lat-up means we
-          // negate. Keep text upright (never upside-down).
           let deg = -angleRad * 180 / Math.PI;
           if (deg > 90) deg -= 180;
           if (deg < -90) deg += 180;
+          // Snap to 0° (horizontal) or 90° (vertical). Goad never tilts.
+          const snapped = Math.abs(deg) > 45 ? 90 : 0;
 
-          // Font size scaled by floor area. Goad gives Area_ft2 — sqrt
-          // gives a typical edge length, mapped onto a sensible pixel
-          // range. Tuned to read at the same density as the Property Map
-          // popup labels (Woody's preferred legibility benchmark).
-          const ft2 = Math.max(50, Math.min(12000, Number(sqft) || 800));
+          // Font scale: sqrt(area) approximates edge length, mapped to a
+          // tight pixel range. Real Goad uses ~6-9pt across the board.
+          const ft2 = Math.max(80, Math.min(15000, ft2Raw));
           const edgeFt = Math.sqrt(ft2);
-          const fontPx = Math.round(Math.max(10, Math.min(18, edgeFt / 2.2)));
-          const widthPx = Math.max(60, Math.min(260, Math.round(edgeFt * 5)));
+          const fontPx = Math.round(Math.max(8, Math.min(14, edgeFt / 2.6)));
+          const widthPx = Math.max(48, Math.min(240, Math.round(edgeFt * 4.5)));
 
           const label = L.marker([cy, cx], {
             interactive: false,
             icon: L.divIcon({
               className: "",
               html: `<div style="
+                font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;
                 font-size:${fontPx}px;
                 font-weight:600;
-                color:#1f1f1f;
+                letter-spacing:-0.2px;
+                color:#0a0a0a;
                 text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;
                 text-align:center;
                 white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
                 pointer-events:none;
                 width:${widthPx}px;
-                transform:rotate(${deg.toFixed(1)}deg);
+                transform:rotate(${snapped}deg);
                 transform-origin:center;
+                text-transform:uppercase;
                 line-height:1;">${fascia}</div>`,
               iconSize: [widthPx, fontPx + 2],
               iconAnchor: [widthPx / 2, (fontPx + 2) / 2],
