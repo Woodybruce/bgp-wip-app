@@ -73,6 +73,7 @@ export function PropertyCombobox({
 
   const containerRef = React.useRef<HTMLDivElement>(null);
   const autocompleteRef = React.useRef<google.maps.places.AutocompleteService | null>(null);
+  const placesServiceRef = React.useRef<google.maps.places.PlacesService | null>(null);
   const debounceRef = React.useRef<ReturnType<typeof setTimeout>>();
   const { toast } = useToast();
 
@@ -80,10 +81,68 @@ export function PropertyCombobox({
     loadGoogleMaps().then((loaded) => {
       if (loaded) {
         autocompleteRef.current = new google.maps.places.AutocompleteService();
+        // PlacesService needs a DOM element; an offscreen div is the
+        // standard pattern (we never render it ourselves).
+        const div = document.createElement("div");
+        placesServiceRef.current = new google.maps.places.PlacesService(div);
         setGoogleReady(true);
       }
     });
   }, []);
+
+  // Wrap PlacesService.getDetails in a promise — used in the resolver
+  // fallback to pull the canonical address / postcode / lat-lng / name
+  // before POSTing a property. Means even when the OS Places resolver
+  // misses (e.g. market / multi-unit building), the property still
+  // lands with all the Google data attached.
+  const fetchGooglePlaceDetails = (placeId: string): Promise<any | null> => {
+    return new Promise((resolve) => {
+      if (!placesServiceRef.current) return resolve(null);
+      placesServiceRef.current.getDetails(
+        { placeId, fields: ["name", "formatted_address", "geometry", "address_components", "types"] },
+        (place, status) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && place) resolve(place);
+          else resolve(null);
+        }
+      );
+    });
+  };
+
+  // Extract a clean property name from a Google place. Building / market
+  // / establishment name wins over the street; otherwise use the first
+  // address line (number + street), stripping the rest of the postal tail.
+  const namePropertyFromPlace = (place: any, fallback: string): string => {
+    const placeName = (place as any).name as string | undefined;
+    const types = ((place as any).types || []) as string[];
+    const isBareAddress = types.includes("street_address") || types.includes("premise") || types.includes("postal_code");
+    if (placeName && !isBareAddress && !/^\d+[a-z]?$/i.test(placeName.trim())) {
+      return placeName;
+    }
+    // Fall back to formatted address line1.
+    const formatted = place.formatted_address || fallback;
+    const line1 = formatted.split(",")[0]?.trim();
+    return line1 || formatted || fallback;
+  };
+
+  const placeToPropertyPayload = (place: any, fallbackName: string) => {
+    const comp = (t: string) => place.address_components?.find((c: any) => c.types.includes(t))?.long_name;
+    const street = [comp("street_number"), comp("route")].filter(Boolean).join(" ");
+    const formatted = place.formatted_address || fallbackName;
+    return {
+      name: namePropertyFromPlace(place, fallbackName),
+      address: {
+        formatted,
+        line1: street || formatted.split(",")[0],
+        city: comp("postal_town") || comp("locality"),
+        region: comp("administrative_area_level_2") || comp("administrative_area_level_1"),
+        country: comp("country"),
+        placeId: place.place_id,
+      },
+      postcode: comp("postal_code") || null,
+      latitude: place.geometry?.location ? String(place.geometry.location.lat()) : null,
+      longitude: place.geometry?.location ? String(place.geometry.location.lng()) : null,
+    };
+  };
 
   // Debounced Google Places lookup — fires only when the dropdown is
   // open and the search is 3+ chars. Matches address-autocomplete.tsx
@@ -174,15 +233,24 @@ export function PropertyCombobox({
           return;
         }
       }
-      // not_found / unknown shape — fall back to name-only creation so
-      // Layla isn't blocked. She can fix the address on the property page later.
-      const r = await apiRequest("POST", "/api/crm/properties", { name: prediction.description });
+      // not_found / unknown shape — OS Places couldn't pin a UPRN
+      // (common on markets, multi-unit buildings, brand-new addresses).
+      // Fall back to creating the property with the Google data we DO
+      // have: clean name from placeName/line1, full formatted address,
+      // postcode, lat/lng. Means the property lands properly even
+      // without a canonical UPRN.
+      const placeDetails = await fetchGooglePlaceDetails(prediction.place_id);
+      const fallbackName = prediction.structured_formatting?.main_text || prediction.description;
+      const payload = placeDetails
+        ? placeToPropertyPayload(placeDetails, fallbackName)
+        : { name: fallbackName };
+      const r = await apiRequest("POST", "/api/crm/properties", payload);
       const prop = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       adoptProperty(prop.id, prop.name, prop.postcode ?? null);
       toast({
-        title: "Created without address lookup",
-        description: "Couldn't auto-resolve the address — added as a plain property. You can edit it from the property page.",
+        title: `Added "${prop.name}"`,
+        description: "Address attached from Google. We couldn't pin an OS Places UPRN — you can confirm the canonical address on the property page.",
       });
     } catch (err: any) {
       toast({
