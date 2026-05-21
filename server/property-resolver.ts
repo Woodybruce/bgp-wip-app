@@ -338,7 +338,26 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
     const llAddr = llResult.kind === "resolved" ? dpaAddressOf(llResult.property) : null;
     const llAgrees = llResult.kind === "resolved" ? checkNumberAgrees(llAddr) : null;
     console.log(`[resolver] lat/lng nearest → kind=${llResult.kind} googleNum=${googleStreetNumber} dpaAddr="${llAddr}" agrees=${llAgrees}`);
-    if (llResult.kind === "resolved" && checkNumberAgrees(dpaAddressOf(llResult.property))) {
+
+    // lat/lng nearest can also return CANDIDATES (multiple UPRNs within
+    // the radius). The previous code passed them straight through, so
+    // the client picked the first candidate even when its building number
+    // disagreed with Google's. Filter the candidates by the same
+    // number-agreement rule before deciding what to do with them.
+    if (llResult.kind === "candidates" && googleStreetNumber) {
+      const filtered = llResult.candidates.filter((c) => checkNumberAgrees(c.address));
+      console.log(`[resolver] lat/lng candidates filtered by number "${googleStreetNumber}" → ${filtered.length} of ${llResult.candidates.length} agree`);
+      if (filtered.length === 1 && filtered[0].uprn) {
+        resolved = await resolveByUprn(filtered[0].uprn);
+      } else if (filtered.length > 1) {
+        return { kind: "candidates", candidates: filtered, reason: `Multiple UPRNs at this number near lat/lng — user must pick` };
+      } else {
+        // None of the lat/lng candidates agree with Google's number.
+        // Tell the caller so it can fall back to Google data directly
+        // rather than offering wrong-building candidates.
+        return { kind: "not_found", reason: `Lat/lng candidates didn't include number ${googleStreetNumber} — using Google data` };
+      }
+    } else if (llResult.kind === "resolved" && checkNumberAgrees(dpaAddressOf(llResult.property))) {
       resolved = llResult;
     } else if (llResult.kind === "not_found" || (llResult.kind === "resolved" && !checkNumberAgrees(dpaAddressOf(llResult.property)))) {
       // Either nearest-radius failed, or it matched a different number.
