@@ -43,6 +43,7 @@ import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
 import { setupRevolutRoutes } from "./revolut";
+import { setupRefreshImageRoutes } from "./refresh-website-images";
 import { setupHrRoutes } from "./hr-routes";
 import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { setupDocumentPreferencesRoutes } from "./document-preferences";
@@ -6324,6 +6325,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   registerGenericCrmRoutes(app);
   setupStripeIssuingRoutes(app);
   setupRevolutRoutes(app);
+  setupRefreshImageRoutes(app);
   setupHrRoutes(app);
   setupWhyBuyDesignRoutes(app);
   setupDocumentPreferencesRoutes(app);
