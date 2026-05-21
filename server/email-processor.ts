@@ -86,6 +86,12 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
 // bodyPreview (always just ~255 chars from Graph) or did a crude tag
 // strip — result was empty or near-empty text for forwarded newsletters
 // where the actual content sits in nested HTML.
+//
+// IMPORTANT: We extract image alt text BEFORE stripping tags. Most
+// commercial newsletters (Green Street News, Property Week, EGi, etc)
+// build the visible content as <img> elements with meaningful alt
+// attributes — strip the tags naively and you get a body of stray
+// "No" / "View in browser" / unsubscribe-footer fragments.
 function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
@@ -93,6 +99,13 @@ function htmlToText(html: string): string {
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
   s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
   s = s.replace(/<!--[\s\S]*?-->/g, "");
+  // Replace <img> tags with their alt text — without this, image-heavy
+  // newsletters look empty after tag-stripping.
+  s = s.replace(/<img\b[^>]*\balt=(?:"([^"]*)"|'([^']*)')[^>]*>/gi, (_m, d, s2) => {
+    const alt = (d || s2 || "").trim();
+    return alt ? `\n${alt}\n` : "";
+  });
+  s = s.replace(/<img\b[^>]*>/gi, "");          // Images without alt → drop silently
   // Block-level and <br> tags become newlines BEFORE stripping remaining tags.
   s = s.replace(/<\s*br\s*\/?\s*>/gi, "\n");
   s = s.replace(/<\/(p|div|li|tr|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
@@ -121,6 +134,10 @@ function htmlToText(html: string): string {
 // Pick the richest readable body for a Microsoft Graph message. Falls
 // back through body.content → bodyPreview so forwarded newsletters
 // (where the bulletin HTML is in body.content) no longer look blank.
+// Also handles the image-heavy newsletter case where htmlToText comes
+// back with very little text relative to the HTML size: we extract
+// hrefs (typical newsletter content is link-rich) and surface them so
+// Claude can at least see "what topics this email touched on".
 function extractEmailBodyText(msg: any): string {
   const raw = msg?.body?.content || "";
   const type = (msg?.body?.contentType || "").toLowerCase();
@@ -128,12 +145,52 @@ function extractEmailBodyText(msg: any): string {
   if (raw) {
     text = type === "html" ? htmlToText(raw) : raw;
   }
+
+  // Image-heavy newsletter detection — if the HTML is sizeable but the
+  // extracted text is tiny, the body is almost certainly built from
+  // images. Pull link anchors as a last-ditch content source so Claude
+  // sees the headlines (newsletters always link to each story).
+  if (type === "html" && raw.length > 2000 && text.trim().length < 300) {
+    const links = extractLinkAnchors(raw);
+    if (links.length > 0) {
+      text = `${text.trim()}\n\n[Email content was image-heavy; the following headlines/links were extracted from the HTML]\n${links.join("\n")}`;
+    }
+  }
+
   // If Graph gave us nothing useful but had a preview, use that so we
   // at least get SOMETHING through to the classifier.
   if (!text.trim() && msg?.bodyPreview) text = msg.bodyPreview;
   // Cap at 20k chars — classifier only reads ~6k, but we keep some
   // headroom so specialist prompts can see more context later.
   return text.slice(0, 20000);
+}
+
+// Pull headline-shaped link anchors from newsletter HTML — i.e. an
+// <a href> wrapping text that looks like a real headline (>= 8 chars,
+// not just "click here" / "unsubscribe"). Used as a fallback when the
+// body is mostly images.
+function extractLinkAnchors(html: string): string[] {
+  const out: string[] = [];
+  const SKIP = /\b(unsubscribe|view\s+in\s+browser|view\s+online|click\s+here|read\s+more|subscribe|preferences|terms|privacy|forward\s+to)\b/i;
+  const re = /<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  const seen = new Set<string>();
+  while ((m = re.exec(html)) !== null) {
+    const href = m[1];
+    const innerText = m[2]
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (innerText.length < 8 || innerText.length > 250) continue;
+    if (SKIP.test(innerText)) continue;
+    const key = innerText.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(`• ${innerText}${href.startsWith("http") ? ` (${href.slice(0, 80)}${href.length > 80 ? "…" : ""})` : ""}`);
+    if (out.length >= 30) break;
+  }
+  return out;
 }
 
 let registeredUserEmails: Set<string> | null = null;
