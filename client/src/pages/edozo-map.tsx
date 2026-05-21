@@ -3492,83 +3492,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       setMapZoom(map.getZoom());
     });
 
-    const renderBuildings = (buildings: any[]) => {
-      if (!buildingLayerRef.current || !mapRef.current) return;
-      buildingLayerRef.current.clearLayers();
-      // Suppress the auto-classifier layer when the real Goad polygons
-      // are showing — the dark outlines from this layer were the
-      // 'messy lines' Woody saw bleeding through.
-      if (showRetailContextRef.current) return;
-
-      for (const b of buildings) {
-        const hasInfo = b.label || b.houseNum;
-        const isUnit = b.isUnit;
-
-        // Goad-style categorical palette by use-class / label heuristics
-        const classify = (label: string): string => {
-          const l = (label || "").toLowerCase();
-          if (!l) return hasInfo ? "other" : "empty";
-          if (/(restaurant|cafe|café|bar|pub|kitchen|grill|sushi|pizza|burger|coffee|starbucks|pret|deli|chop|steak|dine)/.test(l)) return "fb";
-          if (/(bank|hsbc|barclays|natwest|lloyds|santander|metro|post office|bureau|exchange)/.test(l)) return "services";
-          if (/(hotel|hostel|inn|lodge|premier|travelodge|radisson|edwardian)/.test(l)) return "hotel";
-          if (/(theatre|cinema|odeon|vue|fountain|monument|gallery|museum|institute|embassy|church|palace|park|square)/.test(l)) return "civic";
-          if (/(vac|vacant|to let|available)/.test(l)) return "vacant";
-          return "retail";
-        };
-        const category = b.isVacant ? "vacant" : classify(b.label || "");
-        const catFill: Record<string, string> = {
-          retail:   "#fff4e0",  // warm cream
-          fb:       "#ffe8d4",  // peach
-          services: "#e8f0ff",  // pale blue
-          hotel:    "#f0e8ff",  // pale purple
-          civic:    "#e8f5e8",  // pale green
-          vacant:   "#e8e8e8",  // grey
-          empty:    "#f4f2eb",  // off-white
-          other:    "#fbf9f2",
-        };
-
-        const polygon = L.polygon(b.latLngs, {
-          color: "#1a1a1a",
-          weight: isUnit ? 1.4 : 2.2,
-          fillColor: catFill[category] || catFill.other,
-          fillOpacity: 1,
-          opacity: 1,
-          pane: "buildingPane",
-          lineJoin: "miter",
-          lineCap: "butt",
-        });
-
-        // Oriented bounding box: we measure the polygon along its own
-        // principal axis, not the screen axis. A narrow shopfront that
-        // happens to run north-south gets a "width" that's its long side,
-        // and we rotate the label to match. This is how Goad plans keep
-        // text readable inside narrow units.
-        const obb = polygonOBBPixels(b.latLngs, mapRef.current);
-        const zoom = mapRef.current.getZoom();
-        const fitted = zoom < 18 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, obb.w, obb.h);
-
-        if (fitted) {
-          const cssClass = b.isVacant && !b.label
-            ? `edozo-label edozo-label-vacant edozo-fs-${fitted.fontSize}`
-            : `edozo-label edozo-fs-${fitted.fontSize}`;
-          // If the principal axis is meaningfully rotated (>8° off
-          // horizontal), wrap the text in an inline-block that rotates
-          // inside the Leaflet-positioned tooltip. Small angles are left
-          // alone so labels on near-horizontal frontages don't wobble.
-          const rot = Math.abs(obb.rotationDeg) > 8 ? obb.rotationDeg : 0;
-          const htmlLines = fitted.text.split("\n").map(l => `<div>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`).join("");
-          const content = rot === 0
-            ? fitted.text
-            : `<div style="display:inline-block;transform:rotate(${rot}deg);transform-origin:center;white-space:nowrap;line-height:1.1;">${htmlLines}</div>`;
-          polygon.bindTooltip(content, {
-            permanent: true,
-            direction: "center",
-            className: cssClass,
-          });
-        }
-
-        buildingLayerRef.current.addLayer(polygon);
-      }
+    const renderBuildings = (_buildings: any[]) => {
+      // Retired. The auto-classified pale-yellow building layer is
+      // superseded by the real Experian Goad polygons on the Retail
+      // Context toggle. Stub kept so existing callers don't need
+      // surgery — it just clears the layer and exits.
+      if (buildingLayerRef.current) buildingLayerRef.current.clearLayers();
     };
 
     const loadBuildings = async () => {
@@ -3618,14 +3547,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         }).then(r => r.ok ? r.json() : null).catch(() => null).then(d => d ? { ...d, _centreLat: c.lat, _centreLng: c.lng, _radiusKm: c.radiusKm } : null)
       )).then(rs => rs.filter(Boolean));
 
-      const [buildings, labelsResp, centreDirectories] = await Promise.all([
-        fetchBuildings(map),
+      // Auto-classified building layer is retired — superseded by real
+      // Goad polygons on the Retail Context layer. We still keep the
+      // sibling fetches (centre directories, search-label cache) because
+      // the rest of this effect uses them.
+      const [labelsResp, centreDirectories] = await Promise.all([
         labelsPromise,
         centreDirectoriesPromise,
       ]);
-
+      const buildings: any[] = []; // retired — see renderBuildings() below
       if (loadCounterRef.current !== thisLoad) return;
-      if (buildings.length === 0 && buildingLayerRef.current && buildingLayerRef.current.getLayers().length > 0) return;
 
       // Flatten centre directory tenants into label points. We don't know
       // each tenant's exact position inside the centre, so we space them
