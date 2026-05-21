@@ -342,10 +342,15 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
       // Active investigations — pin every pathway run that has a linked
       // property (or a known address via cached geocode). Lets the user
       // see all in-flight work on the map.
+      // r.tenant was removed when property_pathway_runs lost its tenant
+      // column — pulling it back was throwing "column r.tenant does not
+      // exist" and 500'ing the whole map. Tenant info is no longer
+      // surfaced on pathway pins; if it needs to come back, source it
+      // via crm_properties.tenant_name or the linked tenancy spine.
       const pathwayRes = await pool.query(`
         SELECT
           r.id, r.address, r.postcode, r.property_id,
-          r.tenant, r.updated_at,
+          r.updated_at,
           r.stage_results,
           p.latitude  AS p_lat,
           p.longitude AS p_lng
@@ -378,7 +383,6 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
             lat, lng,
             label: r.address,
             postcode: r.postcode,
-            tenant: r.tenant,
             currentStage,
             propertyId: r.property_id,
             updatedAt: r.updated_at,

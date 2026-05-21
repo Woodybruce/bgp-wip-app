@@ -1712,7 +1712,11 @@ Respond with ONLY a JSON object (no markdown, no backticks):
             SELECT json_build_object(
               'id', p.id,
               'name', COALESCE(p.name, ''),
-              'address', COALESCE(p.address, ''),
+              -- p.address is jsonb; coalescing to '' was producing
+              -- "invalid input syntax for type json" on null rows.
+              -- Coalesce to an empty object to preserve the contract
+              -- ("linked_property.address is always present, possibly empty").
+              'address', COALESCE(p.address, '{}'::jsonb),
               'postcode', COALESCE(p.postcode, '')
             )
             FROM crm_properties p
