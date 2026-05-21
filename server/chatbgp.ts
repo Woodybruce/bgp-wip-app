@@ -9,14 +9,15 @@ import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
 import multer from "multer";
+import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage } from "./chatbgp-model-router";
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-opus-4-7";        // Main chat: Opus 4.7 (latest)
-const CHATBGP_OPUS_MODEL = "claude-opus-4-7";   // Same
+const CHATBGP_MODEL = "claude-sonnet-4-6";      // Default chat: Sonnet 4.6 (fast + cheap). Per-thread /opus flips to Opus.
+const CHATBGP_OPUS_MODEL = "claude-opus-4-7";   // Heavy reasoning when /opus is set on a thread.
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
 
 // Resolve a list of chat-media filenames into Graph fileAttachment payloads
@@ -10807,6 +10808,24 @@ export function setupChatBGPRoutes(app: Express) {
         return res.status(400).json({ message: "No messages provided" });
       }
 
+      // /opus or /sonnet at the start of the last user message — applies
+      // for this single request (no thread persistence here).
+      const fileThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+      let fileSlashOverride: "opus" | "sonnet" | null = null;
+      {
+        const lastIdx = messages.length - 1;
+        const lastText = typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
+        const slash = parseSlashCommand(lastText);
+        if (slash.command) {
+          await setThreadModel(fileThreadId, slash.command);
+          if (slash.wasJustCommand) {
+            return res.json({ reply: ackMessage(slash.command) });
+          }
+          fileSlashOverride = slash.command;
+          messages[lastIdx] = { ...messages[lastIdx], content: slash.strippedContent } as any;
+        }
+      }
+
       const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
       const AUDIO_VIDEO_EXTENSIONS = [".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac", ".wma", ".mov", ".avi", ".mkv", ".wmv", ".flv"];
       const documentTexts: string[] = [];
@@ -10904,8 +10923,9 @@ export function setupChatBGPRoutes(app: Express) {
       }
       const systemContent = systemPrompt + personalisation + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
 
+      const fileResolved = await resolveChatModel({ threadId: fileThreadId, override: fileSlashOverride });
       const completionOptions: any = {
-        model: CHATBGP_MODEL,
+        model: fileResolved.model,
         messages: [
           { role: "system", content: systemContent },
           ...messages,
@@ -10938,7 +10958,7 @@ export function setupChatBGPRoutes(app: Express) {
         const isLastLoop = loopCountFile >= maxLoopsFile;
 
         const loopOpts: any = {
-          model: CHATBGP_MODEL,
+          model: fileResolved.model,
           messages: convMessages,
           max_completion_tokens: 8192,
           thinking: true,
@@ -11592,6 +11612,29 @@ export function setupChatBGPRoutes(app: Express) {
       try { res.end(); } catch {}
     };
 
+    // ── /opus or /sonnet slash-command interception ─────────────────────
+    // If the latest user message starts with one of those, flip the
+    // thread's model_preference. If the user typed JUST the command,
+    // short-circuit with an ack — no Claude call. Otherwise strip the
+    // command from the message and continue with the new model.
+    let slashOverride: "opus" | "sonnet" | null = null;
+    {
+      const allMessages = result.data.messages || [];
+      const lastIdx = allMessages.length - 1;
+      const lastMsg = allMessages[lastIdx];
+      const lastText = typeof lastMsg?.content === "string" ? lastMsg.content : "";
+      const slash = parseSlashCommand(lastText);
+      if (slash.command) {
+        await setThreadModel(verifiedThreadId, slash.command);
+        if (slash.wasJustCommand) {
+          await sendResult({ reply: ackMessage(slash.command) });
+          return;
+        }
+        slashOverride = slash.command;
+        allMessages[lastIdx] = { ...lastMsg, content: slash.strippedContent };
+      }
+    }
+
     const requestStart = Date.now();
     // Hard deadline = 10 minutes, matching the client's fetch abort.
     // Beyond this the SSE connection is going to be torn down anyway,
@@ -11781,8 +11824,9 @@ export function setupChatBGPRoutes(app: Express) {
         return { ...msg, content: contentParts };
       }));
 
+      const resolved = await resolveChatModel({ threadId: verifiedThreadId, override: slashOverride });
       const completionOptions: any = {
-        model: CHATBGP_MODEL,
+        model: resolved.model,
         messages: [
           { role: "system", content: systemContent2 },
           ...processedMessages,
@@ -11823,7 +11867,7 @@ export function setupChatBGPRoutes(app: Express) {
         const isLastLoop = loopCount >= maxLoops;
 
         const loopOpts: any = {
-          model: CHATBGP_MODEL,
+          model: resolved.model,
           messages: conversationMessages,
           max_completion_tokens: 16384,
           systemArray, // prompt caching on every call
@@ -12032,6 +12076,23 @@ export function setupChatBGPRoutes(app: Express) {
       return res.status(400).json({ message: "excelContext must be a string under 100000 chars" });
     }
 
+    // /opus or /sonnet slash-command interception (excel-chat).
+    const excelThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+    let excelSlashOverride: "opus" | "sonnet" | null = null;
+    {
+      const lastIdx = messages.length - 1;
+      const lastText = lastIdx >= 0 && typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
+      const slash = parseSlashCommand(lastText);
+      if (slash.command) {
+        await setThreadModel(excelThreadId, slash.command);
+        if (slash.wasJustCommand) {
+          return res.json({ reply: ackMessage(slash.command) });
+        }
+        excelSlashOverride = slash.command;
+        messages[lastIdx] = { ...messages[lastIdx], content: slash.strippedContent };
+      }
+    }
+
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -12190,6 +12251,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
       try { msToken = await getValidMsToken(req); } catch {}
 
       // Run the agentic loop — same pattern as /api/chatbgp/chat-with-files
+      const excelResolved = await resolveChatModel({ threadId: excelThreadId, override: excelSlashOverride });
       let convMessages: any[] = [
         { role: "system", content: systemContent },
         ...messages.slice(-20),
@@ -12209,7 +12271,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
         loopCount++;
         const isLastLoop = loopCount >= maxLoops;
         const loopOpts: any = {
-          model: CHATBGP_MODEL,
+          model: excelResolved.model,
           messages: convMessages,
           max_completion_tokens: 4096,
         };
