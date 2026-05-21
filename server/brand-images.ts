@@ -512,9 +512,15 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
     const dryRun = req.body?.dryRun === true;
     const limit = Math.min(Number(req.body?.limit) || 200, 500);
 
-    // Find rows that look business-y. UPRN no longer required — the
-    // fallback path can derive a name from the property's stored
-    // address jsonb when OS Places can't help (or the UPRN is stale).
+    // Find rows that genuinely look like business / tenant names.
+    // The previous heuristic (letters + no digits + no commas + short)
+    // was way too broad — it caught Bluewater Shopping Centre, Brent
+    // Cross, Bullring, Buchanan Galleries, etc. (real building names
+    // we want to KEEP). Tighten by requiring a business-vocabulary
+    // word AND excluding rows whose name carries a landmark suffix
+    // ("Shopping Centre", "House", "Tower", "Manor", "Galleries"...).
+    const BUSINESS_WORD_PATTERN = "(cafe|café|coffee|restaurant|bistro|brasserie|eatery|kitchen|deli|delicatessen|bakery|patisserie|pizzeria|grill|burger|pub|tavern|bar|lounge|nightclub|club|diner|takeaway|takeout|shop|store|boutique|market|salon|barber|barbers|gym|fitness|spa|pharmacy|clinic|surgery|dentist|optician|opticians|garage|dealership|laundrette|laundromat)";
+    const LANDMARK_SUFFIX_PATTERN = "(shopping\\s*centre|shopping\\s*center|mall|plaza|square|park|gardens?|manor|house|tower|towers|galleries|gallery|place|quay|bridge|lights|dock|village|hall|exchange|estate|wharf|works|terrace|crescent|mews|courts?|station|terminal|stadium|arena|arcade|complex|outlet|outlets|island|cross|valley|fields)";
     const { rows } = await pool.query<{ id: string; name: string; uprn: string | null; address: any; postcode: string | null }>(
       `SELECT id, name, uprn, address, postcode
          FROM crm_properties
@@ -522,9 +528,11 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
           AND name !~ '[0-9]'
           AND position(',' in name) = 0
           AND char_length(name) < 50
+          AND name ~* $2          -- contains a business-vocabulary word
+          AND name !~* $3         -- does NOT contain a landmark suffix
         ORDER BY updated_at DESC NULLS LAST
         LIMIT $1`,
-      [limit]
+      [limit, `\\m${BUSINESS_WORD_PATTERN}\\M`, `\\m${LANDMARK_SUFFIX_PATTERN}\\M`]
     );
 
     const samples: { id: string; oldName: string; newName: string; source: string }[] = [];
@@ -667,6 +675,46 @@ router.post("/api/admin/property-rename", requireAuth, async (req: Request, res:
     res.json({ ok: true, property: rows[0] });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "rename failed" });
+  }
+});
+
+// General property update — patch postcode / lat / lng / address / uprn
+// on a single row. Used to fix stale fields the resolver stamped from
+// a wrong run (e.g. postcode is W4 2ED when it should be W4 1PU). Only
+// the keys present in the body get touched; everything else is left
+// alone.
+//   POST /api/admin/property-update
+//   body: { id, name?, postcode?, latitude?, longitude?, uprn?, address? }
+router.post("/api/admin/property-update", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.id || "");
+    if (!id) return res.status(400).json({ error: "id required" });
+    const ALLOWED = ["name", "postcode", "latitude", "longitude", "uprn", "address"] as const;
+    const sets: string[] = [];
+    const values: any[] = [id];
+    let idx = 2;
+    for (const k of ALLOWED) {
+      if (!(k in (req.body || {}))) continue;
+      const v = (req.body as any)[k];
+      // address is jsonb — serialize objects via the JSON cast.
+      if (k === "address" && v && typeof v === "object") {
+        sets.push(`address = $${idx++}::jsonb`);
+        values.push(JSON.stringify(v));
+      } else {
+        sets.push(`${k} = $${idx++}`);
+        values.push(v === "" ? null : v);
+      }
+    }
+    if (sets.length === 0) return res.status(400).json({ error: "no updatable fields provided" });
+    sets.push(`updated_at = NOW()`);
+    const { rows } = await pool.query(
+      `UPDATE crm_properties SET ${sets.join(", ")} WHERE id = $1 RETURNING id, name, postcode, latitude, longitude, uprn, address`,
+      values
+    );
+    if (!rows[0]) return res.status(404).json({ error: "property not found" });
+    res.json({ ok: true, property: rows[0] });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "update failed" });
   }
 });
 
