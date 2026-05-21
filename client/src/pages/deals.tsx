@@ -870,9 +870,12 @@ function SimplifiedCreateBody({
           mirrors out to the right boards immediately. */}
       {(() => {
         const UNIT_LEVEL_TYPES = new Set([
+          // Landlord-side deal types where the unit lives on the property's
+          // tenancy spine. Lease Acquisition + Sub-Letting are excluded —
+          // those are tenant-rep deals where BGP is acting for the tenant
+          // and the property is a candidate, not something we manage.
           "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-          "Sub-Letting", "New Letting", "Lease Acquisition",
-          "Dilapidations", "Service Charge",
+          "New Letting", "Dilapidations", "Service Charge",
         ]);
         if (!UNIT_LEVEL_TYPES.has(form.dealType)) return null;
         const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
@@ -1168,9 +1171,11 @@ export function DealFormDialog({
       toast({ title: "Either a property or deal name is required", variant: "destructive" });
       return;
     }
+    // Same exclusion as the picker — Lease Acquisition + Sub-Letting are
+    // tenant-rep, property-level, unit not required.
     const UNIT_LEVEL_TYPES = new Set([
       "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-      "Sub-Letting", "New Letting", "Lease Acquisition",
+      "New Letting",
     ]);
     if (UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
       toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });

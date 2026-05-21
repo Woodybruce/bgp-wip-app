@@ -57,6 +57,24 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
     const t = r.rows[0];
     if (!t || !t.property_id) return;
 
+    // Tenant-rep guard: if every deal touching this tenancy row is a
+    // tenant-rep deal type (Lease Acquisition / Sub-Letting), the
+    // property is a CANDIDATE we're looking at on behalf of a tenant
+    // client — not something we're marketing on behalf of a landlord.
+    // Don't pollute the landlord-side boards.
+    const dealCheck = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE deal_type NOT IN ('Lease Acquisition', 'Sub-Letting')) AS landlord_side,
+              COUNT(*) AS total
+         FROM crm_deals
+        WHERE tenancy_unit_id = $1`,
+      [tenancyId]
+    );
+    const counts = dealCheck.rows[0] || { landlord_side: 0, total: 0 };
+    if (Number(counts.total) > 0 && Number(counts.landlord_side) === 0) {
+      // All deals on this unit are tenant-rep — skip the fan-out entirely.
+      return;
+    }
+
     const marketingStatus = mapTenancyToMarketingStatus(t.status);
     const leasingStatus = mapTenancyToLeasingStatus(t.status);
     const sqft = t.gia_sqft ?? t.nia_sqft ?? null;
