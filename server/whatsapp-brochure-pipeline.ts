@@ -142,6 +142,9 @@ export async function tryIngestBrochure(args: BrochurePipelineArgs): Promise<Bro
     if (a.propertyFieldsUpdated?.length) parts.push(`${a.propertyFieldsUpdated.length} fields filled`);
     if (a.geocoded) parts.push("geocoded");
     if (a.agentLinked) parts.push("agent linked");
+    if (a.ownershipLinked?.freeholder) parts.push(`freeholder: ${a.ownershipLinked.freeholder}`);
+    if (a.ownershipLinked?.longLeaseholder) parts.push(`long leaseholder: ${a.ownershipLinked.longLeaseholder}`);
+    if (a.ownershipLinked?.lender) parts.push(`lender: ${a.ownershipLinked.lender}`);
 
     const summary = parts.length > 0
       ? `✅ Brochure filed — ${parts.join(" · ")}.`

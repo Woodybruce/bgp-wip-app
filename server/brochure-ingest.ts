@@ -62,6 +62,11 @@ export interface IngestResult {
     tenancyRowsInserted: number;
     agentLinked: boolean;
     geocoded: boolean;
+    ownershipLinked: {
+      freeholder?: string;
+      longLeaseholder?: string;
+      lender?: string;
+    };
   };
 }
 
@@ -75,6 +80,7 @@ export async function ingestBrochure(args: IngestArgs): Promise<IngestResult> {
     tenancyRowsInserted: 0,
     agentLinked: false,
     geocoded: false,
+    ownershipLinked: {} as { freeholder?: string; longLeaseholder?: string; lender?: string },
   };
 
   try {
@@ -118,6 +124,11 @@ export async function ingestBrochure(args: IngestArgs): Promise<IngestResult> {
         brochureId: args.brochureId,
         propertyId: args.propertyId,
         rows: extraction.tenancySchedule,
+      });
+
+      applied.ownershipLinked = await upsertOwnership({
+        propertyId: args.propertyId,
+        extraction,
       });
 
       applied.agentLinked = await upsertAgent({
@@ -539,4 +550,97 @@ async function upsertAgent(args: {
     ));
 
   return true;
+}
+
+// ─── Ownership stack upsert ─────────────────────────────────────────────
+
+// Match-or-create a crm_companies row for the freeholder / long
+// leaseholder / lender named on the brochure, then link the FK on
+// crm_properties. Vendor is resolved to whichever ownership role makes
+// sense given the tenure — for a freehold sale the vendor IS the
+// freeholder, for a long-lease sale the vendor is the long leaseholder.
+//
+// Match by lowercased trimmed name + company_type prefix. Skip if the
+// property already has the FK set (don't overwrite curated linkages).
+async function upsertOwnership(args: {
+  propertyId: string;
+  extraction: BrochureExtraction;
+}): Promise<{ freeholder?: string; longLeaseholder?: string; lender?: string }> {
+  const e = args.extraction;
+  const linked: { freeholder?: string; longLeaseholder?: string; lender?: string } = {};
+
+  // Resolve vendor → freeholder or longLeaseholder based on tenure.
+  const tenureLower = (e.tenure || "").toLowerCase();
+  const isFreehold = tenureLower.includes("freehold") && !tenureLower.includes("long lease");
+  const isLongLease = tenureLower.includes("leasehold") || tenureLower.includes("long lease");
+
+  // Build a deduped role → name map. Explicit fields beat the inferred
+  // vendor mapping so we don't lose data when both are present.
+  const roleToName: Record<"freeholder" | "longLeaseholder" | "lender", string | null> = {
+    freeholder: e.ownership.freeholderName || (isFreehold ? e.ownership.vendorName : null),
+    longLeaseholder: e.ownership.longLeaseholderName || (isLongLease ? e.ownership.vendorName : null),
+    lender: e.ownership.lenderName,
+  };
+
+  // If the vendor name appears on both freeholder + longLeaseholder via
+  // the inference, prefer freeholder (more common for investment sales).
+  if (roleToName.freeholder && roleToName.longLeaseholder && roleToName.freeholder === roleToName.longLeaseholder) {
+    roleToName.longLeaseholder = null;
+  }
+
+  // Pull the property once so we don't overwrite curated FKs.
+  const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, args.propertyId));
+  if (!property) return linked;
+
+  const upsertCompany = async (name: string, companyType: "Landlord" | "Lender"): Promise<string | null> => {
+    const norm = name.replace(/\s+/g, " ").trim();
+    if (!norm) return null;
+    // Match — same company can be tagged differently in old data, so
+    // accept any row that matches the name (case insensitive) and isn't
+    // a merged ghost.
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id FROM crm_companies
+        WHERE lower(regexp_replace(name, '\\s+', ' ', 'g')) = lower($1)
+          AND merged_into_id IS NULL
+        ORDER BY (coalesce(company_type, '') ILIKE $2) DESC,
+                 created_at ASC
+        LIMIT 1`,
+      [norm, `${companyType}%`],
+    );
+    if (existing.rows[0]) return existing.rows[0].id;
+    const inserted = await db.insert(crmCompanies).values({
+      name: norm,
+      companyType,
+    } as any).returning({ id: crmCompanies.id });
+    return inserted[0]?.id || null;
+  };
+
+  // Freeholder
+  if (roleToName.freeholder && !(property as any).freeholderId) {
+    const id = await upsertCompany(roleToName.freeholder, "Landlord");
+    if (id) {
+      await pool.query(`UPDATE crm_properties SET freeholder_id = $1 WHERE id = $2 AND freeholder_id IS NULL`, [id, args.propertyId]);
+      linked.freeholder = roleToName.freeholder;
+    }
+  }
+
+  // Long leaseholder
+  if (roleToName.longLeaseholder && !(property as any).longLeaseholderId) {
+    const id = await upsertCompany(roleToName.longLeaseholder, "Landlord");
+    if (id) {
+      await pool.query(`UPDATE crm_properties SET long_leaseholder_id = $1 WHERE id = $2 AND long_leaseholder_id IS NULL`, [id, args.propertyId]);
+      linked.longLeaseholder = roleToName.longLeaseholder;
+    }
+  }
+
+  // Lender → senior lender slot (most brochure-named lenders are senior).
+  if (roleToName.lender && !(property as any).seniorLenderId) {
+    const id = await upsertCompany(roleToName.lender, "Lender");
+    if (id) {
+      await pool.query(`UPDATE crm_properties SET senior_lender_id = $1 WHERE id = $2 AND senior_lender_id IS NULL`, [id, args.propertyId]);
+      linked.lender = roleToName.lender;
+    }
+  }
+
+  return linked;
 }

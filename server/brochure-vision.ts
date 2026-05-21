@@ -50,6 +50,15 @@ export interface BrochureAgentContact {
   contactPhone: string | null;
 }
 
+export interface BrochureOwnershipStack {
+  // Whoever's selling. For a freehold sale this is usually the same as
+  // freeholderName; for a leasehold sale it's the longLeaseholderName.
+  vendorName: string | null;
+  freeholderName: string | null;       // explicit "Freeholder:" line on the brochure
+  longLeaseholderName: string | null;  // explicit "Long Leaseholder:" line
+  lenderName: string | null;           // any debt party named in the brochure
+}
+
 export interface BrochureExtraction {
   type: BrochureType;
   // Identity
@@ -81,6 +90,7 @@ export interface BrochureExtraction {
   // Side data
   tenancySchedule: BrochureTenancyRow[];
   agent: BrochureAgentContact;
+  ownership: BrochureOwnershipStack;
   // Meta
   brochureDate: string | null;           // ISO if the brochure shows a prep date
   confidence: "high" | "medium" | "low";
@@ -158,6 +168,12 @@ Return ONLY valid JSON matching this exact shape, no markdown fences:
     "contactEmail": string|null,
     "contactPhone": string|null
   },
+  "ownership": {
+    "vendorName": string|null,
+    "freeholderName": string|null,
+    "longLeaseholderName": string|null,
+    "lenderName": string|null
+  },
   "brochureDate": "YYYY-MM-DD"|null,
   "confidence": "high"|"medium"|"low"
 }
@@ -172,6 +188,10 @@ Rules:
 - assetManagementOpportunities: the explicit "Asset Management" / "Reversion" bullets. Empty array if absent.
 - microLocation: 1-2 sentences describing the area / catchment / footfall — copied as-is when concise, summarised when long. Max 280 chars.
 - type: investment = sale brochure with price + yield; leasing = letting brochure with ERV/asking rent only; tenancy_schedule = just the rent roll with no marketing wrapper.
+- ownership.vendorName: the party SELLING the asset (line items like "Vendor:", "On behalf of:", "Our client:", "For sale by:"). Often a company name; sometimes a trust or individual. Null if not stated.
+- ownership.freeholderName: the registered freeholder ONLY when explicitly named (often "Freeholder:" or "Held freehold by:"). On a freehold sale this is usually identical to vendorName — still extract it when separately listed.
+- ownership.longLeaseholderName: the long leaseholder ONLY when explicitly named ("Long Leaseholder:", "Lessee under head lease:"). On a long-leasehold sale this is usually the vendor.
+- ownership.lenderName: any lender / mortgagee named in the brochure (rare; sometimes appears on receivership / LPA sales as "Sale by:" + the lender). Null if not stated.
 - confidence: "high" if the brochure is clear and most fields visible, "medium" if pages are sparse or you inferred from context, "low" if blurry / wrong document.
 
 Respond with ONLY the JSON object, nothing else.`;
@@ -279,6 +299,13 @@ function normaliseExtraction(raw: any): BrochureExtraction {
     contactPhone: str(raw?.agent?.contactPhone),
   };
 
+  const ownership: BrochureOwnershipStack = {
+    vendorName: str(raw?.ownership?.vendorName),
+    freeholderName: str(raw?.ownership?.freeholderName),
+    longLeaseholderName: str(raw?.ownership?.longLeaseholderName),
+    lenderName: str(raw?.ownership?.lenderName),
+  };
+
   return {
     type,
     propertyName: str(raw?.propertyName),
@@ -305,6 +332,7 @@ function normaliseExtraction(raw: any): BrochureExtraction {
     microLocation: str(raw?.microLocation),
     tenancySchedule: tenancy,
     agent,
+    ownership,
     brochureDate: isoDate(raw?.brochureDate),
     confidence: ["high", "medium", "low"].includes(raw?.confidence) ? raw.confidence : "medium",
   };
