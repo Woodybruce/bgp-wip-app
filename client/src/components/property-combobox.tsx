@@ -218,19 +218,41 @@ export function PropertyCombobox({
         adoptProperty(result.property.id, result.property.name, result.property.postcode ?? null);
         return;
       }
-      if (result?.kind === "candidates") {
-        // OS Places returned >1 match for this address — UPRN
-        // disambiguation needed. Take the first candidate as a
-        // pragmatic fallback so the user isn't stuck (the UPRN
-        // can be reconciled later from the property page).
-        const first = result.candidates?.[0];
-        if (first?.id) {
-          adoptProperty(first.id, first.name || prediction.description, first.postcode ?? null);
-          toast({
-            title: "Multiple address matches",
-            description: `Picked the closest match. Open the property page to fine-tune the UPRN if needed.`,
-          });
+      if (result?.kind === "candidates" && Array.isArray(result.candidates) && result.candidates.length > 0) {
+        // OS Places returned multiple UPRN matches — common for markets,
+        // multi-unit buildings, shopping arcades. Candidates carry UPRNs,
+        // not crm_properties ids. If one of them already maps to a CRM
+        // property we own, use it directly; otherwise call the resolver
+        // again with kind=uprn to find-or-create from the first UPRN.
+        const first = result.candidates[0];
+        if (first?.existingPropertyId) {
+          adoptProperty(
+            first.existingPropertyId,
+            first.address || prediction.structured_formatting?.main_text || prediction.description,
+            first.postcode ?? null,
+          );
           return;
+        }
+        if (first?.uprn) {
+          const uprnResp = await fetch("/api/property-resolver/resolve", {
+            method: "POST",
+            credentials: "include",
+            headers: { "content-type": "application/json", ...getAuthHeaders() },
+            body: JSON.stringify({ kind: "uprn", uprn: first.uprn }),
+          });
+          if (uprnResp.ok) {
+            const uprnResult = await uprnResp.json();
+            if (uprnResult?.kind === "resolved" && uprnResult.property?.id) {
+              adoptProperty(uprnResult.property.id, uprnResult.property.name, uprnResult.property.postcode ?? null);
+              if (result.candidates.length > 1) {
+                toast({
+                  title: `Picked closest UPRN (${result.candidates.length} matches)`,
+                  description: `Multiple OS Places entries for this address — used the first. Confirm on the property page if needed.`,
+                });
+              }
+              return;
+            }
+          }
         }
       }
       // not_found / unknown shape — OS Places couldn't pin a UPRN
