@@ -157,9 +157,26 @@ function extractEmailBodyText(msg: any): string {
     }
   }
 
-  // If Graph gave us nothing useful but had a preview, use that so we
-  // at least get SOMETHING through to the classifier.
-  if (!text.trim() && msg?.bodyPreview) text = msg.bodyPreview;
+  // bodyPreview fallback — used to fire whenever extracted text was
+  // empty, which routinely landed the 255-char Graph preview snippet
+  // (often just the forwarding envelope "FW: From: ... Sent: ...
+  // Subject:") in front of Claude. That's the "body looks empty or
+  // truncated" symptom Layla kept seeing.
+  //
+  // New rule: only use bodyPreview when (a) there's nothing else, and
+  // (b) the preview itself doesn't look like a bare forwarding header.
+  // Better to send an empty body to the classifier (it'll surface that
+  // honestly) than to send a misleading 255-char header snippet.
+  if (!text.trim() && msg?.bodyPreview) {
+    const preview = String(msg.bodyPreview).trim();
+    const looksLikeForwardingEnvelope =
+      /^(fw|fwd|re):/i.test(preview) ||
+      /^from:\s/im.test(preview.slice(0, 200)) ||
+      /^-+\s*(forwarded|original)\s+message/i.test(preview);
+    if (preview && !looksLikeForwardingEnvelope) {
+      text = preview;
+    }
+  }
   // Cap at 20k chars — classifier only reads ~6k, but we keep some
   // headroom so specialist prompts can see more context later.
   return text.slice(0, 20000);
@@ -980,8 +997,8 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
 
     console.log(`[email-processor] Found ${unreadMessages.length} unread messages`);
 
-    for (const msg of unreadMessages) {
-      const messageId = msg.id;
+    for (const listMsg of unreadMessages) {
+      const messageId = listMsg.id;
 
       const existing = await db.select({ id: chatbgpEmailLog.id })
         .from(chatbgpEmailLog)
@@ -991,6 +1008,13 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
       if (existing.length > 0) {
         continue;
       }
+
+      // Refetch the canonical full message before processing. The list
+      // endpoint truncates subject + body for some forwarded messages
+      // (we saw "Grand centra" instead of the full subject, and bodies
+      // collapsing to bodyPreview). Fetching by ID gives the full data.
+      // Fall back to the list payload if the by-id call fails.
+      const msg = (await getSharedMailboxMessageById(messageId).catch(() => null)) || listMsg;
 
       const fromEmail = msg.from?.emailAddress?.address || "";
       const fromName = msg.from?.emailAddress?.name || "";
