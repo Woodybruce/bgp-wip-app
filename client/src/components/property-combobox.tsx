@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Check, ChevronsUpDown, X, MapPin, Loader2 } from "lucide-react";
+import { Check, ChevronsUpDown, X, MapPin, Loader2, Plus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,8 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { loadGoogleMaps } from "@/lib/google-maps-loader";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export type PropertyItem = {
   id: string;
@@ -73,6 +74,7 @@ export function PropertyCombobox({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const autocompleteRef = React.useRef<google.maps.places.AutocompleteService | null>(null);
   const debounceRef = React.useRef<ReturnType<typeof setTimeout>>();
+  const { toast } = useToast();
 
   React.useEffect(() => {
     loadGoogleMaps().then((loaded) => {
@@ -124,6 +126,17 @@ export function PropertyCombobox({
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [search, open, googleReady]);
 
+  // Helper: stamp a freshly resolved/created property into the picker.
+  const adoptProperty = (id: string, name: string, postcode: string | null) => {
+    const created: PropertyItem = { id, label: name, subLabel: postcode || undefined };
+    setRecentlyCreated(created);
+    onCreated?.({ id, name, postcode });
+    onChange(id);
+    setSearch("");
+    setPredictions([]);
+    setOpen(false);
+  };
+
   const handleCreateFromGoogle = async (prediction: google.maps.places.AutocompletePrediction) => {
     setCreating(true);
     try {
@@ -133,24 +146,70 @@ export function PropertyCombobox({
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ kind: "googlePlace", placeId: prediction.place_id }),
       });
-      if (!resp.ok) throw new Error("Resolver failed");
-      const result = await resp.json();
-      if (result?.kind !== "resolved" || !result.property?.id) {
-        throw new Error(result?.reason || "Resolver returned no property");
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => "");
+        throw new Error(`Resolver ${resp.status}: ${txt.slice(0, 200) || resp.statusText}`);
       }
-      const created: PropertyItem = {
-        id: result.property.id,
-        label: result.property.name,
-        subLabel: result.property.postcode || undefined,
-      };
-      setRecentlyCreated(created);
-      onCreated?.({ id: result.property.id, name: result.property.name, postcode: result.property.postcode ?? null });
-      onChange(created.id);
-      setSearch("");
-      setPredictions([]);
-      setOpen(false);
-    } catch (_err) {
-      // Caller surfaces — keep UI quiet here.
+      const result = await resp.json();
+
+      // Resolver can return three shapes. Handle each so the click never
+      // dead-ends silently — the original failure mode was 'click does
+      // nothing' because we threw on non-resolved and swallowed the error.
+      if (result?.kind === "resolved" && result.property?.id) {
+        adoptProperty(result.property.id, result.property.name, result.property.postcode ?? null);
+        return;
+      }
+      if (result?.kind === "candidates") {
+        // OS Places returned >1 match for this address — UPRN
+        // disambiguation needed. Take the first candidate as a
+        // pragmatic fallback so the user isn't stuck (the UPRN
+        // can be reconciled later from the property page).
+        const first = result.candidates?.[0];
+        if (first?.id) {
+          adoptProperty(first.id, first.name || prediction.description, first.postcode ?? null);
+          toast({
+            title: "Multiple address matches",
+            description: `Picked the closest match. Open the property page to fine-tune the UPRN if needed.`,
+          });
+          return;
+        }
+      }
+      // not_found / unknown shape — fall back to name-only creation so
+      // Layla isn't blocked. She can fix the address on the property page later.
+      const r = await apiRequest("POST", "/api/crm/properties", { name: prediction.description });
+      const prop = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      adoptProperty(prop.id, prop.name, prop.postcode ?? null);
+      toast({
+        title: "Created without address lookup",
+        description: "Couldn't auto-resolve the address — added as a plain property. You can edit it from the property page.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Couldn't add that property",
+        description: err?.message || "Try a different address, or use 'Create by name' below.",
+        variant: "destructive",
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Last-resort fallback: just POST the typed name to /api/crm/properties.
+  // No Google, no resolver, no UPRN. For when Google's failing or the
+  // address genuinely isn't on Google (new build, internal name, etc).
+  const handleCreateByName = async () => {
+    const name = search.trim();
+    if (!name) return;
+    setCreating(true);
+    try {
+      const r = await apiRequest("POST", "/api/crm/properties", { name });
+      const prop = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      adoptProperty(prop.id, prop.name, prop.postcode ?? null);
+      toast({ title: "Property created", description: `Added "${prop.name}" — fill in the address on the property page when you have a minute.` });
+    } catch (err: any) {
+      toast({ title: "Couldn't create property", description: err?.message, variant: "destructive" });
     } finally {
       setCreating(false);
     }
@@ -305,6 +364,23 @@ export function PropertyCombobox({
                       <span className="text-sm text-emerald-900 dark:text-emerald-200 truncate">{p.description}</span>
                     </CommandItem>
                   ))}
+                </CommandGroup>
+              )}
+
+              {/* Fallback: create a bare-name property when Google has
+                  nothing useful or is unavailable. Always shown once the
+                  user has typed something so they're never blocked. */}
+              {search.trim().length >= 2 && (
+                <CommandGroup heading="Or add manually">
+                  <CommandItem
+                    value={`__create_by_name__ ${search}`}
+                    onSelect={handleCreateByName}
+                    disabled={creating}
+                    className="bg-amber-50/60 dark:bg-amber-950/30 data-[selected=true]:bg-amber-100 dark:data-[selected=true]:bg-amber-950/60 text-amber-900 dark:text-amber-200 font-medium"
+                  >
+                    {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    <span className="truncate">Create property "{search.trim()}" without address lookup</span>
+                  </CommandItem>
                 </CommandGroup>
               )}
             </CommandList>
