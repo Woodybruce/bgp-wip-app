@@ -4238,7 +4238,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       other:       { fill: "#A8A8A8", stroke: "#707070", label: "Other / Unknown" },
     };
 
-    const showLabels = (mapRef.current?.getZoom() ?? 0) >= 17;
+    const currentZoom = mapRef.current?.getZoom() ?? 0;
+    // West End polygons are tiny — labels only become readable at 18+.
+    const showLabels = currentZoom >= 18;
 
     for (const feature of goadFeatures) {
       const props = feature.properties || {};
@@ -4301,69 +4303,90 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
       retailMarkersRef.current.addLayer(polygon);
 
-      // Fascia label — matches Experian Goad-plan style:
-      //   - snap to 0° or 90° (never a diagonal — Goad rule),
-      //   - ALL CAPS condensed,
-      //   - font size scaled by Area_ft2,
-      //   - hide entirely for tiny units that would just create clutter.
+      // Fascia label — Goad-plan style, constrained to the polygon's
+      // actual on-screen bounding box. No more labels overflowing into
+      // adjacent units: we measure the polygon in pixels at the current
+      // zoom and clamp font + width to that. If the text won't fit even
+      // at the smallest readable size, we hide the label entirely.
       const ft2Raw = Number(sqft) || 0;
-      if (showLabels && fascia && !isVacant && ft2Raw >= 80) {
+      const map = mapRef.current;
+      if (showLabels && map && fascia && !isVacant && ft2Raw >= 80) {
         const ring: [number, number][] | undefined = feature.geometry?.coordinates?.[0];
         const cx = parseFloat(props.Centroid_X);
         const cy = parseFloat(props.Centroid_Y);
         if (Array.isArray(ring) && ring.length > 2 && Number.isFinite(cx) && Number.isFinite(cy)) {
-          // PCA: principal axis angle in lng/lat space. Convert lng to
-          // metres-equivalent at this latitude so the axis is a true
-          // ground direction rather than a stretched one.
-          const pts = ring.slice(0, -1);
-          let mx = 0, my = 0;
-          for (const [x, y] of pts) { mx += x; my += y; }
-          mx /= pts.length; my /= pts.length;
-          let cxx = 0, cxy = 0, cyy = 0;
-          for (const [x, y] of pts) {
-            const dx = (x - mx) * Math.cos((my * Math.PI) / 180);
-            const dy = y - my;
-            cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
+          // 1) Polygon bbox in screen pixels at this zoom.
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          for (const [lng, lat] of ring) {
+            const pt = map.latLngToLayerPoint([lat, lng]);
+            if (pt.x < minX) minX = pt.x;
+            if (pt.x > maxX) maxX = pt.x;
+            if (pt.y < minY) minY = pt.y;
+            if (pt.y > maxY) maxY = pt.y;
           }
-          const angleRad = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
-          let deg = -angleRad * 180 / Math.PI;
-          if (deg > 90) deg -= 180;
-          if (deg < -90) deg += 180;
-          // Snap to 0° (horizontal) or 90° (vertical). Goad never tilts.
-          const snapped = Math.abs(deg) > 45 ? 90 : 0;
+          const widthPx = Math.max(0, maxX - minX);
+          const heightPx = Math.max(0, maxY - minY);
+          // Skip tiny on-screen units — text would be unreadable anyway.
+          if (Math.min(widthPx, heightPx) < 14 || Math.max(widthPx, heightPx) < 30) {
+            // nothing — fall through, no label
+          } else {
+            // 2) Choose 0° or 90° based on actual screen orientation.
+            //    (PCA on lng/lat is fine for ground direction, but we
+            //    care about how the unit looks on screen.)
+            const isVertical = heightPx > widthPx * 1.25;
+            const longPx = isVertical ? heightPx : widthPx;
+            const shortPx = isVertical ? widthPx : heightPx;
+            const angle = isVertical ? 90 : 0;
 
-          // Font scale: sqrt(area) approximates edge length, mapped to a
-          // tight pixel range. Real Goad uses ~6-9pt across the board.
-          const ft2 = Math.max(80, Math.min(15000, ft2Raw));
-          const edgeFt = Math.sqrt(ft2);
-          const fontPx = Math.round(Math.max(8, Math.min(14, edgeFt / 2.6)));
-          const widthPx = Math.max(48, Math.min(240, Math.round(edgeFt * 4.5)));
-
-          const label = L.marker([cy, cx], {
-            interactive: false,
-            pane: "goadLabelPane",
-            icon: L.divIcon({
-              className: "",
-              html: `<div style="
-                font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;
-                font-size:${fontPx}px;
-                font-weight:600;
-                letter-spacing:-0.2px;
-                color:#0a0a0a;
-                text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;
-                text-align:center;
-                white-space:nowrap;
-                pointer-events:none;
-                width:${widthPx}px;
-                transform:rotate(${snapped}deg);
-                transform-origin:center;
-                text-transform:uppercase;
-                line-height:1;">${fascia}</div>`,
-              iconSize: [widthPx, fontPx + 2],
-              iconAnchor: [widthPx / 2, (fontPx + 2) / 2],
-            }),
-          });
-          retailLabelLayerRef.current.addLayer(label);
+            // 3) Fit text into the long edge. Condensed sans at typical
+            //    weight uses ~0.55 of fontSize per char. We pick the
+            //    largest font that lets every char fit, then clamp.
+            const safeLong = longPx - 6; // leave 3px padding each side
+            const safeShort = Math.max(6, shortPx - 2);
+            const maxByLength = (safeLong / Math.max(fascia.length, 1)) / 0.55;
+            const maxByHeight = safeShort * 0.9;
+            const fontPx = Math.floor(Math.max(7, Math.min(13, Math.min(maxByLength, maxByHeight))));
+            // Hide if even the smallest readable font (7px) won't fit
+            // — better to show nothing than spill outside the polygon.
+            if (fontPx >= 7) {
+              const innerWidth = Math.round(safeLong);
+              // Outer box matches the polygon bbox so the label is
+              // visually anchored inside the shape, no overflow.
+              const outerW = Math.round(Math.max(widthPx, innerWidth));
+              const outerH = Math.round(Math.max(heightPx, fontPx + 2));
+              const label = L.marker([cy, cx], {
+                interactive: false,
+                pane: "goadLabelPane",
+                icon: L.divIcon({
+                  className: "",
+                  html: `<div style="
+                    width:${outerW}px;
+                    height:${outerH}px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    pointer-events:none;
+                    overflow:hidden;"><div style="
+                      font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;
+                      font-size:${fontPx}px;
+                      font-weight:600;
+                      letter-spacing:-0.2px;
+                      color:#0a0a0a;
+                      text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;
+                      text-align:center;
+                      white-space:nowrap;
+                      width:${innerWidth}px;
+                      transform:rotate(${angle}deg);
+                      transform-origin:center;
+                      text-transform:uppercase;
+                      line-height:1;">${fascia}</div></div>`,
+                  iconSize: [outerW, outerH],
+                  iconAnchor: [outerW / 2, outerH / 2],
+                }),
+              });
+              retailLabelLayerRef.current.addLayer(label);
+            }
+          }
         }
       }
     }
