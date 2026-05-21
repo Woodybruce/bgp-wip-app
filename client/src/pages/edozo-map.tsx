@@ -3360,7 +3360,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // Goad polygon → combined side panel. Holds the clicked feature's
   // properties plus any joined context fetched via /api/goad/polygon-context.
   const [goadPanelUnit, setGoadPanelUnit] = useState<any | null>(null);
-  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[] } | null>(null);
+  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null } | null>(null);
   const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
@@ -4263,6 +4263,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         subclass === "Retailf1" ? "First Floor" :
         subclass === "Retailf2" ? "Second Floor" : "";
 
+      const centroidLng = parseFloat(props.Centroid_X);
+      const centroidLat = parseFloat(props.Centroid_Y);
       polygon.on("click", () => {
         setGoadPanelUnit({
           tenant,
@@ -4281,6 +4283,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           goadNumber: props.GoadNumber,
           precName: props.PrecName,
           surveyDate: props.SurveyDate,
+          lat: Number.isFinite(centroidLat) ? centroidLat : undefined,
+          lng: Number.isFinite(centroidLng) ? centroidLng : undefined,
         });
       });
 
@@ -4314,15 +4318,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           if (deg > 90) deg -= 180;
           if (deg < -90) deg += 180;
 
-          // Font size scaled by floor area. Goad gives Area_ft2 — sqrt gives
-          // a typical edge length, mapped onto a sensible pixel range.
-          const ft2 = Math.max(50, Math.min(8000, Number(sqft) || 600));
+          // Font size scaled by floor area. Goad gives Area_ft2 — sqrt
+          // gives a typical edge length, mapped onto a sensible pixel
+          // range. Tuned to read at the same density as the Property Map
+          // popup labels (Woody's preferred legibility benchmark).
+          const ft2 = Math.max(50, Math.min(12000, Number(sqft) || 800));
           const edgeFt = Math.sqrt(ft2);
-          const fontPx = Math.round(Math.max(7, Math.min(14, edgeFt / 3.2)));
-          // Width budget for the rotated label — long-edge ft × ~0.55 px/ft
-          // at zoom 17 is a workable approximation that lets multi-word
-          // fascias breathe without overflowing tiny units.
-          const widthPx = Math.max(40, Math.min(220, Math.round(edgeFt * 4)));
+          const fontPx = Math.round(Math.max(10, Math.min(18, edgeFt / 2.2)));
+          const widthPx = Math.max(60, Math.min(260, Math.round(edgeFt * 5)));
 
           const label = L.marker([cy, cx], {
             interactive: false,
@@ -4366,6 +4369,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (goadPanelUnit.num) params.set("streetNum", goadPanelUnit.num);
     if (goadPanelUnit.street) params.set("street", goadPanelUnit.street);
     if (goadPanelUnit.holding) params.set("holding", goadPanelUnit.holding);
+    if (goadPanelUnit.lat) params.set("lat", String(goadPanelUnit.lat));
+    if (goadPanelUnit.lng) params.set("lng", String(goadPanelUnit.lng));
     fetch(`/api/goad/polygon-context?${params}`, { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -4393,7 +4398,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         const headers: Record<string, string> = { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
 
         // ── Buildings (zoom >= 16) ──
-        if (showOSBuildings && zoom >= 16) {
+        // Suppress OS Buildings while Retail Context is on — Goad polygons
+        // already outline every building and stacking the two produces the
+        // blue-tinted double-border that Woody flagged.
+        if (showOSBuildings && !showRetailContext && zoom >= 16) {
           if (bboxStr !== osLastBboxRef.current.buildings) {
             osLastBboxRef.current.buildings = bboxStr;
             fetch(`/api/os/buildings?bbox=${bboxStr}`, { headers })
@@ -4560,7 +4568,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       map.off("moveend", fetchOSData);
       if (osDebounceRef.current) clearTimeout(osDebounceRef.current);
     };
-  }, [showOSBuildings, showOSSites, mapZoom]);
+  }, [showOSBuildings, showOSSites, showRetailContext, mapZoom]);
 
   const handleSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setSearchResults([]); return; }
@@ -5302,6 +5310,58 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                         ].filter(Boolean).join(" · ")}
                       </div>
                     </a>
+                  </section>
+                )}
+
+                {/* Land Registry — via real Land Registry API through
+                    resolveBuildingTitles(). Shows the freehold proprietor(s)
+                    and any matched leaseholds for this exact building. */}
+                {goadPanelContext?.landRegistry && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                      <span>Land Registry</span>
+                      {!goadPanelContext.landRegistry.exact && (
+                        <span className="text-[9px] text-amber-600 normal-case font-medium">approx. match</span>
+                      )}
+                    </div>
+                    {goadPanelContext.landRegistry.freeholds.length === 0 && goadPanelContext.landRegistry.leaseholds.length === 0 ? (
+                      <p className="text-[11px] text-gray-500 italic">No titles matched at this address.</p>
+                    ) : (
+                      <>
+                        {goadPanelContext.landRegistry.freeholds.length > 0 && (
+                          <div className="mb-2">
+                            <div className="text-[10px] text-gray-600 mb-0.5">Freehold</div>
+                            {goadPanelContext.landRegistry.freeholds.map((f: any, i: number) => (
+                              <div key={`fh-${i}`} className="bg-amber-50 border border-amber-200 rounded p-2 mb-1 text-[11px]">
+                                <div className="font-medium text-gray-900">{f.proprietor_name || f.proprietorName || "Unknown proprietor"}</div>
+                                {(f.title_number || f.titleNumber) && (
+                                  <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
+                                )}
+                                {(f.proprietor_address || f.proprietorAddress) && (
+                                  <div className="text-gray-500 text-[10px] mt-0.5 truncate">{f.proprietor_address || f.proprietorAddress}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {goadPanelContext.landRegistry.leaseholds.length > 0 && (
+                          <div>
+                            <div className="text-[10px] text-gray-600 mb-0.5">Leasehold ({goadPanelContext.landRegistry.leaseholds.length})</div>
+                            {goadPanelContext.landRegistry.leaseholds.slice(0, 3).map((l: any, i: number) => (
+                              <div key={`lh-${i}`} className="bg-sky-50 border border-sky-200 rounded p-2 mb-1 text-[11px]">
+                                <div className="font-medium text-gray-900 truncate">{l.proprietor_name || l.proprietorName || "Unknown leaseholder"}</div>
+                                {(l.title_number || l.titleNumber) && (
+                                  <div className="text-gray-600 font-mono text-[10px] mt-0.5">{l.title_number || l.titleNumber}</div>
+                                )}
+                              </div>
+                            ))}
+                            {goadPanelContext.landRegistry.leaseholds.length > 3 && (
+                              <p className="text-[10px] text-gray-500 italic">+{goadPanelContext.landRegistry.leaseholds.length - 3} more leaseholds</p>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </section>
                 )}
 

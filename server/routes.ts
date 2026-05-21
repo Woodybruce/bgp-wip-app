@@ -47,6 +47,7 @@ import { setupHrRoutes } from "./hr-routes";
 import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { setupDocumentPreferencesRoutes } from "./document-preferences";
 import { importTrlRequirement } from "./trl";
+import { resolveBuildingTitles } from "./land-registry";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
@@ -504,17 +505,22 @@ export async function registerRoutes(
   // recent deals, and (cheap) a parent-company hit by HoldingCo name.
   // VOA / Companies House / Land Registry can be layered on later; this
   // first cut is the join most useful day-to-day.
-  app.get("/api/goad/polygon-context", requireAuth, async (req, res) => {
+  app.get("/api/goad/polygon-context", requireAuth, async (req: any, res) => {
     const postcode = String(req.query.postcode || "").trim().toUpperCase();
     const streetNum = String(req.query.streetNum || "").trim();
     const street = String(req.query.street || "").trim().toUpperCase();
     const holding = String(req.query.holding || "").trim();
-    if (!postcode && !street) return res.json({ crmProperties: [], deals: [], parentCompany: null });
+    const lat = req.query.lat ? Number(req.query.lat) : undefined;
+    const lng = req.query.lng ? Number(req.query.lng) : undefined;
+    if (!postcode && !street) return res.json({ crmProperties: [], deals: [], parentCompany: null, landRegistry: null });
 
     const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
+    // Reconstruct the address line for the Land Registry resolver.
+    const lrAddress = [streetNum, street, postcode].filter(Boolean).join(" ");
+    const userId = req.session?.userId || req.tokenUserId || null;
 
     try {
-      const [crmRows, dealRows, parentRows] = await Promise.all([
+      const [crmRows, dealRows, parentRows, lrResult] = await Promise.all([
         pool.query(
           `SELECT id, name, status, asset_class, sqft, postcode, latitude, longitude,
                   address, monday_item_id, group_name
@@ -545,12 +551,42 @@ export async function registerRoutes(
               [holding, `%${holding}%`],
             ).catch(() => ({ rows: [] as any[] }))
           : Promise.resolve({ rows: [] as any[] }),
+        // Land Registry — hit the real API via the existing resolver. It
+        // returns matched freeholds/leaseholds for this exact building.
+        (postcode || (lat && lng))
+          ? resolveBuildingTitles({
+              address: lrAddress || undefined,
+              postcode: postcode || undefined,
+              lat,
+              lng,
+              uprn: null,
+              source: "goad-polygon",
+              userId,
+              skipPersist: true,
+            }).catch((err: any) => ({ ok: false, status: 500, error: err?.message || "lr lookup failed" }))
+          : Promise.resolve({ ok: false, status: 0, error: "no address" }),
       ]);
+
+      let landRegistry: any = null;
+      if (lrResult && (lrResult as any).ok) {
+        const r: any = lrResult;
+        landRegistry = {
+          resolvedAddress: r.resolvedAddress,
+          buildingName: r.buildingName,
+          source: r.source,
+          freeholds: (r.matched?.freeholds || []).slice(0, 8),
+          leaseholds: (r.matched?.leaseholds || []).slice(0, 8),
+          exact: r.matched?.exact || false,
+          uprns: r.uprns || [],
+        };
+      }
+
       res.json({
         crmProperties: crmRows.rows,
         deals: dealRows.rows,
         parentCompany: parentRows.rows[0] || null,
         parentCompanyCandidates: parentRows.rows,
+        landRegistry,
       });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to load polygon context" });
