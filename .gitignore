@@ -19,7 +19,10 @@ attached_assets/
 *.log
 
 # VOA SQLite snapshots (built locally by scripts/build-voa-sqlite.ts,
-# deployed to Railway volume — never committed).
-data/
+# deployed to Railway volume — never committed). Files inside data/ are
+# ignored by default, but data/goad/ is whitelisted so the West End Goad
+# overlay ships with the repo (~10 MB, totally fine for git).
+data/*
+!data/goad/
 .voa-cache/
 .claude/
