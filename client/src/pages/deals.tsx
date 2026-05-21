@@ -114,6 +114,7 @@ import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
+import { PropertyCombobox } from "@/components/property-combobox";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 
@@ -809,10 +810,9 @@ function SimplifiedCreateBody({
     <div className="space-y-4">
       <div>
         <Label>Property *</Label>
-        <EntityCombobox
+        <PropertyCombobox
           testId="select-deal-property-top"
-          placeholder="Select property"
-          searchPlaceholder="Type to search properties…"
+          placeholder="Select property or paste an address"
           value={form.propertyId}
           items={properties.map((p) => ({
             id: p.id,
@@ -826,6 +826,13 @@ function SimplifiedCreateBody({
               const prop = properties.find(p => p.id === val);
               if (prop) set("name", prop.name);
             }
+          }}
+          onCreated={(prop) => {
+            // The parent's properties array updates after the next
+            // refetch; meanwhile the picker holds the row so the
+            // trigger label stays correct.
+            queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+            if (!form.name.trim()) set("name", prop.name);
           }}
         />
       </div>
@@ -1204,10 +1211,9 @@ export function DealFormDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <Label>Property *</Label>
-              <EntityCombobox
+              <PropertyCombobox
                 testId="select-deal-property-top"
-                placeholder="Select property"
-                searchPlaceholder="Type to search properties…"
+                placeholder="Select property or paste an address"
                 value={form.propertyId}
                 items={properties.map((p) => ({
                   id: p.id,
@@ -1221,6 +1227,10 @@ export function DealFormDialog({
                     const prop = properties.find(p => p.id === val);
                     if (prop) set("name", prop.name);
                   }
+                }}
+                onCreated={(prop) => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+                  if (!form.name.trim()) set("name", prop.name);
                 }}
               />
             </div>

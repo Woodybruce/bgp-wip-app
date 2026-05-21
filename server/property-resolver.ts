@@ -315,23 +315,68 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
     }
   }
 
-  // Tack the establishment name onto the property name so pathway / brand
-  // panel / breadcrumb show "Hartsfield Manor, Sandy Ln, Betchworth RH3 7AA"
-  // rather than the bare street.
+  // Establishment name (e.g. "The Shard", "Hartsfield Manor", "Westfield
+  // London") wins over the street name. Only overwrites the auto-derived
+  // line1-style name; never trashes a value a user has already curated.
   if (resolved && resolved.kind === "resolved" && establishmentName) {
-    const currentName = String((resolved.property as any).name || "");
-    if (!currentName.toLowerCase().includes(establishmentName.toLowerCase())) {
-      const newName = `${establishmentName}, ${currentName}`.trim().replace(/^,\s*/, "");
+    const currentName = String((resolved.property as any).name || "").trim();
+    const looksAutoDerived = currentName === "" || isAutoDerivedName(currentName);
+    if (looksAutoDerived && currentName.toLowerCase() !== establishmentName.toLowerCase()) {
       try {
-        await db.update(crmProperties).set({ name: newName }).where(eq(crmProperties.id, (resolved.property as any).id));
-        (resolved.property as any).name = newName;
+        await db.update(crmProperties).set({ name: establishmentName }).where(eq(crmProperties.id, (resolved.property as any).id));
+        (resolved.property as any).name = establishmentName;
       } catch (e: any) {
-        console.warn(`[property-resolver] couldn't prefix establishment name "${establishmentName}":`, e?.message);
+        console.warn(`[property-resolver] couldn't apply establishment name "${establishmentName}":`, e?.message);
       }
     }
   }
 
   return resolved!;
+}
+
+/**
+ * Property naming rule (matches the client-side PropertyCombobox flow):
+ *   1. Google establishment name wins when distinct from the street
+ *      ("The Shard", "Westfield London") — applied by caller after this.
+ *   2. Otherwise derive a clean line1-style name from the OS Places
+ *      address. OS data is all-caps with a full postal tail; we strip
+ *      the city / postcode and title-case for display.
+ */
+function derivePropertyNameFromDpa(dpa: OsPlacesResult): string {
+  const raw = (dpa.address || "").trim();
+  if (!raw) return "Unknown property";
+  // Split on comma and keep the first chunk that isn't a unit-floor
+  // descriptor ("GROUND FLOOR", "1ST FLOOR", "BASEMENT").
+  const parts = raw.split(",").map((p) => p.trim()).filter(Boolean);
+  const FLOOR_RE = /^(ground|first|second|third|fourth|fifth|basement|lower\s+ground|mezzanine|\d+(st|nd|rd|th))\s+(floor|fl)\b/i;
+  let pick = parts[0] || raw;
+  for (const p of parts) {
+    if (!FLOOR_RE.test(p)) { pick = p; break; }
+  }
+  return titleCaseAddress(pick);
+}
+
+/**
+ * Heuristic: was this name auto-derived from an OS Places address, or
+ * has a human curated it? Auto-derived names have no commas and look
+ * like a street (number + words), or are exactly the full DPA address.
+ * Used to decide whether the establishment-name override is safe.
+ */
+function isAutoDerivedName(name: string): boolean {
+  if (!name) return true;
+  // Full DPA address (multi-part, contains a UK postcode) — safe to replace.
+  if (/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/.test(name)) return true;
+  // Looks like a bare street: starts with number, no comma.
+  if (/^\d+[a-z]?\b/i.test(name) && !name.includes(",")) return true;
+  return false;
+}
+
+function titleCaseAddress(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\b([a-z])([a-z]*)/g, (_m, a, b) => a.toUpperCase() + b)
+    // Keep small connectives lowercase mid-string ("of the", etc.)
+    .replace(/\b(Of|The|And|At)\b/g, (m, p1, off) => (off === 0 ? p1 : p1.toLowerCase()));
 }
 
 /** Pull a leading street number / range out of a formatted address. */
@@ -382,7 +427,13 @@ async function createFromDpa(dpa: OsPlacesResult, source: ResolveSource): Promis
     const [byUprn] = await db.select().from(crmProperties).where(eq(crmProperties.uprn, dpa.uprn));
     if (byUprn) return { kind: "resolved", property: byUprn, source: "uprn_db" };
   }
-  const name = dpa.address || "Unknown property";
+  // Smart name: prefer the line1 (street + number) over the full
+  // formatted address. OS Places returns all-caps strings like
+  // "12 BERKELEY SQUARE, LONDON, W1J 6BS" — title-case the leading
+  // chunk so the property list reads cleanly. Building-name overrides
+  // (e.g. "The Shard") are applied by the caller in resolveByGooglePlace
+  // when the Google place carries an establishment name.
+  const name = derivePropertyNameFromDpa(dpa);
   const [created] = await db
     .insert(crmProperties)
     .values({
