@@ -4988,6 +4988,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
               { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: goadFeatures.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
               { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
+              { key: "osb",    label: showOSBuildings && showRetailContext ? "OS Buildings (hidden — Goad on)" : (mapZoom < 16 && showOSBuildings ? "OS Buildings (zoom 16+)" : "OS Buildings"),     count: 0, dot: "#3b82f6", on: showOSBuildings, set: setShowOSBuildings },
+              { key: "oss",    label: mapZoom < 14 && showOSSites ? "Named Sites (zoom 14+)" : "Named Sites", count: 0, dot: "#15616D", on: showOSSites,     set: setShowOSSites },
             ].map((row) => (
               <button
                 key={row.key}
@@ -5393,50 +5395,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           </div>
         )}
 
-        {/* Goad-style building key — floating panel top-right */}
-        <div className="absolute top-20 right-3 z-[1000] bg-white/95 backdrop-blur rounded-lg shadow-lg border border-gray-200 p-3 w-[200px]" data-testid="map-key-panel">
-          <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-2">Building Key</p>
-          <div className="space-y-1.5">
-            {[
-              { c: "#fff4e0", l: "Retail" },
-              { c: "#ffe8d4", l: "Food & Drink" },
-              { c: "#e8f0ff", l: "Services" },
-              { c: "#f0e8ff", l: "Hotel" },
-              { c: "#e8f5e8", l: "Civic / Cultural" },
-              { c: "#e8e8e8", l: "Vacant" },
-            ].map((k) => (
-              <div key={k.l} className="flex items-center gap-2 text-[10px]">
-                <span className="w-4 h-3 border border-gray-900 rounded-sm shrink-0" style={{ background: k.c }} />
-                <span className="text-gray-700">{k.l}</span>
-              </div>
-            ))}
-          </div>
-          <div className="border-t mt-2.5 pt-2 space-y-1.5">
-            <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-1">OS Data</p>
-            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showOSBuildings}
-                onChange={() => setShowOSBuildings(!showOSBuildings)}
-                className="rounded accent-gray-900"
-                data-testid="toggle-os-buildings"
-              />
-              <span className="text-gray-700">Building Footprints</span>
-              {mapZoom < 16 && showOSBuildings && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-            </label>
-            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showOSSites}
-                onChange={() => setShowOSSites(!showOSSites)}
-                className="rounded accent-gray-900"
-                data-testid="toggle-os-sites"
-              />
-              <span className="text-gray-700">Named Sites</span>
-              {mapZoom < 14 && showOSSites && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-            </label>
-          </div>
-        </div>
+        {/* The old floating right-side "Building Key" panel was removed —
+            its toggles (OS Buildings, Named Sites) now live in the unified
+            Map Layers list on the left. The pastel auto-classifier legend
+            it carried is no longer needed because Retail Context shows the
+            real Goad data with the band filter directly below the toggle. */}
 
         {(postcode || loadingData) && (
           <PropertyPanel
