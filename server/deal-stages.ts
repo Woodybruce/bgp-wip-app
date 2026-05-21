@@ -16,6 +16,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { runAllAmlChecks } from "./kyc-orchestrator";
+import { fanOutTenancyStatus } from "./unit-mirror";
 
 const router = Router();
 
@@ -192,8 +193,9 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     if (toStage === "completed") {
       try {
         const d = await pool.query(
-          `SELECT d.name, d.property_id, d.rent_pa, d.pricing, d.lease_length, d.break_option, d.total_area_sqft,
-                  d.deal_type, lc.name AS landlord_name, tc.name AS tenant_name,
+          `SELECT d.name, d.property_id, d.tenancy_unit_id, d.rent_pa, d.pricing, d.lease_length,
+                  d.break_option, d.total_area_sqft, d.deal_type, d.completed_at,
+                  lc.name AS landlord_name, tc.name AS tenant_name, tc.id AS tenant_company_id,
                   p.postcode AS property_postcode
              FROM crm_deals d
              LEFT JOIN crm_properties p ON p.id = d.property_id
@@ -227,9 +229,39 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
             ]
           );
         }
+
+        // Write the let back onto the tenancy spine + fan out. Once the
+        // tenancy row flips to Occupied, fanOutTenancyStatus archives
+        // the leasing_schedule_units projection so the unit comes off
+        // the client board automatically. The deal already vanishes
+        // from the Letting Tracker because its status is COM (filtered
+        // out by the tracker's AVA/NEG-only view).
+        if (row?.tenancy_unit_id) {
+          const completionDate = row.completed_at
+            ? new Date(row.completed_at).toISOString().slice(0, 10)
+            : new Date().toISOString().slice(0, 10);
+          await pool.query(
+            `UPDATE tenancy_schedule_units
+                SET status = 'Occupied',
+                    tenant_name = COALESCE(NULLIF(tenant_name, ''), $2),
+                    tenant_company_id = COALESCE(tenant_company_id, $3),
+                    passing_rent_pa = COALESCE(passing_rent_pa, $4),
+                    lease_start = COALESCE(lease_start, $5::date),
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [
+              row.tenancy_unit_id,
+              row.tenant_name || null,
+              row.tenant_company_id || null,
+              row.rent_pa ? Number(row.rent_pa) : null,
+              completionDate,
+            ]
+          );
+          await fanOutTenancyStatus(pool, row.tenancy_unit_id);
+        }
       } catch (e: any) {
-        // comp seeding is best-effort — log and continue
-        console.warn("[deal-stages] comp seed failed:", e?.message);
+        // comp seeding + tenancy writeback are best-effort — log and continue
+        console.warn("[deal-stages] completion writeback failed:", e?.message);
       }
     }
 

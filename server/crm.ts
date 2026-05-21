@@ -2677,6 +2677,40 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         console.warn(`[deal->comps] auto-copy failed for ${deal.id}:`, compErr?.message);
       }
 
+      // Flip the tenancy spine to Occupied + fan out projections on COM
+      // transition. Tenancy is the god of truth — the leasing-schedule
+      // and Letting Tracker rows reflect this automatically (the
+      // client board archives the unit, the tracker drops it off
+      // the AVA filter). Best-effort; never fails the deal write.
+      try {
+        if (legacyToCode(oldDeal?.status) !== "COM" && legacyToCode(deal.status) === "COM" && (deal as any).tenancyUnitId) {
+          const completionDate = (deal as any).completedAt
+            ? new Date((deal as any).completedAt as any).toISOString().slice(0, 10)
+            : new Date().toISOString().slice(0, 10);
+          await pool.query(
+            `UPDATE tenancy_schedule_units
+                SET status = 'Occupied',
+                    tenant_name = COALESCE(NULLIF(tenant_name, ''), $2),
+                    tenant_company_id = COALESCE(tenant_company_id, $3),
+                    passing_rent_pa = COALESCE(passing_rent_pa, $4),
+                    lease_start = COALESCE(lease_start, $5::date),
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [
+              (deal as any).tenancyUnitId,
+              (deal as any).tenantName || null,
+              (deal as any).tenantId || null,
+              (deal as any).rentPa ? Number((deal as any).rentPa) : null,
+              completionDate,
+            ]
+          );
+          const { fanOutTenancyStatus } = await import("./unit-mirror");
+          await fanOutTenancyStatus(pool, (deal as any).tenancyUnitId);
+        }
+      } catch (tenErr: any) {
+        console.warn(`[deal->tenancy] writeback failed for ${deal.id}:`, tenErr?.message);
+      }
+
       const rentFields = ["rentPa", "rentFree", "leaseLength", "capitalContribution", "totalAreaSqft"];
       if (rentFields.some(f => req.body[f] !== undefined)) {
         const ra = calculateRentAnalysis(deal);

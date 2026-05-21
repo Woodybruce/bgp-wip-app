@@ -587,15 +587,29 @@ function formToPayloadWithLearning(form: DealFormData, changeReason: string | un
 // then auto-stamps tenancy_unit_id. When a tenancy row has no
 // matching property_units yet, the user is prompted to promote the
 // spine on the property page first.
+// Map a deal status code to the tenancy status we stamp on a freshly
+// created unit. Keeps the tenancy spine in sync with what the deal is
+// doing the moment Layla types a new unit name into the picker.
+function dealStatusToTenancyStatus(dealStatus: string | undefined | null): string {
+  const code = legacyToCode(dealStatus || "") || dealStatus || "";
+  if (code === "SOL" || code === "EXC") return "Under Offer";
+  if (code === "COM") return "Occupied";
+  return "Marketing";
+}
+
 function DealUnitPicker({
-  propertyId, unitOptions, value, onChange,
+  propertyId, unitOptions, value, onChange, dealStatus, onUnitCreated,
 }: {
   propertyId: string;
   unitOptions: Array<{ id: string; unitName: string; propertyId: string }>;
   value: string;
   onChange: (v: string) => void;
+  dealStatus?: string;
+  // Fires when a brand-new tenancy row is created inline. Carries the
+  // tenancy row so the parent form can prefill area / asking rent.
+  onUnitCreated?: (tenancyRow: { id: string; unit_number: string; gia_sqft?: number | null; nia_sqft?: number | null; itza_sqft?: number | null; marketing_rent_pa?: number | null; erv_pa?: number | null }) => void;
 }) {
-  const { data: tenancyUnits = [] } = useQuery<Array<{
+  const { data: tenancyUnits = [], refetch } = useQuery<Array<{
     id: string | number; unit_number: string; tenant_name: string | null;
     status: string | null; nia_sqft: number | null;
   }>>({
@@ -610,10 +624,13 @@ function DealUnitPicker({
     staleTime: 60_000,
   });
 
-  type Opt = { id: string; name: string; tenant: string | null; source: "tenancy" | "property"; orphan: boolean };
-  const options: Opt[] = (() => {
+  // Build combobox items. Tenancy rows that already have a matching
+  // property_units shadow use the property_units id; orphans use the
+  // "__tenancy__<id>" token which the server resolves on deal save.
+  type Item = { id: string; label: string; subLabel?: string; keywords?: string[] };
+  const items: Item[] = (() => {
     const seen = new Set<string>();
-    const out: Opt[] = [];
+    const out: Item[] = [];
     const pUnitsByName = new Map<string, string>();
     for (const pu of unitOptions) {
       pUnitsByName.set((pu.unitName || "").trim().toLowerCase(), pu.id);
@@ -623,54 +640,58 @@ function DealUnitPicker({
       if (!key || seen.has(key)) continue;
       seen.add(key);
       const matchedId = pUnitsByName.get(key);
+      const tenantSub = t.tenant_name ? `· ${t.tenant_name}` : (t.status || "");
       out.push({
         id: matchedId || `__tenancy__${t.id}`,
-        name: t.unit_number,
-        tenant: t.tenant_name || null,
-        source: "tenancy",
-        orphan: !matchedId,
+        label: t.unit_number,
+        subLabel: tenantSub || undefined,
+        keywords: [t.tenant_name || "", t.status || ""],
       });
     }
     for (const pu of unitOptions) {
       const key = (pu.unitName || "").trim().toLowerCase();
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      out.push({ id: pu.id, name: pu.unitName, tenant: null, source: "property", orphan: false });
+      out.push({ id: pu.id, label: pu.unitName });
     }
     return out;
   })();
 
+  const handleCreate = async (name: string): Promise<Item> => {
+    const tenancyStatus = dealStatusToTenancyStatus(dealStatus);
+    const res = await fetch("/api/tenancy-schedule/unit", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ property_id: propertyId, unit_number: name, status: tenancyStatus }),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(msg || "Failed to create unit");
+    }
+    const row = await res.json();
+    // Tell the parent so it can prefill area / asking rent from this row.
+    onUnitCreated?.(row);
+    // Refresh the tenancy query so the new row shows up in the dropdown.
+    await refetch();
+    // Invalidate downstream views that list tenancy rows for this property.
+    queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+    return { id: `__tenancy__${row.id}`, label: row.unit_number };
+  };
+
   return (
-    <Select
-      value={value || undefined}
-      onValueChange={(v) => onChange(v === "__clear__" ? "" : v)}
+    <EntityCombobox
+      testId="select-deal-unit"
+      placeholder={propertyId ? "Select unit" : "Pick a property first"}
+      searchPlaceholder="Search units on this property…"
+      emptyText="No units yet — type to create one"
+      items={items}
+      value={value}
+      onChange={onChange}
       disabled={!propertyId}
-    >
-      <SelectTrigger data-testid="select-deal-unit">
-        <SelectValue placeholder={propertyId ? "Select unit" : "Pick a property first"} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__clear__">None</SelectItem>
-        {options.map(o => (
-          // Tenancy-only rows used to be disabled here (the "needs
-          // promote" path). They're now selectable — the server
-          // resolves the "__tenancy__<id>" token on deal save by
-          // upserting a property_units shadow with the matching
-          // unit name. No manual promote step.
-          <SelectItem key={o.id} value={o.id}>
-            <span className="inline-flex items-center gap-1.5">
-              <span>{o.name}</span>
-              {o.source === "tenancy" && (
-                <span className="text-[9px] px-1 py-0 rounded bg-purple-100 text-purple-700">tenancy</span>
-              )}
-              {o.tenant && (
-                <span className="text-[10px] text-muted-foreground">· {o.tenant}</span>
-              )}
-            </span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      onCreate={propertyId ? handleCreate : undefined}
+      createLabel="unit"
+    />
   );
 }
 
@@ -690,11 +711,12 @@ function DealUnitPicker({
 //   - BGP contacts: users, sorted alphabetically by name.
 // ─────────────────────────────────────────────────────────────────────────
 function SimplifiedCreateBody({
-  form, set, properties, companies, users, toggleAgent, setForm,
+  form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
 }: {
   form: any;
   set: (k: any, v: any) => void;
   properties: CrmProperty[];
+  propertyUnits: Array<{ id: string; unitName: string; propertyId: string }>;
   companies: CrmCompany[];
   users: { id: string; name: string }[];
   toggleAgent: (name: string) => void;
@@ -833,6 +855,49 @@ function SimplifiedCreateBody({
           </SelectContent>
         </Select>
       </div>
+
+      {/* Unit picker — only shown for unit-level deal types. Searches
+          the tenancy schedule first (god of truth) and lets the user
+          inline-create a tenancy row when the unit doesn't exist yet.
+          New row gets a status derived from the deal status so it
+          mirrors out to the right boards immediately. */}
+      {(() => {
+        const UNIT_LEVEL_TYPES = new Set([
+          "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
+          "Sub-Letting", "New Letting", "Lease Acquisition",
+          "Dilapidations", "Service Charge",
+        ]);
+        if (!UNIT_LEVEL_TYPES.has(form.dealType)) return null;
+        const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
+        return (
+          <div>
+            <Label>Unit *</Label>
+            <DealUnitPicker
+              propertyId={form.propertyId}
+              unitOptions={unitOptions}
+              value={form.unitId}
+              onChange={(v) => set("unitId", v)}
+              dealStatus={form.status}
+              onUnitCreated={(row) => {
+                // Prefill area + asking rent from the new tenancy row so
+                // Layla doesn't have to retype data she just entered (or
+                // would have to look up). She can still override on the
+                // full form if anything's wrong.
+                const sqft = row.gia_sqft ?? row.nia_sqft ?? row.itza_sqft ?? null;
+                const rent = row.marketing_rent_pa ?? row.erv_pa ?? null;
+                setForm((p: any) => ({
+                  ...p,
+                  totalAreaSqft: p.totalAreaSqft || (sqft != null ? String(sqft) : p.totalAreaSqft),
+                  rentPa: p.rentPa || (rent != null ? String(rent) : p.rentPa),
+                }));
+              }}
+            />
+            {!form.propertyId && (
+              <p className="text-[11px] text-muted-foreground mt-1">Pick a property first.</p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Counterparty — contextual to deal type. For "auto" (no deal
           type picked, or a type without an obvious counterparty),
@@ -1129,6 +1194,7 @@ export function DealFormDialog({
               form={form}
               set={set}
               properties={properties}
+              propertyUnits={propertyUnits}
               companies={companies}
               users={users}
               toggleAgent={toggleAgent}
@@ -1175,6 +1241,16 @@ export function DealFormDialog({
                     unitOptions={unitOptions}
                     value={form.unitId}
                     onChange={(v) => set("unitId", v)}
+                    dealStatus={form.status}
+                    onUnitCreated={(row) => {
+                      const sqft = row.gia_sqft ?? row.nia_sqft ?? row.itza_sqft ?? null;
+                      const rent = row.marketing_rent_pa ?? row.erv_pa ?? null;
+                      setForm((p: any) => ({
+                        ...p,
+                        totalAreaSqft: p.totalAreaSqft || (sqft != null ? String(sqft) : p.totalAreaSqft),
+                        rentPa: p.rentPa || (rent != null ? String(rent) : p.rentPa),
+                      }));
+                    }}
                   />
                   {needsUnit && !form.unitId && form.propertyId && (
                     <p className="text-[11px] text-rose-600 mt-1">A {form.dealType} requires a specific unit on the property.</p>

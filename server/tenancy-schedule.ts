@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { fanOutTenancyStatus } from "./unit-mirror";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -301,6 +302,12 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
           ),
         ]);
       }
+
+      // Fan-out: ensure the projection rows reflect this row's status.
+      // No-op when a matching available / leasing row already exists
+      // (auto-knit above attached it); otherwise creates a fresh
+      // projection so the unit shows on the right boards immediately.
+      await fanOutTenancyStatus(pool, newId);
     }
 
     res.json(result.rows[0]);
@@ -386,6 +393,13 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
           ) : Promise.resolve(),
         ]).catch((e: any) => console.warn("[tenancy] rename re-knit failed:", e?.message));
       }
+    }
+
+    // Status changes drive the projection boards. Marketing / Vacant
+    // populates the Letting Tracker + client board; Under Offer keeps
+    // them but flips status; Occupied archives off the client board.
+    if ("status" in d) {
+      await fanOutTenancyStatus(pool, id);
     }
 
     res.json(result.rows[0]);
