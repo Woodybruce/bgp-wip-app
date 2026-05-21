@@ -727,6 +727,9 @@ function SimplifiedCreateBody({
   setForm: any;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
+  // Tenant Acquisition + New Letting + Sub-Letting + Consultancy + Secondment
+  // fall through to "auto", which renders BOTH landlord and tenant pickers
+  // so the agent can link either side as the deal needs.
   const dt = form.dealType || "";
   const isInvestment = dt === "Purchase" || dt === "Sale";
   const counterpartyKind: "landlord" | "tenant" | "vendor" | "purchaser" | "auto" =

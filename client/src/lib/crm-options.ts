@@ -145,6 +145,7 @@ export const CRM_OPTIONS = {
     "Lease Renewal",
     "Rent Review",
     "Lease Acquisition",
+    "Tenant Acquisition",
     "Lease Disposal",
     "Regear",
     "New Letting",
