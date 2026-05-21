@@ -4,8 +4,10 @@
 // our local cache.
 //
 // Sources tried in order per brand (first hit wins):
-//   1. logo.dev — requires LOGO_DEV_TOKEN env (free signup at logo.dev)
-//   2. Google s2 favicons — free, no token, sz=128 usually serves a real logo
+//   1. Company website itself — Open Graph image, schema.org logo,
+//      apple-touch-icon, navbar SVG. Almost always the highest quality.
+//   2. logo.dev — requires LOGO_DEV_TOKEN env (free signup at logo.dev)
+//   3. Google s2 favicons — free, no token, sz=128 usually serves a real logo
 //
 // We deliberately stopped using Clearbit (dead since Mar 2025) and
 // DuckDuckGo (low quality, often the wrong icon) — rather have nothing
@@ -18,6 +20,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { storeImageFromBuffer } from "./image-studio";
+import { scrapeLogoFromWebsite } from "./website-logo-scraper";
 
 const router = Router();
 
@@ -53,17 +56,28 @@ async function tryFetch(url: string, timeoutMs = 8000): Promise<{ buffer: Buffer
 }
 
 async function fetchLogoForDomain(domain: string): Promise<{ buffer: Buffer; mime: string; source: string } | null> {
-  // 1. logo.dev — best quality if configured. Free signup at logo.dev gives
-  //    you a publishable token (pk_...) that goes in LOGO_DEV_TOKEN env.
+  // 1. Company website itself. Most retailers publish their logo as an
+  //    Open Graph image, schema.org Organization.logo, apple-touch-icon,
+  //    or as the first <img> in the <header>/<nav>. Almost always the
+  //    cleanest source — sharper than logo.dev, properly cropped (unlike
+  //    Google favicons), and the actual brand-approved wordmark.
+  try {
+    const scraped = await scrapeLogoFromWebsite(domain);
+    if (scraped) return { buffer: scraped.buffer, mime: scraped.mime, source: `website-${scraped.source}` };
+  } catch (err: any) {
+    console.warn(`[bulk-logos] website scrape failed for ${domain}: ${err?.message}`);
+  }
+
+  // 2. logo.dev — best paid fallback if configured. Free signup at logo.dev
+  //    gives you a publishable token (pk_...) that goes in LOGO_DEV_TOKEN.
   const logoDevToken = process.env.LOGO_DEV_TOKEN;
   if (logoDevToken) {
     const hit = await tryFetch(`https://img.logo.dev/${encodeURIComponent(domain)}?token=${logoDevToken}&size=512&format=png`);
     if (hit) return { ...hit, source: "logo.dev" };
   }
-  // 2. Google's favicon API — high-res (sz=128) often serves a real logo,
-  //    not just the tiny favicon. Free, no key. Rather than fall back to
-  //    Clearbit (dead) or DuckDuckGo (rubbish), return null when this
-  //    misses so the caller can see the gap and fix the domain.
+  // 3. Google's favicon API — high-res (sz=128) often serves a real logo,
+  //    not just the tiny favicon. Free, no key. Return null beyond this
+  //    so callers can see the gap and fix the domain.
   const google = await tryFetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`);
   if (google && google.buffer.length > 300) return { ...google, source: "google" };
   return null;
@@ -170,7 +184,7 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
       missed: 0,
       errors: 0,
       errorSamples: [],
-      sourceCounts: { "logo.dev": 0, google: 0 },
+      sourceCounts: { "website-og": 0, "website-schema": 0, "website-apple-touch-icon": 0, "website-favicon-hires": 0, "website-header-img": 0, "logo.dev": 0, google: 0 },
       total: brands.length,
       logoDevConfigured: !!process.env.LOGO_DEV_TOKEN,
       lastBrand: null,
