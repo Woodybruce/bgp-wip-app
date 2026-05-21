@@ -292,24 +292,55 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   // Fallback: lat/lng nearest with a generous 50m radius. Google-derived
   // building centroids on big West End blocks sit further from individual
   // entrance UPRNs than the 25m default.
+  //
+  // Number-guard: when Google gave us a clean street number, refuse a
+  // lat/lng match whose DPA starts with a DIFFERENT number — otherwise
+  // picking "108 Chiswick High Road" lands on "99" because 108 has no
+  // single-building UPRN and 99 is the nearest neighbour. Better to
+  // return candidates / not_found and let the caller fall back to Google
+  // data than silently misname the property.
+  const googleStreetNumber = extractStreetNumber(formatted);
+  const checkNumberAgrees = (dpaAddress: string | undefined) => {
+    if (!googleStreetNumber || !dpaAddress) return true;
+    const dpaNum = extractStreetNumber(dpaAddress);
+    if (!dpaNum) return true;
+    // Range-aware: "108" agrees with "108-110"; "108" disagrees with "99".
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+    return norm(dpaNum).startsWith(norm(googleStreetNumber)) ||
+           norm(googleStreetNumber).startsWith(norm(dpaNum));
+  };
+
   if (!resolved) {
     const llResult = await resolveByLatLng(lat, lng, 50);
-    if (llResult.kind === "resolved") resolved = llResult;
-    else if (llResult.kind === "not_found" && formatted) {
-      // Final fallback: OS Places find on the formatted address — don't
+    if (llResult.kind === "resolved" && checkNumberAgrees((llResult.property as any)?.name)) {
+      resolved = llResult;
+    } else if (llResult.kind === "not_found" || (llResult.kind === "resolved" && !checkNumberAgrees((llResult.property as any)?.name))) {
+      // Either nearest-radius failed, or it matched a different number.
+      // Try free-text OS Places search on the formatted address — don't
       // re-enter resolveByAddress, which would re-Google and loop.
-      const results = await osPlacesFind(formatted, 10);
-      if (results.length === 1 && results[0].uprn) {
-        resolved = await resolveByUprn(results[0].uprn);
-      } else if (results.length > 1) {
+      const results = formatted ? await osPlacesFind(formatted, 10) : [];
+      const numberFiltered = googleStreetNumber
+        ? results.filter(r => checkNumberAgrees(r.address))
+        : results;
+      if (numberFiltered.length === 1 && numberFiltered[0].uprn) {
+        resolved = await resolveByUprn(numberFiltered[0].uprn);
+      } else if (numberFiltered.length > 1) {
         return {
           kind: "candidates",
-          candidates: await annotateCandidates(results),
-          reason: "Google match → OS Places returned multiple — user must pick",
+          candidates: await annotateCandidates(numberFiltered),
+          reason: "Multiple OS Places matches at this number — user must pick",
         };
       } else {
-        return llResult;
+        // Tell the caller "we tried everything but couldn't pin a UPRN"
+        // so it falls back to creating the property from Google data
+        // directly. Means the property gets the right name + postcode
+        // even when OS Places doesn't know about it.
+        return { kind: "not_found", reason: googleStreetNumber
+          ? `OS Places has no UPRN for ${googleStreetNumber} at ${postcode || "this location"} — using Google data directly`
+          : "OS Places returned no usable match" };
       }
+    } else if (llResult.kind === "candidates") {
+      return llResult;
     } else {
       return llResult;
     }
@@ -345,13 +376,35 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
 function derivePropertyNameFromDpa(dpa: OsPlacesResult): string {
   const raw = (dpa.address || "").trim();
   if (!raw) return "Unknown property";
-  // Split on comma and keep the first chunk that isn't a unit-floor
-  // descriptor ("GROUND FLOOR", "1ST FLOOR", "BASEMENT").
+  // OS Places DPA addresses look like "108, CHISWICK HIGH ROAD, LONDON,
+  // W4 2ED" — the building number sits on its own comma-separated chunk.
+  // The old code took just parts[0], so the property name came out as
+  // "108" with no street. Walk the parts skipping unit/floor descriptors
+  // and combine the leading number with the next part (the street) so
+  // the name reads "108 Chiswick High Road" instead of "108".
   const parts = raw.split(",").map((p) => p.trim()).filter(Boolean);
   const FLOOR_RE = /^(ground|first|second|third|fourth|fifth|basement|lower\s+ground|mezzanine|\d+(st|nd|rd|th))\s+(floor|fl)\b/i;
-  let pick = parts[0] || raw;
-  for (const p of parts) {
-    if (!FLOOR_RE.test(p)) { pick = p; break; }
+  const UNIT_RE = /^(unit|flat|suite|apartment|apt|room|shop|store|kiosk|pod)\s+/i;
+  const POSTCODE_RE = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+  // City / town tail — anything after a postcode, plus common London catch-alls.
+  const TAIL_TOWNS = new Set(["LONDON", "GREATER LONDON", "ENGLAND", "UNITED KINGDOM", "UK"]);
+  const isStreetish = (p: string) =>
+    p &&
+    !FLOOR_RE.test(p) &&
+    !UNIT_RE.test(p) &&
+    !POSTCODE_RE.test(p) &&
+    !TAIL_TOWNS.has(p.toUpperCase());
+
+  // Find first content-bearing part.
+  const meaningful = parts.filter(isStreetish);
+  if (meaningful.length === 0) return titleCaseAddress(parts[0] || raw);
+
+  let pick = meaningful[0];
+  // If the leading part is just a number (e.g. "108" or "18-22"), glue
+  // it onto the next meaningful part (the street) so the name carries
+  // the street identity.
+  if (/^\d+[a-z]?(?:-\d+[a-z]?)?$/i.test(pick) && meaningful[1]) {
+    pick = `${pick} ${meaningful[1]}`;
   }
   return titleCaseAddress(pick);
 }
