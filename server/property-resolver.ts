@@ -261,13 +261,48 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   const streetNumberFromComponents: string | null = (result?.address_components || [])
     .find((c: any) => c.types?.includes("street_number"))?.long_name
     ?? null;
-  // Only treat as an "establishment" if Google flagged it that way. Pure
-  // street addresses come back with name === formatted_address; we don't
-  // want to prefix those.
+  // Use Google's place name as the PROPERTY name only when it's a building
+  // / landmark — NOT when it's a business occupying a unit. "The Pantry Cafe"
+  // is a restaurant at 108 Chiswick High Road; the property name should be
+  // the address, not the current tenant. By contrast "The Shard" / "Westfield
+  // London" / "Bluewater" ARE building/landmark names worth using.
+  //
+  // Google's `types` array tells us which kind we have. Building/landmark
+  // types win; if any business type is also present, treat it as a tenant
+  // and ignore the name (Google often returns BOTH for chain stores in
+  // named buildings, e.g. a Pret inside a shopping mall — we want the
+  // mall name only when the place IS the mall, not a tenant inside it).
   const types: string[] = Array.isArray(result?.types) ? result.types : [];
-  const isEstablishment = types.includes("establishment") || types.includes("point_of_interest") || types.includes("premise") || types.includes("subpremise");
+  const BUILDING_LANDMARK_TYPES = new Set([
+    "premise", "subpremise", "shopping_mall", "tourist_attraction",
+    "stadium", "convention_center", "airport", "train_station",
+    "transit_station", "university", "school", "hospital",
+  ]);
+  const BUSINESS_TENANT_TYPES = new Set([
+    "food", "restaurant", "cafe", "bar", "meal_takeaway", "meal_delivery", "bakery",
+    "store", "shoe_store", "clothing_store", "book_store", "electronics_store",
+    "furniture_store", "hardware_store", "home_goods_store", "jewelry_store",
+    "liquor_store", "pet_store", "supermarket", "convenience_store",
+    "bank", "finance", "atm", "insurance_agency", "real_estate_agency",
+    "pharmacy", "doctor", "dentist", "veterinary_care", "physiotherapist",
+    "gym", "beauty_salon", "hair_care", "spa", "nail_salon",
+    "car_dealer", "car_rental", "car_repair", "car_wash", "gas_station",
+    "lodging", "night_club", "movie_theater", "bowling_alley", "casino",
+  ]);
+  const isBuildingLandmark = types.some((t) => BUILDING_LANDMARK_TYPES.has(t));
+  const isBusinessTenant = types.some((t) => BUSINESS_TENANT_TYPES.has(t));
   const rawName: string | null = (typeof result?.name === "string" && result.name.trim()) ? result.name.trim() : null;
-  const establishmentName = (isEstablishment && rawName && formatted && !formatted.toLowerCase().startsWith(rawName.toLowerCase())) ? rawName : null;
+  // Use the establishment name only when it's clearly a building/landmark
+  // (and not also a business tenant, which would mean it's a chain store in
+  // a named building — keep the building, not the tenant).
+  const establishmentName = (
+    isBuildingLandmark
+    && !isBusinessTenant
+    && rawName
+    && formatted
+    && !formatted.toLowerCase().startsWith(rawName.toLowerCase())
+  ) ? rawName : null;
+  console.log(`[resolver] place-name decision: name="${rawName}" types=[${types.join(",")}] building=${isBuildingLandmark} business=${isBusinessTenant} → useEstablishment=${establishmentName ? `"${establishmentName}"` : "no (use address)"}`);
   if (typeof lat !== "number" || typeof lng !== "number") {
     return { kind: "not_found", reason: "Google Place Details returned no geometry" };
   }

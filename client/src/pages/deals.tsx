@@ -5059,10 +5059,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
                   const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || "");
                   const teams = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || "");
+                  // Custom deal name (different from the auto-filled property
+                  // name) wins as the title — Layla's typed name should show.
+                  // Otherwise fall back to the canonical property → deal name.
+                  const customDealName = deal.name && deal.name !== propName ? deal.name : null;
                   return {
                     id: deal.id,
-                    title: propName || deal.name,
-                    subtitle: propName ? deal.name : undefined,
+                    title: customDealName || propName || deal.name,
+                    subtitle: customDealName && propName ? propName : undefined,
                     href: `/deals/${deal.id}`,
                     status: deal.status || undefined,
                     statusColor: DEAL_STATUS_COLORS[deal.status || ""] || "bg-muted-foreground",

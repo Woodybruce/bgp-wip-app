@@ -128,8 +128,17 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap }: DealKanba
                 : "";
               const code = legacyToCode(deal.status);
               const showTenant = code && TENANT_HEADING_STATUSES.has(code) && tenantName;
-              // Heading: unit > property > deal name. In SOL+, append tenant.
-              const baseName = unitName || propName || deal.name;
+              // Heading priority:
+              //   1. User-typed deal name (when it differs from the
+              //      auto-filled property name — i.e. Layla customised it)
+              //   2. Unit name
+              //   3. Property name
+              //   4. Deal name as final fallback
+              // The auto-fill on the form sets deal.name = property.name when
+              // the user doesn't type their own, so equating those two is how
+              // we detect "this is just the auto-fill, prefer unit".
+              const customDealName = deal.name && deal.name !== propName ? deal.name : null;
+              const baseName = customDealName || unitName || propName || deal.name;
               const displayName = showTenant ? `${baseName} — ${tenantName}` : baseName;
               const agents = Array.isArray(deal.internalAgent)
                 ? deal.internalAgent.join(", ")
