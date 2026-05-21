@@ -3365,7 +3365,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // Goad polygon → combined side panel. Holds the clicked feature's
   // properties plus any joined context fetched via /api/goad/polygon-context.
   const [goadPanelUnit, setGoadPanelUnit] = useState<any | null>(null);
-  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null; tenantCompany: any | null; tenantCompanyCandidates: any[] } | null>(null);
+  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null; tenantCompany: any | null; tenantCompanyCandidates: any[]; diagnostics?: { voaAvailable: boolean; propertyDataKeyAvailable: boolean; landRegistryRan: boolean; landRegistryError: string | null } } | null>(null);
   const [goadPanelStartingPathway, setGoadPanelStartingPathway] = useState(false);
   const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
@@ -5434,12 +5434,24 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                 )}
 
                 {/* Rates — actual unit-level rateable values from the
-                    VOA snapshot, narrowed by the Goad street number. */}
-                {goadPanelContext && goadPanelContext.rates.length > 0 && (
+                    VOA snapshot, narrowed by the Goad street number.
+                    Always shown so the user knows whether VOA was even
+                    consulted. */}
+                {goadPanelContext && (
                   <section className="border-t pt-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
-                      Rates ({goadPanelContext.rates.length})
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                      <span>Rates {goadPanelContext.rates.length > 0 ? `(${goadPanelContext.rates.length})` : ""}</span>
+                      {!goadPanelContext.diagnostics?.voaAvailable && (
+                        <span className="text-[9px] text-amber-600 normal-case">VOA file not on server</span>
+                      )}
                     </div>
+                    {goadPanelContext.rates.length === 0 && (
+                      <p className="text-[11px] text-gray-500 italic mb-1.5">
+                        {goadPanelContext.diagnostics?.voaAvailable
+                          ? "No rateable values matched at this address."
+                          : "VOA snapshot not deployed — rates lookup skipped."}
+                      </p>
+                    )}
                     {goadPanelContext.rates.slice(0, 5).map((r: any, i: number) => (
                       <div key={`rt-${i}`} className="bg-amber-50/40 border border-amber-100 rounded p-2 mb-1 text-[11px]">
                         <div className="flex items-baseline gap-2">
@@ -5465,23 +5477,35 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                   </section>
                 )}
 
-                {/* Land Registry — via real LR API through resolveBuildingTitles().
-                    Shows matched (UPRN-locked) titles first; falls back to
-                    street-number matches; the postcode-wide list is never
-                    shown (that was the 'all Unknown' noise). */}
-                {goadPanelContext?.landRegistry && (
+                {/* Land Registry — via the real LR API through
+                    resolveBuildingTitles(). Always shown so the user can
+                    tell whether the resolver ran. */}
+                {goadPanelContext && (
                   <section className="border-t pt-3">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
                       <span>Land Registry</span>
-                      <span className={`text-[9px] normal-case font-medium ${
-                        goadPanelContext.landRegistry.source === "uprn" ? "text-emerald-600" :
-                        goadPanelContext.landRegistry.source === "street_number" ? "text-amber-600" : "text-gray-500"
-                      }`}>
-                        {goadPanelContext.landRegistry.source === "uprn" ? "UPRN-matched" :
-                         goadPanelContext.landRegistry.source === "street_number" ? "by street number" :
-                         "postcode-only"}
-                      </span>
+                      {goadPanelContext.landRegistry ? (
+                        <span className={`text-[9px] normal-case font-medium ${
+                          goadPanelContext.landRegistry.source === "uprn" ? "text-emerald-600" :
+                          goadPanelContext.landRegistry.source === "street_number" ? "text-amber-600" : "text-gray-500"
+                        }`}>
+                          {goadPanelContext.landRegistry.source === "uprn" ? "UPRN-matched" :
+                           goadPanelContext.landRegistry.source === "street_number" ? "by street number" :
+                           "postcode-only"}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] text-amber-600 normal-case">
+                          {goadPanelContext.diagnostics?.landRegistryError ? `failed: ${goadPanelContext.diagnostics.landRegistryError.slice(0, 40)}` : "no result"}
+                        </span>
+                      )}
                     </div>
+                    {!goadPanelContext.landRegistry && (
+                      <p className="text-[11px] text-gray-500 italic">
+                        {goadPanelContext.diagnostics?.propertyDataKeyAvailable === false
+                          ? "PropertyData key not configured on server — LR lookup skipped."
+                          : "Resolver returned no result for this address."}
+                      </p>
+                    )}
                     {(() => {
                       const lr = goadPanelContext.landRegistry;
                       const fhs = (lr.matched?.freeholds || []).length > 0 ? lr.matched.freeholds : lr.fallback?.freeholds || [];
@@ -5530,11 +5554,21 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                 )}
 
                 {/* Planning applications — last 10 years from PropertyData. */}
-                {goadPanelContext && goadPanelContext.planningApplications.length > 0 && (
+                {goadPanelContext && (
                   <section className="border-t pt-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
-                      Planning apps — last 10 yrs ({goadPanelContext.planningApplications.length})
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                      <span>Planning apps — last 10 yrs {goadPanelContext.planningApplications.length > 0 ? `(${goadPanelContext.planningApplications.length})` : ""}</span>
+                      {!goadPanelContext.diagnostics?.propertyDataKeyAvailable && (
+                        <span className="text-[9px] text-amber-600 normal-case">PD key not configured</span>
+                      )}
                     </div>
+                    {goadPanelContext.planningApplications.length === 0 && (
+                      <p className="text-[11px] text-gray-500 italic mb-1.5">
+                        {goadPanelContext.diagnostics?.propertyDataKeyAvailable
+                          ? "No planning applications recorded at this postcode in the last 10 years."
+                          : "Planning lookup skipped — PropertyData key not configured."}
+                      </p>
+                    )}
                     {goadPanelContext.planningApplications.slice(0, 5).map((a: any, i: number) => {
                       const dec = (a.decision || a.status || "").toLowerCase();
                       const dot = dec.includes("approved") || dec.includes("permit") || dec.includes("granted") ? "#10b981" :

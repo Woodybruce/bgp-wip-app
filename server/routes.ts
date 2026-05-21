@@ -521,6 +521,10 @@ export async function registerRoutes(
     const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
     // Reconstruct the address line for the Land Registry resolver.
     const lrAddress = [streetNum, street, postcode].filter(Boolean).join(" ");
+    // PropertyData wants postcodes WITHOUT a space ("W1J8NR", not "W1J 8NR")
+    // — most of its endpoints silently return zero results for the spaced
+    // form. That was the 'board only showing Goad stuff' bug.
+    const postcodeNoSpace = postcode.replace(/\s+/g, "");
     const userId = req.session?.userId || req.tokenUserId || null;
     const PD_KEY = process.env.PROPERTYDATA_API_KEY;
 
@@ -577,10 +581,11 @@ export async function registerRoutes(
             }).catch((err: any) => ({ ok: false, status: 500, error: err?.message || "lr lookup failed" }))
           : Promise.resolve({ ok: false, status: 0, error: "no address" }),
         // Planning applications via PropertyData (last 7300 days = ~20 yrs;
-        // we'll cap at 10 yrs client-side, but ask for plenty so the cap
-        // bites correctly). Returns nothing if no API key configured.
-        PD_KEY && postcode
-          ? fetch(`https://api.propertydata.co.uk/planning-applications?${new URLSearchParams({ key: PD_KEY, postcode, max_age: "3650" }).toString()}`, { signal: AbortSignal.timeout(8000) })
+        // we'll cap at 10 yrs client-side). Note the postcode goes in
+        // WITHOUT a space — PD silently returns zero results for the
+        // spaced form, which was the 'no planning apps' bug.
+        PD_KEY && postcodeNoSpace
+          ? fetch(`https://api.propertydata.co.uk/planning-applications?${new URLSearchParams({ key: PD_KEY, postcode: postcodeNoSpace, max_age: "3650" }).toString()}`, { signal: AbortSignal.timeout(8000) })
               .then((r) => (r.ok ? r.json() : null))
               .then((j: any) => (Array.isArray(j?.data) ? j.data : []))
               .catch(() => [] as any[])
@@ -680,6 +685,14 @@ export async function registerRoutes(
         pathwayRun: pathwayRow || null,
         tenantCompany: tenantRows.rows[0] || null,
         tenantCompanyCandidates: tenantRows.rows,
+        // Diagnostics so the panel can show 'we ran X but found nothing'
+        // rather than silently hiding the section.
+        diagnostics: {
+          voaAvailable: voaSqliteAvailable(),
+          propertyDataKeyAvailable: !!PD_KEY,
+          landRegistryRan: lrResult && (lrResult as any).ok === true,
+          landRegistryError: (lrResult as any)?.ok === false ? (lrResult as any).error : null,
+        },
       });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to load polygon context" });
