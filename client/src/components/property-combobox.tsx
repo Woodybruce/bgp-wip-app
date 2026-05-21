@@ -109,16 +109,49 @@ export function PropertyCombobox({
   };
 
   // Extract a clean property name from a Google place. Building / market
-  // / establishment name wins over the street; otherwise use the first
-  // address line (number + street), stripping the rest of the postal tail.
+  // / landmark names win over the street ("The Shard", "Westfield London",
+  // "Bluewater"). Business names DON'T — "The Pantry Cafe" is a tenant
+  // occupying 108 Chiswick High Road, not a property name. The same
+  // building-vs-business filter runs server-side in property-resolver.ts;
+  // mirror it here for the client fallback path that POSTs directly when
+  // the resolver returns not_found (e.g. 108 isn't in OS Places).
+  const BUILDING_LANDMARK_TYPES = new Set([
+    "premise", "subpremise", "shopping_mall", "tourist_attraction",
+    "stadium", "convention_center", "airport", "train_station",
+    "transit_station", "university", "school", "hospital",
+  ]);
+  const BUSINESS_TENANT_TYPES = new Set([
+    "food", "restaurant", "cafe", "bar", "meal_takeaway", "meal_delivery", "bakery",
+    "store", "shoe_store", "clothing_store", "book_store", "electronics_store",
+    "furniture_store", "hardware_store", "home_goods_store", "jewelry_store",
+    "liquor_store", "pet_store", "supermarket", "convenience_store",
+    "bank", "finance", "atm", "insurance_agency", "real_estate_agency",
+    "pharmacy", "doctor", "dentist", "veterinary_care", "physiotherapist",
+    "gym", "beauty_salon", "hair_care", "spa", "nail_salon",
+    "car_dealer", "car_rental", "car_repair", "car_wash", "gas_station",
+    "lodging", "night_club", "movie_theater", "bowling_alley", "casino",
+  ]);
   const namePropertyFromPlace = (place: any, fallback: string): string => {
     const placeName = (place as any).name as string | undefined;
     const types = ((place as any).types || []) as string[];
-    const isBareAddress = types.includes("street_address") || types.includes("premise") || types.includes("postal_code");
-    if (placeName && !isBareAddress && !/^\d+[a-z]?$/i.test(placeName.trim())) {
+    const isBuildingLandmark = types.some((t) => BUILDING_LANDMARK_TYPES.has(t));
+    const isBusinessTenant = types.some((t) => BUSINESS_TENANT_TYPES.has(t));
+    // Use the place name only when it's clearly a building/landmark, NOT
+    // when it's a business tenant. Reject numeric-only names too (Google
+    // sometimes returns the street number as `name` for plain addresses).
+    if (placeName && isBuildingLandmark && !isBusinessTenant && !/^\d+[a-z]?$/i.test(placeName.trim())) {
       return placeName;
     }
-    // Fall back to formatted address line1.
+    // Fall back to "<street_number> <route>" if address_components carries
+    // them — gives "108 Chiswick High Road" rather than the comma-tail of
+    // the formatted_address (which might be "108 Chiswick High Rd.,
+    // Chiswick, London W4 1PU" or even lead with a place name).
+    const comp = (t: string) => place.address_components?.find((c: any) => c.types?.includes(t))?.long_name;
+    const number = comp("street_number");
+    const route = comp("route");
+    if (number && route) return `${number} ${route}`;
+    if (route) return route;
+    // Last resort: first chunk of formatted address.
     const formatted = place.formatted_address || fallback;
     const line1 = formatted.split(",")[0]?.trim();
     return line1 || formatted || fallback;
