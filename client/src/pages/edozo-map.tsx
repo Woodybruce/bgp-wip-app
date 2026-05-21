@@ -3467,6 +3467,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     // CRM data layer groups — clustered (Deals / Comps / Lease Events)
     const crmPane = map.createPane("crmPane");
     crmPane.style.zIndex = "460";
+
+    // Goad polygons need to sit above the auto-classified buildings
+    // (zIndex 450) AND the CRM markers (460) so clicking a Goad unit
+    // opens the new polygon-context side panel rather than firing
+    // loadPropertyData() via an underlying CRM/building click.
+    const goadPane = map.createPane("goadPane");
+    goadPane.style.zIndex = "475";
+    const goadLabelPane = map.createPane("goadLabelPane");
+    goadLabelPane.style.zIndex = "476";
     const clusterOpts = { maxClusterRadius: 40, disableClusteringAtZoom: 17 };
     dealsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
     compsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
@@ -4209,10 +4218,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   useEffect(() => {
     if (!mapRef.current) return;
     if (!retailMarkersRef.current) {
-      retailMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+      retailMarkersRef.current = L.layerGroup({ pane: "goadPane" } as any).addTo(mapRef.current);
     }
     if (!retailLabelLayerRef.current) {
-      retailLabelLayerRef.current = L.layerGroup().addTo(mapRef.current);
+      retailLabelLayerRef.current = L.layerGroup({ pane: "goadLabelPane" } as any).addTo(mapRef.current);
     }
     retailMarkersRef.current.clearLayers();
     retailLabelLayerRef.current.clearLayers();
@@ -4237,6 +4246,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       const style = COLOURS[category] || COLOURS.other;
 
       const polygon = L.geoJSON(feature, {
+        pane: "goadPane",
         style: () => ({
           fillColor: style.fill,
           color: style.stroke,
@@ -4244,7 +4254,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           opacity: 1,
           fillOpacity: 0.7,
         }),
-      });
+      } as any);
 
       const fascia = (props.FasciaMas || props.Fascia || "").trim();
       const activity = (props.PrimaryAc || props.Activity || "").trim();
@@ -4330,6 +4340,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
           const label = L.marker([cy, cx], {
             interactive: false,
+            pane: "goadLabelPane",
             icon: L.divIcon({
               className: "",
               html: `<div style="
