@@ -489,7 +489,8 @@ export async function registerRoutes(
     res.json({ centreCode: "9033MM", centreName: "London West End", layers });
   });
   app.get("/api/goad/:layer", requireAuth, (req, res) => {
-    const file = GOAD_LAYERS[req.params.layer.toLowerCase()];
+    const layerParam = String(req.params.layer || "").toLowerCase();
+    const file = GOAD_LAYERS[layerParam];
     if (!file) return res.status(404).json({ message: "Unknown Goad layer" });
     const diskPath = path.join(GOAD_DIR, file);
     if (!fs.existsSync(diskPath)) return res.status(404).json({ message: "Goad layer file not found" });

@@ -3345,16 +3345,18 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showStreetView, setShowStreetView] = useState(false);
   const [googleMapsKey, setGoogleMapsKey] = useState<string | null>(null);
   const streetViewClickRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
-  // ── Retail Context layer (BGP Goad-style data, live) ───────────────────────
-  // When toggled on, fetch mapped units (VOA + OSM + Places + CRM) for the
-  // current map view and render circle markers coloured by retail category.
-  // Same data source as the deck-export PNG (server/goad-plan-data.ts).
+  // ── Retail Context layer (real Experian Goad polygons) ────────────────────
+  // When toggled on, loads the licensed Goad GeoJSON layers for the West End
+  // (centre 9033MM, ~10,600 unit footprints across LG/GF/F1/F2) and renders
+  // them as colour-coded polygons. The previous synthesised version (CRM +
+  // VOA + Places mash-up) is retained server-side for the Goad-plan PDF
+  // export but is no longer the source of truth for the live map layer.
   const [showRetailContext, setShowRetailContext] = useState(false);
-  const [retailUnits, setRetailUnits] = useState<Array<{ lat: number; lng: number; address: string; tenantName?: string; category: string; voaDescription?: string; rateableValue?: number; tradingStatus?: string; isSubject?: boolean }>>([]);
+  const [goadFeatures, setGoadFeatures] = useState<any[]>([]);
   const [retailFetching, setRetailFetching] = useState(false);
   const [excludedRetailCategories, setExcludedRetailCategories] = useState<Set<string>>(new Set());
   const retailMarkersRef = useRef<L.LayerGroup | null>(null);
-  const retailFetchTokenRef = useRef(0);
+  const retailLabelLayerRef = useRef<L.LayerGroup | null>(null);
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
@@ -4060,41 +4062,44 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     }
   }, [showCrmLayer, crmProperties]);
 
-  // ─── Retail Context layer ───────────────────────────────────────
-  // Fetch mapped units for the current map centre when the layer is
-  // toggled on or the user pans far enough. Tokenised so out-of-order
-  // responses don't clobber a newer fetch.
+  // ─── Retail Context layer (Goad GeoJSON loader) ─────────────────────
+  // Loads all four floor layers (LG/GF/F1/F2) once on first toggle-on and
+  // caches them in component state. The data is static — no pan-refetch
+  // needed. The render effect below picks up changes to goadFeatures
+  // (initial load) or excludedRetailCategories (band-filter changes).
   useEffect(() => {
     if (!showRetailContext) {
       retailMarkersRef.current?.clearLayers();
+      retailLabelLayerRef.current?.clearLayers();
       return;
     }
-    const map = mapRef.current;
-    if (!map) return;
+    if (goadFeatures.length > 0) return; // already loaded
     let cancelled = false;
-    const fetchForCentre = async () => {
-      const c = map.getCenter();
-      const myToken = ++retailFetchTokenRef.current;
+    (async () => {
       setRetailFetching(true);
       try {
-        const r = await fetch(`/api/retail-context-plan/units?lat=${c.lat}&lng=${c.lng}&radius=180`, { credentials: "include" });
-        if (!r.ok) return;
-        const data = await r.json();
-        if (cancelled || myToken !== retailFetchTokenRef.current) return;
-        setRetailUnits(Array.isArray(data?.units) ? data.units : []);
+        const layerIds = ["lg", "gf", "f1", "f2"];
+        const responses = await Promise.all(
+          layerIds.map((id) =>
+            fetch(`/api/goad/${id}`, { credentials: "include" }).then((r) =>
+              r.ok ? r.json() : null,
+            ),
+          ),
+        );
+        if (cancelled) return;
+        const all: any[] = [];
+        for (const gj of responses) {
+          if (gj?.features) all.push(...gj.features);
+        }
+        setGoadFeatures(all);
       } catch {
-        /* ignore — toggle still works, just no data */
+        /* swallow — toggle still works, just no data */
       } finally {
-        if (!cancelled && myToken === retailFetchTokenRef.current) setRetailFetching(false);
+        if (!cancelled) setRetailFetching(false);
       }
-    };
-    fetchForCentre();
-    // Refetch on significant pan. moveend fires after the user releases
-    // the mouse; debounced via the tokenised pattern above.
-    const onMoveEnd = () => fetchForCentre();
-    map.on("moveend", onMoveEnd);
-    return () => { cancelled = true; map.off("moveend", onMoveEnd); };
-  }, [showRetailContext]);
+    })();
+    return () => { cancelled = true; };
+  }, [showRetailContext, goadFeatures.length]);
 
   // ── Persist last map centre to localStorage ───────────────────────────────
   // Lets sibling components (e.g. the MAP BGP "🌐 3D View" button) pick up
@@ -4167,15 +4172,45 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     };
   }, [showStreetView, googleMapsKey]);
 
-  // Render the units as colour-coded circle markers. Re-runs when units
-  // change OR when the user toggles a category checkbox in the layer
-  // panel (excludedRetailCategories).
+  // Map Experian Goad `Category` strings onto the 6-band palette below.
+  // Kept in this file (not goad-taxonomy.ts) because the server-side
+  // taxonomy operates on synthesised data with different field names.
+  const classifyGoadCategory = useCallback((rawCategory: string, activity: string): string => {
+    const c = (rawCategory || "").toUpperCase();
+    const a = (activity || "").toUpperCase();
+    if (a === "VACANT" || c.startsWith("VACANT")) return "vacant";
+    if (c === "OFFICES" || c.includes("BANK") || c.includes("BUILDING SOC") || c.includes("ESTATE AGENT") ||
+        c.includes("SOLICITOR") || c.includes("POST OFFICE") || c.includes("TRAVEL AGENT") ||
+        c.includes("INSURANCE") || c.includes("ACCOUNTANT") || c.includes("EMPLOYMENT") ||
+        c.includes("BUREAU") || c.includes("REPAIRS") || c.includes("CAR PARK")) return "services";
+    if (c.includes("RESTAURANT") || c.includes("CAFE") || c.includes("PUB") || c === "BARS & WINE BARS" ||
+        c.includes("TAKE AWAY") || c.includes("BAKER") || c.includes("FAST FOOD") || c.includes("WINE")) return "fnb";
+    if (c.includes("HEALTH & BEAUTY") || c.includes("COSMETICS") || c.includes("HAIRDRESS") ||
+        c.includes("BARBER") || c.includes("BEAUTY SALON") || c.includes("SPA")) return "beauty";
+    if (c.includes("LADIES") || c.includes("MENS WEAR") || c.includes("FOOTWEAR") || c.includes("JEWEL") ||
+        c.includes("ART ") || c === "ART & ART DEALERS" || c.includes("CHILDREN") ||
+        c.includes("HANDBAGS") || c.includes("SPORTS GOODS") || c.includes("TOYS") ||
+        c.includes("HOUSEHOLD GOODS") || c.includes("FURNITURE") || c.includes("ELECTRICAL") ||
+        c.includes("CHARITY") || c.includes("BOOKS") || c.includes("MUSIC")) return "fashion";
+    if (c.includes("SUPERMARKET") || c.includes("GROCER") || c.includes("BUTCHER") || c.includes("FISHMONGER") ||
+        c.includes("CONVENIENCE") || c.includes("OFF LICEN") || c.includes("NEWSAGENT") ||
+        c.includes("CHEMIST") || c.includes("PHARMACY") || c.includes("FRUIT") || c.includes("VEGET")) return "convenience";
+    return "other";
+  }, []);
+
+  // Render the licensed Goad polygons. Re-runs when the dataset arrives
+  // or the user toggles a band filter. Polygons live in retailMarkersRef
+  // (despite the legacy name — kept so the panel toggle still binds).
   useEffect(() => {
     if (!mapRef.current) return;
     if (!retailMarkersRef.current) {
       retailMarkersRef.current = L.layerGroup().addTo(mapRef.current);
     }
+    if (!retailLabelLayerRef.current) {
+      retailLabelLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    }
     retailMarkersRef.current.clearLayers();
+    retailLabelLayerRef.current.clearLayers();
     if (!showRetailContext) return;
 
     const COLOURS: Record<string, { fill: string; stroke: string; label: string }> = {
@@ -4188,33 +4223,79 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       other:       { fill: "#A8A8A8", stroke: "#707070", label: "Other / Unknown" },
     };
 
-    for (const u of retailUnits) {
-      if (!Number.isFinite(u.lat) || !Number.isFinite(u.lng)) continue;
-      if (excludedRetailCategories.has(u.category)) continue;
-      const style = COLOURS[u.category] || COLOURS.other;
-      const marker = L.circleMarker([u.lat, u.lng], {
-        radius: u.isSubject ? 9 : 6,
-        fillColor: style.fill,
-        color: u.isSubject ? "#001524" : style.stroke,
-        weight: u.isSubject ? 2.5 : 1.2,
-        opacity: 1,
-        fillOpacity: 0.85,
+    const showLabels = (mapRef.current?.getZoom() ?? 0) >= 17;
+
+    for (const feature of goadFeatures) {
+      const props = feature.properties || {};
+      const category = classifyGoadCategory(props.Category || "", props.Activity || "");
+      if (excludedRetailCategories.has(category)) continue;
+      const style = COLOURS[category] || COLOURS.other;
+
+      const polygon = L.geoJSON(feature, {
+        style: () => ({
+          fillColor: style.fill,
+          color: style.stroke,
+          weight: 0.8,
+          opacity: 1,
+          fillOpacity: 0.7,
+        }),
       });
-      const ratable = u.rateableValue ? `<br/><span style="color:#666">RV £${u.rateableValue.toLocaleString()}</span>` : "";
-      const status = u.tradingStatus && u.tradingStatus !== "trading" ? `<br/><span style="font-size:10px;background:#ef4444;color:white;padding:1px 6px;border-radius:8px">${u.tradingStatus.replace(/_/g, " ")}</span>` : "";
-      marker.bindPopup(`
-        <div style="font-size:12px;max-width:240px">
-          <strong>${u.tenantName || u.address || "Unit"}</strong>
-          ${u.address && u.tenantName ? `<br/><span style="color:#666">${u.address}</span>` : ""}
-          ${u.voaDescription ? `<br/><span style="color:#666;font-style:italic">${u.voaDescription}</span>` : ""}
-          ${ratable}
-          <br/><span style="font-size:10px;background:${style.fill};color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">${style.label}</span>
-          ${status}
+
+      const fascia = (props.FasciaMas || props.Fascia || "").trim();
+      const activity = (props.PrimaryAc || props.Activity || "").trim();
+      const tenant = fascia || activity || "(no fascia)";
+      const isVacant = category === "vacant";
+      const num = (props.StreetNum || "").trim();
+      const street = (props.StreetName || "").trim();
+      const postcode = (props.Postcode || "").trim();
+      const holding = (props.HoldingCo || "").trim();
+      const useClass = (props.UseClass || "").trim();
+      const sqft = props.Area_ft2;
+      const subclass = props.Subclass || "";
+      const floor =
+        subclass === "Retailgf" ? "Ground" :
+        subclass === "Retaillg" ? "Lower Ground" :
+        subclass === "Retailf1" ? "First Floor" :
+        subclass === "Retailf2" ? "Second Floor" : "";
+
+      polygon.bindPopup(`
+        <div style="font-size:12px;max-width:260px;font-family:system-ui,sans-serif">
+          <strong>${isVacant ? '<span style="color:#dc2626">VACANT — </span>' : ''}${tenant}</strong>
+          ${activity && activity !== tenant ? `<br/><span style="color:#444">${activity}</span>` : ""}
+          ${(num || street) ? `<br/><span style="color:#666">${num} ${street}</span>` : ""}
+          ${postcode ? `<br/><span style="color:#666;font-family:monospace">${postcode}</span>` : ""}
+          <div style="margin-top:6px;font-size:11px;color:#666">
+            ${props.Category || ""}${useClass ? ` · Use Class ${useClass}` : ""}
+          </div>
+          ${floor || sqft ? `<div style="font-size:11px;color:#666">${floor}${floor && sqft ? " · " : ""}${sqft ? `${Number(sqft).toLocaleString()} sqft` : ""}</div>` : ""}
+          ${holding && holding !== "NON MULTIPLE" ? `<div style="font-size:11px;color:#888;margin-top:2px">Parent: ${holding}</div>` : ""}
+          <span style="display:inline-block;margin-top:6px;font-size:10px;background:${style.fill};color:#1f1f1f;padding:1px 6px;border-radius:8px">${style.label}</span>
         </div>
       `, { closeButton: false, offset: L.point(0, -5) });
-      retailMarkersRef.current.addLayer(marker);
+
+      retailMarkersRef.current.addLayer(polygon);
+
+      // Fascia label: only render at street-level zoom to avoid clutter.
+      // Use the GF layer's published centroid if available, otherwise the
+      // polygon's geometric centroid.
+      if (showLabels && fascia && !isVacant) {
+        const cx = parseFloat(props.Centroid_X);
+        const cy = parseFloat(props.Centroid_Y);
+        if (Number.isFinite(cx) && Number.isFinite(cy)) {
+          const label = L.marker([cy, cx], {
+            interactive: false,
+            icon: L.divIcon({
+              className: "",
+              html: `<div style="font-size:9px;font-weight:600;color:#1f1f1f;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;pointer-events:none">${fascia.slice(0, 18)}</div>`,
+              iconSize: [80, 14],
+              iconAnchor: [40, 7],
+            }),
+          });
+          retailLabelLayerRef.current.addLayer(label);
+        }
+      }
     }
-  }, [showRetailContext, retailUnits, excludedRetailCategories]);
+  }, [showRetailContext, goadFeatures, excludedRetailCategories, classifyGoadCategory, mapZoom]);
 
   // ─── OS Data Layers: fetch buildings / sites on map move ─────────
   const [highlightedBuildingLayer, setHighlightedBuildingLayer] = useState<L.GeoJSON | null>(null);
@@ -4817,7 +4898,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
               { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
-              { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: retailUnits.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
+              { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: goadFeatures.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
               { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
             ].map((row) => (
               <button
@@ -4844,9 +4925,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           {showRetailContext && (
             <div className="mt-3 pt-2.5 border-t">
               <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Retail bands</p>
-              {!retailFetching && retailUnits.length === 0 && (
+              {!retailFetching && goadFeatures.length === 0 && (
                 <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
-                  No retail data here yet. Try zooming closer to a UK high street, or pan and the layer will refetch.
+                  Loading the Goad dataset… If this persists, the layer files may be missing from data/goad/.
+                </p>
+              )}
+              {goadFeatures.length > 0 && mapZoom < 17 && (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
+                  Zoom in (≥ 17) to see fascia labels on each unit.
                 </p>
               )}
               <div className="grid grid-cols-2 gap-1">
