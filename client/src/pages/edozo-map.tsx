@@ -3352,6 +3352,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // VOA + Places mash-up) is retained server-side for the Goad-plan PDF
   // export but is no longer the source of truth for the live map layer.
   const [showRetailContext, setShowRetailContext] = useState(false);
+  // Mirror state into a ref so closures captured in the map-init effect
+  // (renderBuildings, fetchOSData, …) can read the live value without
+  // being recreated on every toggle.
+  const showRetailContextRef = useRef(false);
+  useEffect(() => { showRetailContextRef.current = showRetailContext; }, [showRetailContext]);
   const [goadFeatures, setGoadFeatures] = useState<any[]>([]);
   const [retailFetching, setRetailFetching] = useState(false);
   const [excludedRetailCategories, setExcludedRetailCategories] = useState<Set<string>>(new Set());
@@ -3490,6 +3495,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     const renderBuildings = (buildings: any[]) => {
       if (!buildingLayerRef.current || !mapRef.current) return;
       buildingLayerRef.current.clearLayers();
+      // Suppress the auto-classifier layer when the real Goad polygons
+      // are showing — the dark outlines from this layer were the
+      // 'messy lines' Woody saw bleeding through.
+      if (showRetailContextRef.current) return;
 
       for (const b of buildings) {
         const hasInfo = b.label || b.houseNum;
@@ -3937,6 +3946,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     const layer = titleBoundaryLayerRef.current;
 
     const refresh = async () => {
+      // Don't fetch / repaint title boundaries while Retail Context is on
+      // — the always-on red lines compete visually with the Goad colours
+      // and made the map feel busy.
+      if (showRetailContextRef.current) {
+        layer.clearLayers();
+        titleBoundaryBboxRef.current = "";
+        return;
+      }
       const bounds = map.getBounds();
       const bbox = `${bounds.getSouth().toFixed(4)},${bounds.getWest().toFixed(4)},${bounds.getNorth().toFixed(4)},${bounds.getEast().toFixed(4)}`;
       if (bbox === titleBoundaryBboxRef.current) return;
@@ -4076,6 +4093,20 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       crmMarkersRef.current.addLayer(marker);
     }
   }, [showCrmLayer, crmProperties]);
+
+  // When Retail Context is on, suppress the legacy layers underneath it:
+  //   - buildingLayerRef: pale-yellow auto-classified buildings with dark
+  //     #1a1a1a outlines that bleed through Goad polygons
+  //   - titleBoundaryLayerRef: always-on red Land Registry boundary lines
+  //   - centreTenantLayerRef: old centre tenant text markers
+  // All three are superseded by the real Goad data — keeping them painted
+  // underneath just creates the 'messy lines' Woody flagged.
+  useEffect(() => {
+    if (!showRetailContext) return;
+    buildingLayerRef.current?.clearLayers();
+    titleBoundaryLayerRef.current?.clearLayers();
+    centreTenantLayerRef.current?.clearLayers();
+  }, [showRetailContext, goadFeatures.length]);
 
   // ─── Retail Context layer (Goad GeoJSON loader) ─────────────────────
   // Loads all four floor layers (LG/GF/F1/F2) once on first toggle-on and
