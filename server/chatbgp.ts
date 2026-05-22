@@ -11054,7 +11054,17 @@ export function setupChatBGPRoutes(app: Express) {
           return res.json({ reply: "I wasn't able to process that image. Could you try sending it again, or let me know what you need help with?" });
         }
       }
-      res.status(500).json({ message: "Failed to process chat with files" });
+      // Surface the underlying error so callers (internal admin users)
+      // can diagnose without trawling Railway logs. Caps the body to
+      // avoid leaking very large stack traces.
+      const surfaceMsg = String(err?.message || err || "Unknown error").slice(0, 500);
+      const fileSummary = files?.map(f => `${f.originalname} (${f.mimetype || "?"}, ${f.size} bytes)`).join(", ") || null;
+      res.status(500).json({
+        message: "Failed to process chat with files",
+        error: surfaceMsg,
+        status: err?.status ?? null,
+        files: fileSummary,
+      });
     } finally {
       if (files) {
         for (const file of files) {
