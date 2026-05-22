@@ -4347,6 +4347,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
             if (deg > 90) deg -= 180;
             if (deg < -90) deg += 180;
 
+            // 4b) Only commit to a rotation when the polygon is
+            //     *clearly* elongated AND the angle is *clearly* off
+            //     horizontal. L-shaped / near-square / jagged polygons
+            //     produce small misleading PCA angles that read as
+            //     'stray' tilted labels — Goad PDFs leave those flat.
+            const elongation = longPx / Math.max(shortPx, 1);
+            if (elongation < 1.8 || Math.abs(deg) < 12) {
+              deg = 0;
+            }
+
             // 5) Fit text to the long axis. Condensed sans at typical
             //    weight uses ~0.55 of fontSize per char. Skip the label
             //    if even the smallest readable font (7px) won't fit so
