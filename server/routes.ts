@@ -482,6 +482,28 @@ export async function registerRoutes(
     f1: "9033MM_F1_WGS84.geojson",
     f2: "9033MM_F2_WGS84.geojson",
   };
+  // Diagnostic — exposes which external data sources the live server can
+  // see. Lets us tell at a glance whether PROPERTYDATA_API_KEY /
+  // GOOGLE_API_KEY / Companies House key / VOA SQLite are actually
+  // wired up in the current environment. No secrets returned — booleans
+  // and counts only.
+  app.get("/api/admin/data-sources", requireAuth, (_req, res) => {
+    res.json({
+      propertyDataKey: !!process.env.PROPERTYDATA_API_KEY,
+      propertyDataKeyLength: process.env.PROPERTYDATA_API_KEY?.length || 0,
+      googleApiKey: !!process.env.GOOGLE_API_KEY,
+      companiesHouseKey: !!process.env.COMPANIES_HOUSE_API_KEY,
+      anthropicKey: !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY),
+      voaSqliteAvailable: voaSqliteAvailable(),
+      voaSqlitePath: process.env.VOA_SQLITE_PATH || null,
+      goadFiles: Object.entries(GOAD_LAYERS).map(([id, file]) => ({
+        id,
+        exists: fs.existsSync(path.join(GOAD_DIR, file)),
+      })),
+      nodeEnv: process.env.NODE_ENV || null,
+    });
+  });
+
   app.get("/api/goad/layers", requireAuth, (_req, res) => {
     const layers = Object.entries(GOAD_LAYERS).map(([id, file]) => {
       const p = path.join(GOAD_DIR, file);
