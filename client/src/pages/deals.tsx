@@ -112,6 +112,7 @@ import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mo
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
+import { buildAmlCompanyMap, computeDealAmlStatus, DealAmlBadge } from "@/components/deal-aml-badge";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { PropertyCombobox } from "@/components/property-combobox";
@@ -4983,6 +4984,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const propertyMap = new Map(properties.map((p) => [p.id, p.name]));
   const companyMap = new Map(companies.map((c) => [c.id, c.name]));
+  // AML lookup for the badge — built from the same companies list so
+  // we don't re-fetch. Kept narrow to id/name/kycStatus/expiry.
+  const amlCompanyMap = useMemo(() => buildAmlCompanyMap(companies), [companies]);
   const unitMap = new Map(propertyUnits.map((u) => [u.id, u.unitName]));
   const agentCompanies = companies.filter(c => c.companyType === "Agent");
 
@@ -5215,7 +5219,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             ))}
           </div>
         ) : (
-          <DealKanban deals={filteredDeals} propertyMap={propertyMap} unitMap={unitMap} tenantMap={companyMap} />
+          <DealKanban
+            deals={filteredDeals}
+            propertyMap={propertyMap}
+            unitMap={unitMap}
+            tenantMap={companyMap}
+            amlCompanyMap={amlCompanyMap}
+          />
         )
       ) : viewMode === "card" ? (
         <Card className="flex-1 min-h-0 flex flex-col">
@@ -5395,15 +5405,21 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-mono text-muted-foreground text-xs">
-                        {deal.dealRef ? (
-                          <Link
-                            href={`/deals/${deal.id}`}
-                            className="text-blue-600 hover:underline"
-                            data-testid={`link-deal-${deal.id}`}
-                          >
-                            #{deal.dealRef}
-                          </Link>
-                        ) : "—"}
+                        <div className="flex items-center gap-1">
+                          {(() => {
+                            const aml = computeDealAmlStatus(deal as any, amlCompanyMap);
+                            return <DealAmlBadge status={aml.status} missing={aml.missing} />;
+                          })()}
+                          {deal.dealRef ? (
+                            <Link
+                              href={`/deals/${deal.id}`}
+                              className="text-blue-600 hover:underline"
+                              data-testid={`link-deal-${deal.id}`}
+                            >
+                              #{deal.dealRef}
+                            </Link>
+                          ) : "—"}
+                        </div>
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-medium text-sm max-w-[200px]">
                         <InlineLinkSelect

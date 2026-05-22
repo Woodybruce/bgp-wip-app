@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import type { CrmDeal } from "@shared/schema";
 import { legacyToCode } from "@shared/deal-status";
+import { computeDealAmlStatus, DealAmlBadge, type AmlCheckCompany } from "@/components/deal-aml-badge";
 
 // WIP-only kanban: NEG → INV. Pipeline (REP/SPEC/LIVE/AVA) belongs on the
 // Letting / Investment trackers; WIT is hidden from the WIP board entirely.
@@ -63,12 +64,14 @@ interface DealKanbanProps {
   propertyMap: Map<string, string>;
   unitMap?: Map<string, string>;
   tenantMap?: Map<string, string>;
+  /** Optional — supply to render the AML status dot on each card. */
+  amlCompanyMap?: Map<string, AmlCheckCompany>;
 }
 
 // Stages where the tenant becomes part of the card heading.
 const TENANT_HEADING_STATUSES = new Set(["SOL", "EXC", "COM", "INV"]);
 
-export function DealKanban({ deals, propertyMap, unitMap, tenantMap }: DealKanbanProps) {
+export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyMap }: DealKanbanProps) {
   // Group deals into columns
   const columns = KANBAN_COLUMNS.map((col) => {
     const columnDeals = deals.filter((d) => {
@@ -149,13 +152,23 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap }: DealKanba
                   ? [deal.team]
                   : [];
 
+              // Derive AML state per deal — shown as a small dot beside
+              // the name so the team sees the gate coming before they
+              // try to drag a card to SOL.
+              const aml = amlCompanyMap
+                ? computeDealAmlStatus(deal as any, amlCompanyMap)
+                : null;
+
               return (
                 <Link key={deal.id} href={`/deals/${deal.id}`}>
                   <div className="bg-background rounded-md border shadow-sm p-3 space-y-2 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group">
-                    {/* Name */}
-                    <p className="text-sm font-semibold leading-tight truncate group-hover:text-primary transition-colors">
-                      {displayName}
-                    </p>
+                    {/* Name + AML status */}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {aml && <DealAmlBadge status={aml.status} missing={aml.missing} />}
+                      <p className="text-sm font-semibold leading-tight truncate group-hover:text-primary transition-colors flex-1 min-w-0">
+                        {displayName}
+                      </p>
+                    </div>
 
                     {/* Deal type badge + asset class dot */}
                     <div className="flex items-center gap-1.5 flex-wrap">
