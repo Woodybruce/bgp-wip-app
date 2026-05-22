@@ -363,11 +363,25 @@ async function findCseImages(brandName: string, industry: string | null, brandDo
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────
 
-export async function refreshBrandImages(companyId: string): Promise<{
+export async function refreshBrandImages(companyId: string, opts: {
+  /**
+   * If true, delete every existing brand-auto image for this brand
+   * before pulling fresh ones. Use when the stored set is junk (e.g.
+   * pre-landlord-scraper CSE leftovers).
+   */
+  force?: boolean;
+  /**
+   * Override TARGET_IMAGES_PER_BRAND for this run. Useful for big
+   * REITs (Landsec, British Land, Hammerson) where 5 images isn't
+   * enough for a representative gallery.
+   */
+  target?: number;
+} = {}): Promise<{
   attempted: number;
   imported: number;
   bySource: Record<string, number>;
   skipped: string;
+  deleted?: number;
 }> {
   const { rows } = await pool.query<BrandRow & { company_type: string | null }>(
     `SELECT id, name, domain, domain_url, industry, company_type FROM crm_companies WHERE id = $1`,
@@ -383,6 +397,21 @@ export async function refreshBrandImages(companyId: string): Promise<{
   const ct = (brand.company_type || "").toLowerCase();
   const isLandlord = ct.includes("landlord") || ct === "client" || ct === "landlord / client";
 
+  const target = Math.max(1, Math.min(50, opts.target ?? TARGET_IMAGES_PER_BRAND));
+
+  // Force-mode: wipe brand-auto rows first so the source pipeline
+  // re-pulls cleanly. Manual uploads (no brand-auto tag) survive.
+  let deleted = 0;
+  if (opts.force) {
+    const del = await pool.query(
+      `DELETE FROM image_studio_images
+        WHERE LOWER(brand_name) = LOWER($1)
+          AND 'brand-auto' = ANY(tags)`,
+      [brand.name]
+    );
+    deleted = del.rowCount || 0;
+  }
+
   // Skip if we already have enough auto-fetched images. Manual uploads are
   // never counted against the cap — users always get their content back.
   const existingRow = await pool.query<{ cnt: number }>(
@@ -392,10 +421,10 @@ export async function refreshBrandImages(companyId: string): Promise<{
     [brand.name]
   );
   const existing = existingRow.rows[0]?.cnt ?? 0;
-  if (existing >= TARGET_IMAGES_PER_BRAND) {
-    return { attempted: 0, imported: 0, bySource: {}, skipped: `Already have ${existing} auto-images (target ${TARGET_IMAGES_PER_BRAND})` };
+  if (existing >= target) {
+    return { attempted: 0, imported: 0, bySource: {}, skipped: `Already have ${existing} auto-images (target ${target})`, deleted };
   }
-  const targetNew = TARGET_IMAGES_PER_BRAND - existing;
+  const targetNew = target - existing;
 
   const domain = extractDomain(brand.domain || brand.domain_url);
   const candidates: FoundImage[] = [];
@@ -472,7 +501,7 @@ export async function refreshBrandImages(companyId: string): Promise<{
     }
   }
 
-  return { attempted, imported, bySource, skipped: "" };
+  return { attempted, imported, bySource, skipped: "", deleted };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────
@@ -483,10 +512,15 @@ export async function refreshBrandImages(companyId: string): Promise<{
 router.post("/api/brand/:companyId/refresh-images", requireAuth, async (req: Request, res: Response) => {
   const { startJob, getJobStatus } = await import("./brand-jobs");
   const companyId = String(req.params.companyId);
+  // Body or query — both accepted so this is easy to fire from the
+  // console (?force=true&target=15) or from the brand-page UI.
+  const force = req.body?.force === true || req.query?.force === "true";
+  const targetRaw = req.body?.target ?? req.query?.target;
+  const target = targetRaw != null ? Number(targetRaw) : undefined;
   const key = `refresh-images:${companyId}`;
-  const { alreadyRunning } = startJob(key, () => refreshBrandImages(companyId));
+  const { alreadyRunning } = startJob(key, () => refreshBrandImages(companyId, { force, target }));
   const status = getJobStatus(key);
-  res.status(202).json({ accepted: true, inFlight: true, alreadyRunning, jobKey: key, startedAt: status?.startedAt });
+  res.status(202).json({ accepted: true, inFlight: true, alreadyRunning, jobKey: key, startedAt: status?.startedAt, force, target });
 });
 
 router.get("/api/brand/:companyId/refresh-images/status", requireAuth, async (req: Request, res: Response) => {
