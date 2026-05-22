@@ -2236,6 +2236,8 @@ function UnitFormDialog({
     id: string | number; unit_number: string; premises: string | null;
     permitted_use: string | null; nia_sqft: number | null; gia_sqft: number | null;
     floor_level: string | null; status: string | null; tenant_name: string | null;
+    marketing_rent_pa: number | null; rates_payable: number | null;
+    service_charge: number | null; epc_rating: string | null;
   }>>({
     queryKey: ["/api/tenancy-schedule/property", form.propertyId],
     queryFn: async () => {
@@ -2253,7 +2255,12 @@ function UnitFormDialog({
   // that already appears in tenancy doesn't double up.
   const pickerOptions = (() => {
     const seen = new Set<string>();
-    const out: Array<{ id: string; name: string; floor: string | null; sqft: number | null; useClass: string | null; source: "tenancy" | "property"; vacant?: boolean }> = [];
+    const out: Array<{
+      id: string; name: string; floor: string | null; sqft: number | null;
+      useClass: string | null; askingRent: number | null; ratesPa: number | null;
+      serviceChargePa: number | null; epcRating: string | null;
+      source: "tenancy" | "property"; vacant?: boolean;
+    }> = [];
     for (const t of tenancyUnits) {
       const key = (t.unit_number || "").trim().toLowerCase();
       if (!key || seen.has(key)) continue;
@@ -2265,6 +2272,10 @@ function UnitFormDialog({
         floor: t.floor_level || t.premises,
         sqft: t.nia_sqft || t.gia_sqft,
         useClass: t.permitted_use,
+        askingRent: t.marketing_rent_pa,
+        ratesPa: t.rates_payable,
+        serviceChargePa: t.service_charge,
+        epcRating: t.epc_rating,
         source: "tenancy",
         vacant: isVacant,
       });
@@ -2280,6 +2291,10 @@ function UnitFormDialog({
         floor: pu.floor || null,
         sqft: pu.sqft ?? null,
         useClass: pu.useClass || null,
+        askingRent: null,
+        ratesPa: null,
+        serviceChargePa: null,
+        epcRating: null,
         source: "property",
       });
     }
@@ -2357,12 +2372,20 @@ function UnitFormDialog({
                             key={`${pu.source}-${pu.id}`}
                             value={pu.name}
                             onSelect={() => {
+                              // Pre-fill every field the tenancy spine already knows so
+                              // Layla doesn't re-type values that exist canonically. Only
+                              // fills empty fields — anything the user already typed
+                              // wins.
                               setForm({
                                 ...form,
                                 unitName: pu.name,
-                                floor: pu.floor || form.floor,
-                                sqft: pu.sqft != null ? String(pu.sqft) : form.sqft,
-                                useClass: pu.useClass || form.useClass,
+                                floor: form.floor || pu.floor || "",
+                                sqft: form.sqft || (pu.sqft != null ? String(pu.sqft) : ""),
+                                useClass: form.useClass || pu.useClass || "",
+                                askingRent: form.askingRent || (pu.askingRent != null ? String(pu.askingRent) : ""),
+                                ratesPa: form.ratesPa || (pu.ratesPa != null ? String(pu.ratesPa) : ""),
+                                serviceChargePa: form.serviceChargePa || (pu.serviceChargePa != null ? String(pu.serviceChargePa) : ""),
+                                epcRating: form.epcRating || pu.epcRating || "",
                               });
                               setUnitPickerOpen(false);
                             }}
