@@ -4292,15 +4292,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           if (Math.min(widthPx, heightPx) < 14 || Math.max(widthPx, heightPx) < 30) {
             // nothing — fall through, no label
           } else {
-            // 2) Always horizontal. Woody's Goad-PDF reference uses
-            //    horizontal labels almost everywhere; the 90° snap I had
-            //    was triggering on too many diagonal-street units (e.g.
-            //    Bond Street) and making the map look tilted. Polygons
-            //    too narrow to fit a horizontal label just get hidden by
-            //    the fit-to-shape guard below.
+            // 2) Always horizontal. No rotation, no transform, no
+            //    snap-to-axis. If a polygon is too narrow for the fascia
+            //    text at min font size, the label is skipped — better
+            //    than tilting it (Woody's flagged complaint).
             const longPx = widthPx;
             const shortPx = heightPx;
-            const angle = 0;
 
             // 3) Fit text into the long edge. Condensed sans at typical
             //    weight uses ~0.55 of fontSize per char. We pick the
@@ -4323,27 +4320,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                 pane: "goadLabelPane",
                 icon: L.divIcon({
                   className: "",
-                  html: `<div style="
-                    width:${outerW}px;
-                    height:${outerH}px;
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    pointer-events:none;
-                    overflow:hidden;"><div style="
-                      font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;
-                      font-size:${fontPx}px;
-                      font-weight:600;
-                      letter-spacing:-0.2px;
-                      color:#0a0a0a;
-                      text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;
-                      text-align:center;
-                      white-space:nowrap;
-                      width:${innerWidth}px;
-                      transform:rotate(${angle}deg);
-                      transform-origin:center;
-                      text-transform:uppercase;
-                      line-height:1;">${fascia}</div></div>`,
+                  html: `<div data-goad-label-v3="1" style="width:${outerW}px;height:${outerH}px;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden;"><div style="font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;font-size:${fontPx}px;font-weight:600;letter-spacing:-0.2px;color:#0a0a0a;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;width:${innerWidth}px;text-transform:uppercase;line-height:1;">${fascia}</div></div>`,
                   iconSize: [outerW, outerH],
                   iconAnchor: [outerW / 2, outerH / 2],
                 }),
