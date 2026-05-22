@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PropertyCombobox } from "@/components/property-combobox";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -387,8 +388,14 @@ export default function ImageStudio() {
   // Properties list for the assign dialog. Also feeds the lookup maps
   // below so image tiles can render their CRM link as a clickable chip
   // pointing at the property page, not just a passive address string.
+  // Real BGP CRM properties — previously this pointed at /api/projects
+  // by mistake, which meant the bulk-assign dropdown and the
+  // property-name lookup on each image chip never matched anything.
+  // Switching to /api/crm/properties so the property→image linkage
+  // actually resolves.
   const { data: properties = [] } = useQuery<any[]>({
-    queryKey: ["/api/projects"],
+    queryKey: ["/api/crm/properties"],
+    staleTime: 5 * 60 * 1000,
   });
 
   // Brands list — needed to turn an image's brand_name (free text) into
@@ -402,9 +409,29 @@ export default function ImageStudio() {
   const propertyLookup = useMemo(() => {
     const m = new Map<string, { id: string; name: string }>();
     for (const p of properties) {
-      if (p?.id) m.set(p.id, { id: p.id, name: p.name || p.address || "Property" });
+      if (p?.id) {
+        const addrLine = typeof p.address === "string" ? p.address : p.address?.address;
+        m.set(p.id, { id: p.id, name: p.name || addrLine || p.postcode || "Property" });
+      }
     }
     return m;
+  }, [properties]);
+
+  // Items for the PropertyCombobox in the bulk-assign dialog. Includes
+  // postcode as subLabel so two same-named properties on different
+  // streets are distinguishable.
+  const propertyComboboxItems = useMemo(() => {
+    return properties
+      .filter((p: any) => p?.id)
+      .map((p: any) => {
+        const addrLine = typeof p.address === "string" ? p.address : p.address?.address;
+        return {
+          id: p.id,
+          label: p.name || addrLine || "Untitled",
+          subLabel: p.postcode || addrLine || undefined,
+          keywords: [p.name, addrLine, p.postcode, p.group_name, p.status].filter(Boolean) as string[],
+        };
+      });
   }, [properties]);
 
   const brandLookup = useMemo(() => {
@@ -1597,20 +1624,27 @@ export default function ImageStudio() {
           <div className="space-y-4">
             <div>
               <Label>Property</Label>
-              <Select value={bulkPropertyId} onValueChange={(v) => {
-                setBulkPropertyId(v);
-                const prop = properties.find((p: any) => p.id === v);
-                if (prop) setBulkPropertyAddress(prop.name || prop.address || "");
-              }}>
-                <SelectTrigger data-testid="select-bulk-property">
-                  <SelectValue placeholder="Select a property..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {properties.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <PropertyCombobox
+                items={propertyComboboxItems}
+                value={bulkPropertyId}
+                onChange={(id) => {
+                  setBulkPropertyId(id);
+                  const prop = properties.find((p: any) => p.id === id);
+                  if (prop) {
+                    const addrLine = typeof prop.address === "string" ? prop.address : prop.address?.address;
+                    setBulkPropertyAddress(prop.name || addrLine || "");
+                  }
+                }}
+                onCreated={(prop) => {
+                  // Newly created property via Google lookup — pre-fill
+                  // address so the user doesn't have to retype it.
+                  setBulkPropertyId(prop.id);
+                  setBulkPropertyAddress(prop.name);
+                  queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+                }}
+                placeholder="Search BGP properties…"
+                testId="select-bulk-property"
+              />
             </div>
             <div>
               <Label>Address Override (optional)</Label>
