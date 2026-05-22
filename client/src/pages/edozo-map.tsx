@@ -4357,22 +4357,31 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               deg = 0;
             }
 
-            // 5) Fit text to the long axis. Condensed sans at typical
-            //    weight uses ~0.55 of fontSize per char. Skip the label
-            //    if even the smallest readable font (7px) won't fit so
-            //    nothing spills outside the polygon.
-            const safeLong = longPx - 6;
-            const safeShort = Math.max(6, shortPx - 2);
+            // 5) Fit text. CRITICAL: the width budget depends on which
+            //    direction the text actually runs after our rotation
+            //    decision above:
+            //      - deg = 0 → text runs along the screen X axis, so
+            //        the budget is the screen-aligned widthPx
+            //      - deg ≠ 0 → text runs along the polygon's principal
+            //        axis, so the budget is longPx
+            //    Using longPx for a horizontal label on a tall-narrow
+            //    polygon was overshooting and spilling into neighbours
+            //    ('ALICE + OLIVIA BY STACEY BENDET' etc.).
+            const textBudget = deg === 0 ? widthPx : longPx;
+            const shortBudget = deg === 0 ? heightPx : shortPx;
+            const safeLong = Math.max(0, textBudget - 6);
+            const safeShort = Math.max(6, shortBudget - 2);
             const maxByLength = (safeLong / Math.max(fascia.length, 1)) / 0.55;
             const maxByHeight = safeShort * 0.9;
-            const fontPx = Math.floor(Math.max(7, Math.min(13, Math.min(maxByLength, maxByHeight))));
+            const fontPx = Math.floor(Math.min(13, Math.min(maxByLength, maxByHeight)));
+            // Skip entirely if the smallest readable font won't fit —
+            // better than overflow.
             if (fontPx >= 7) {
               const innerWidth = Math.round(safeLong);
-              // Outer wrapper covers the polygon's screen bbox + a bit
-              // of slack so the rotated text doesn't get clipped by
-              // overflow:hidden when the polygon is nearly square.
-              const outerW = Math.round(Math.max(widthPx, longPx) + 6);
-              const outerH = Math.round(Math.max(heightPx, shortPx, fontPx + 2) + 6);
+              // Outer wrapper matches the polygon's screen bbox so
+              // overflow:hidden tightly clips anything that escapes.
+              const outerW = Math.round(widthPx + 2);
+              const outerH = Math.round(Math.max(heightPx, fontPx + 2) + 2);
               const label = L.marker([cy, cx], {
                 interactive: false,
                 pane: "goadLabelPane",
