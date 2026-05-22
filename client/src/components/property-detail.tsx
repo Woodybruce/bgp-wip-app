@@ -766,6 +766,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     <span className="text-sm font-semibold">Images</span>
                   </div>
                   <EntityImagesPanel entityType="property" entityId={property.id} />
+                  <BrandPipelineImagesLink propertyId={property.id} propertyName={property.name} />
                 </div>
               </div>
             ) : (
@@ -1026,6 +1027,37 @@ function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
       <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
         Open in Letting Tracker →
       </a>
+    </div>
+  );
+}
+
+// ── Brand pipeline images (auto-attributed from landlord scrape) ────────────
+// Small footer link in the property's Images panel. Shows a count of
+// image-studio images linked to this property by FK (set during the
+// landlord brand-image refresh, when the URL slug matched the
+// property's name) and deep-links to Image Studio with the property
+// pre-filtered.
+function BrandPipelineImagesLink({ propertyId, propertyName }: { propertyId: string; propertyName: string }) {
+  const { data } = useQuery<any[]>({
+    queryKey: ["/api/image-studio/search", { propertyId }],
+    queryFn: async () => {
+      const r = await fetch(`/api/image-studio/search?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  const count = Array.isArray(data) ? data.length : 0;
+  if (count === 0) return null;
+  return (
+    <div className="mt-2 pt-2 border-t border-border/60">
+      <Link
+        href={`/image-studio?property=${encodeURIComponent(propertyName)}&propertyId=${encodeURIComponent(propertyId)}`}
+        className="text-[11px] text-muted-foreground hover:text-foreground underline flex items-center gap-1"
+        data-testid="link-brand-pipeline-images"
+      >
+        View {count} landlord-auto image{count === 1 ? "" : "s"} for this property in Image Studio →
+      </Link>
     </div>
   );
 }

@@ -468,6 +468,49 @@ export async function refreshBrandImages(companyId: string, opts: {
     }
   }
 
+  // For landlords: build a URL → property_id matcher using every CRM
+  // property owned by this landlord. The matcher checks whether any
+  // property's normalised name appears as a substring in the image
+  // URL's slug. Lets us auto-attribute "trinity-leeds-...webp" to the
+  // Trinity Leeds property row without manual tagging.
+  type PropMatch = { id: string; key: string; name: string };
+  let propMatchers: PropMatch[] = [];
+  if (isLandlord) {
+    try {
+      const { rows: ownedProps } = await pool.query<{ id: string; name: string }>(
+        `SELECT id, name FROM crm_properties WHERE landlord_id = $1`,
+        [brand.id]
+      );
+      propMatchers = ownedProps
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          // Normalise: lowercase + collapse non-alphanumerics to single
+          // hyphens. Matches the slug format in CDN URLs so we can
+          // do a substring lookup.
+          key: (p.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+        }))
+        .filter(p => p.key.length >= 4); // Skip 1-3 letter names that'd match anything
+      console.log(`[brand-images ${brand.name}] URL→property matcher ready: ${propMatchers.length} candidates`);
+    } catch (e: any) {
+      console.warn(`[brand-images] property matcher build failed: ${e?.message}`);
+    }
+  }
+  const matchPropertyId = (imgUrl: string): string | undefined => {
+    if (propMatchers.length === 0) return undefined;
+    const slug = imgUrl.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    // Sort by key length descending so "trinity-leeds" wins over "trinity"
+    // when both would match.
+    for (const p of [...propMatchers].sort((a, b) => b.key.length - a.key.length)) {
+      // Wrap the key in hyphens so we match whole tokens, not arbitrary
+      // substrings ("the-park" wouldn't match "the-parkway").
+      if (slug.includes(`-${p.key}-`) || slug.startsWith(`${p.key}-`) || slug.endsWith(`-${p.key}`)) {
+        return p.id;
+      }
+    }
+    return undefined;
+  };
+
   const bySource: Record<string, number> = {};
   let imported = 0;
   let attempted = 0;
@@ -482,6 +525,11 @@ export async function refreshBrandImages(companyId: string, opts: {
     const fetched = await fetchImage(c.url);
     if (!fetched) continue;
 
+    // Phase 2: try to match the URL slug against a CRM property
+    // owned by this landlord (e.g. "trinity-leeds-...webp" → Trinity
+    // Leeds property row). When we find one, the image is filed
+    // against the property too — so the property page can pull it.
+    const matchedPropertyId = matchPropertyId(c.url);
     try {
       await storeImageFromBuffer({
         buffer: fetched.buffer,
@@ -494,6 +542,7 @@ export async function refreshBrandImages(companyId: string, opts: {
         // Hard FK link so future Image Studio queries can filter by
         // landlord / brand by id rather than fragile name matching.
         companyId: brand.id,
+        propertyId: matchedPropertyId,
         mimeType: fetched.mime,
         filenameHint: `${brand.name}-${c.source}`,
       });
@@ -774,6 +823,82 @@ router.get("/api/admin/property-inspect/:id", requireAuth, async (req: Request, 
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "inspect failed" });
+  }
+});
+
+// One-shot: walk every brand-auto image that has a company_id but no
+// property_id, and try to stamp property_id by matching the image's
+// description / file_name URL slug against the landlord's CRM
+// properties. Same matcher as the live import path, just retro-fitted
+// onto historic rows. Safe to re-run — only writes when matched.
+//
+//   POST /api/admin/backfill-image-property-ids  { dryRun?: true, companyId?: string }
+//   Returns { scanned, matched, samples: [{ imageId, propertyName, url }] }
+router.post("/api/admin/backfill-image-property-ids", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const dryRun = req.body?.dryRun === true;
+    const companyFilter = req.body?.companyId ? String(req.body.companyId) : null;
+
+    // Pull every image we might want to backfill — has a company FK,
+    // no property FK, and description carries the source URL.
+    const imgQ = companyFilter
+      ? `SELECT id, file_name, description, company_id FROM image_studio_images
+          WHERE company_id IS NOT NULL AND property_id IS NULL AND company_id = $1
+          LIMIT 1000`
+      : `SELECT id, file_name, description, company_id FROM image_studio_images
+          WHERE company_id IS NOT NULL AND property_id IS NULL
+          LIMIT 1000`;
+    const args = companyFilter ? [companyFilter] : [];
+    const { rows: images } = await pool.query<{ id: string; file_name: string; description: string | null; company_id: string }>(imgQ, args as any);
+
+    // Group images by company so we only load each landlord's
+    // property list once.
+    const byCompany: Record<string, typeof images> = {};
+    for (const img of images) (byCompany[img.company_id] = byCompany[img.company_id] || []).push(img);
+
+    const samples: { imageId: string; propertyName: string; url: string }[] = [];
+    let matched = 0;
+    for (const [companyId, list] of Object.entries(byCompany)) {
+      const { rows: props } = await pool.query<{ id: string; name: string }>(
+        `SELECT id, name FROM crm_properties WHERE landlord_id = $1`,
+        [companyId]
+      );
+      const propMatchers = props
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          key: (p.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+        }))
+        .filter(p => p.key.length >= 4)
+        .sort((a, b) => b.key.length - a.key.length);
+      if (propMatchers.length === 0) continue;
+
+      for (const img of list) {
+        // Description format from the import path is "Auto-fetched from
+        // X (https://...) for Y" — the URL is in there. Fall back to
+        // file_name if no URL is captured.
+        const haystack = ((img.description || "") + " " + (img.file_name || "")).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        let hit: { id: string; name: string } | null = null;
+        for (const p of propMatchers) {
+          if (haystack.includes(`-${p.key}-`) || haystack.startsWith(`${p.key}-`) || haystack.endsWith(`-${p.key}`)) {
+            hit = { id: p.id, name: p.name };
+            break;
+          }
+        }
+        if (hit) {
+          matched++;
+          if (samples.length < 25) samples.push({ imageId: img.id, propertyName: hit.name, url: (img.description || "").slice(0, 120) });
+          if (!dryRun) {
+            await pool.query(`UPDATE image_studio_images SET property_id = $1 WHERE id = $2`, [hit.id, img.id]);
+          }
+        }
+      }
+    }
+
+    res.json({ scanned: images.length, matched, dryRun, samples });
+  } catch (e: any) {
+    console.error("[backfill-image-property-ids]", e?.message);
+    res.status(500).json({ error: e?.message || "backfill failed" });
   }
 });
 
