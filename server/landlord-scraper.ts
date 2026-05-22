@@ -27,20 +27,25 @@ import { saveFile } from "./file-storage";
 // Paths likely to hold landlord-specific intel. Probed in parallel. Each
 // path that returns >200 chars of text is fed into the AI prompt. We
 // cap at 6 to keep ScraperAPI cost predictable.
+// Order matters: paths earlier in the list get priority in the
+// image-URL round-robin (see imageUrls assembly below). Portfolio /
+// asset pages first — that's where the property hero photography
+// lives. Investor pages last so their charts + headshots don't
+// crowd out the property galleries.
 const LANDLORD_PATHS = [
-  "/",
+  "/our-places",          // Landsec
   "/portfolio",
-  "/our-properties",
   "/our-portfolio",
-  "/our-places",          // Land Sec's path
+  "/our-properties",
   "/assets",
   "/investments",
-  "/investors",
-  "/investors/investors-overview",
+  "/",
   "/about",
   "/about/board",
   "/media",
   "/media-centre",
+  "/investors",
+  "/investors/investors-overview",
   "/sustainability",
 ];
 
@@ -144,6 +149,9 @@ function extractImageUrls(html: string, baseUrl: string, limit = 30): string[] {
   // clearly the asset's identity, not part of a longer path.
   const REJECT = /(?:^|[/_-])(favicon|sprite|placeholder|spacer|pixel|tracking|gtm|analytics|1x1)(?:$|[._-])|\bicon-\d+\b|\.svg(?:\?|$)|^data:.*base64,/i;
   const REJECT_TINY_LOGO = /(?:^|[/_-])logo(?:[-_.][a-z0-9]+)?\.(?:svg|png|gif|webp)(\?|$)/i;
+  // Investor / press / report content — headshots, chart thumbnails,
+  // press release covers. Not what we want on the property gallery.
+  const REJECT_INVESTOR = /(?:^|[/_-])(headshot|portrait|chart|graph|infographic|annual[-_]?report|results[-_]?presentation|press[-_]?release|board[-_]?member|director[-_]?profile|interim[-_]?report|prelim|trading[-_]?update)(?:$|[._-])|\/investors?\/[^/]+\.(?:jpe?g|png|webp)/i;
   const push = (url: string | undefined | null) => {
     if (!url) return;
     let abs: string;
@@ -151,6 +159,7 @@ function extractImageUrls(html: string, baseUrl: string, limit = 30): string[] {
     if (seen.has(abs)) return;
     if (REJECT.test(abs)) return;
     if (REJECT_TINY_LOGO.test(abs)) return;
+    if (REJECT_INVESTOR.test(abs)) return;
     seen.add(abs);
     out.push(abs);
   };
@@ -299,18 +308,30 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     return { ok: false, error: err?.message || "AI extraction failed" };
   }
 
-  // Dedupe image URLs across all fetched pages. Cap at 40 — that's
-  // plenty for a hero gallery and keeps the persisted JSONB small.
+  // Round-robin merge image URLs across all fetched pages. Previously
+  // we drained page 0 entirely before touching page 1 — which meant a
+  // chatty investors page would crowd out the property gallery. Now
+  // each page contributes one URL per round. Cap at 40.
+  //
+  // ALSO bias by page order: pages earlier in LANDLORD_PATHS (e.g.
+  // /our-places, /portfolio) are visited first in `fetched`, so the
+  // round-robin naturally prefers them. The reorder above puts those
+  // ahead of investors / about / media.
   const imageUrlSeen = new Set<string>();
   const imageUrls: string[] = [];
-  for (const p of fetched) {
-    for (const u of p.images) {
+  const cursors = fetched.map(() => 0);
+  let stillHasMore = true;
+  while (stillHasMore && imageUrls.length < 40) {
+    stillHasMore = false;
+    for (let pi = 0; pi < fetched.length && imageUrls.length < 40; pi++) {
+      const page = fetched[pi];
+      if (cursors[pi] >= page.images.length) continue;
+      const u = page.images[cursors[pi]++];
+      stillHasMore = true;
       if (imageUrlSeen.has(u)) continue;
       imageUrlSeen.add(u);
       imageUrls.push(u);
-      if (imageUrls.length >= 40) break;
     }
-    if (imageUrls.length >= 40) break;
   }
   // Log image discovery so we can debug landlord-specific failures
   // (e.g. Landsec) by watching Railway logs.
