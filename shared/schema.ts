@@ -1344,6 +1344,11 @@ export const dealFeeAllocations = pgTable("deal_fee_allocations", {
   allocationType: text("allocation_type").notNull(),
   percentage: real("percentage"),
   fixedAmount: real("fixed_amount"),
+  // BGP House slices are the firm's overhead/tax cut. Sage import has
+  // historically tagged these via " (BGP House)" name suffix; this flag
+  // is the canonical signal so the UI and commission calc don't have
+  // to string-match the name.
+  isBgpHouse: boolean("is_bgp_house").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -1130,6 +1130,14 @@ import { pool } from "./db";
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
 
+    // deal_fee_allocations.is_bgp_house — explicit boolean for the BGP
+    // House (firm overhead/tax) slice. Sage import used to tag this via
+    // " (BGP House)" suffix on the agent name; we keep that for back-compat
+    // but the boolean is the canonical signal going forward.
+    `ALTER TABLE deal_fee_allocations ADD COLUMN IF NOT EXISTS is_bgp_house BOOLEAN NOT NULL DEFAULT false`,
+    // Backfill: anything tagged with the legacy suffix is BGP House.
+    `UPDATE deal_fee_allocations SET is_bgp_house = true WHERE is_bgp_house = false AND agent_name ILIKE '%(BGP House)%'`,
+
     // Scheduled jobs — ChatBGP can author rows via sql_write; the worker
     // in server/scheduled-jobs.ts polls every minute. Migration 0013 is
     // the canonical version; mirrored here so a DB that lost track of

@@ -115,6 +115,7 @@ import { DealKanban } from "@/components/deal-kanban";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { PropertyCombobox } from "@/components/property-combobox";
+import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 
@@ -416,6 +417,8 @@ interface DealFormData {
   xeroAccountNumber: string;
   xeroBillingAddress: any | null;
   poNumber: string;
+  invoicingEmail: string;
+  feePercentage: string;
 }
 
 const emptyForm: DealFormData = {
@@ -467,6 +470,8 @@ const emptyForm: DealFormData = {
   xeroAccountNumber: "",
   xeroBillingAddress: null,
   poNumber: "",
+  invoicingEmail: "",
+  feePercentage: "",
 };
 
 function dealToForm(deal: CrmDeal): DealFormData {
@@ -519,6 +524,8 @@ function dealToForm(deal: CrmDeal): DealFormData {
     xeroAccountNumber: (deal as any).xeroAccountNumber || "",
     xeroBillingAddress: (deal as any).xeroBillingAddress || null,
     poNumber: deal.poNumber || "",
+    invoicingEmail: (deal as any).invoicingEmail || "",
+    feePercentage: (deal as any).feePercentage != null ? String((deal as any).feePercentage) : "",
   };
 }
 
@@ -573,6 +580,8 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     xeroAccountNumber: form.xeroAccountNumber || null,
     xeroBillingAddress: form.xeroBillingAddress || null,
     poNumber: form.poNumber || null,
+    invoicingEmail: form.invoicingEmail || null,
+    feePercentage: parseNum(form.feePercentage),
   };
   if (changeReason) payload.changeReason = changeReason;
   return payload;
@@ -716,11 +725,16 @@ function DealUnitPicker({
 // ─────────────────────────────────────────────────────────────────────────
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
+  feeRows, setFeeRows, feeAllocType, setFeeAllocType,
 }: {
   form: any;
   set: (k: any, v: any) => void;
   properties: CrmProperty[];
   propertyUnits: Array<{ id: string; unitName: string; propertyId: string }>;
+  feeRows: FeeAllocationEditorRow[];
+  setFeeRows: (r: FeeAllocationEditorRow[]) => void;
+  feeAllocType: "percentage" | "fixed";
+  setFeeAllocType: (t: "percentage" | "fixed") => void;
   companies: CrmCompany[];
   users: { id: string; name: string }[];
   toggleAgent: (name: string) => void;
@@ -1058,8 +1072,102 @@ function SimplifiedCreateBody({
         </DropdownMenu>
       </div>
 
+      {/* WIP-template fields — these mirror what Layla fills in via the
+          shared spreadsheet so creating a deal here captures everything
+          the team currently emails in. All optional at submit time
+          except where validation above already enforces them. */}
+      <div className="border-t pt-3 space-y-3">
+        <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & timing</div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <Label htmlFor="deal-rent-pa" className="text-xs">Rent £ pa</Label>
+            <Input id="deal-rent-pa" type="number" value={form.rentPa}
+              onChange={(e) => set("rentPa", e.target.value)}
+              placeholder="e.g. 175000" />
+          </div>
+          <div>
+            <Label htmlFor="deal-fee-pct" className="text-xs">% Agency fee</Label>
+            <Input id="deal-fee-pct" type="number" step="0.1" value={form.feePercentage}
+              onChange={(e) => {
+                const pct = e.target.value;
+                set("feePercentage", pct);
+                // Auto-calc total fee from rent × fee%. Only sets if the
+                // user hasn't already typed a custom fee, so manual
+                // overrides survive.
+                const rent = parseFloat(form.rentPa);
+                const pctNum = parseFloat(pct);
+                if (!isNaN(rent) && !isNaN(pctNum) && !form.fee) {
+                  set("fee", String(Math.round(rent * pctNum) / 100));
+                }
+              }}
+              placeholder="e.g. 6" />
+          </div>
+          <div>
+            <Label htmlFor="deal-fee" className="text-xs">Total fee £</Label>
+            <Input id="deal-fee" type="number" value={form.fee}
+              onChange={(e) => set("fee", e.target.value)}
+              placeholder="auto from rent × %" />
+          </div>
+        </div>
+
+        <div>
+          <Label className="text-xs">BGP fee split</Label>
+          <div className="border rounded-md p-2.5 bg-muted/30">
+            <FeeAllocationEditor
+              rows={feeRows}
+              onChange={setFeeRows}
+              allocType={feeAllocType}
+              onAllocTypeChange={setFeeAllocType}
+              dealFee={parseFloat(form.fee) || null}
+              bgpAgents={users.map(u => ({ id: String(u.id), name: u.name }))}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="deal-target-date" className="text-xs">Timing for completion</Label>
+            <Input id="deal-target-date" type="date" value={form.targetDate}
+              onChange={(e) => set("targetDate", e.target.value)} />
+          </div>
+          <div>
+            <Label htmlFor="deal-invoicing-email" className="text-xs">Invoicing email / contact</Label>
+            <Input id="deal-invoicing-email" type="email" value={form.invoicingEmail}
+              onChange={(e) => set("invoicingEmail", e.target.value)}
+              placeholder="e.g. accounts@client.com" />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="flex items-center gap-2 pt-5">
+            <Checkbox
+              id="deal-aml-completed"
+              checked={form.amlCheckCompleted === "YES" || form.amlCheckCompleted === "yes" || form.amlCheckCompleted === "true"}
+              onCheckedChange={(checked) => set("amlCheckCompleted", checked ? "YES" : "")}
+            />
+            <Label htmlFor="deal-aml-completed" className="text-xs font-normal cursor-pointer">
+              AML check completed
+            </Label>
+          </div>
+          <div>
+            <Label htmlFor="deal-po-number" className="text-xs">PO number (if known)</Label>
+            <Input id="deal-po-number" value={form.poNumber}
+              onChange={(e) => set("poNumber", e.target.value)}
+              placeholder="leave blank if finance to request" />
+          </div>
+        </div>
+
+        <div>
+          <Label htmlFor="deal-comments" className="text-xs">Comments / specific wording</Label>
+          <Textarea id="deal-comments" rows={3} value={form.comments}
+            onChange={(e) => set("comments", e.target.value)}
+            placeholder="Anything finance needs to know — special wording, PO process, billing quirks…" />
+        </div>
+      </div>
+
       <p className="text-[11px] text-muted-foreground border-t pt-3">
-        That's all you need to start. Rent, fees, areas, dates, AML, Xero — all editable on the deal board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need to fill anything else now.
+        Anything not here (yield, areas, individual dates, Xero billing address) is editable on the deal board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need the full form now.
       </p>
     </div>
   );
@@ -1093,6 +1201,13 @@ export function DealFormDialog({
   const [showAllFields, setShowAllFields] = useState(false);
   const [approvalGateOpen, setApprovalGateOpen] = useState(false);
   const [approvalGateMessage, setApprovalGateMessage] = useState("");
+  // Fee allocations live alongside the form state. On EDIT they're loaded
+  // from the existing deal's allocations endpoint (read-only here — the
+  // FeeAllocationCard on the deal-detail page is the canonical editor
+  // for existing deals); on CREATE they're collected in-form and POSTed
+  // after the deal is created.
+  const [feeRows, setFeeRows] = useState<FeeAllocationEditorRow[]>([]);
+  const [feeAllocType, setFeeAllocType] = useState<"percentage" | "fixed">("percentage");
 
   // Reset form whenever the dialog re-opens. Without this, the previous
   // create attempt's values stick around — Layla hit 'New Deal' after
@@ -1105,6 +1220,8 @@ export function DealFormDialog({
     setChangeReason("");
     setLearning("");
     setShowAllFields(false);
+    setFeeRows([]);
+    setFeeAllocType("percentage");
   }, [open, deal]);
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
@@ -1147,7 +1264,37 @@ export function DealFormDialog({
       if (isEdit) {
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
       } else {
-        await apiRequest("POST", "/api/crm/deals", payload);
+        const res = await apiRequest("POST", "/api/crm/deals", payload);
+        const created = await res.json();
+        // Persist fee allocations alongside the new deal. Only fires when
+        // the user actually entered any rows — empty array = "no split set"
+        // (deal still saves, allocations can be added later on the deal
+        // detail page). PUT /fee-allocations replaces the existing set;
+        // for a new deal that's empty anyway.
+        if (created?.id && feeRows.length > 0) {
+          const allocations = feeRows
+            .filter(r => (r.isBgpHouse || r.agentName))
+            .map(r => ({
+              agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+              allocationType: feeAllocType,
+              percentage: feeAllocType === "percentage" ? r.percentage : null,
+              fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
+              isBgpHouse: !!r.isBgpHouse,
+            }));
+          if (allocations.length > 0) {
+            try {
+              await apiRequest("PUT", `/api/crm/deals/${created.id}/fee-allocations`, { allocations });
+            } catch (e: any) {
+              // Deal exists, allocations failed — surface but don't undo
+              // the deal create (Layla can retry from the deal page).
+              toast({
+                title: "Deal created, fee split failed to save",
+                description: e?.message || "Open the deal and set the split there.",
+                variant: "destructive",
+              });
+            }
+          }
+        }
       }
     },
     onSuccess: async () => {
@@ -1248,6 +1395,10 @@ export function DealFormDialog({
               users={users}
               toggleAgent={toggleAgent}
               setForm={setForm}
+              feeRows={feeRows}
+              setFeeRows={setFeeRows}
+              feeAllocType={feeAllocType}
+              setFeeAllocType={setFeeAllocType}
             />
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

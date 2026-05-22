@@ -702,18 +702,20 @@ async function enrichWipDealsFromSage(
 
       // 2) Fee allocations ---------------------------------------------------
       // Wipe-and-replace so re-imports don't accumulate duplicates. BGP House
-      // CON049 slices are tagged in the agent name so the UI can call them
-      // out (the agent decode UI already handles the " (BGP House)" suffix).
+      // CON049 slices are tagged both ways: the legacy " (BGP House)" suffix
+      // on the agent name (so older UI code keeps reading it) AND the
+      // canonical is_bgp_house boolean column (the new source of truth).
       await client.query(`DELETE FROM deal_fee_allocations WHERE deal_id = $1`, [deal.id]);
       for (const slice of enrich.feeSlices) {
         if (!slice.agent || slice.amount === 0) continue;
         await client.query(
-          `INSERT INTO deal_fee_allocations (id, deal_id, agent_name, allocation_type, fixed_amount, created_at)
-           VALUES (gen_random_uuid(), $1, $2, 'fixed', $3, NOW())`,
+          `INSERT INTO deal_fee_allocations (id, deal_id, agent_name, allocation_type, fixed_amount, is_bgp_house, created_at)
+           VALUES (gen_random_uuid(), $1, $2, 'fixed', $3, $4, NOW())`,
           [
             deal.id,
             slice.isBgpHouse ? `${slice.agent} (BGP House)` : slice.agent,
             slice.amount,
+            slice.isBgpHouse,
           ],
         );
         result.allocationsCreated++;
@@ -3209,6 +3211,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         allocationType: a.allocationType === "fixed" ? "fixed" : "percentage",
         percentage: a.allocationType === "percentage" ? Number(a.percentage) || 0 : null,
         fixedAmount: a.allocationType === "fixed" ? Number(a.fixedAmount) || 0 : null,
+        // Canonical flag for the firm overhead slice. Sage import has
+        // historically inferred this from the " (BGP House)" name suffix;
+        // the form now sends the boolean directly. Accept either signal.
+        isBgpHouse: a.isBgpHouse === true || /\(BGP House\)/i.test(String(a.agentName || "")),
       })).filter((a: any) => a.agentName.length > 0);
       // Validate percentage allocations don't exceed 100%
       const totalPct = validated
