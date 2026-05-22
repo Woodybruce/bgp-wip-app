@@ -326,7 +326,7 @@ export default function ImageStudio() {
   });
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
+    mutationFn: async ({ ids }: { ids: string[] }) => {
       await apiRequest("POST", "/api/image-studio/bulk-delete", { ids });
     },
     onSuccess: (_data: unknown, variables: { ids: string[] }) => {
@@ -1270,7 +1270,7 @@ export default function ImageStudio() {
                     disabled={bulkDeleteMutation.isPending}
                     onClick={() => {
                       if (confirm(`Delete ${selectedIds.size} images? This cannot be undone.`)) {
-                        bulkDeleteMutation.mutate([...selectedIds]);
+                        bulkDeleteMutation.mutate({ ids: [...selectedIds] });
                       }
                     }}
                     data-testid="button-bulk-delete"
