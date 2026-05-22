@@ -5143,11 +5143,17 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           )}
         </div>
 
-        <ScrollArea className="flex-1">
-          <div className="px-3 py-2.5">
-            <p className="text-[11px] font-semibold text-gray-700 mb-2">
+        {/* Recent Searches — capped at a sensible chunk of the sidebar
+            so it doesn't run all the way to the bottom, and tightly
+            clipped so long addresses don't bleed across the divider. */}
+        <div className="border-t flex flex-col overflow-hidden max-h-[40vh]">
+          <div className="px-3 pt-2.5 pb-1 shrink-0">
+            <p className="text-[11px] font-semibold text-gray-700">
               Recent Searches {recentSearches.length > 0 && <span className="font-normal text-gray-400">({recentSearches.length})</span>}
             </p>
+          </div>
+          <ScrollArea className="flex-1 overflow-hidden">
+            <div className="px-3 pb-2.5">
             {recentSearches.length === 0 ? (
               <p className="text-[10px] text-gray-400 py-3 text-center">No recent searches yet.</p>
             ) : (
@@ -5170,17 +5176,17 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                           loadPropertyData(s.postcode, undefined, s.address || undefined, coords?.lat && coords?.lng ? { lat: coords.lat, lng: coords.lng } : null);
                         }
                       }}
-                      className="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors group/item"
+                      className="w-full max-w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors group/item overflow-hidden"
                       data-testid={`map-search-history-${s.id}`}
                     >
-                      <div className="flex items-start gap-1.5">
+                      <div className="flex items-start gap-1.5 min-w-0">
                         <MapPin className={`w-3 h-3 mt-0.5 shrink-0 ${pinColor}`} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-medium text-gray-800 truncate leading-tight">{s.address}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            {s.postcode && <span className="text-[9px] text-gray-400 font-mono">{s.postcode}</span>}
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <p className="text-[11px] font-medium text-gray-800 truncate leading-tight max-w-full">{s.address}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                            {s.postcode && <span className="text-[9px] text-gray-400 font-mono truncate">{s.postcode}</span>}
                             {s.status && s.status !== "New" && (
-                              <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
+                              <span className={`text-[8px] px-1 py-0.5 rounded font-medium shrink-0 ${
                                 isAcquired ? "bg-emerald-100 text-emerald-700" :
                                 s.status === "Investigating" ? "bg-blue-100 text-blue-700" :
                                 s.status === "Contacted Owner" ? "bg-amber-100 text-amber-700" :
@@ -5189,7 +5195,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                             )}
                           </div>
                           {ownerName && (
-                            <p className="text-[9px] text-gray-400 truncate mt-0.5">{ownerName}</p>
+                            <p className="text-[9px] text-gray-400 truncate mt-0.5 max-w-full">{ownerName}</p>
                           )}
                         </div>
                         <span className="text-[8px] text-gray-300 shrink-0 mt-0.5">
@@ -5201,8 +5207,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                 })}
               </div>
             )}
-          </div>
-        </ScrollArea>
+            </div>
+          </ScrollArea>
+        </div>
       </div>
 
       <div className="flex-1 relative">
