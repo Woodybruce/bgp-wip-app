@@ -4247,7 +4247,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
       const centroidLng = parseFloat(props.Centroid_X);
       const centroidLat = parseFloat(props.Centroid_Y);
-      polygon.on("click", () => {
+      polygon.on("click", (e: L.LeafletMouseEvent) => {
+        // Stop the click bubbling to the map's general click handler —
+        // otherwise both the polygon panel (Goad data) and the map-click
+        // panel (reverse-geocoded) would fight to open the side panel.
+        L.DomEvent.stopPropagation(e);
         setGoadPanelUnit({
           tenant,
           activity,
@@ -4792,6 +4796,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   };
 
   const handleMapClick = async (lat: number, lng: number) => {
+    // Street View has its own click handler — let it own clicks while on.
+    if (showStreetView) return;
     try {
       const resp = await fetch(`/api/reverse-geocode?lat=${lat}&lng=${lng}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
@@ -4799,17 +4805,48 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       if (!resp.ok) return;
       const data = await resp.json();
       const { displayAddr, postcode } = data;
-
       if (!postcode) return;
 
-      if (markerRef.current) markerRef.current.remove();
-      markerRef.current = L.circleMarker([lat, lng], {
-        radius: 8, fillColor: "#6366f1", color: "#fff", weight: 2.5, opacity: 1, fillOpacity: 0.9,
-      }).addTo(mapRef.current!).bindPopup(`<strong>${displayAddr || postcode}</strong><br/><span style="color:#666;font-size:11px">${postcode}</span>`, { closeButton: false, offset: L.point(0, -5) }).openPopup();
+      // Pull a street number + street out of the formatted address so the
+      // polygon-context endpoint can narrow VOA rates / LR resolver / planning
+      // apps to the right building rather than the whole postcode.
+      let num = "";
+      let street = "";
+      if (displayAddr) {
+        const m = displayAddr.match(/^(\d+[A-Z]?(?:\s*-\s*\d+[A-Z]?)?)\s+(.+?)(?:,|$)/);
+        if (m) {
+          num = m[1].trim();
+          street = m[2].trim();
+        } else {
+          street = displayAddr.split(",")[0]?.trim() || "";
+        }
+      }
 
-      setSelectedPostcode(postcode);
-      setCurrentArea(displayAddr || postcode);
-      loadPropertyData(postcode, undefined, displayAddr || undefined, { lat, lng });
+      // Open the new polygon side panel with synthesised "click-point" data.
+      // Goad-specific fields are left empty; everything downstream (BGP CRM,
+      // Rates, Land Registry, Planning, Pathway) still works off postcode +
+      // street + lat/lng — which is what the operator actually wants when
+      // clicking an OS-only building outside the West End Goad coverage.
+      setGoadPanelUnit({
+        tenant: displayAddr || postcode,
+        activity: "",
+        category: "Map click",
+        band: "Click point",
+        bandFill: "#94a3b8",
+        useClass: "",
+        floor: "",
+        sqft: 0,
+        holding: "",
+        num,
+        street: street.toUpperCase(),
+        postcode,
+        isVacant: false,
+        goadNumber: "",
+        precName: "",
+        surveyDate: "",
+        lat,
+        lng,
+      });
     } catch (e) {
       console.error("Reverse geocode error:", e);
     }
