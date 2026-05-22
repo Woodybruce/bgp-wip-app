@@ -1203,9 +1203,28 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           <div className="w-full flex flex-col gap-2.5">
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
-              const a = c.head_office_address;
-              const hqFull = a ? [a.street, a.city, a.country].filter(Boolean).join(", ") || a.address || null : null;
-              const hqShort = a ? [a.city, a.country].filter(Boolean).join(", ") || a.address || null : null;
+              const a: any = c.head_office_address;
+              // head_office_address can be a string (legacy), an
+              // {address, ...} wrapper, or a structured {street, city,
+              // country, postcode} (Apollo). Stringify safely — the
+              // .address fallback used to leak an object into JSX.
+              const stringifyAddrFallback = (x: any): string | null => {
+                if (!x) return null;
+                if (typeof x === "string") return x;
+                if (typeof x === "object") {
+                  return x.formatted
+                    || x.line1
+                    || [x.street, x.city, x.postcode, x.country].filter(Boolean).join(", ")
+                    || null;
+                }
+                return null;
+              };
+              const hqFull = a
+                ? ([a.street, a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
+                : null;
+              const hqShort = a
+                ? ([a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
+                : null;
               const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year || c.stock_ticker);
               if (!hasDetails) return null;
               const empStr = c.employee_count && c.employee_count > 0
@@ -2108,7 +2127,20 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           {u.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{u.unit_name}</span>}
                           {u.zone && <Badge variant="outline" className="text-[10px] shrink-0">{u.zone}</Badge>}
                         </div>
-                        {u.property_address && <div className="text-[10px] text-muted-foreground truncate">{u.property_address}</div>}
+                        {(() => {
+                          // property_address comes from the jsonb
+                          // crm_properties.address column. Server now
+                          // stringifies but be defensive — older deploys
+                          // and direct queries may still hand back an
+                          // object shape.
+                          const a: any = u.property_address;
+                          const txt = typeof a === "string"
+                            ? a
+                            : a && typeof a === "object"
+                              ? (a.formatted || a.line1 || [a.street, a.city, a.postcode, a.country].filter(Boolean).join(", "))
+                              : "";
+                          return txt ? <div className="text-[10px] text-muted-foreground truncate">{txt}</div> : null;
+                        })()}
                       </div>
                       <div className="text-right shrink-0">
                         {u.rent_pa != null && <div className="font-semibold text-xs">£{Math.round(u.rent_pa / 1000)}k pa</div>}

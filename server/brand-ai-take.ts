@@ -389,20 +389,25 @@ router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Req
 
     const scored = unitsRows.map((u: any) => {
       let score = 0;
-      // crm_properties.address is jsonb (e.g. { formatted, line1, postcode })
-      // — calling .toLowerCase() on the object threw. Coerce to a string
-      // first, preferring the formatted address field when present.
+      // crm_properties.address is jsonb — could be { formatted, line1,
+      // postcode } (resolver shape) or { city, street, country,
+      // postcode } (Apollo shape) or a flat string (legacy). Coerce to
+      // a printable string here so the client doesn't have to. Without
+      // this React #31 fires when the object lands in JSX directly.
       const addrSrc = u.property_address;
-      const addr = (typeof addrSrc === "string"
+      const addrStr = typeof addrSrc === "string"
         ? addrSrc
-        : addrSrc?.formatted || addrSrc?.line1 || ""
-      ).toLowerCase();
+        : (addrSrc?.formatted
+          || addrSrc?.line1
+          || [addrSrc?.street, addrSrc?.city, addrSrc?.postcode, addrSrc?.country].filter(Boolean).join(", ")
+          || null);
+      const addr = (addrStr || "").toLowerCase();
       const zone = (u.zone || "").toLowerCase();
       if (reqLocations.some(loc => addr.includes(loc) || zone.includes(loc))) score += 10;
       if (u.optimum_target) score += 5;
       if (u.target_brands) score += 3;
       if (u.priority && ["high", "a", "1"].includes(u.priority.toLowerCase())) score += 4;
-      return { ...u, matchScore: score };
+      return { ...u, property_address: addrStr, matchScore: score };
     });
 
     scored.sort((a: any, b: any) => b.matchScore - a.matchScore);
