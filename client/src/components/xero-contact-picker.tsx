@@ -45,6 +45,10 @@ export function XeroContactPicker({
   const [open, setOpen] = useState(false);
 
   const trimmed = search.trim();
+  // Track Xero auth state separately so we can distinguish "no contacts"
+  // from "not connected" in the empty UI. Surfaces the actionable error
+  // ("Connect Xero in Settings") rather than the misleading "no contacts found".
+  const [notConnected, setNotConnected] = useState(false);
   const { data: contacts = [], isFetching } = useQuery<XeroContact[]>({
     queryKey: ["/api/xero/contacts", trimmed],
     queryFn: async () => {
@@ -53,9 +57,13 @@ export function XeroContactPicker({
         : `/api/xero/contacts`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) {
-        if (res.status === 401) return [];
+        if (res.status === 401) {
+          setNotConnected(true);
+          return [];
+        }
         throw new Error(await res.text());
       }
+      setNotConnected(false);
       return res.json();
     },
     enabled: open,
@@ -114,7 +122,11 @@ export function XeroContactPicker({
           )}
           {!isFetching && contacts.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted-foreground">
-              {trimmed ? "No Xero contacts found" : "Type to search Xero contacts"}
+              {notConnected
+                ? "Xero isn't connected — an admin needs to connect Xero in Settings before billing contacts will appear."
+                : trimmed
+                  ? "No Xero contacts found"
+                  : "Type to search Xero contacts"}
             </div>
           )}
           {contacts.map((c) => {

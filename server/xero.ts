@@ -142,6 +142,27 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
   }
 }
 
+// Read-side helper: tries the caller's session first, then falls back
+// to the firm-wide system Xero session for unauthenticated/orphan
+// requests. Used by the contacts / accounts / organisation endpoints
+// so agents who haven't OAuth-connected their own session can still
+// search the firm's Xero contacts.
+//
+// Write paths stay session-scoped via xeroApi() — when an invoice gets
+// posted we want it attributed to the user who triggered it.
+export async function xeroApiWithFallback(session: any, path: string, options: RequestInit = {}): Promise<any> {
+  try {
+    return await xeroApi(session, path, options);
+  } catch (err: any) {
+    if (!String(err?.message || "").includes("Not connected")) throw err;
+    // Caller has no Xero — try the system-wide session.
+    const { getSystemXeroSession } = await import("./xero-system-session");
+    const sys = await getSystemXeroSession();
+    if (!sys) throw new Error("Not connected to Xero");
+    return xeroApi(sys, path, options);
+  }
+}
+
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
   const token = await refreshXeroToken(session);
   if (!token) throw new Error("Not connected to Xero");
@@ -412,7 +433,12 @@ export function setupXeroRoutes(app: Express) {
       if (search) {
         path += `&where=Name.Contains("${search.replace(/"/g, "")}")`;
       }
-      const data = await xeroApi(req.session, path);
+      // Read-only endpoint — falls back to the firm-wide system Xero
+      // session when the caller's session isn't connected. Means agents
+      // can pick a billing entity without each having to OAuth-connect
+      // their own Xero. Write endpoints stay session-scoped for proper
+      // attribution.
+      const data = await xeroApiWithFallback(req.session, path);
       const contacts = (data.Contacts || []).map((c: any) => ({
         ContactID: c.ContactID,
         Name: c.Name,
@@ -424,7 +450,7 @@ export function setupXeroRoutes(app: Express) {
       res.json(contacts);
     } catch (err: any) {
       if (err.message.includes("Not connected")) {
-        return res.status(401).json({ message: "Not connected to Xero" });
+        return res.status(401).json({ message: "Xero isn't connected. An admin needs to connect Xero in Settings before billing entities will show here." });
       }
       console.error("[Xero] Contacts error:", err);
       res.status(500).json({ message: err.message });
@@ -435,7 +461,7 @@ export function setupXeroRoutes(app: Express) {
   // account number / billing address stored on a deal.
   app.get("/api/xero/contacts/:contactId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const data = await xeroApi(req.session, `/Contacts/${req.params.contactId}`);
+      const data = await xeroApiWithFallback(req.session, `/Contacts/${req.params.contactId}`);
       const c = data.Contacts?.[0];
       if (!c) return res.status(404).json({ message: "Contact not found" });
       res.json({
