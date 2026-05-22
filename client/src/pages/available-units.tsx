@@ -48,6 +48,7 @@ import {
 import { PropertyCombobox } from "@/components/property-combobox";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { XeroContactPicker } from "@/components/xero-contact-picker";
+import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-allocation-editor";
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
@@ -343,6 +344,11 @@ export default function AvailableUnitsPage() {
     amlChecked: "",      // YES | NO | N-A — soft-required at SOL
     overrideCompliance: false, // user-acknowledged shipping despite incomplete AML/fee agreement
   });
+  // Fee split is the same shape the deal form collects — BGP House 15% +
+  // agents on the remaining 85%. FeeAllocationEditor auto-injects BGP
+  // House if missing, so starting empty is safe.
+  const [wipFeeRows, setWipFeeRows] = useState<FeeAllocationRow[]>([]);
+  const [wipFeeAllocType, setWipFeeAllocType] = useState<"percentage" | "fixed">("percentage");
   const { toast } = useToast();
 
   const { data: units = [], isLoading } = useQuery<AvailableUnit[]>({
@@ -684,9 +690,36 @@ export default function AvailableUnitsPage() {
   });
 
   const wipDealMutation = useMutation({
-    mutationFn: async ({ unitId, data }: { unitId: string; data: any }) => {
+    mutationFn: async ({ unitId, data, feeRows, feeAllocType }: { unitId: string; data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
       const res = await apiRequest("POST", `/api/available-units/${unitId}/create-deal`, data);
-      return res;
+      const json = await res.json();
+      const dealId = json?.deal?.id;
+      // Persist fee allocations alongside the promote, same shape the
+      // deal-form mutation uses. Empty list = no split set yet (fall
+      // back to whatever was on the deal previously).
+      if (dealId && feeRows.length > 0) {
+        const allocations = feeRows
+          .filter(r => (r.isBgpHouse || r.agentName))
+          .map(r => ({
+            agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+            allocationType: feeAllocType,
+            percentage: feeAllocType === "percentage" ? r.percentage : null,
+            fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
+            isBgpHouse: !!r.isBgpHouse,
+          }));
+        if (allocations.length > 0) {
+          try {
+            await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
+          } catch (e: any) {
+            toast({
+              title: "Promoted, but fee split failed to save",
+              description: e?.message || "Open the deal to set the split there.",
+              variant: "destructive",
+            });
+          }
+        }
+      }
+      return json;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
@@ -723,6 +756,17 @@ export default function AvailableUnitsPage() {
       amlChecked: existingDeal?.amlCheckCompleted || "",
       overrideCompliance: false,
     });
+    // Start with the picked agent (if any) on 85% so the BGP House
+    // auto-injection at 15% lands the split at a complete 100%.
+    // Editor renders BGP House itself; agent rows owned by us.
+    const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "";
+    setWipFeeRows(initialAgent ? [{
+      agentName: initialAgent,
+      allocationType: "percentage",
+      percentage: 85,
+      fixedAmount: 0,
+    }] : []);
+    setWipFeeAllocType("percentage");
     setWipUnit(unit);
   };
 
@@ -1712,6 +1756,26 @@ export default function AvailableUnitsPage() {
                 </Select>
               </div>
             </div>
+
+            {/* Fee split — same shape as the deal form (BGP House 15%
+                locked + agents on the remaining 85%). The auto-created
+                AVA deal lands here with no split set, so this is where
+                Layla locks it in for SOL handover. PUT'd to
+                /api/crm/deals/:id/fee-allocations after the promote
+                mutation succeeds. */}
+            <div>
+              <Label className="text-xs mb-1">BGP fee split</Label>
+              <div className="border rounded-md p-2.5 bg-muted/30">
+                <FeeAllocationEditor
+                  rows={wipFeeRows}
+                  onChange={setWipFeeRows}
+                  allocType={wipFeeAllocType}
+                  onAllocTypeChange={setWipFeeAllocType}
+                  dealFee={parseFloat(wipForm.fee) || null}
+                  bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
+                />
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs mb-1">AML / KYC checked</Label>
@@ -1816,7 +1880,7 @@ export default function AvailableUnitsPage() {
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
                   <Button
-                    onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm })}
+                    onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm, feeRows: wipFeeRows, feeAllocType: wipFeeAllocType })}
                     disabled={wipDealMutation.isPending || !canSubmit}
                     data-testid="wip-submit"
                   >
