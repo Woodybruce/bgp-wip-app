@@ -406,12 +406,45 @@ export default function ImageStudio() {
     staleTime: 10 * 60 * 1000,
   });
 
+  // Address objects in this codebase come in several shapes — sometimes
+  // a plain string, sometimes {formatted, line1, city, country, postcode},
+  // sometimes {address: "12 High St"}, sometimes nested
+  // {address: {city, street, country, postcode}}. Always coerce to a
+  // string so React never sees an object child (root cause of the
+  // 'objects are not valid React children' #31 crash).
+  const safeAddress = (val: any): string => {
+    if (!val) return "";
+    if (typeof val === "string") return val;
+    if (typeof val === "object") {
+      const inner = (val as any).address;
+      if (typeof inner === "string") return inner;
+      if (inner && typeof inner === "object") {
+        // Nested address-of-address — common with the resolver-canonical shape.
+        return safeAddress(inner);
+      }
+      const formatted = (val as any).formatted;
+      if (typeof formatted === "string") return formatted;
+      // Last resort: stitch known address parts together.
+      const parts = [
+        (val as any).line1,
+        (val as any).line2,
+        (val as any).street,
+        (val as any).city,
+        (val as any).postcode,
+        (val as any).country,
+      ].filter((s) => typeof s === "string" && s.length > 0);
+      return parts.join(", ");
+    }
+    return String(val);
+  };
+  const safeStr = (val: any): string => (typeof val === "string" ? val : "");
+
   const propertyLookup = useMemo(() => {
     const m = new Map<string, { id: string; name: string }>();
     for (const p of properties) {
       if (p?.id) {
-        const addrLine = typeof p.address === "string" ? p.address : p.address?.address;
-        m.set(p.id, { id: p.id, name: p.name || addrLine || p.postcode || "Property" });
+        const name = safeStr(p.name) || safeAddress(p.address) || safeStr(p.postcode) || "Property";
+        m.set(p.id, { id: p.id, name });
       }
     }
     return m;
@@ -419,17 +452,19 @@ export default function ImageStudio() {
 
   // Items for the PropertyCombobox in the bulk-assign dialog. Includes
   // postcode as subLabel so two same-named properties on different
-  // streets are distinguishable.
+  // streets are distinguishable. Everything is coerced to a string —
+  // see safeAddress / safeStr above.
   const propertyComboboxItems = useMemo(() => {
     return properties
       .filter((p: any) => p?.id)
       .map((p: any) => {
-        const addrLine = typeof p.address === "string" ? p.address : p.address?.address;
+        const addrLine = safeAddress(p.address);
+        const name = safeStr(p.name);
         return {
           id: p.id,
-          label: p.name || addrLine || "Untitled",
-          subLabel: p.postcode || addrLine || undefined,
-          keywords: [p.name, addrLine, p.postcode, p.group_name, p.status].filter(Boolean) as string[],
+          label: name || addrLine || "Untitled",
+          subLabel: safeStr(p.postcode) || addrLine || undefined,
+          keywords: [name, addrLine, safeStr(p.postcode), safeStr(p.group_name), safeStr(p.status)].filter((s) => s.length > 0) as string[],
         };
       });
   }, [properties]);
@@ -1631,8 +1666,7 @@ export default function ImageStudio() {
                   setBulkPropertyId(id);
                   const prop = properties.find((p: any) => p.id === id);
                   if (prop) {
-                    const addrLine = typeof prop.address === "string" ? prop.address : prop.address?.address;
-                    setBulkPropertyAddress(prop.name || addrLine || "");
+                    setBulkPropertyAddress(safeStr(prop.name) || safeAddress(prop.address) || "");
                   }
                 }}
                 onCreated={(prop) => {
