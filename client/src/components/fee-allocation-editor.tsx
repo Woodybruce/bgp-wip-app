@@ -37,15 +37,21 @@ interface Props {
   className?: string;
 }
 
+// BGP House percentage of total fee. Fixed firm policy — every deal
+// takes 15% off the top before agents split the remainder. Change here
+// if the firm rate ever changes.
+export const BGP_HOUSE_PCT = 15;
+
 // Controlled fee-split editor — same shape the deal-detail FeeAllocationCard
 // has used for months, but with no internal mutation / query. Drives off
 // caller-owned state so the create-deal form can collect allocations
 // before the deal row exists. On submit, the parent POSTs the deal first
 // then the allocations using the returned id.
 //
-// Single split-type toggle applies to every row (matches existing UX —
-// mixed % + fixed in the same deal was never supported on the deal page).
-// is_bgp_house is per-row so you can flag the firm overhead slice.
+// BGP House row is ALWAYS present at 15% of total fee — locked, not
+// removable, no manual "add" button. Agents split the remaining 85%.
+// is_bgp_house is per-row so the server / commission calc can find the
+// firm overhead slice without name-matching.
 export function FeeAllocationEditor({
   rows,
   onChange,
@@ -54,10 +60,41 @@ export function FeeAllocationEditor({
   dealFee,
   bgpAgents,
   colorMap,
-  showBgpHouseToggle = true,
+  showBgpHouseToggle: _ignored, // kept for back-compat but BGP House is now always auto-added
   className = "",
 }: Props) {
+  // Ensure exactly one BGP House row is always present. Runs on every
+  // render so the row is materialised even if the parent forgot to
+  // include it on initial state. Agents only ever interact with the
+  // non-BGP-House rows.
+  React.useEffect(() => {
+    const hasBgp = rows.some((r) => r.isBgpHouse);
+    if (!hasBgp) {
+      onChange([
+        ...rows,
+        {
+          agentName: "BGP House",
+          allocationType: allocType,
+          percentage: BGP_HOUSE_PCT,
+          fixedAmount: (dealFee || 0) * BGP_HOUSE_PCT / 100,
+          isBgpHouse: true,
+        },
+      ]);
+    } else if (allocType === "fixed") {
+      // Keep BGP House's fixed amount in sync with the deal fee.
+      const bgpRow = rows.find((r) => r.isBgpHouse);
+      if (bgpRow) {
+        const expected = (dealFee || 0) * BGP_HOUSE_PCT / 100;
+        if (Math.abs((bgpRow.fixedAmount || 0) - expected) > 0.5) {
+          onChange(rows.map((r) => r.isBgpHouse ? { ...r, fixedAmount: expected } : r));
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length, dealFee, allocType]);
+
   const addRow = () => {
+    // Append a fresh AGENT row (not BGP House — that's auto-managed).
     onChange([
       ...rows,
       { agentName: "", allocationType: allocType, percentage: 0, fixedAmount: 0, isBgpHouse: false },
@@ -65,10 +102,14 @@ export function FeeAllocationEditor({
   };
 
   const removeRow = (idx: number) => {
+    const r = rows[idx];
+    if (r?.isBgpHouse) return; // BGP House is locked
     onChange(rows.filter((_, i) => i !== idx));
   };
 
   const updateRow = (idx: number, patch: Partial<FeeAllocationRow>) => {
+    const r = rows[idx];
+    if (r?.isBgpHouse) return; // BGP House values are policy-driven, not editable
     onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   };
 
@@ -78,6 +119,12 @@ export function FeeAllocationEditor({
     return s + (r.fixedAmount || 0);
   }, 0);
   const totalPct = rows.reduce((s, r) => s + (r.percentage || 0), 0);
+  // Agents-only totals — BGP House contributes 15% (locked), agents
+  // must contribute the remaining 85%.
+  const agentRows = rows.filter((r) => !r.isBgpHouse);
+  const agentPctTotal = agentRows.reduce((s, r) => s + (r.percentage || 0), 0);
+  const agentPctTarget = 100 - BGP_HOUSE_PCT; // 85
+  const agentPctIsBalanced = Math.abs(agentPctTotal - agentPctTarget) < 0.01;
 
   // BGP staff list excluding already-picked names (so the dropdown doesn't
   // let you double-allocate to the same person on different rows). BGP
@@ -111,24 +158,25 @@ export function FeeAllocationEditor({
         {totalFee > 0 && (
           <span className="text-[11px] text-muted-foreground">
             Total fee: {formatCurrency(totalFee)}
-            {rows.length > 0 && (
-              <>
-                {" "}
-                · Allocated: {formatCurrency(totalAllocated)}
-                {allocType === "percentage" && (
-                  <span className={totalPct === 100 ? "text-emerald-600 ml-1" : "text-amber-600 ml-1"}>
-                    ({totalPct.toFixed(1)}%)
-                  </span>
-                )}
-              </>
+            {allocType === "percentage" && (
+              <span className="ml-2">
+                · Agents:
+                <span className={agentPctIsBalanced ? "text-emerald-600 ml-1" : "text-amber-600 ml-1"}>
+                  {agentPctTotal.toFixed(1)}% / {agentPctTarget}%
+                </span>
+              </span>
             )}
           </span>
         )}
       </div>
+      {/* Firm-policy reminder so Layla knows where the 15% goes. */}
+      <p className="text-[10px] text-muted-foreground">
+        BGP House takes {BGP_HOUSE_PCT}% off the top automatically. Agents share the remaining {100 - BGP_HOUSE_PCT}%.
+      </p>
 
-      {rows.length === 0 ? (
+      {agentRows.length === 0 ? (
         <p className="text-[11px] text-muted-foreground italic">
-          No fee split set — add at least one agent below.
+          Add the agents earning on this deal — BGP House is already taking {BGP_HOUSE_PCT}%.
         </p>
       ) : (
         <div className="space-y-1.5">
@@ -169,6 +217,7 @@ export function FeeAllocationEditor({
                     className="w-20 h-8 text-xs text-right"
                     placeholder="0"
                     step="0.1"
+                    disabled={row.isBgpHouse}
                     data-testid={`fee-editor-pct-${idx}`}
                   />
                   <span className="text-xs text-muted-foreground">%</span>
@@ -182,20 +231,28 @@ export function FeeAllocationEditor({
                     onChange={(e) => updateRow(idx, { fixedAmount: Number(e.target.value) })}
                     className="w-28 h-8 text-xs text-right"
                     placeholder="0"
+                    disabled={row.isBgpHouse}
                     data-testid={`fee-editor-amount-${idx}`}
                   />
                 </div>
               )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => removeRow(idx)}
-                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                data-testid={`fee-editor-remove-${idx}`}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
+              {/* BGP House can't be removed — firm policy locks the
+                  15% slice on every deal. Render an empty slot to keep
+                  rows aligned. */}
+              {row.isBgpHouse ? (
+                <span className="w-8" aria-hidden="true" />
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => removeRow(idx)}
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                  data-testid={`fee-editor-remove-${idx}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
             </div>
           ))}
         </div>
@@ -213,22 +270,24 @@ export function FeeAllocationEditor({
           <Plus className="h-3 w-3 mr-1" />
           Add agent
         </Button>
-        {showBgpHouseToggle && !rows.some((r) => r.isBgpHouse) && (
+        {/* Equal-split helper: distributes the 85% pool evenly across
+            agent rows. Useful for the 33.3% / 33.3% / 33.3% case Layla
+            writes in her WIP template. Only enabled in % mode. */}
+        {allocType === "percentage" && agentRows.length > 0 && (
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
-            onClick={() =>
-              onChange([
-                ...rows,
-                { agentName: "BGP House", allocationType: allocType, percentage: 0, fixedAmount: 0, isBgpHouse: true },
-              ])
-            }
-            className="h-7 text-xs bg-amber-50/60 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200"
-            data-testid="fee-editor-add-bgp-house"
+            onClick={() => {
+              const each = Math.round((agentPctTarget / agentRows.length) * 100) / 100;
+              onChange(rows.map((r) =>
+                r.isBgpHouse ? r : { ...r, percentage: each }
+              ));
+            }}
+            className="h-7 text-xs text-muted-foreground"
+            data-testid="fee-editor-equal-split"
           >
-            <Plus className="h-3 w-3 mr-1" />
-            Add BGP House
+            Equal split (each {agentRows.length > 0 ? (agentPctTarget / agentRows.length).toFixed(1) : 0}%)
           </Button>
         )}
       </div>
