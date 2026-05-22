@@ -3352,6 +3352,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showStreetView, setShowStreetView] = useState(false);
   const [googleMapsKey, setGoogleMapsKey] = useState<string | null>(null);
   const streetViewClickRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
+
+  // ── Tenancy Plans layer ──────────────────────────────────────────────────
+  // Phase 1 of the 'upload any plan' flow — fetches geo-tagged tenancy
+  // plans (GeoJSON) for the current viewport and renders them as a layer.
+  // Each polygon is later clickable; for now they just sit on the map
+  // as an outline pass.
+  const [showTenancyPlans, setShowTenancyPlans] = useState(true);
+  const [tenancyPlanCount, setTenancyPlanCount] = useState(0);
+  const tenancyPlansLayerRef = useRef<L.LayerGroup | null>(null);
   // ── Retail Context layer (real Experian Goad polygons) ────────────────────
   // When toggled on, loads the licensed Goad GeoJSON layers for the West End
   // (centre 9033MM, ~10,600 unit footprints across LG/GF/F1/F2) and renders
@@ -4625,6 +4634,97 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     };
   }, [showOSBuildings, showOSSites, showRetailContext, mapZoom]);
 
+  // ─── Tenancy Plans layer fetch + render ────────────────────────────────
+  // Refetches on map move. Polygons are drawn with a thick red stroke
+  // so they read as 'BGP tenancy data' rather than generic OS shapes.
+  // Click handler is wired the same way as Goad polygons — opens the
+  // unified side panel via setGoadPanelUnit with the plan's metadata.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!tenancyPlansLayerRef.current) {
+      tenancyPlansLayerRef.current = L.layerGroup({ pane: "goadPane" } as any).addTo(map);
+    }
+    const layer = tenancyPlansLayerRef.current;
+    if (!showTenancyPlans) {
+      layer.clearLayers();
+      setTenancyPlanCount(0);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      const bounds = map.getBounds();
+      const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+      try {
+        const r = await fetch(`/api/property-plans/in-viewport?bbox=${bbox}`, {
+          credentials: "include",
+          headers: getAuthHeaders(),
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        layer.clearLayers();
+        let count = 0;
+        for (const plan of (data.plans || []) as any[]) {
+          const gj = plan.geojson;
+          if (!gj?.features) continue;
+          const gjLayer = L.geoJSON(gj, {
+            pane: "goadPane",
+            style: () => ({
+              fillColor: "#fee2e2",
+              fillOpacity: 0.35,
+              color: "#dc2626",
+              weight: 1.4,
+              opacity: 0.95,
+            }),
+            onEachFeature: (feature: any, lyr: any) => {
+              const props = feature?.properties || {};
+              const unitRef = props.unit_ref || props.UNIT_REF || props.Unit || props.unit_number || "";
+              lyr.bindTooltip(
+                `<div style="font-family:sans-serif;font-size:11px"><strong>${unitRef || plan.property_name || "Unit"}</strong>${plan.floor ? `<br/><span style="color:#666">${plan.floor}</span>` : ""}</div>`,
+                { sticky: true, opacity: 0.95 },
+              );
+              lyr.on("click", (e: any) => {
+                L.DomEvent.stopPropagation(e);
+                setGoadPanelUnit({
+                  tenant: unitRef || plan.property_name || "Tenancy plan unit",
+                  activity: "",
+                  category: "Tenancy plan",
+                  band: plan.floor || "Plan",
+                  bandFill: "#fee2e2",
+                  useClass: "",
+                  floor: plan.floor || "",
+                  sqft: props.sqft || props.area_ft2 || 0,
+                  holding: "",
+                  num: "",
+                  street: "",
+                  postcode: "",
+                  isVacant: false,
+                  goadNumber: "",
+                  precName: plan.property_name || "",
+                  surveyDate: "",
+                  lat: e?.latlng?.lat,
+                  lng: e?.latlng?.lng,
+                  source: "tenancy-plan",
+                  unitRef,
+                  planId: plan.id,
+                  propertyId: plan.property_id,
+                });
+              });
+            },
+          });
+          gjLayer.addTo(layer);
+          count += Array.isArray(gj.features) ? gj.features.length : 0;
+        }
+        if (!cancelled) setTenancyPlanCount(count);
+      } catch { /* ignore */ }
+    };
+    refresh();
+    const onMove = () => refresh();
+    map.on("moveend", onMove);
+    return () => { cancelled = true; map.off("moveend", onMove); };
+  }, [showTenancyPlans]);
+
   const handleSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setSearchResults([]); return; }
     setSearching(true);
@@ -5096,6 +5196,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
               { key: "osb",    label: showOSBuildings && showRetailContext ? "OS Buildings (hidden — Goad on)" : (mapZoom < 16 && showOSBuildings ? "OS Buildings (zoom 16+)" : "OS Buildings"),     count: 0, dot: "#3b82f6", on: showOSBuildings, set: setShowOSBuildings },
               { key: "oss",    label: mapZoom < 14 && showOSSites ? "Named Sites (zoom 14+)" : "Named Sites", count: 0, dot: "#15616D", on: showOSSites,     set: setShowOSSites },
+              { key: "tp",     label: "Tenancy Plans",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
             ].map((row) => (
               <button
                 key={row.key}

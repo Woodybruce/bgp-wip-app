@@ -787,6 +787,19 @@ import { pool } from "./db";
        updated_at TIMESTAMPTZ DEFAULT NOW()
      )`,
     `CREATE INDEX IF NOT EXISTS idx_property_plans_property ON property_plans (property_id, display_order)`,
+    // Geographic-overlay columns — Phase 1 of the 'upload any tenancy
+    // plan' flow. When a GeoJSON (or vector file converted to GeoJSON)
+    // is uploaded, the polygons are stored on the plan row itself so
+    // the live Pathway map can render them as a layer without an extra
+    // round-trip. is_geo flags whether this plan has world coordinates
+    // (vs the legacy image-based plans with 0-1 normalised polygons).
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS geojson JSONB`,
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS is_geo BOOLEAN DEFAULT false`,
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_north DOUBLE PRECISION`,
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_south DOUBLE PRECISION`,
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_east DOUBLE PRECISION`,
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_west DOUBLE PRECISION`,
+    `CREATE INDEX IF NOT EXISTS idx_property_plans_geo ON property_plans (is_geo, bbox_west, bbox_east, bbox_south, bbox_north) WHERE is_geo = true`,
 
     // Property brochures — leasing / investment / OM PDFs uploaded
     // directly to a property's brochure board. Same pattern as

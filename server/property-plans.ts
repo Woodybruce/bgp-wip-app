@@ -510,4 +510,143 @@ router.get("/api/properties/:propertyId/plan-pickable-units", requireAuth, async
   }
 });
 
+// ─── Phase 1: Geographic tenancy-plan overlay ─────────────────────────────
+// Accept a GeoJSON file for a property — polygons are stored on the plan
+// row with bbox so the live Pathway map can fetch them via the viewport
+// endpoint and render them as a tenancy-plan layer.
+
+const geojsonUpload = multer({
+  storage: multer.memoryStorage(),
+  // GeoJSON files can be sizable when polygons are dense — allow 50MB.
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+router.post(
+  "/api/properties/:propertyId/plans/geojson",
+  requireAuth,
+  geojsonUpload.single("file"),
+  async (req: Request, res: Response) => {
+    try {
+      const file = (req as any).file;
+      if (!file) return res.status(400).json({ error: "file required" });
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(file.buffer.toString("utf-8"));
+      } catch {
+        return res.status(400).json({ error: "File is not valid JSON" });
+      }
+
+      // Accept either a FeatureCollection or a single Feature.
+      let features: any[];
+      if (parsed?.type === "FeatureCollection" && Array.isArray(parsed.features)) {
+        features = parsed.features;
+      } else if (parsed?.type === "Feature") {
+        features = [parsed];
+      } else {
+        return res
+          .status(400)
+          .json({ error: "Expected a GeoJSON FeatureCollection or single Feature" });
+      }
+      if (features.length === 0) return res.status(400).json({ error: "No features in file" });
+
+      // Compute bbox so the viewport query can index-filter quickly.
+      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+      const visitCoords = (coords: any) => {
+        if (typeof coords?.[0] === "number" && typeof coords?.[1] === "number") {
+          const [lng, lat] = coords;
+          if (lng < minLng) minLng = lng;
+          if (lat < minLat) minLat = lat;
+          if (lng > maxLng) maxLng = lng;
+          if (lat > maxLat) maxLat = lat;
+          return;
+        }
+        if (Array.isArray(coords)) coords.forEach(visitCoords);
+      };
+      for (const f of features) {
+        if (f?.geometry?.coordinates) visitCoords(f.geometry.coordinates);
+      }
+      if (!Number.isFinite(minLng) || !Number.isFinite(minLat)) {
+        return res
+          .status(400)
+          .json({ error: "Couldn't extract any coordinates — file may be in CAD/local space, not lng/lat. Use Phase 3 georeference flow." });
+      }
+
+      const floor = String(req.body?.floor || "Ground").trim();
+      const source = String(req.body?.source || "tenancy-plan-geojson").trim();
+      const notes = req.body?.notes ? String(req.body.notes).trim() : null;
+      const propertyId = req.params.propertyId;
+      const planId = crypto.randomUUID();
+      // Also persist the raw file in storage so we can re-process it later
+      // (e.g. when Phase 4's auto-link runs).
+      const storageKey = `property-plans/${propertyId}/${planId}.geojson`;
+      await saveFile(storageKey, file.buffer, "application/geo+json", file.originalname);
+
+      const { rows } = await pool.query(
+        `INSERT INTO property_plans
+           (id, property_id, floor, source, notes, storage_key,
+            geojson, is_geo,
+            bbox_north, bbox_south, bbox_east, bbox_west)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8,$9,$10,$11)
+         RETURNING id, property_id, floor, display_order, storage_key,
+                   source, notes, is_geo, bbox_north, bbox_south, bbox_east, bbox_west,
+                   created_at, updated_at`,
+        [
+          planId,
+          propertyId,
+          floor,
+          source,
+          notes,
+          storageKey,
+          JSON.stringify({ type: "FeatureCollection", features }),
+          maxLat,
+          minLat,
+          maxLng,
+          minLng,
+        ],
+      );
+      res.json({ ...rows[0], featureCount: features.length });
+    } catch (err: any) {
+      console.error("[property-plans/geojson] upload error:", err?.message);
+      res.status(500).json({ error: err?.message || "upload failed" });
+    }
+  },
+);
+
+// Viewport query — returns every geo-tagged plan whose bbox intersects the
+// requested bounding box. Used by the live Pathway map's 'Tenancy Plans'
+// layer. Bbox format: 'south,west,north,east' (matches OS layer queries).
+router.get(
+  "/api/property-plans/in-viewport",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const bbox = String(req.query.bbox || "");
+      const parts = bbox.split(",").map((s) => Number(s));
+      if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+        return res.status(400).json({ error: "bbox required as south,west,north,east" });
+      }
+      const [south, west, north, east] = parts;
+      const { rows } = await pool.query(
+        `SELECT p.id, p.property_id, p.floor, p.source, p.notes, p.geojson,
+                p.bbox_north, p.bbox_south, p.bbox_east, p.bbox_west,
+                pr.name AS property_name, pr.status AS property_status
+           FROM property_plans p
+           LEFT JOIN crm_properties pr ON pr.id = p.property_id
+          WHERE p.is_geo = true
+            AND p.bbox_west  <= $4
+            AND p.bbox_east  >= $2
+            AND p.bbox_south <= $3
+            AND p.bbox_north >= $1
+          LIMIT 200`,
+        [south, west, north, east],
+      );
+      res.json({ plans: rows });
+    } catch (err: any) {
+      console.error("[property-plans/in-viewport] error:", err?.message);
+      res.status(500).json({ error: err?.message || "viewport query failed" });
+    }
+  },
+);
+
 export default router;
