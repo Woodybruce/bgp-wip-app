@@ -2037,6 +2037,135 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Trading entities ─────────────────────────────────────────────────
+  // The brand is what the team picks; the entity is what's on the lease
+  // and what we KYC. List endpoint returns every entity under a parent
+  // company, default first. Create / update accept name + CH + VAT.
+  app.get("/api/crm/companies/:id/trading-entities", requireAuth, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, parent_company_id AS "parentCompanyId", name,
+                companies_house_number AS "companiesHouseNumber",
+                vat_number AS "vatNumber", is_default AS "isDefault",
+                notes, created_at AS "createdAt", updated_at AS "updatedAt"
+           FROM crm_trading_entities
+          WHERE parent_company_id = $1
+          ORDER BY is_default DESC, lower(name) ASC`,
+        [req.params.id]
+      );
+      res.json(rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/crm/trading-entities", requireAuth, async (req, res) => {
+    try {
+      const { parentCompanyId, name, companiesHouseNumber, vatNumber, isDefault, notes } = req.body || {};
+      if (!parentCompanyId || !name || !String(name).trim()) {
+        return res.status(400).json({ error: "parentCompanyId and name required" });
+      }
+      // Take-the-default torch when isDefault: true — only one row per
+      // parent should carry the flag.
+      if (isDefault) {
+        await pool.query(
+          `UPDATE crm_trading_entities SET is_default = false WHERE parent_company_id = $1`,
+          [parentCompanyId]
+        );
+      }
+      const { rows } = await pool.query(
+        `INSERT INTO crm_trading_entities
+           (parent_company_id, name, companies_house_number, vat_number, is_default, notes)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (parent_company_id, LOWER(name)) DO UPDATE SET
+           companies_house_number = COALESCE(EXCLUDED.companies_house_number, crm_trading_entities.companies_house_number),
+           vat_number             = COALESCE(EXCLUDED.vat_number, crm_trading_entities.vat_number),
+           notes                  = COALESCE(EXCLUDED.notes, crm_trading_entities.notes),
+           updated_at             = NOW()
+         RETURNING id, parent_company_id AS "parentCompanyId", name,
+                   companies_house_number AS "companiesHouseNumber",
+                   vat_number AS "vatNumber", is_default AS "isDefault",
+                   notes, created_at AS "createdAt", updated_at AS "updatedAt"`,
+        [
+          parentCompanyId,
+          String(name).trim(),
+          companiesHouseNumber || null,
+          vatNumber || null,
+          !!isDefault,
+          notes || null,
+        ]
+      );
+      // Mirror into the legacy jsonb array on crm_companies so the
+      // tenancy schedule's TenantBrandPicker still sees the new entity
+      // until phase 4 migrates it onto this table.
+      try {
+        await pool.query(
+          `UPDATE crm_companies
+              SET trading_entities = COALESCE(trading_entities, '[]'::jsonb)
+                                     || jsonb_build_array(jsonb_build_object(
+                                          'name', $2::text,
+                                          'added_at', to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                                        ))
+            WHERE id = $1
+              AND NOT (trading_entities @> jsonb_build_array(jsonb_build_object('name', $2::text)))`,
+          [parentCompanyId, String(name).trim()]
+        );
+      } catch (e: any) {
+        // Best-effort — the canonical row is already in crm_trading_entities.
+        console.warn("[trading-entities] jsonb mirror failed:", e?.message);
+      }
+      res.status(201).json(rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.put("/api/crm/trading-entities/:id", requireAuth, async (req, res) => {
+    try {
+      const { name, companiesHouseNumber, vatNumber, isDefault, notes } = req.body || {};
+      // Promote-to-default torches the other rows under the same parent.
+      if (isDefault) {
+        await pool.query(
+          `UPDATE crm_trading_entities
+              SET is_default = false
+            WHERE parent_company_id = (SELECT parent_company_id FROM crm_trading_entities WHERE id = $1)`,
+          [req.params.id]
+        );
+      }
+      const sets: string[] = ["updated_at = NOW()"];
+      const values: any[] = [req.params.id];
+      let i = 2;
+      if (name !== undefined) { sets.push(`name = $${i++}`); values.push(String(name).trim()); }
+      if (companiesHouseNumber !== undefined) { sets.push(`companies_house_number = $${i++}`); values.push(companiesHouseNumber || null); }
+      if (vatNumber !== undefined) { sets.push(`vat_number = $${i++}`); values.push(vatNumber || null); }
+      if (isDefault !== undefined) { sets.push(`is_default = $${i++}`); values.push(!!isDefault); }
+      if (notes !== undefined) { sets.push(`notes = $${i++}`); values.push(notes || null); }
+      const { rows } = await pool.query(
+        `UPDATE crm_trading_entities SET ${sets.join(", ")} WHERE id = $1
+         RETURNING id, parent_company_id AS "parentCompanyId", name,
+                   companies_house_number AS "companiesHouseNumber",
+                   vat_number AS "vatNumber", is_default AS "isDefault",
+                   notes, created_at AS "createdAt", updated_at AS "updatedAt"`,
+        values
+      );
+      if (!rows[0]) return res.status(404).json({ error: "entity not found" });
+      res.json(rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/crm/trading-entities/:id", requireAuth, async (req, res) => {
+    try {
+      // Guard: refuse to delete if any deal links to this entity.
+      const links = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM crm_deals
+          WHERE landlord_entity_id = $1 OR tenant_entity_id = $1
+             OR vendor_entity_id   = $1 OR purchaser_entity_id = $1`,
+        [req.params.id]
+      );
+      if ((links.rows[0]?.n || 0) > 0) {
+        return res.status(409).json({ error: `Entity is linked to ${links.rows[0].n} deal(s) — unlink first.` });
+      }
+      await pool.query(`DELETE FROM crm_trading_entities WHERE id = $1`, [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/crm/companies/:id/properties", async (req, res) => {
     try {
       const properties = await storage.getCompanyProperties(req.params.id);
@@ -2557,35 +2686,64 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // (Solicitors / Exchanged / Completed / Invoiced) requires every
       // linked counterparty to have kyc_status = 'approved' and not
       // expired. Bypass via amlOverride: true (logged to audit).
+      //
+      // Now entity-aware: if the deal has a trading entity linked for a
+      // role (landlordEntityId etc.), the gate reads the entity's KYC.
+      // Otherwise falls back to the parent brand's KYC. Lets us KYC the
+      // actual legal entity on the lease rather than the brand umbrella.
       if (req.body.status && oldDeal) {
         const newCode = legacyToCode(req.body.status);
         const oldCode = legacyToCode(oldDeal.status);
         const GATED = new Set(["SOL", "EXC", "COM", "INV"]);
         if (newCode && GATED.has(newCode) && newCode !== oldCode && req.body.amlOverride !== true) {
-          const counterpartyIds = [
-            oldDeal.landlordId,
-            oldDeal.tenantId,
-            (oldDeal as any).vendorId,
-            (oldDeal as any).purchaserId,
-          ].filter(Boolean) as string[];
-          if (counterpartyIds.length === 0) {
+          // Build pairs of (parent, entity) per role so we can prefer the
+          // entity's KYC fields when set.
+          const pairs: { role: string; parentId: string | null; entityId: string | null }[] = [
+            { role: "landlord",  parentId: oldDeal.landlordId  ?? null, entityId: (oldDeal as any).landlordEntityId  ?? null },
+            { role: "tenant",    parentId: oldDeal.tenantId    ?? null, entityId: (oldDeal as any).tenantEntityId    ?? null },
+            { role: "vendor",    parentId: (oldDeal as any).vendorId    ?? null, entityId: (oldDeal as any).vendorEntityId    ?? null },
+            { role: "purchaser", parentId: (oldDeal as any).purchaserId ?? null, entityId: (oldDeal as any).purchaserEntityId ?? null },
+          ].filter(p => p.parentId);
+          if (pairs.length === 0) {
             return res.status(403).json({ error: `Cannot move to ${newCode}: deal has no counterparties linked, so AML can't run.` });
           }
-          const ids = Array.from(new Set(counterpartyIds));
-          const cpRows = await db.select({
-            id: crmCompanies.id,
-            name: crmCompanies.name,
-            kycStatus: crmCompanies.kycStatus,
-            kycExpiresAt: crmCompanies.kycExpiresAt,
-          }).from(crmCompanies).where(inArray(crmCompanies.id, ids));
-          const notReady = cpRows.filter((c: any) => {
-            if (c.kycStatus !== "approved") return true;
-            if (c.kycExpiresAt && new Date(c.kycExpiresAt) < new Date()) return true;
-            return false;
-          });
+          const parentIds = Array.from(new Set(pairs.map(p => p.parentId!).filter(Boolean)));
+          const entityIds = Array.from(new Set(pairs.map(p => p.entityId).filter(Boolean) as string[]));
+          const [parentRows, entityRows] = await Promise.all([
+            db.select({
+              id: crmCompanies.id,
+              name: crmCompanies.name,
+              kycStatus: crmCompanies.kycStatus,
+              kycExpiresAt: crmCompanies.kycExpiresAt,
+            }).from(crmCompanies).where(inArray(crmCompanies.id, parentIds)),
+            entityIds.length > 0
+              ? pool.query<{ id: string; name: string; kyc_status: string | null; kyc_expires_at: Date | null }>(
+                  `SELECT id, name, kyc_status, kyc_expires_at FROM crm_trading_entities
+                    WHERE id = ANY($1::varchar[])`,
+                  [entityIds]
+                ).then(r => r.rows)
+              : Promise.resolve([]),
+          ]);
+          const parentById = new Map(parentRows.map((p: any) => [p.id, p]));
+          const entityById = new Map(entityRows.map((e: any) => [e.id, e]));
+
+          const notReady: { name: string; reason: string }[] = [];
+          for (const p of pairs) {
+            // Prefer entity KYC when linked, fall back to parent.
+            const entity = p.entityId ? entityById.get(p.entityId) : null;
+            const parent = p.parentId ? parentById.get(p.parentId) : null;
+            const kycStatus = entity?.kyc_status ?? parent?.kycStatus ?? null;
+            const kycExpiresAt = entity?.kyc_expires_at ?? parent?.kycExpiresAt ?? null;
+            const displayName = entity?.name || parent?.name || `(unknown ${p.role})`;
+            if (kycStatus !== "approved") {
+              notReady.push({ name: displayName, reason: kycStatus || "no checks run" });
+            } else if (kycExpiresAt && new Date(kycExpiresAt) < new Date()) {
+              notReady.push({ name: displayName, reason: "expired" });
+            }
+          }
           if (notReady.length > 0) {
             return res.status(403).json({
-              error: `AML not complete: ${notReady.map((c: any) => `${c.name} (${c.kycStatus || "no checks run"})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true with senior approval.`,
+              error: `AML not complete: ${notReady.map((c: any) => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true with senior approval.`,
             });
           }
         }

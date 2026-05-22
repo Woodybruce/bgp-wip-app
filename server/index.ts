@@ -1130,6 +1130,65 @@ import { pool } from "./db";
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
 
+    // crm_trading_entities — formal legal/billing entities under a brand.
+    // The parent brand is what the team picks; the entity is what we KYC
+    // and what's on the lease. Previously stored as a {name, added_at}
+    // jsonb on crm_companies — graduated to its own table so we can
+    // store CH numbers per entity and key AML off the right party.
+    `CREATE TABLE IF NOT EXISTS crm_trading_entities (
+      id                       VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      parent_company_id        VARCHAR NOT NULL,
+      name                     TEXT NOT NULL,
+      companies_house_number   TEXT,
+      vat_number               TEXT,
+      is_default               BOOLEAN NOT NULL DEFAULT false,
+      notes                    TEXT,
+      kyc_status               TEXT,
+      kyc_expires_at           TIMESTAMP,
+      kyc_approved_at          TIMESTAMP,
+      kyc_approved_by          TEXT,
+      aml_risk_level           TEXT,
+      sanctions_screen         JSONB,
+      last_checked_at          TIMESTAMP,
+      created_at               TIMESTAMP DEFAULT NOW(),
+      updated_at               TIMESTAMP DEFAULT NOW()
+    )`,
+    // Late additions for existing deploys (CREATE TABLE IF NOT EXISTS
+    // skipped them on first run before the KYC fields were added).
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS kyc_status TEXT`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS kyc_expires_at TIMESTAMP`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS sanctions_screen JSONB`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP`,
+    `CREATE INDEX IF NOT EXISTS crm_trading_entities_parent_idx ON crm_trading_entities (parent_company_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS crm_trading_entities_parent_name_uniq
+       ON crm_trading_entities (parent_company_id, LOWER(name))`,
+    // Backfill from the legacy jsonb array. Each tradingEntities element
+    // becomes a row. uk_entity_name (the canonical entity field) becomes
+    // the default row when set. Safe to re-run — UNIQUE on (parent, name)
+    // makes inserts no-op on conflict.
+    `INSERT INTO crm_trading_entities (parent_company_id, name, is_default)
+     SELECT c.id, c.uk_entity_name, true
+       FROM crm_companies c
+      WHERE c.uk_entity_name IS NOT NULL AND length(trim(c.uk_entity_name)) > 0
+     ON CONFLICT (parent_company_id, LOWER(name)) DO NOTHING`,
+    `INSERT INTO crm_trading_entities (parent_company_id, name, is_default)
+     SELECT c.id, te.value->>'name', false
+       FROM crm_companies c
+       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.trading_entities, '[]'::jsonb)) te
+      WHERE te.value->>'name' IS NOT NULL AND length(trim(te.value->>'name')) > 0
+     ON CONFLICT (parent_company_id, LOWER(name)) DO NOTHING`,
+
+    // Deal-level FKs to the specific trading entity per counterparty
+    // role. Nullable so existing deals stay valid; AML falls back to the
+    // parent brand when null.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS landlord_entity_id  VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS tenant_entity_id    VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_entity_id    VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_entity_id VARCHAR`,
+
     // deal_fee_allocations.is_bgp_house — explicit boolean for the BGP
     // House (firm overhead/tax) slice. Sage import used to tag this via
     // " (BGP House)" suffix on the agent name; we keep that for back-compat

@@ -841,6 +841,14 @@ export const crmDeals = pgTable("crm_deals", {
   vendorContactId: varchar("vendor_contact_id"),
   purchaserId: varchar("purchaser_id"),
   purchaserContactId: varchar("purchaser_contact_id"),
+  // Trading-entity FKs — the specific legal entity for each counterparty
+  // role. Lets AML key off the entity's CH number rather than the brand's.
+  // Nullable for back-compat with deals created before entities existed
+  // (AML falls back to the parent in that case).
+  landlordEntityId: varchar("landlord_entity_id"),
+  tenantEntityId: varchar("tenant_entity_id"),
+  vendorEntityId: varchar("vendor_entity_id"),
+  purchaserEntityId: varchar("purchaser_entity_id"),
   vendorAgentId: varchar("vendor_agent_id"),
   vendorAgentContactId: varchar("vendor_agent_contact_id"),
   acquisitionAgentId: varchar("acquisition_agent_id"),
@@ -1355,6 +1363,45 @@ export const dealFeeAllocations = pgTable("deal_fee_allocations", {
 export const insertDealFeeAllocationSchema = createInsertSchema(dealFeeAllocations).omit({ id: true, createdAt: true });
 export type InsertDealFeeAllocation = z.infer<typeof insertDealFeeAllocationSchema>;
 export type DealFeeAllocation = typeof dealFeeAllocations.$inferSelect;
+
+// Trading / billing / contracting entities under a parent brand. The brand
+// is what the team thinks in ("Pret"); the entity is what's on the lease and
+// what we KYC ("Pret A Manger UK Ltd", CH 01057547). Previously stored as a
+// {name, added_at} jsonb array on crm_companies — graduated to its own table
+// so we can carry the Companies House number per entity and key AML off the
+// right party. Parent jsonb is kept in sync for back-compat with the tenancy
+// schedule's TenantBrandPicker (will be migrated in phase 4).
+export const crmTradingEntities = pgTable("crm_trading_entities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  parentCompanyId: varchar("parent_company_id").notNull(),
+  name: text("name").notNull(),
+  companiesHouseNumber: text("companies_house_number"),
+  vatNumber: text("vat_number"),
+  // Marks the canonical entity for the brand. Used as the default pick
+  // on the deal form when the user picks the parent brand. Only one row
+  // per parent_company_id should have isDefault = true (enforced by
+  // logic, not a constraint, so the data layer can heal mid-edit).
+  isDefault: boolean("is_default").notNull().default(false),
+  notes: text("notes"),
+  // Entity-level KYC fields. Mirror the same shape as crm_companies so
+  // the orchestrator can store results against the right entity rather
+  // than smearing them across the whole brand. Deal-stage AML gate reads
+  // these when an entity is linked on the deal, falling back to the
+  // parent's fields when no entity is set (legacy deals).
+  kycStatus: text("kyc_status"),
+  kycExpiresAt: timestamp("kyc_expires_at"),
+  kycApprovedAt: timestamp("kyc_approved_at"),
+  kycApprovedBy: text("kyc_approved_by"),
+  amlRiskLevel: text("aml_risk_level"),
+  sanctionsScreen: jsonb("sanctions_screen"),
+  lastCheckedAt: timestamp("last_checked_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCrmTradingEntitySchema = createInsertSchema(crmTradingEntities).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertCrmTradingEntity = z.infer<typeof insertCrmTradingEntitySchema>;
+export type CrmTradingEntity = typeof crmTradingEntities.$inferSelect;
 
 export const externalRequirements = pgTable("external_requirements", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

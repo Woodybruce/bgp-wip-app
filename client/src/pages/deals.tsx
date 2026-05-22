@@ -117,6 +117,7 @@ import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { PropertyCombobox } from "@/components/property-combobox";
 import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
+import { TradingEntityPicker } from "@/components/trading-entity-picker";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 
@@ -420,6 +421,13 @@ interface DealFormData {
   poNumber: string;
   invoicingEmail: string;
   feePercentage: string;
+  // Trading-entity FKs per counterparty role — set after the user picks
+  // the parent brand, picked from the brand's entities list (with
+  // inline-create). AML reads these to KYC the right legal entity.
+  landlordEntityId: string;
+  tenantEntityId: string;
+  vendorEntityId: string;
+  purchaserEntityId: string;
 }
 
 const emptyForm: DealFormData = {
@@ -473,6 +481,10 @@ const emptyForm: DealFormData = {
   poNumber: "",
   invoicingEmail: "",
   feePercentage: "",
+  landlordEntityId: "",
+  tenantEntityId: "",
+  vendorEntityId: "",
+  purchaserEntityId: "",
 };
 
 function dealToForm(deal: CrmDeal): DealFormData {
@@ -527,6 +539,10 @@ function dealToForm(deal: CrmDeal): DealFormData {
     poNumber: deal.poNumber || "",
     invoicingEmail: (deal as any).invoicingEmail || "",
     feePercentage: (deal as any).feePercentage != null ? String((deal as any).feePercentage) : "",
+    landlordEntityId: (deal as any).landlordEntityId || "",
+    tenantEntityId: (deal as any).tenantEntityId || "",
+    vendorEntityId: (deal as any).vendorEntityId || "",
+    purchaserEntityId: (deal as any).purchaserEntityId || "",
   };
 }
 
@@ -583,6 +599,10 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     poNumber: form.poNumber || null,
     invoicingEmail: form.invoicingEmail || null,
     feePercentage: parseNum(form.feePercentage),
+    landlordEntityId: form.landlordEntityId || null,
+    tenantEntityId: form.tenantEntityId || null,
+    vendorEntityId: form.vendorEntityId || null,
+    purchaserEntityId: form.purchaserEntityId || null,
   };
   if (changeReason) payload.changeReason = changeReason;
   return payload;
@@ -968,7 +988,7 @@ function SimplifiedCreateBody({
           on the client, lighter screen on the counterparty). */}
       {counterpartyKind === "leasing" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
+          <div className="space-y-1.5">
             <Label>Landlord{clientRole === "landlord" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-landlord"
@@ -976,12 +996,23 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search landlords…"
               value={form.landlordId}
               items={toComboItems(landlordOptions)}
-              onChange={(v) => set("landlordId", v)}
+              onChange={(v) => { set("landlordId", v); set("landlordEntityId", ""); }}
               onCreate={createLandlord}
               createLabel="landlord"
             />
+            {form.landlordId && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
+                <TradingEntityPicker
+                  testId="select-deal-landlord-entity"
+                  parentCompanyId={form.landlordId}
+                  value={form.landlordEntityId}
+                  onChange={(v) => set("landlordEntityId", v)}
+                />
+              </div>
+            )}
           </div>
-          <div>
+          <div className="space-y-1.5">
             <Label>Tenant{clientRole === "tenant" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-tenant"
@@ -989,16 +1020,27 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search tenants…"
               value={form.tenantId}
               items={toComboItems(tenantOptions)}
-              onChange={(v) => set("tenantId", v)}
+              onChange={(v) => { set("tenantId", v); set("tenantEntityId", ""); }}
               onCreate={createTenant}
               createLabel="tenant"
             />
+            {form.tenantId && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
+                <TradingEntityPicker
+                  testId="select-deal-tenant-entity"
+                  parentCompanyId={form.tenantId}
+                  value={form.tenantEntityId}
+                  onChange={(v) => set("tenantEntityId", v)}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
       {counterpartyKind === "investment" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
+          <div className="space-y-1.5">
             <Label>Vendor{clientRole === "vendor" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-vendor"
@@ -1006,12 +1048,23 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search vendors…"
               value={form.vendorId}
               items={toComboItems(vendorOptions)}
-              onChange={(v) => set("vendorId", v)}
+              onChange={(v) => { set("vendorId", v); set("vendorEntityId", ""); }}
               onCreate={createVendor}
               createLabel="vendor"
             />
+            {form.vendorId && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
+                <TradingEntityPicker
+                  testId="select-deal-vendor-entity"
+                  parentCompanyId={form.vendorId}
+                  value={form.vendorEntityId}
+                  onChange={(v) => set("vendorEntityId", v)}
+                />
+              </div>
+            )}
           </div>
-          <div>
+          <div className="space-y-1.5">
             <Label>Purchaser{clientRole === "purchaser" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-purchaser"
@@ -1019,10 +1072,21 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search purchasers…"
               value={form.purchaserId}
               items={toComboItems(purchaserOptions)}
-              onChange={(v) => set("purchaserId", v)}
+              onChange={(v) => { set("purchaserId", v); set("purchaserEntityId", ""); }}
               onCreate={createPurchaser}
               createLabel="purchaser"
             />
+            {form.purchaserId && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
+                <TradingEntityPicker
+                  testId="select-deal-purchaser-entity"
+                  parentCompanyId={form.purchaserId}
+                  value={form.purchaserEntityId}
+                  onChange={(v) => set("purchaserEntityId", v)}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
