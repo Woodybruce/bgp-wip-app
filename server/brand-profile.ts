@@ -224,13 +224,24 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
-    // Image gallery
+    // Image gallery. Pulls every column the brand profile UI needs —
+    // tags is critical because the "brand-hero" pin (toggled from the
+    // lightbox) reads it to decide which images go in the top banner.
+    // Without tags here the UI thinks nothing is pinned even after a
+    // successful PATCH. Also prefer company_id FK match (set on new
+    // imports) and fall back to lowercased brand_name for older rows.
     const imagesQ = pool.query(
-      `SELECT i.id, i.file_name, i.thumbnail_data, i.category, i.created_at
+      `SELECT i.id, i.file_name, i.thumbnail_data, i.category, i.created_at,
+              i.tags, i.mime_type, i.description, i.source, i.company_id, i.property_id
          FROM image_studio_images i
-        WHERE i.brand_name IS NOT NULL
-          AND lower(i.brand_name) = (SELECT lower(name) FROM crm_companies WHERE id = $1)
-        ORDER BY i.created_at DESC LIMIT 12`,
+        WHERE i.company_id = $1
+           OR (i.brand_name IS NOT NULL
+               AND lower(i.brand_name) = (SELECT lower(name) FROM crm_companies WHERE id = $1))
+        ORDER BY
+          -- Hero images first so the UI doesn't have to re-sort
+          ('brand-hero' = ANY(i.tags))::int DESC,
+          i.created_at DESC
+        LIMIT 60`,
       [companyId]
     );
 
