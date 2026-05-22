@@ -1139,23 +1139,18 @@ function SimplifiedCreateBody({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="flex items-center gap-2 pt-5">
-            <Checkbox
-              id="deal-aml-completed"
-              checked={form.amlCheckCompleted === "YES" || form.amlCheckCompleted === "yes" || form.amlCheckCompleted === "true"}
-              onCheckedChange={(checked) => set("amlCheckCompleted", checked ? "YES" : "")}
-            />
-            <Label htmlFor="deal-aml-completed" className="text-xs font-normal cursor-pointer">
-              AML check completed
-            </Label>
-          </div>
-          <div>
-            <Label htmlFor="deal-po-number" className="text-xs">PO number (if known)</Label>
-            <Input id="deal-po-number" value={form.poNumber}
-              onChange={(e) => set("poNumber", e.target.value)}
-              placeholder="leave blank if finance to request" />
-          </div>
+        {/* AML completion is no longer a self-attest checkbox — the
+            regulator doesn't care that the agent ticked a box. The deal
+            page derives 'AML complete' from crm_companies.aml_checklist
+            for every linked counterparty (CH lookup, sanctions screen,
+            PEP screen, UBO, ID verification, address verification). The
+            stage-transition handler blocks moves to SOL+ when AML
+            status is not complete for all parties. */}
+        <div>
+          <Label htmlFor="deal-po-number" className="text-xs">PO number (if known)</Label>
+          <Input id="deal-po-number" value={form.poNumber}
+            onChange={(e) => set("poNumber", e.target.value)}
+            placeholder="leave blank if finance to request" />
         </div>
 
         <div>

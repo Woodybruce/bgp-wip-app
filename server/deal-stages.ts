@@ -119,11 +119,69 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     }
 
     const current = await pool.query(
-      `SELECT id, stage, exchanged_at, completed_at, invoiced_at, solicitor_instructed_at FROM crm_deals WHERE id = $1`,
+      `SELECT id, stage, exchanged_at, completed_at, invoiced_at, solicitor_instructed_at,
+              landlord_id, tenant_id, vendor_id, purchaser_id
+         FROM crm_deals WHERE id = $1`,
       [dealId]
     );
     if (!current.rows[0]) return res.status(404).json({ error: "Deal not found" });
     const fromStage = current.rows[0].stage;
+
+    // AML gate. Any move to sols / agreed / completed / invoiced requires
+    // every linked counterparty to have kyc_status = 'approved' and not
+    // expired. The agent self-attest checkbox is gone — derived status
+    // from crm_companies.kyc_status is the source of truth.
+    //
+    // amlOverride: senior-approved override for edge cases where AML is
+    // demonstrably complete outside the system (legacy import, client's
+    // own AML team). Logged to deal_events so the audit captures it.
+    const GATED_STAGES = new Set(["sols", "agreed", "completed", "invoiced"]);
+    if (GATED_STAGES.has(toStage) && req.body?.amlOverride !== true) {
+      const counterpartyIds = [
+        current.rows[0].landlord_id,
+        current.rows[0].tenant_id,
+        current.rows[0].vendor_id,
+        current.rows[0].purchaser_id,
+      ].filter(Boolean) as string[];
+
+      if (counterpartyIds.length === 0) {
+        return res.status(403).json({
+          error: "Deal needs at least one counterparty linked before moving to Solicitors+. AML can't run on nothing.",
+        });
+      }
+
+      const ids = Array.from(new Set(counterpartyIds));
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(",");
+      const cpResult = await pool.query(
+        `SELECT id, name, kyc_status, kyc_expires_at
+           FROM crm_companies
+          WHERE id IN (${placeholders})`,
+        ids,
+      );
+      const notReady = cpResult.rows.filter((c: any) => {
+        if (c.kyc_status !== "approved") return true;
+        if (c.kyc_expires_at && new Date(c.kyc_expires_at) < new Date()) return true;
+        return false;
+      });
+      if (notReady.length > 0) {
+        return res.status(403).json({
+          error: `AML not complete: ${notReady.map((c: any) => `${c.name} (${c.kyc_status || "no checks run"}${c.kyc_expires_at && new Date(c.kyc_expires_at) < new Date() ? " — expired" : ""})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true if you have senior approval.`,
+        });
+      }
+    }
+    // Log override usage for the audit trail.
+    if (req.body?.amlOverride === true && GATED_STAGES.has(toStage)) {
+      await pool.query(
+        `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
+         VALUES ($1, 'aml_override_used', $2, $3, $4)`,
+        [
+          dealId,
+          JSON.stringify({ toStage, reason: req.body?.amlOverrideReason || null }),
+          req.user?.id || null,
+          req.user?.name || null,
+        ],
+      ).catch(() => {});
+    }
 
     const updates: string[] = ["stage = $1", "stage_entered_at = now()", "updated_at = now()"];
     const values: any[] = [toStage];

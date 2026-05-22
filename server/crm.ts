@@ -2553,6 +2553,44 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
+      // AML gate — mirrors the deal-stages.ts check. Any move to SOL+
+      // (Solicitors / Exchanged / Completed / Invoiced) requires every
+      // linked counterparty to have kyc_status = 'approved' and not
+      // expired. Bypass via amlOverride: true (logged to audit).
+      if (req.body.status && oldDeal) {
+        const newCode = legacyToCode(req.body.status);
+        const oldCode = legacyToCode(oldDeal.status);
+        const GATED = new Set(["SOL", "EXC", "COM", "INV"]);
+        if (newCode && GATED.has(newCode) && newCode !== oldCode && req.body.amlOverride !== true) {
+          const counterpartyIds = [
+            oldDeal.landlordId,
+            oldDeal.tenantId,
+            (oldDeal as any).vendorId,
+            (oldDeal as any).purchaserId,
+          ].filter(Boolean) as string[];
+          if (counterpartyIds.length === 0) {
+            return res.status(403).json({ error: `Cannot move to ${newCode}: deal has no counterparties linked, so AML can't run.` });
+          }
+          const ids = Array.from(new Set(counterpartyIds));
+          const cpRows = await db.select({
+            id: crmCompanies.id,
+            name: crmCompanies.name,
+            kycStatus: crmCompanies.kycStatus,
+            kycExpiresAt: crmCompanies.kycExpiresAt,
+          }).from(crmCompanies).where(inArray(crmCompanies.id, ids));
+          const notReady = cpRows.filter((c: any) => {
+            if (c.kycStatus !== "approved") return true;
+            if (c.kycExpiresAt && new Date(c.kycExpiresAt) < new Date()) return true;
+            return false;
+          });
+          if (notReady.length > 0) {
+            return res.status(403).json({
+              error: `AML not complete: ${notReady.map((c: any) => `${c.name} (${c.kycStatus || "no checks run"})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true with senior approval.`,
+            });
+          }
+        }
+      }
+
       if (req.body.kycApproved === true && !oldDeal?.kycApproved) {
         req.body.kycApprovedAt = new Date();
         req.body.kycApprovedBy = changedByName;
