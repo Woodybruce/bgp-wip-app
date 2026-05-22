@@ -512,8 +512,13 @@ export async function registerRoutes(
     });
     res.json({ centreCode: "9033MM", centreName: "London West End", layers });
   });
-  app.get("/api/goad/:layer", requireAuth, (req, res) => {
+  app.get("/api/goad/:layer", requireAuth, (req, res, next) => {
     const layerParam = String(req.params.layer || "").toLowerCase();
+    // Critical: don't shadow other /api/goad/<name> routes registered
+    // AFTER this one. Express evaluates in declaration order — a
+    // wildcard like :layer otherwise eats /api/goad/polygon-context
+    // and returns 404 because 'polygon-context' isn't in GOAD_LAYERS.
+    if (!(layerParam in GOAD_LAYERS)) return next();
     const file = GOAD_LAYERS[layerParam];
     if (!file) return res.status(404).json({ message: "Unknown Goad layer" });
     const diskPath = path.join(GOAD_DIR, file);
