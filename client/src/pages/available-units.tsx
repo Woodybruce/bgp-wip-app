@@ -186,6 +186,7 @@ interface UnitFormState {
   notes: string;
   restrictions: string;
   fee: string;
+  feePercentage: string;
   marketingStartDate: string;
   agentUserIds: string[];
 }
@@ -208,6 +209,7 @@ const emptyForm: UnitFormState = {
   notes: "",
   restrictions: "",
   fee: "",
+  feePercentage: "",
   marketingStartDate: "",
   agentUserIds: [],
 };
@@ -255,6 +257,7 @@ function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
     notes: u.notes || "",
     restrictions: u.restrictions || "",
     fee: u.fee?.toString() || "",
+    feePercentage: "",
     marketingStartDate: u.marketingStartDate || "",
     agentUserIds: Array.isArray(u.agentUserIds) ? u.agentUserIds : [],
   };
@@ -308,6 +311,14 @@ export default function AvailableUnitsPage() {
   const [linkDealOpen, setLinkDealOpen] = useState<AvailableUnit | null>(null);
   const [linkDealId, setLinkDealId] = useState("");
   const [form, setForm] = useState<UnitFormState>(emptyForm);
+  // Fee split for the auto-created deal — same shape as Add Deal so a
+  // unit lands with BGP House + agent rows pre-baked rather than empty.
+  const [unitFeeRows, setUnitFeeRows] = useState<FeeAllocationRow[]>([]);
+  const [unitFeeAllocType, setUnitFeeAllocType] = useState<"percentage" | "fixed">("percentage");
+  // Mirror Add Deal's "Show all fields" toggle — minor fields (Rates,
+  // Service Charge, Use Class, Condition, EPC, Location, Marketing
+  // Start Date, Restrictions) collapse behind it.
+  const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
@@ -541,11 +552,46 @@ export default function AvailableUnitsPage() {
   }, [crmCompanies]);
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/available-units", data),
+    mutationFn: async ({ data, feeRows, feeAllocType }: { data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
+      const res = await apiRequest("POST", "/api/available-units", data);
+      const unit = await res.json();
+      // The server auto-creates a backing deal and stamps its id on the
+      // unit. Fold the user's fee split onto that deal so it lands with
+      // BGP House + agents pre-baked instead of empty (which used to
+      // require re-opening the deal to lock in).
+      const dealId = unit?.dealId;
+      if (dealId && feeRows.length > 0) {
+        const allocations = feeRows
+          .filter(r => (r.isBgpHouse || r.agentName))
+          .map(r => ({
+            agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+            allocationType: feeAllocType,
+            percentage: feeAllocType === "percentage" ? r.percentage : null,
+            fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
+            isBgpHouse: !!r.isBgpHouse,
+          }));
+        if (allocations.length > 0) {
+          try {
+            await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
+          } catch (e: any) {
+            toast({
+              title: "Unit added, fee split failed to save",
+              description: e?.message || "Open the deal to set the split there.",
+              variant: "destructive",
+            });
+          }
+        }
+      }
+      return unit;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      invalidateDealCaches();
       setCreateOpen(false);
       setForm(emptyForm);
+      setUnitFeeRows([]);
+      setUnitFeeAllocType("percentage");
+      setShowAllUnitFields(false);
       toast({ title: "Unit added" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -1495,15 +1541,25 @@ export default function AvailableUnitsPage() {
 
       <UnitFormDialog
         open={createOpen}
-        onOpenChange={(v) => { setCreateOpen(v); if (!v) setForm(emptyForm); }}
+        onOpenChange={(v) => {
+          setCreateOpen(v);
+          if (!v) { setForm(emptyForm); setUnitFeeRows([]); setUnitFeeAllocType("percentage"); setShowAllUnitFields(false); }
+        }}
         title="Add Available Unit"
         form={form}
         setForm={setForm}
         properties={properties}
         propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
-        onSubmit={() => createMutation.mutate(formToPayload(form))}
+        feeRows={unitFeeRows}
+        setFeeRows={setUnitFeeRows}
+        feeAllocType={unitFeeAllocType}
+        setFeeAllocType={setUnitFeeAllocType}
+        showAllFields={showAllUnitFields}
+        setShowAllFields={setShowAllUnitFields}
+        onSubmit={() => createMutation.mutate({ data: formToPayload(form), feeRows: unitFeeRows, feeAllocType: unitFeeAllocType })}
         isPending={createMutation.isPending}
+        isEdit={false}
       />
 
       <UnitFormDialog
@@ -1515,8 +1571,15 @@ export default function AvailableUnitsPage() {
         properties={properties}
         propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
+        feeRows={unitFeeRows}
+        setFeeRows={setUnitFeeRows}
+        feeAllocType={unitFeeAllocType}
+        setFeeAllocType={setUnitFeeAllocType}
+        showAllFields={true}
+        setShowAllFields={setShowAllUnitFields}
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
+        isEdit={true}
       />
 
       <Dialog open={!!deleteItem} onOpenChange={v => { if (!v) setDeleteItem(null); }}>
@@ -2399,7 +2462,10 @@ function MarketingFilesDialog({
 }
 
 function UnitFormDialog({
-  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, onSubmit, isPending,
+  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers,
+  feeRows, setFeeRows, feeAllocType, setFeeAllocType,
+  showAllFields, setShowAllFields, isEdit,
+  onSubmit, isPending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -2409,6 +2475,13 @@ function UnitFormDialog({
   properties: CrmProperty[];
   propertyUnits?: PropertyUnit[];
   bgpUsers: { id: string; name: string }[];
+  feeRows: FeeAllocationRow[];
+  setFeeRows: (r: FeeAllocationRow[]) => void;
+  feeAllocType: "percentage" | "fixed";
+  setFeeAllocType: (t: "percentage" | "fixed") => void;
+  showAllFields: boolean;
+  setShowAllFields: (v: boolean) => void;
+  isEdit: boolean;
   onSubmit: () => void;
   isPending: boolean;
 }) {
@@ -2620,65 +2693,6 @@ function UnitFormDialog({
             <CurrencyInput value={form.sqft} onChange={v => upd("sqft", v)} placeholder="e.g. 1,500" />
           </div>
           <div>
-            <Label>Quoting Rent (£ p.a.)</Label>
-            <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
-          </div>
-          <div>
-            <Label>Fee (£)</Label>
-            <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="e.g. 12,500" prefix="£" />
-          </div>
-          <div>
-            <Label>Rates (£ p.a.)</Label>
-            <CurrencyInput value={form.ratesPa} onChange={v => upd("ratesPa", v)} placeholder="e.g. 25,000" prefix="£" />
-          </div>
-          <div>
-            <Label>Service Charge (£ p.a.)</Label>
-            <CurrencyInput value={form.serviceChargePa} onChange={v => upd("serviceChargePa", v)} placeholder="e.g. 15,000" prefix="£" />
-          </div>
-          <div>
-            <Label>Use Class</Label>
-            <Select value={form.useClass} onValueChange={v => upd("useClass", v)}>
-              <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {USE_CLASSES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Location</Label>
-            <Select value={form.location} onValueChange={v => upd("location", v)}>
-              <SelectTrigger data-testid="select-location"><SelectValue placeholder="Select location..." /></SelectTrigger>
-              <SelectContent>
-                {LOCATIONS.map(l => (
-                  <SelectItem key={l} value={l}>
-                    <span className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${LOCATION_COLORS[l] || "bg-gray-400"}`} />
-                      {l}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Condition</Label>
-            <Select value={form.condition} onValueChange={v => upd("condition", v)}>
-              <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {CONDITIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>EPC Rating</Label>
-            <Select value={form.epcRating} onValueChange={v => upd("epcRating", v)}>
-              <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {EPC_RATINGS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
             <Label>Marketing Status</Label>
             <Select value={legacyToCode(form.marketingStatus) || "AVA"} onValueChange={v => upd("marketingStatus", v)}>
               <SelectTrigger><SelectValue placeholder="Status..." /></SelectTrigger>
@@ -2690,10 +2704,6 @@ function UnitFormDialog({
           <div>
             <Label>Available Date</Label>
             <Input type="date" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
-          </div>
-          <div>
-            <Label>Marketing Start Date</Label>
-            <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
           </div>
           <div className="col-span-2">
             <Label>BGP Contact *</Label>
@@ -2747,14 +2757,141 @@ function UnitFormDialog({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <div className="col-span-2">
-            <Label>Restrictions</Label>
-            <Textarea value={form.restrictions} onChange={e => upd("restrictions", e.target.value)} placeholder="Any use or tenant restrictions..." rows={2} />
+          {/* Financials & timing — same shape as the New Deal form so
+              fee structure is captured up-front instead of relying on
+              the agent to re-open the auto-created deal later. % drives
+              Total fee from Quoting Rent × % (only overrides empty
+              Total so manual numbers survive). FeeAllocationEditor
+              flows to the linked deal's allocations on submit. */}
+          <div className="col-span-2 border-t pt-3 space-y-3">
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & fee split</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Quoting Rent (£ p.a.)</Label>
+                <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
+              </div>
+              <div>
+                <Label className="text-xs">% Agency fee</Label>
+                <Input type="number" step="0.1" value={form.feePercentage}
+                  onChange={(e) => {
+                    const pct = e.target.value;
+                    const rent = parseFloat(form.askingRent);
+                    const pctNum = parseFloat(pct);
+                    const next = { ...form, feePercentage: pct } as UnitFormState;
+                    if (!isNaN(rent) && !isNaN(pctNum) && !form.fee) {
+                      next.fee = String(Math.round(rent * pctNum) / 100);
+                    }
+                    setForm(next);
+                  }}
+                  placeholder="e.g. 10" />
+              </div>
+              <div>
+                <Label className="text-xs">Total fee (£)</Label>
+                <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="auto from rent × %" prefix="£" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">BGP fee split</Label>
+              <div className="border rounded-md p-2.5 bg-muted/30">
+                <FeeAllocationEditor
+                  rows={feeRows}
+                  onChange={setFeeRows}
+                  allocType={feeAllocType}
+                  onAllocTypeChange={setFeeAllocType}
+                  dealFee={parseFloat(form.fee) || null}
+                  bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
+                />
+              </div>
+            </div>
           </div>
+
           <div className="col-span-2">
             <Label>Notes</Label>
             <Textarea value={form.notes} onChange={e => upd("notes", e.target.value)} placeholder="Additional notes..." rows={3} />
           </div>
+
+          {/* Less-frequently-set fields collapse behind a toggle, same
+              shape Add Deal uses. Always-expanded on edit so an existing
+              row isn't pretending it has no values. */}
+          {!isEdit && (
+            <div className="col-span-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                onClick={() => setShowAllFields(!showAllFields)}
+                data-testid="toggle-show-all-fields"
+              >
+                <ChevronDown className={`h-3 w-3 mr-1 transition-transform ${showAllFields ? "rotate-180" : ""}`} />
+                {showAllFields ? "Hide extra fields" : "Show all fields (rates, service charge, use class, condition, EPC, location, restrictions)"}
+              </Button>
+            </div>
+          )}
+
+          {showAllFields && (
+            <>
+              <div>
+                <Label>Rates (£ p.a.)</Label>
+                <CurrencyInput value={form.ratesPa} onChange={v => upd("ratesPa", v)} placeholder="e.g. 25,000" prefix="£" />
+              </div>
+              <div>
+                <Label>Service Charge (£ p.a.)</Label>
+                <CurrencyInput value={form.serviceChargePa} onChange={v => upd("serviceChargePa", v)} placeholder="e.g. 15,000" prefix="£" />
+              </div>
+              <div>
+                <Label>Use Class</Label>
+                <Select value={form.useClass} onValueChange={v => upd("useClass", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    {USE_CLASSES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Condition</Label>
+                <Select value={form.condition} onValueChange={v => upd("condition", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    {CONDITIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>EPC Rating</Label>
+                <Select value={form.epcRating} onValueChange={v => upd("epcRating", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    {EPC_RATINGS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Location</Label>
+                <Select value={form.location} onValueChange={v => upd("location", v)}>
+                  <SelectTrigger data-testid="select-location"><SelectValue placeholder="Select location..." /></SelectTrigger>
+                  <SelectContent>
+                    {LOCATIONS.map(l => (
+                      <SelectItem key={l} value={l}>
+                        <span className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${LOCATION_COLORS[l] || "bg-gray-400"}`} />
+                          {l}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Marketing Start Date</Label>
+                <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
+              </div>
+              <div className="col-span-2">
+                <Label>Restrictions</Label>
+                <Textarea value={form.restrictions} onChange={e => upd("restrictions", e.target.value)} placeholder="Any use or tenant restrictions..." rows={2} />
+              </div>
+            </>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
