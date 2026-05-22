@@ -168,9 +168,13 @@ export default function ImageStudio() {
   const linkedAddress = queryParams.get("address") || "";
   const linkedPropertyId = queryParams.get("propertyId") || "";
   const linkedCollectionId = queryParams.get("collection") || "";
+  // Deep-link support from the brand profile panel — opens Image
+  // Studio with the search box pre-filled to the brand's name so the
+  // user lands on a filtered view.
+  const linkedBrand = queryParams.get("brand") || "";
 
   const [activeTab, setActiveTab] = useState("library");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(linkedBrand);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [selectedImage, setSelectedImage] = useState<ImageStudioImage | null>(null);

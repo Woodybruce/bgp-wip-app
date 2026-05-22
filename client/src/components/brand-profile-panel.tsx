@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
-import { MessageSquare, FolderTree, RefreshCw } from "lucide-react";
+import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
@@ -4393,6 +4394,63 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
   const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
   const [newsTagFilter, setNewsTagFilter] = useState<Set<string>>(new Set());
+
+  // Gallery lightbox + auto-refresh state. Image refresh used to be
+  // manual via two buttons (re-scrape + refresh-images). Now it's fully
+  // automatic: when this brand is opened and its image count is below
+  // target, a refresh fires in the background and the gallery updates
+  // when it finishes.
+  const [lightboxImg, setLightboxImg] = useState<any | null>(null);
+  const autoImageRefreshRan = useRef(false);
+  useEffect(() => {
+    if (autoImageRefreshRan.current) return;
+    // Heuristic for "needs refresh": 0-4 images for a landlord row, 0
+    // images for any other row. Avoids the 5-min round-trip cost when
+    // we already have a decent gallery.
+    const want = isLandlord ? 5 : 1;
+    if ((data.images?.length || 0) >= want) return;
+    autoImageRefreshRan.current = true;
+    (async () => {
+      try {
+        await fetch(`/api/brand/${companyId}/refresh-images`, {
+          method: "POST", credentials: "include", headers: getAuthHeaders(),
+        });
+        // Poll quietly — don't toast unless something interesting happens.
+        const started = Date.now();
+        const poll = async () => {
+          if (Date.now() - started > 4 * 60_000) return;
+          const r = await fetch(`/api/brand/${companyId}/refresh-images/status`, { credentials: "include" });
+          if (!r.ok) { setTimeout(poll, 5000); return; }
+          const st = await r.json();
+          if (st.state === "done") {
+            if ((st.result?.imported || 0) > 0) {
+              queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+            }
+            return;
+          }
+          if (st.state === "error") return;
+          setTimeout(poll, 5000);
+        };
+        setTimeout(poll, 5000);
+      } catch { /* silent — the buttons are gone, but the user can still hit Image Studio */ }
+    })();
+  }, [companyId, isLandlord, data.images?.length]);
+
+  const deleteImageMutation = useMutation({
+    mutationFn: async (imageId: string) => {
+      const r = await fetch(`/api/image-studio/${imageId}`, {
+        method: "DELETE", credentials: "include", headers: getAuthHeaders(),
+      });
+      if (!r.ok) throw new Error(`Delete failed: HTTP ${r.status}`);
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Image removed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      setLightboxImg(null);
+    },
+    onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
+  });
   const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
     staleTime: 5 * 60_000,
@@ -4839,170 +4897,113 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           )}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <div className="text-[10px] text-muted-foreground">{data.images.length} image{data.images.length === 1 ? "" : "s"}</div>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    // Chain: re-scrape landlord website (refills
-                    // landlord_website_findings.image_urls from /portfolio
-                    // and /our-places), then auto-trigger refresh-images
-                    // so the new URLs actually flow into the gallery.
-                    // Bypasses the 14-day freshness gate that suppresses
-                    // the on-load auto-scrape, which is what stranded
-                    // landlords scraped before the pipeline reorder.
-                    try {
-                      toast({ title: "Re-scraping website…", description: "Hitting /portfolio + /our-places. 60-120s." });
-                      const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio`, {
-                        method: "POST",
-                        headers: { ...getAuthHeaders() },
-                      });
-                      if (!r.ok && r.status !== 202) {
-                        const result = await r.json().catch(() => ({}));
-                        toast({ title: "Scrape failed", description: result.error || `HTTP ${r.status}`, variant: "destructive" });
-                        return;
-                      }
-                      const started = Date.now();
-                      const MAX_WAIT = 5 * 60_000;
-                      const pollScrape = async (): Promise<boolean> => {
-                        if (Date.now() - started > MAX_WAIT) return false;
-                        try {
-                          const s = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, {
-                            headers: getAuthHeaders(),
-                            credentials: "include",
-                          });
-                          if (s.ok) {
-                            const st = await s.json();
-                            if (st.progress?.state === "done") return true;
-                            if (st.progress?.state === "error") {
-                              toast({ title: "Scrape failed", description: st.progress.error || "Unknown error", variant: "destructive" });
-                              return false;
-                            }
-                          }
-                        } catch {}
-                        await new Promise(r => setTimeout(r, 5000));
-                        return pollScrape();
-                      };
-                      const ok = await pollScrape();
-                      if (!ok) return;
-                      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-                      // Chain straight into image refresh so the freshly
-                      // harvested URLs actually populate the gallery.
-                      toast({ title: "Scrape done — refreshing images…" });
-                      await fetch(`/api/brand/${companyId}/refresh-images`, {
-                        method: "POST",
-                        headers: { ...getAuthHeaders() },
-                      });
-                      const imgStarted = Date.now();
-                      const pollImages = async () => {
-                        if (Date.now() - imgStarted > MAX_WAIT) return;
-                        try {
-                          const s = await fetch(`/api/brand/${companyId}/refresh-images/status`, {
-                            headers: getAuthHeaders(),
-                            credentials: "include",
-                          });
-                          if (s.ok) {
-                            const st = await s.json();
-                            if (st.state === "done") {
-                              const result = st.result || {};
-                              toast({
-                                title: result.imported > 0 ? `Imported ${result.imported} new images` : "No new images found",
-                                description: result.imported > 0 ? Object.entries(result.bySource || {}).map(([k, n]) => `${n} from ${k}`).join(", ") : undefined,
-                              });
-                              queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-                              return;
-                            }
-                            if (st.state === "error") return;
-                          }
-                        } catch {}
-                        setTimeout(pollImages, 5000);
-                      };
-                      setTimeout(pollImages, 5000);
-                    } catch (e: any) {
-                      toast({ title: "Re-scrape failed", description: e?.message, variant: "destructive" });
-                    }
-                  }}
-                  className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                  data-testid="btn-rescrape-landlord-website"
-                >
-                  Re-scrape website
-                </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  // Fire-and-poll: kicks off background image refresh,
-                  // then polls /status every 5s until done. Avoids
-                  // Railway's 60s edge timeout on image-heavy brands.
-                  try {
-                    const r = await fetch(`/api/brand/${companyId}/refresh-images`, {
-                      method: "POST",
-                      headers: { ...getAuthHeaders() },
-                    });
-                    if (!r.ok && r.status !== 202) {
-                      const result = await r.json().catch(() => ({}));
-                      toast({ title: "Refresh failed", description: result.error || `HTTP ${r.status}`, variant: "destructive" });
-                      return;
-                    }
-                    toast({ title: "Searching for images…", description: "This can take 30-90 seconds. We'll update the panel when it's done." });
-                    const started = Date.now();
-                    const MAX_WAIT = 5 * 60_000;
-                    const poll = async () => {
-                      if (Date.now() - started > MAX_WAIT) return;
-                      try {
-                        const s = await fetch(`/api/brand/${companyId}/refresh-images/status`, {
-                          headers: getAuthHeaders(),
-                          credentials: "include",
-                        });
-                        if (s.ok) {
-                          const st = await s.json();
-                          if (st.state === "done") {
-                            const result = st.result || {};
-                            toast({
-                              title: result.imported > 0 ? `Imported ${result.imported} new images` : "No new images found",
-                              description: result.skipped || (result.imported > 0 ? Object.entries(result.bySource || {}).map(([s, n]) => `${n} from ${s}`).join(", ") : "Sources: press kit, Wikipedia, homepage, Google search"),
-                            });
-                            queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-                            return;
-                          }
-                          if (st.state === "error") {
-                            toast({ title: "Refresh failed", description: st.error, variant: "destructive" });
-                            return;
-                          }
-                        }
-                      } catch {}
-                      setTimeout(poll, 5000);
-                    };
-                    setTimeout(poll, 5000);
-                  } catch (e: any) {
-                    toast({ title: "Refresh failed", description: e?.message, variant: "destructive" });
-                  }
-                }}
-                className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                data-testid="btn-refresh-brand-images"
-              >
-                Refresh images
-              </button>
+              <div className="text-[10px] text-muted-foreground">
+                {data.images.length} image{data.images.length === 1 ? "" : "s"} · auto-refreshed
               </div>
+              {/* Image Studio is the full library + enhance / retag /
+                  upload UI — deep-link with the brand name so it lands
+                  pre-filtered. */}
+              <Link
+                href={`/image-studio?brand=${encodeURIComponent(c.name)}`}
+                className="text-[10px] text-muted-foreground hover:text-foreground underline flex items-center gap-0.5"
+                data-testid="link-open-image-studio"
+              >
+                Open in Image Studio <ExternalLinkIcon className="w-2.5 h-2.5" />
+              </Link>
             </div>
             {data.images.length > 0 && (
               <div className="grid grid-cols-4 gap-1">
-                {data.images.slice(0, 8).map((img: any) => (
-                  <div key={img.id} className="aspect-square rounded border border-border/60 overflow-hidden bg-muted">
-                    <img
-                      src={img.thumbnail_data
-                        ? (img.thumbnail_data.startsWith("data:")
-                            ? img.thumbnail_data
-                            : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
-                        : `/api/brand/gallery-image/${img.id}`}
-                      alt={img.file_name}
-                      className="w-full h-full object-cover"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                    />
-                  </div>
-                ))}
+                {data.images.slice(0, 8).map((img: any) => {
+                  const thumbSrc = img.thumbnail_data
+                    ? (img.thumbnail_data.startsWith("data:")
+                        ? img.thumbnail_data
+                        : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
+                    : `/api/brand/gallery-image/${img.id}`;
+                  return (
+                    <div
+                      key={img.id}
+                      className="relative aspect-square rounded border border-border/60 overflow-hidden bg-muted cursor-zoom-in group"
+                      onClick={() => setLightboxImg(img)}
+                      data-testid={`brand-image-${img.id}`}
+                    >
+                      <img
+                        src={thumbSrc}
+                        alt={img.file_name}
+                        className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                      {/* Hover delete — stops propagation so click doesn't open the lightbox */}
+                      <button
+                        type="button"
+                        className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full bg-black/70 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm("Remove this image?")) deleteImageMutation.mutate(img.id);
+                        }}
+                        title="Remove image"
+                        data-testid={`brand-image-delete-${img.id}`}
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
+
+          {/* Lightbox — click any thumbnail to enlarge. From here the
+              user can delete the image or jump to the Image Studio for
+              the full enhance / retag UI. */}
+          <Dialog open={!!lightboxImg} onOpenChange={(v) => { if (!v) setLightboxImg(null); }}>
+            <DialogContent className="max-w-4xl">
+              <DialogTitle className="text-sm font-medium truncate">
+                {lightboxImg?.file_name || "Image"}
+              </DialogTitle>
+              <DialogDescription className="text-[11px] text-muted-foreground">
+                {lightboxImg?.description || ""}
+              </DialogDescription>
+              {lightboxImg && (
+                <div className="space-y-3">
+                  <div className="rounded-md overflow-hidden bg-muted">
+                    <img
+                      src={`/api/brand/gallery-image/${lightboxImg.id}`}
+                      alt={lightboxImg.file_name}
+                      className="w-full max-h-[70vh] object-contain bg-black/5"
+                      onError={(e) => {
+                        // Fall back to the embedded thumbnail if the full route fails
+                        const el = e.target as HTMLImageElement;
+                        const data = lightboxImg.thumbnail_data;
+                        if (data) {
+                          el.src = typeof data === "string" && data.startsWith("data:") ? data : `data:${lightboxImg.mime_type || "image/jpeg"};base64,${data}`;
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <Link
+                      href={`/image-studio?brand=${encodeURIComponent(c.name)}&imageId=${lightboxImg.id}`}
+                      className="text-xs text-muted-foreground hover:text-foreground underline flex items-center gap-1"
+                      data-testid="lightbox-open-image-studio"
+                    >
+                      Open in Image Studio (enhance, retag, download) <ExternalLinkIcon className="w-3 h-3" />
+                    </Link>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => {
+                        if (confirm("Remove this image?")) deleteImageMutation.mutate(lightboxImg.id);
+                      }}
+                      disabled={deleteImageMutation.isPending}
+                      data-testid="lightbox-delete"
+                    >
+                      <XIcon className="w-3 h-3 mr-1" /> Delete
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
     </aside>
