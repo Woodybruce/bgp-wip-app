@@ -527,8 +527,14 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
     //    (Capital, Holdings, Partners, Asset Managers, Investments,
     //    Management, Group). Landmark filter still wins, so "Capital
     //    House" / "Holdings Court" / "Partners Place" are kept.
-    const BUSINESS_WORD_PATTERN = "(cafe|café|coffee|restaurant|bistro|brasserie|eatery|kitchen|deli|delicatessen|bakery|patisserie|pizzeria|grill|burger|pub|tavern|bar|lounge|nightclub|club|diner|takeaway|takeout|shop|store|boutique|market|salon|barber|barbers|gym|fitness|spa|pharmacy|clinic|surgery|dentist|optician|opticians|garage|dealership|laundrette|laundromat|ltd|plc|llp|limited|inc|incorporated|capital|holdings|partners|investments?|asset\\s*managers?|asset\\s*management|management|advisors?|advisers?|consultants?|consultancy|consulting|services|solutions|group|technologies|systems|enterprises|industries|corp|corporation|company)";
-    const LANDMARK_SUFFIX_PATTERN = "(shopping\\s*centre|shopping\\s*center|mall|plaza|square|park|gardens?|manor|house|tower|towers|galleries|gallery|place|quay|bridge|lights|dock|village|hall|exchange|estate|wharf|works|terrace|crescent|mews|courts?|station|terminal|stadium|arena|arcade|complex|outlet|outlets|island|cross|valley|fields)";
+    //
+    // Important: "spa" used to be in here but caught legitimate hotel
+    // properties ("Mercure St Pauls Hotel and Spa", "Netherwood Hotel &
+    // Spa"). Hotel-and-spa places are properties, not tenants — they
+    // belong on the landmark list. Same goes for "market" — "Brixton
+    // Market" / "Old Spitalfields Market" are landmarks, not tenants.
+    const BUSINESS_WORD_PATTERN = "(cafe|café|coffee|restaurant|bistro|brasserie|eatery|kitchen|deli|delicatessen|bakery|patisserie|pizzeria|grill|burger|pub|tavern|bar|lounge|nightclub|club|diner|takeaway|takeout|shop|store|boutique|salon|barber|barbers|gym|fitness|pharmacy|clinic|surgery|dentist|optician|opticians|garage|dealership|laundrette|laundromat|ltd|plc|llp|limited|inc|incorporated|capital|holdings|partners|investments?|asset\\s*managers?|asset\\s*management|management|advisors?|advisers?|consultants?|consultancy|consulting|services|solutions|group|technologies|systems|enterprises|industries|corp|corporation|company)";
+    const LANDMARK_SUFFIX_PATTERN = "(shopping\\s*centre|shopping\\s*center|mall|plaza|square|park|gardens?|manor|house|tower|towers|galleries|gallery|place|quay|bridge|lights|dock|village|hall|exchange|estate|wharf|works|terrace|crescent|mews|courts?|station|terminal|stadium|arena|arcade|complex|outlet|outlets|island|cross|valley|fields|hotel|hotels|inn|lodge|spa|resort|market|markets)";
     const { rows } = await pool.query<{ id: string; name: string; uprn: string | null; address: any; postcode: string | null }>(
       `SELECT id, name, uprn, address, postcode
          FROM crm_properties
