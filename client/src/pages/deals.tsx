@@ -730,15 +730,36 @@ function SimplifiedCreateBody({
   // Tenant Acquisition + New Letting + Sub-Letting + Consultancy + Secondment
   // fall through to "auto", which renders BOTH landlord and tenant pickers
   // so the agent can link either side as the deal needs.
+  // Sale + Purchase use "investment" which renders BOTH vendor and
+  // purchaser pickers — the * marker on the client side comes from
+  // clientRole below.
   const dt = form.dealType || "";
   const isInvestment = dt === "Purchase" || dt === "Sale";
-  const counterpartyKind: "landlord" | "tenant" | "vendor" | "purchaser" | "auto" =
+  const counterpartyKind: "landlord" | "tenant" | "investment" | "auto" =
     dt === "Lease Acquisition" ? "landlord"  :
     dt === "Lease Disposal" ? "tenant"       :
     dt === "Lease Renewal" || dt === "Rent Review" || dt === "Regear" ? "tenant" :
-    dt === "Purchase" ? "vendor"             :
-    dt === "Sale" ? "purchaser"              :
+    dt === "Purchase" || dt === "Sale" ? "investment" :
     "auto";
+
+  // Who is OUR client for this deal type? Used to mark the right
+  // counterparty picker as required (*) and to drive AML (we KYC the
+  // client, lighter screen for the counterparty). Per the agreed
+  // mapping:
+  //   Sale  → vendor is our client (we're disposing for them)
+  //   Purchase → purchaser is our client (we're acquiring for them)
+  //   Lease Acquisition → tenant (tenant-rep)
+  //   Lease Disposal → tenant
+  //   New Letting → landlord
+  //   Lease Renewal / Rent Review / Regear → either (ambiguous, user picks)
+  //   Tenant Acquisition / Sub-Letting / Consultancy / Secondment → either
+  const clientRole: "landlord" | "tenant" | "vendor" | "purchaser" | null =
+    dt === "Sale" ? "vendor"
+    : dt === "Purchase" ? "purchaser"
+    : dt === "Lease Acquisition" ? "tenant"
+    : dt === "Lease Disposal" ? "tenant"
+    : dt === "New Letting" ? "landlord"
+    : null;
 
   const landlordOptions = companies.filter(c =>
     c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client"
@@ -930,7 +951,7 @@ function SimplifiedCreateBody({
           show both landlord and tenant pickers. */}
       {counterpartyKind === "landlord" && (
         <div>
-          <Label>Landlord</Label>
+          <Label>Landlord{clientRole === "landlord" ? " * (client)" : ""}</Label>
           <EntityCombobox
             testId="select-deal-landlord"
             placeholder="Link landlord"
@@ -946,7 +967,7 @@ function SimplifiedCreateBody({
       {counterpartyKind === "tenant" && (
         <>
           <div>
-            <Label>Landlord</Label>
+            <Label>Landlord{clientRole === "landlord" ? " * (client)" : ""}</Label>
             <EntityCombobox
               testId="select-deal-landlord"
               placeholder="Link landlord"
@@ -959,7 +980,7 @@ function SimplifiedCreateBody({
             />
           </div>
           <div>
-            <Label>Tenant</Label>
+            <Label>Tenant{clientRole === "tenant" ? " * (client)" : ""}</Label>
             <EntityCombobox
               testId="select-deal-tenant"
               placeholder="Link tenant"
@@ -973,34 +994,34 @@ function SimplifiedCreateBody({
           </div>
         </>
       )}
-      {counterpartyKind === "vendor" && (
-        <div>
-          <Label>Vendor</Label>
-          <EntityCombobox
-            testId="select-deal-vendor"
-            placeholder="Link vendor"
-            searchPlaceholder="Search vendors…"
-            value={form.vendorId}
-            items={toComboItems(vendorOptions)}
-            onChange={(v) => set("vendorId", v)}
-            onCreate={createVendor}
-            createLabel="vendor"
-          />
-        </div>
-      )}
-      {counterpartyKind === "purchaser" && (
-        <div>
-          <Label>Purchaser</Label>
-          <EntityCombobox
-            testId="select-deal-purchaser"
-            placeholder="Link purchaser"
-            searchPlaceholder="Search purchasers…"
-            value={form.purchaserId}
-            items={toComboItems(purchaserOptions)}
-            onChange={(v) => set("purchaserId", v)}
-            onCreate={createPurchaser}
-            createLabel="purchaser"
-          />
+      {counterpartyKind === "investment" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>Vendor{clientRole === "vendor" ? " *" : ""}{clientRole === "vendor" ? " (client)" : ""}</Label>
+            <EntityCombobox
+              testId="select-deal-vendor"
+              placeholder="Link vendor"
+              searchPlaceholder="Search vendors…"
+              value={form.vendorId}
+              items={toComboItems(vendorOptions)}
+              onChange={(v) => set("vendorId", v)}
+              onCreate={createVendor}
+              createLabel="vendor"
+            />
+          </div>
+          <div>
+            <Label>Purchaser{clientRole === "purchaser" ? " *" : ""}{clientRole === "purchaser" ? " (client)" : ""}</Label>
+            <EntityCombobox
+              testId="select-deal-purchaser"
+              placeholder="Link purchaser"
+              searchPlaceholder="Search purchasers…"
+              value={form.purchaserId}
+              items={toComboItems(purchaserOptions)}
+              onChange={(v) => set("purchaserId", v)}
+              onCreate={createPurchaser}
+              createLabel="purchaser"
+            />
+          </div>
         </div>
       )}
       {counterpartyKind === "auto" && (
