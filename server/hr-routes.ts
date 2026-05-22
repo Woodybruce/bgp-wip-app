@@ -622,25 +622,24 @@ export function setupHrRoutes(app: Express) {
       let awaitingPayment: Array<{ id: string; name: string; fee: number; status: string; date: string | null; invoicedAt: string | null }> = [];
       try {
         const { rows: dealRows } = await pool.query(
+          // Commission attribution is now driven entirely by
+          // deal_fee_allocations rows. The legacy equal-split fallback
+          // (deal.fee / internal_agent[].length when no allocation row
+          // existed) is gone — backfill ran first, so every historic
+          // deal has explicit rows. Any future deal without allocations
+          // will simply not appear in this agent's pipeline, which is
+          // the correct signal that the split is missing.
           `WITH my_deals AS (
              SELECT d.id, d.name, d.status, d.fee, d.invoiced_at,
                     COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
                     CASE
                       WHEN dfa.percentage    IS NOT NULL THEN d.fee * dfa.percentage / 100.0
                       WHEN dfa.fixed_amount  IS NOT NULL THEN dfa.fixed_amount
-                      ELSE d.fee::numeric / GREATEST(COALESCE(array_length(d.internal_agent, 1), 1), 1)
+                      ELSE 0
                     END AS my_portion
              FROM crm_deals d
-             LEFT JOIN deal_fee_allocations dfa
+             INNER JOIN deal_fee_allocations dfa
                ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = LOWER($1)
-             WHERE EXISTS (
-                     SELECT 1 FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a
-                     WHERE LOWER(a) = LOWER($1)
-                   )
-                OR EXISTS (
-                     SELECT 1 FROM deal_fee_allocations a2
-                     WHERE a2.deal_id = d.id AND LOWER(a2.agent_name) = LOWER($1)
-                   )
            )
            SELECT id, name, status, fee, dt, invoiced_at, my_portion
            FROM my_deals
