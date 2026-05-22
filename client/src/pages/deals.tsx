@@ -1189,17 +1189,18 @@ export function DealFormDialog({
       return;
     }
 
-    // Enforce client + counterparty per deal type. Both names are needed
-    // so AML can fire full KYC on the client and a lighter screen on the
-    // counterparty. EDIT mode skips this — historic deals may pre-date
-    // the rule and we don't want to block routine edits.
-    if (!isEdit && form.dealType) {
+    // Enforce client + counterparty per deal type. Always required —
+    // a deal without both names blocks the AML chain (full KYC on the
+    // client, lighter screen on the counterparty). Applies to edits too:
+    // a historic deal missing a side needs the missing party filled in
+    // before any further changes save.
+    if (form.dealType) {
       const investmentTypes = new Set(["Sale", "Purchase"]);
       if (investmentTypes.has(form.dealType)) {
         if (!form.vendorId || !form.purchaserId) {
           toast({
             title: "Vendor and Purchaser required",
-            description: "Both parties on an investment deal — link or create each.",
+            description: "Both parties on an investment deal — link or create each so AML can run on both sides.",
             variant: "destructive",
           });
           return;
@@ -1209,7 +1210,7 @@ export function DealFormDialog({
         if (!form.landlordId || !form.tenantId) {
           toast({
             title: "Landlord and Tenant required",
-            description: "Both parties needed to fire AML on the right side.",
+            description: "Both parties needed so AML can fire on the client + counterparty.",
             variant: "destructive",
           });
           return;
