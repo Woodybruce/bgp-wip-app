@@ -4277,50 +4277,87 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         const cx = parseFloat(props.Centroid_X);
         const cy = parseFloat(props.Centroid_Y);
         if (Array.isArray(ring) && ring.length > 2 && Number.isFinite(cx) && Number.isFinite(cy)) {
-          // 1) Polygon bbox in screen pixels at this zoom.
+          // 1) Project every vertex to screen pixels at the current zoom.
+          //    Working in screen space (where Y points DOWN) means PCA
+          //    angle plugs straight into CSS rotate() without sign
+          //    gymnastics — that was the bug in the previous attempts.
+          const screenPts = (ring.slice(0, -1) as [number, number][]).map(
+            ([lng, lat]) => map.latLngToLayerPoint([lat, lng]),
+          );
+          if (screenPts.length < 3) continue;
+
+          // Axis-aligned bbox — only used to decide whether the unit is
+          // big enough to bother labelling.
           let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-          for (const [lng, lat] of ring) {
-            const pt = map.latLngToLayerPoint([lat, lng]);
-            if (pt.x < minX) minX = pt.x;
-            if (pt.x > maxX) maxX = pt.x;
-            if (pt.y < minY) minY = pt.y;
-            if (pt.y > maxY) maxY = pt.y;
+          for (const p of screenPts) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
           }
           const widthPx = Math.max(0, maxX - minX);
           const heightPx = Math.max(0, maxY - minY);
-          // Skip tiny on-screen units — text would be unreadable anyway.
           if (Math.min(widthPx, heightPx) < 14 || Math.max(widthPx, heightPx) < 30) {
-            // nothing — fall through, no label
+            // too small — no label
           } else {
-            // 2) Always horizontal. No rotation, no transform, no
-            //    snap-to-axis. If a polygon is too narrow for the fascia
-            //    text at min font size, the label is skipped — better
-            //    than tilting it (Woody's flagged complaint).
-            const longPx = widthPx;
-            const shortPx = heightPx;
+            // 2) PCA on the screen-pixel vertices → angle of the long
+            //    axis. Because we're in screen space, this angle plugs
+            //    straight into CSS transform: rotate() with no sign flip.
+            let mx = 0, my = 0;
+            for (const p of screenPts) { mx += p.x; my += p.y; }
+            mx /= screenPts.length; my /= screenPts.length;
+            let cxx = 0, cxy = 0, cyy = 0;
+            for (const p of screenPts) {
+              const dx = p.x - mx;
+              const dy = p.y - my;
+              cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
+            }
+            const angleRad = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
 
-            // 3) Fit text into the long edge. Condensed sans at typical
-            //    weight uses ~0.55 of fontSize per char. We pick the
-            //    largest font that lets every char fit, then clamp.
-            const safeLong = longPx - 6; // leave 3px padding each side
+            // 3) Project every vertex onto (long axis, short axis) so we
+            //    know the true space available for text along the shop's
+            //    length, not the wider axis-aligned bbox.
+            const ca = Math.cos(angleRad);
+            const sa = Math.sin(angleRad);
+            let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+            for (const p of screenPts) {
+              const u = (p.x - mx) * ca + (p.y - my) * sa;       // along long axis
+              const v = -(p.x - mx) * sa + (p.y - my) * ca;      // perpendicular
+              if (u < minU) minU = u; if (u > maxU) maxU = u;
+              if (v < minV) minV = v; if (v > maxV) maxV = v;
+            }
+            const longPx = maxU - minU;
+            const shortPx = maxV - minV;
+
+            // 4) Keep text right-side-up — never upside-down. CSS rotation
+            //    is CW positive (screen-y points down), so the angle in
+            //    radians from atan2 maps directly to degrees here.
+            let deg = (angleRad * 180) / Math.PI;
+            if (deg > 90) deg -= 180;
+            if (deg < -90) deg += 180;
+
+            // 5) Fit text to the long axis. Condensed sans at typical
+            //    weight uses ~0.55 of fontSize per char. Skip the label
+            //    if even the smallest readable font (7px) won't fit so
+            //    nothing spills outside the polygon.
+            const safeLong = longPx - 6;
             const safeShort = Math.max(6, shortPx - 2);
             const maxByLength = (safeLong / Math.max(fascia.length, 1)) / 0.55;
             const maxByHeight = safeShort * 0.9;
             const fontPx = Math.floor(Math.max(7, Math.min(13, Math.min(maxByLength, maxByHeight))));
-            // Hide if even the smallest readable font (7px) won't fit
-            // — better to show nothing than spill outside the polygon.
             if (fontPx >= 7) {
               const innerWidth = Math.round(safeLong);
-              // Outer box matches the polygon bbox so the label is
-              // visually anchored inside the shape, no overflow.
-              const outerW = Math.round(Math.max(widthPx, innerWidth));
-              const outerH = Math.round(Math.max(heightPx, fontPx + 2));
+              // Outer wrapper covers the polygon's screen bbox + a bit
+              // of slack so the rotated text doesn't get clipped by
+              // overflow:hidden when the polygon is nearly square.
+              const outerW = Math.round(Math.max(widthPx, longPx) + 6);
+              const outerH = Math.round(Math.max(heightPx, shortPx, fontPx + 2) + 6);
               const label = L.marker([cy, cx], {
                 interactive: false,
                 pane: "goadLabelPane",
                 icon: L.divIcon({
                   className: "",
-                  html: `<div data-goad-label-v3="1" style="width:${outerW}px;height:${outerH}px;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden;"><div style="font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;font-size:${fontPx}px;font-weight:600;letter-spacing:-0.2px;color:#0a0a0a;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;width:${innerWidth}px;text-transform:uppercase;line-height:1;">${fascia}</div></div>`,
+                  html: `<div data-goad-label-v4="1" style="width:${outerW}px;height:${outerH}px;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden;"><div style="font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;font-size:${fontPx}px;font-weight:600;letter-spacing:-0.2px;color:#0a0a0a;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;width:${innerWidth}px;transform:rotate(${deg.toFixed(1)}deg);transform-origin:center;text-transform:uppercase;line-height:1;">${fascia}</div></div>`,
                   iconSize: [outerW, outerH],
                   iconAnchor: [outerW / 2, outerH / 2],
                 }),
