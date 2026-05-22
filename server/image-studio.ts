@@ -1675,6 +1675,63 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // ─── AI image finder ─────────────────────────────────────────────────────
+  // Uses Perplexity to surface real exterior / interior photos of a specific
+  // property from UK commercial-property sources (Knight Frank / Savills /
+  // JLL / Estates Gazette / Property Week / CoStar marketing pages).
+  // Returns ranked image URLs the user can preview + import via the existing
+  // /import-stock flow. Replaces the rubbish auto-Wikipedia search for
+  // 'real' (non-generic) building imagery.
+  app.post("/api/image-studio/ai-find-images", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { address, postcode, tenantName } = req.body as { address?: string; postcode?: string; tenantName?: string };
+      if (!address && !postcode) return res.status(400).json({ error: "address or postcode required" });
+      const { askPerplexity, isPerplexityConfigured } = await import("./perplexity");
+      if (!isPerplexityConfigured()) {
+        return res.status(503).json({ error: "Perplexity not configured (set PERPLEXITY_API_KEY on Railway)" });
+      }
+      const target = [address, postcode].filter(Boolean).join(", ");
+      const tenantHint = tenantName ? ` Current/recent tenant: ${tenantName}.` : "";
+      // Tight, JSON-only prompt — we want URLs we can fetch, not prose.
+      const prompt = `Find exterior building photos for this UK commercial property:
+${target}.${tenantHint}
+
+Look at: knightfrank.co.uk, savills.com, jll.co.uk, cbre.co.uk, costar.com, propertyweek.com, egi.co.uk, realla.co.uk, allsop.co.uk, and the tenant brand's own website.
+
+Return STRICT JSON — no commentary, no markdown. Schema:
+{"images":[{"url":"<direct image URL ending in .jpg/.png/.webp>","sourceUrl":"<page where it came from>","sourceName":"<e.g. Knight Frank>","description":"<one-line caption>","quality":"high|medium|low"}]}
+
+Only include images you've actually confirmed exist on those pages. Skip stock libraries (Unsplash/Pexels/Wikipedia) — we want real listing photos of the specific building. Max 8 results.`;
+
+      const r = await askPerplexity(prompt, { maxTokens: 1500, temperature: 0.0 });
+
+      // Parse the JSON out of the response — Perplexity sometimes wraps it
+      // in a ```json block despite instructions, so we strip if needed.
+      let parsed: any = null;
+      const raw = r.answer.trim();
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try { parsed = JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
+      }
+
+      const images = Array.isArray(parsed?.images) ? parsed.images : [];
+      // Sanity-check: every image must be a direct HTTPS URL to a known image extension.
+      const safe = images
+        .filter((i: any) => typeof i?.url === "string" && /^https:\/\//.test(i.url) && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(i.url))
+        .slice(0, 8);
+
+      res.json({
+        target,
+        images: safe,
+        citations: r.citations,
+        rawAnswer: safe.length === 0 ? r.answer : undefined, // surface for debugging when extraction fails
+      });
+    } catch (err: any) {
+      console.error("[ai-find-images] error:", err?.message);
+      res.status(500).json({ error: err?.message || "AI image search failed" });
+    }
+  });
+
   app.post("/api/image-studio/import-stock", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { imageUrl, fileName, photographer, category, area, tags } = req.body;

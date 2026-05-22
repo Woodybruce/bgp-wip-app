@@ -4550,27 +4550,13 @@ async function runStage8(runId: string, req: Request): Promise<void> {
     console.warn("[pathway stage8] image sweep failed:", err?.message);
   }
 
-  // 8b. Retail Context Plan (custom GOAD-style overlay) — filed to the Area
-  // collection so it shows up alongside the other area imagery.
-  try {
-    const rcpMod = await import("./retail-context-plan").catch(() => null as any);
-    if (rcpMod?.renderRetailContextPlan) {
-      const image = await rcpMod.renderRetailContextPlan({ address: run.address, postcode: run.postcode || "", propertyId: run.propertyId });
-      patch.retailContextImageId = image.id;
-      const areaCol = patch.collections?.find(c => c.bucket === "area");
-      if (areaCol?.id && image?.id) {
-        try {
-          await pool.query(
-            `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT (collection_id, image_id) DO NOTHING`,
-            [areaCol.id, image.id],
-          );
-          areaCol.imageCount = (areaCol.imageCount || 0) + 1;
-        } catch {}
-      }
-    }
-  } catch (err: any) {
-    console.warn("[pathway stage8] retail context plan skipped:", err?.message);
-  }
+  // 8b. Retail Context Plan auto-render — DISABLED. The auto-rendered
+  // plan was consistently the wrong angle / wrong zoom and required a
+  // human override almost every time. Pathway now leaves this slot
+  // empty and the UI nudges the user to open the live map and pick a
+  // view, then click Download Plan / Capture which fills retailContextImageId.
+  // (The renderer module is kept — it's still used by the deck export
+  // when a human has set a canonical view.)
 
   await setStageStatus(runId, "stage8", "completed", { stage8: patch });
 }
