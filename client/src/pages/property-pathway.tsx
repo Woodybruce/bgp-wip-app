@@ -548,29 +548,10 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           <Button variant="ghost" size="sm" onClick={onDelete} className="text-muted-foreground hover:text-destructive" title="Delete investigation">
             <Trash2 className="w-4 h-4" />
           </Button>
-          <Button onClick={() => onAdvance(nextStage)} disabled={advancing || run.currentStage > 9} className="gap-1.5">
-            {advancing ? <Clock className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
-            {(() => {
-              // Stages 1–5 auto-chain to Business Plan, so the button label
-              // reflects the chain rather than a single stage.
-              if (nextStage < 6) {
-                switch (nextStage) {
-                  case 1: return "Run Investigation → Business Plan";
-                  case 2: return "Continue → Business Plan";
-                  case 3: return "Continue → Business Plan";
-                  case 4: return "Continue → Business Plan";
-                  case 5: return "Continue → Business Plan";
-                }
-              }
-              switch (nextStage) {
-                case 6: return "Draft Business Plan";
-                case 7: return "Generate Model Studio";
-                case 8: return "Run Studio Time";
-                case 9: return "Generate Why Buy";
-                default: return `Run Stage ${nextStage}`;
-              }
-            })()}
-          </Button>
+          {/* The big 'Run Stage / Generate' button is gone — every stage
+              now auto-runs end-to-end on Pathway start. The 'Refresh'
+              button to the left still re-fires Stage 1 (and the chain
+              behind it) when new emails / data come in. */}
         </div>
       </div>
 
@@ -1330,7 +1311,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 Set tenant
               </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={() => onAdvance(2)}>Re-run Stage 2</Button>
+            {/* Re-run button removed — Stage 2 auto-runs as part of the
+                pathway chain. If it fails, hit Refresh in the header
+                to restart from Stage 1. */}
           </CardContent>
         </Card>
       ) : s2 && !s2.skipped ? (
@@ -1427,17 +1410,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             <CardTitle className="text-base flex items-center gap-2">
               <Building2 className="w-4 h-4" /> Property Intelligence
               <span className="text-[10px] text-muted-foreground font-normal ml-2">Virtual — materialise to SharePoint at Investigation Board</span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-auto h-7 text-[11px]"
-                onClick={() => onAdvance(4)}
-                disabled={advancing}
-                title="Re-run Stage 4 — re-resolves Companies House + planning + floor plans from Stage 1 data"
-              >
-                {advancing ? <Clock className="w-3 h-3 mr-1 animate-spin" /> : <Search className="w-3 h-3 mr-1" />}
-                Re-run
-              </Button>
+              {/* Stage 4 re-run button removed — auto-runs in the chain. */}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-3">
@@ -1758,7 +1731,7 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
           <p className="text-muted-foreground">Agree the business plan first — the model is generated from its targets.</p>
         )}
         {planAgreed && !stage7?.modelRunId && (
-          <p className="text-muted-foreground">Click "Generate Model Studio" above to build the workbook from the agreed plan.</p>
+          <p className="text-muted-foreground">Excel Model auto-builds from the agreed Business Plan as part of the pathway chain — should appear here shortly.</p>
         )}
         {stage7?.modelRunId && (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">

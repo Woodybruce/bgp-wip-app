@@ -4995,16 +4995,17 @@ export function registerPropertyPathwayRoutes(app: Express) {
         })
         .returning();
 
-      // Auto-pilot stages 1 → 7 (Briefing → Excel Model). Stage 8 is
-      // Image Studio which needs human curation, so we stop there. The
-      // chain runs entirely in the background; the user lands on the
-      // run page and watches each stage tick through. Opt-out via
-      // {autoRun: false} for callers that want manual control.
+      // Auto-pilot the entire pathway end-to-end — every stage runs in
+      // the background, the user lands on the run page and watches each
+      // one tick through. Stops at Stage 10 exclusive (so 1→9: Briefing,
+      // Planning, Ownership, Clouseau, Data Quality, Business Plan,
+      // Excel Model, Image Studio, Why Buy). Opt out via
+      // {autoRun: false}.
       const autoRun = (req.body as any)?.autoRun !== false;
       if (autoRun) {
         const newRunId = run.id;
         (async () => {
-          const chainCap = 8;
+          const chainCap = 10;
           let cur = 1;
           while (cur < chainCap) {
             console.log(`[pathway start auto-chain] running stage ${cur} for ${newRunId}`);
