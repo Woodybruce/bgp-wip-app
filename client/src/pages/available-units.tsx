@@ -189,6 +189,12 @@ interface UnitFormState {
   feePercentage: string;
   marketingStartDate: string;
   agentUserIds: string[];
+  // Landlord brand (client). Auto-pre-filled from
+  // crm_properties.landlord_id when the user picks a property, but
+  // overrideable. No Xero billing entity at this stage — that's a
+  // SOL-handover concern.
+  landlordId: string;
+  landlordName: string;
 }
 
 const emptyForm: UnitFormState = {
@@ -212,6 +218,8 @@ const emptyForm: UnitFormState = {
   feePercentage: "",
   marketingStartDate: "",
   agentUserIds: [],
+  landlordId: "",
+  landlordName: "",
 };
 
 function formToPayload(f: UnitFormState) {
@@ -235,6 +243,7 @@ function formToPayload(f: UnitFormState) {
     fee: f.fee ? parseFloat(f.fee) : null,
     marketingStartDate: f.marketingStartDate || null,
     agentUserIds: f.agentUserIds.length > 0 ? f.agentUserIds : null,
+    landlordId: f.landlordId || null,
   };
 }
 
@@ -260,6 +269,8 @@ function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
     feePercentage: "",
     marketingStartDate: u.marketingStartDate || "",
     agentUserIds: Array.isArray(u.agentUserIds) ? u.agentUserIds : [],
+    landlordId: (u as any).landlordId || "",
+    landlordName: "",
   };
 }
 
@@ -1555,6 +1566,7 @@ export default function AvailableUnitsPage() {
         setFeeRows={setUnitFeeRows}
         feeAllocType={unitFeeAllocType}
         setFeeAllocType={setUnitFeeAllocType}
+        crmCompanies={crmCompanies}
         showAllFields={showAllUnitFields}
         setShowAllFields={setShowAllUnitFields}
         onSubmit={() => createMutation.mutate({ data: formToPayload(form), feeRows: unitFeeRows, feeAllocType: unitFeeAllocType })}
@@ -1575,6 +1587,7 @@ export default function AvailableUnitsPage() {
         setFeeRows={setUnitFeeRows}
         feeAllocType={unitFeeAllocType}
         setFeeAllocType={setUnitFeeAllocType}
+        crmCompanies={crmCompanies}
         showAllFields={true}
         setShowAllFields={setShowAllUnitFields}
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
@@ -2462,7 +2475,7 @@ function MarketingFilesDialog({
 }
 
 function UnitFormDialog({
-  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers,
+  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   showAllFields, setShowAllFields, isEdit,
   onSubmit, isPending,
@@ -2475,6 +2488,7 @@ function UnitFormDialog({
   properties: CrmProperty[];
   propertyUnits?: PropertyUnit[];
   bgpUsers: { id: string; name: string }[];
+  crmCompanies?: CrmCompany[];
   feeRows: FeeAllocationRow[];
   setFeeRows: (r: FeeAllocationRow[]) => void;
   feeAllocType: "percentage" | "fixed";
@@ -2588,7 +2602,24 @@ function UnitFormDialog({
                 subLabel: p.postcode || undefined,
                 keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
               }))}
-              onChange={(val) => upd("propertyId", val || "")}
+              onChange={(val) => {
+                // Auto-fill the Landlord picker from the picked
+                // property's landlord_id. User can override below. Only
+                // overrides when the user hasn't already touched the
+                // landlord field, so previously-picked landlords on a
+                // re-pick survive.
+                const prop = properties.find(p => p.id === val);
+                const propLandlordId = (prop as any)?.landlordId || "";
+                const landlordBrand = propLandlordId
+                  ? crmCompanies.find(c => c.id === propLandlordId)
+                  : null;
+                setForm({
+                  ...form,
+                  propertyId: val || "",
+                  landlordId: form.landlordId || propLandlordId,
+                  landlordName: form.landlordName || landlordBrand?.name || "",
+                });
+              }}
               onCreated={() => {
                 // Newly-created property won't be in `properties` yet —
                 // PropertyCombobox holds the row internally so the
@@ -2597,6 +2628,54 @@ function UnitFormDialog({
                 queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
               }}
             />
+          </div>
+          {/* Landlord (the client for a Letting deal). Auto-pre-filled
+              from the picked property's landlord_id; user can swap to a
+              different brand or create one inline. No Xero billing
+              entity at this stage — that's a SOL-handover concern, not
+              an AVA one. */}
+          <div className="col-span-2">
+            <Label>Landlord (client)</Label>
+            <EntityCombobox
+              testId="select-unit-landlord"
+              placeholder="Link landlord"
+              searchPlaceholder="Search landlords…"
+              value={form.landlordId}
+              items={crmCompanies
+                .filter(c =>
+                  c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client"
+                  || c.id === form.landlordId
+                )
+                .map(c => ({
+                  id: c.id,
+                  label: c.name,
+                  subLabel: (c as any).ukEntityName || c.companyType || undefined,
+                  keywords: [c.companyType || "", c.domainUrl || ""].filter(Boolean),
+                }))}
+              onChange={(v) => {
+                const picked = crmCompanies.find(c => c.id === v);
+                setForm({
+                  ...form,
+                  landlordId: v,
+                  landlordName: picked?.name || "",
+                });
+              }}
+              onCreate={async (name) => {
+                const r = await apiRequest("POST", "/api/crm/companies", {
+                  name: name.trim(),
+                  companyType: "Landlord",
+                });
+                const created = await r.json();
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+                return { id: String(created.id), label: created.name, subLabel: created.companyType };
+              }}
+              createLabel="landlord"
+            />
+            {!form.landlordId && form.propertyId && (
+              <p className="text-[10px] text-amber-700 mt-0.5">
+                No landlord linked to this property — picking one here will also stamp it on the property going forward.
+              </p>
+            )}
           </div>
           <div>
             <Label>Deal Type *</Label>

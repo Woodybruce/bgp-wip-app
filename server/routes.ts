@@ -3024,6 +3024,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!unit.dealId) {
         try {
           const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          // Landlord linkage: prefer the value the user picked on the
+          // form (it may differ from property.landlord_id if they
+          // overrode), then fall back to property.landlord_id. Stamps
+          // the deal at AVA so AML on the landlord side fires the
+          // moment the deal flips to SOL.
+          const landlordId = (req.body as any).landlordId
+            || (property as any)?.landlordId
+            || null;
+          // Also backfill property.landlord_id if the user picked one
+          // and the property was missing one — so the next deal on
+          // this property doesn't repeat the same prompt.
+          if ((req.body as any).landlordId && property && !(property as any).landlordId) {
+            try {
+              await pool.query(
+                `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
+                [(req.body as any).landlordId, property.id]
+              );
+            } catch (e: any) {
+              console.warn("[available-units POST] property landlord backfill failed:", e.message);
+            }
+          }
           const deal = await storage.createCrmDeal({
             name: property
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
@@ -3036,6 +3057,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             fee: unit.fee ?? undefined,
             rentPa: unit.askingRent ?? undefined,
             totalAreaSqft: unit.sqft ?? undefined,
+            landlordId: landlordId || undefined,
           } as any);
           await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
           (unit as any).dealId = deal.id;

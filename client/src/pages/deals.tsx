@@ -937,8 +937,21 @@ function SimplifiedCreateBody({
             keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
           }))}
           onChange={(val) => {
-            set("propertyId", val);
-            applyAutoName({ ...form, propertyId: val });
+            // Auto-fill landlord (leasing) or vendor (Sale/Purchase)
+            // from the picked property's landlord_id when the user
+            // hasn't already chosen one. The property's landlord is
+            // canonically the same as the deal-side counterparty for
+            // most flows — saves a click.
+            const prop = properties.find(p => p.id === val);
+            const propLandlordId = (prop as any)?.landlordId || "";
+            const investType = form.dealType === "Sale" || form.dealType === "Purchase";
+            const patch: any = { propertyId: val };
+            if (propLandlordId) {
+              if (investType && !form.vendorId) patch.vendorId = propLandlordId;
+              if (!investType && !form.landlordId) patch.landlordId = propLandlordId;
+            }
+            setForm((p: any) => ({ ...p, ...patch }));
+            applyAutoName({ ...form, ...patch });
           }}
           onCreated={(prop) => {
             // The parent's properties array updates after the next
