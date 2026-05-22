@@ -3316,15 +3316,18 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // Search history & CRM layers
   const [recentSearches, setRecentSearches] = useState<any[]>([]);
   const [crmProperties, setCrmProperties] = useState<any[]>([]);
-  const [showSearchHistory, setShowSearchHistory] = useState(false);
-  const [showCrmLayer, setShowCrmLayer] = useState(false);
+  // Landing-on-map defaults: every useful layer on so the operator
+  // sees everything BGP knows about an area at a glance. Street View
+  // stays off because turning it on hijacks the click handler.
+  const [showSearchHistory, setShowSearchHistory] = useState(true);
+  const [showCrmLayer, setShowCrmLayer] = useState(true);
   const searchMarkersRef = useRef<L.LayerGroup | null>(null);
   const crmMarkersRef = useRef<L.LayerGroup | null>(null);
 
   // OS Data layers
   const [showOSBuildings, setShowOSBuildings] = useState(true);
   const [showOSUprns, setShowOSUprns] = useState(false);
-  const [showOSSites, setShowOSSites] = useState(false);
+  const [showOSSites, setShowOSSites] = useState(true);
   const osBuildingLayerRef = useRef<L.LayerGroup | null>(null);
   const osUprnLayerRef = useRef<L.LayerGroup | null>(null);
   const osSiteLayerRef = useRef<L.LayerGroup | null>(null);
@@ -3332,11 +3335,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const osDebounceRef = useRef<ReturnType<typeof setTimeout>>();
   const [mapZoom, setMapZoom] = useState(17);
 
-  // CRM data layers — Deals, Comps, Lease Events
-  const [showDeals, setShowDeals] = useState(false);
-  const [showComps, setShowComps] = useState(false);
-  const [showLeaseEvents, setShowLeaseEvents] = useState(false);
-  const [showPathway, setShowPathway] = useState(false);
+  // CRM data layers — Deals, Comps, Lease Events. All default-on so
+  // landing on the map shows every signal at once.
+  const [showDeals, setShowDeals] = useState(true);
+  const [showComps, setShowComps] = useState(true);
+  const [showLeaseEvents, setShowLeaseEvents] = useState(true);
+  const [showPathway, setShowPathway] = useState(true);
   const pathwayMarkersRef = useRef<L.LayerGroup | null>(null);
   // ── Street View on-click ───────────────────────────────────────────────────
   // When toggled on, clicking the map opens an embedded Google Street View
@@ -3351,11 +3355,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // them as colour-coded polygons. The previous synthesised version (CRM +
   // VOA + Places mash-up) is retained server-side for the Goad-plan PDF
   // export but is no longer the source of truth for the live map layer.
-  const [showRetailContext, setShowRetailContext] = useState(false);
+  // Default-on: the Goad layer is the single most useful overlay so
+  // it loads on first landing. The ~9.6MB GeoJSON fetch is cached for
+  // the rest of the session.
+  const [showRetailContext, setShowRetailContext] = useState(true);
   // Mirror state into a ref so closures captured in the map-init effect
   // (renderBuildings, fetchOSData, …) can read the live value without
   // being recreated on every toggle.
-  const showRetailContextRef = useRef(false);
+  const showRetailContextRef = useRef(true);
   useEffect(() => { showRetailContextRef.current = showRetailContext; }, [showRetailContext]);
   const [goadFeatures, setGoadFeatures] = useState<any[]>([]);
   const [retailFetching, setRetailFetching] = useState(false);
@@ -5453,7 +5460,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                           : "Resolver returned no result for this address."}
                       </p>
                     )}
-                    {(() => {
+                    {goadPanelContext.landRegistry && (() => {
                       const lr = goadPanelContext.landRegistry;
                       const fhs = (lr.matched?.freeholds || []).length > 0 ? lr.matched.freeholds : lr.fallback?.freeholds || [];
                       const lhs = (lr.matched?.leaseholds || []).length > 0 ? lr.matched.leaseholds : lr.fallback?.leaseholds || [];
