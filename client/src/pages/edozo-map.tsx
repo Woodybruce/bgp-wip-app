@@ -5460,7 +5460,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                           : "Resolver returned no result for this address."}
                       </p>
                     )}
-                    {(() => {
+                    {goadPanelContext.landRegistry && (() => {
                       const lr = goadPanelContext.landRegistry;
                       const fhs = (lr.matched?.freeholds || []).length > 0 ? lr.matched.freeholds : lr.fallback?.freeholds || [];
                       const lhs = (lr.matched?.leaseholds || []).length > 0 ? lr.matched.leaseholds : lr.fallback?.leaseholds || [];
