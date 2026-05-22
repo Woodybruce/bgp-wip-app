@@ -22,9 +22,17 @@ function htmlToText(html: string): string {
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
   s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
   s = s.replace(/<!--[\s\S]*?-->/g, "");
+  // Image-heavy newsletters (Green Street News Morning Bulletin etc.)
+  // carry article headlines inside <img alt="..."> — pull those out
+  // before the tag strip so they aren't lost. Same for aria-label and
+  // title which marketing emails sometimes use instead.
+  s = s.replace(
+    /<img\b[^>]*?\b(?:alt|aria-label|title)\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/gi,
+    (_m, _q, dq, sq) => ` ${dq || sq || ""} `
+  );
   // Block-level and <br> tags become newlines BEFORE stripping remaining tags.
   s = s.replace(/<\s*br\s*\/?\s*>/gi, "\n");
-  s = s.replace(/<\/(p|div|li|tr|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
+  s = s.replace(/<\/(p|div|li|tr|td|th|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
   s = s.replace(/<\s*hr\s*\/?\s*>/gi, "\n---\n");
   // Strip all remaining tags.
   s = s.replace(/<[^>]+>/g, " ");
