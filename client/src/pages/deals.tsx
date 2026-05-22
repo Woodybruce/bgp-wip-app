@@ -763,6 +763,7 @@ function DealUnitPicker({
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
+  nameAutoFilled, setNameAutoFilled,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -772,6 +773,8 @@ function SimplifiedCreateBody({
   setFeeRows: (r: FeeAllocationEditorRow[]) => void;
   feeAllocType: "percentage" | "fixed";
   setFeeAllocType: (t: "percentage" | "fixed") => void;
+  nameAutoFilled: boolean;
+  setNameAutoFilled: (v: boolean) => void;
   companies: CrmCompany[];
   users: { id: string; name: string }[];
   toggleAgent: (name: string) => void;
@@ -810,6 +813,32 @@ function SimplifiedCreateBody({
     : dt === "Lease Disposal" ? "tenant"
     : dt === "New Letting" ? "landlord"
     : null;
+
+  // Deal name auto-fill rule (Woody, 2026-05): non-investment uses
+  //   `Tenant – Property`, investment uses `Client – Property` where
+  //   Client = Vendor (Sale) or Purchaser (Purchase). Stays in sync as
+  //   long as the user hasn't manually typed in the Deal Name box —
+  //   typing flips nameAutoFilled off and the auto-fill stops touching
+  //   it.
+  const computeAutoName = (f: any): string => {
+    const prop = properties.find(p => p.id === f.propertyId);
+    const propName = prop?.name || "";
+    const investType = f.dealType === "Sale" || f.dealType === "Purchase";
+    let cpName = "";
+    if (investType) {
+      const clientId = f.dealType === "Sale" ? f.vendorId : f.purchaserId;
+      cpName = companies.find(c => c.id === clientId)?.name || "";
+    } else {
+      cpName = companies.find(c => c.id === f.tenantId)?.name || "";
+    }
+    if (cpName && propName) return `${cpName} – ${propName}`;
+    return cpName || propName || "";
+  };
+  const applyAutoName = (next: any) => {
+    if (!nameAutoFilled) return;
+    const auto = computeAutoName(next);
+    if (auto && auto !== next.name) setForm((p: any) => ({ ...p, name: auto }));
+  };
 
   const landlordOptions = companies.filter(c =>
     c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client"
@@ -909,17 +938,28 @@ function SimplifiedCreateBody({
           }))}
           onChange={(val) => {
             set("propertyId", val);
-            if (val && !form.name.trim()) {
-              const prop = properties.find(p => p.id === val);
-              if (prop) set("name", prop.name);
-            }
+            applyAutoName({ ...form, propertyId: val });
           }}
           onCreated={(prop) => {
             // The parent's properties array updates after the next
             // refetch; meanwhile the picker holds the row so the
             // trigger label stays correct.
             queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
-            if (!form.name.trim()) set("name", prop.name);
+            // Auto-name driven by counterparty + property; the new
+            // property may not be in `properties` yet so seed the
+            // lookup with its name directly.
+            if (nameAutoFilled) {
+              const investType = form.dealType === "Sale" || form.dealType === "Purchase";
+              let cpName = "";
+              if (investType) {
+                const clientId = form.dealType === "Sale" ? form.vendorId : form.purchaserId;
+                cpName = companies.find(c => c.id === clientId)?.name || "";
+              } else {
+                cpName = companies.find(c => c.id === form.tenantId)?.name || "";
+              }
+              const auto = cpName && prop.name ? `${cpName} – ${prop.name}` : (cpName || prop.name);
+              if (auto) set("name", auto);
+            }
           }}
         />
       </div>
@@ -939,6 +979,7 @@ function SimplifiedCreateBody({
             if (autoTeam && !form.team.includes(autoTeam)) {
               setForm((p: any) => ({ ...p, team: [...p.team, autoTeam] }));
             }
+            applyAutoName({ ...form, dealType: val });
           }}
         >
           <SelectTrigger data-testid="select-deal-type">
@@ -1012,7 +1053,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search landlords…"
               value={form.landlordId}
               items={toComboItems(landlordOptions)}
-              onChange={(v) => { set("landlordId", v); set("landlordEntityId", ""); }}
+              onChange={(v) => { set("landlordId", v); set("landlordEntityId", ""); applyAutoName({ ...form, landlordId: v }); }}
               onCreate={createLandlord}
               createLabel="landlord"
             />
@@ -1043,7 +1084,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search tenants…"
               value={form.tenantId}
               items={toComboItems(tenantOptions)}
-              onChange={(v) => { set("tenantId", v); set("tenantEntityId", ""); }}
+              onChange={(v) => { set("tenantId", v); set("tenantEntityId", ""); applyAutoName({ ...form, tenantId: v }); }}
               onCreate={createTenant}
               createLabel="tenant"
             />
@@ -1078,7 +1119,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search vendors…"
               value={form.vendorId}
               items={toComboItems(vendorOptions)}
-              onChange={(v) => { set("vendorId", v); set("vendorEntityId", ""); }}
+              onChange={(v) => { set("vendorId", v); set("vendorEntityId", ""); applyAutoName({ ...form, vendorId: v }); }}
               onCreate={createVendor}
               createLabel="vendor"
             />
@@ -1109,7 +1150,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search purchasers…"
               value={form.purchaserId}
               items={toComboItems(purchaserOptions)}
-              onChange={(v) => { set("purchaserId", v); set("purchaserEntityId", ""); }}
+              onChange={(v) => { set("purchaserId", v); set("purchaserEntityId", ""); applyAutoName({ ...form, purchaserId: v }); }}
               onCreate={createPurchaser}
               createLabel="purchaser"
             />
@@ -1136,12 +1177,12 @@ function SimplifiedCreateBody({
       )}
 
       <div>
-        <Label htmlFor="deal-name">Deal Name <span className="text-muted-foreground text-xs">(optional — auto-fills from property)</span></Label>
+        <Label htmlFor="deal-name">Deal Name <span className="text-muted-foreground text-xs">(auto-fills as {counterpartyKind === "investment" ? "Client – Property" : "Tenant – Property"})</span></Label>
         <Input
           id="deal-name"
           value={form.name}
-          onChange={(e) => set("name", e.target.value)}
-          placeholder={form.propertyId ? properties.find(p => p.id === form.propertyId)?.name || "" : "Enter deal name"}
+          onChange={(e) => { setNameAutoFilled(false); set("name", e.target.value); }}
+          placeholder={computeAutoName(form) || "Enter deal name"}
           data-testid="input-deal-name"
         />
       </div>
@@ -1312,6 +1353,11 @@ export function DealFormDialog({
   // after the deal is created.
   const [feeRows, setFeeRows] = useState<FeeAllocationEditorRow[]>([]);
   const [feeAllocType, setFeeAllocType] = useState<"percentage" | "fixed">("percentage");
+  // Tracks whether the deal name is still being managed by the auto-fill
+  // rule or has been hand-edited. Goes false the first time Layla types
+  // into the deal name input — from that point we stop overwriting.
+  // Edit mode starts in "manual" so we never trample a saved name.
+  const [nameAutoFilled, setNameAutoFilled] = useState<boolean>(!deal);
 
   // Reset form whenever the dialog re-opens. Without this, the previous
   // create attempt's values stick around — Layla hit 'New Deal' after
@@ -1326,6 +1372,7 @@ export function DealFormDialog({
     setShowAllFields(false);
     setFeeRows([]);
     setFeeAllocType("percentage");
+    setNameAutoFilled(!deal); // new = auto-managed; edit = treat name as user-owned
   }, [open, deal]);
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
@@ -1503,6 +1550,8 @@ export function DealFormDialog({
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}
               setFeeAllocType={setFeeAllocType}
+              nameAutoFilled={nameAutoFilled}
+              setNameAutoFilled={setNameAutoFilled}
             />
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
