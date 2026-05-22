@@ -45,6 +45,7 @@ import {
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
+import { PropertyCombobox } from "@/components/property-combobox";
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
@@ -2316,16 +2317,25 @@ function UnitFormDialog({
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
             <Label>Property *</Label>
-            <Select value={form.propertyId} onValueChange={v => upd("propertyId", v)}>
-              <SelectTrigger data-testid="select-property">
-                <SelectValue placeholder="Select property..." />
-              </SelectTrigger>
-              <SelectContent>
-                {properties.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <PropertyCombobox
+              testId="select-property"
+              placeholder="Select property or paste an address"
+              value={form.propertyId}
+              items={properties.map(p => ({
+                id: p.id,
+                label: p.name,
+                subLabel: p.postcode || undefined,
+                keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
+              }))}
+              onChange={(val) => upd("propertyId", val || "")}
+              onCreated={() => {
+                // Newly-created property won't be in `properties` yet —
+                // PropertyCombobox holds the row internally so the
+                // trigger label stays correct until the cache refetch
+                // catches up.
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+              }}
+            />
           </div>
           <div>
             <Label>Deal Type *</Label>
