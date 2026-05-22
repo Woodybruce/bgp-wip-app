@@ -37,7 +37,7 @@ function isValidStage(s: any): s is Stage {
  * auto-ticking. Every run writes a deal_events entry so the audit log
  * captures the outcome whether or not the orchestrator succeeded.
  */
-async function autoLaunchAmlForDeal(
+export async function autoLaunchAmlForDeal(
   dealId: string,
   actorId: string | null,
   actorName: string | null,

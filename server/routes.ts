@@ -4027,6 +4027,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Build the field set from the form. Used to either UPDATE an existing
       // linked deal (the common case now that Add Unit auto-creates a deal)
       // or CREATE a new one (only when the unit was somehow orphaned).
+      //
+      // Contracting entities: tenantId comes from the WIP form's
+      // EntityCombobox; landlordId is auto-resolved from the property
+      // (crm_properties.landlord_id) since the landlord is implicit at
+      // SOL on a letting deal. Xero billing entities (tenant + landlord)
+      // are also captured for the invoicing chain.
       const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
@@ -4042,6 +4048,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
         comments: body.comments || undefined,
         amlCheckCompleted: body.amlChecked || undefined,
+        tenantId: body.tenantId || undefined,
+        tenantEntityId: body.tenantEntityId || undefined,
+        tenantEntityName: body.tenantEntityName || undefined,
+        // Landlord auto-resolved from property.landlord_id — explicit body
+        // override wins (rare; only if the property's landlord changed
+        // between AVA and SOL).
+        landlordId: body.landlordId || (property as any)?.landlordId || undefined,
+        landlordEntityId: body.landlordEntityId || undefined,
+        landlordEntityName: body.landlordEntityName || undefined,
       };
 
       let deal;
@@ -4059,20 +4074,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         } as any);
       }
 
-      if (body.tenantName && deal) {
-        try {
-          const { crmContacts } = await import("@shared/schema");
-          const existing = await db.select().from(crmContacts).where(sql`LOWER(name) = LOWER(${body.tenantName})`).limit(1);
-          if (existing.length > 0) {
-            await storage.updateCrmDeal(deal.id, { tenantId: existing[0].id });
-          }
-        } catch (_) {}
-      }
-
       await storage.updateAvailableUnit(req.params.id, {
         dealId: deal?.id ?? unit.dealId,
         marketingStatus: "SOL",
       });
+
+      // Fire AML on every counterparty now that the deal carries real
+      // company links rather than a tenant-name string. Auto-launched
+      // chain mirrors the deal-stages SOL transition path so an
+      // AVA→SOL via Letting Tracker behaves the same as a direct
+      // kanban drag-to-SOL.
+      if (deal?.id) {
+        try {
+          const { autoLaunchAmlForDeal } = await import("./deal-stages");
+          await autoLaunchAmlForDeal(
+            deal.id,
+            (req as any).user?.id || null,
+            (req as any).user?.name || null,
+          );
+        } catch (e: any) {
+          console.warn("[promote-unit] AML auto-launch failed:", e?.message);
+        }
+      }
 
       // If user ticked "Promote anyway" to bypass missing AML / fee-agreement,
       // log it so a future compliance report can chase the gaps before exchange.

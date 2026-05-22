@@ -46,6 +46,8 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import { PropertyCombobox } from "@/components/property-combobox";
+import { EntityCombobox } from "@/components/entity-combobox";
+import { XeroContactPicker } from "@/components/xero-contact-picker";
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
@@ -319,7 +321,18 @@ export default function AvailableUnitsPage() {
     dealType: "Letting",
     team: [] as string[],
     agent: "",
+    // Tenant brand (crm_companies.id) + cached display name. Replaces the
+    // old free-text tenantName so AML can fire on a real company link
+    // rather than a string lookup. Tenant Xero entity is the billing /
+    // legal entity for invoicing.
+    tenantId: "",
     tenantName: "",
+    tenantEntityId: "",
+    tenantEntityName: "",
+    // Landlord Xero entity — landlord brand is derived from the
+    // property (crm_properties.landlord_id) and shown read-only.
+    landlordEntityId: "",
+    landlordEntityName: "",
     fee: "",
     feeAgreement: "",
     askingRent: "",
@@ -694,7 +707,12 @@ export default function AvailableUnitsPage() {
       dealType: existingDeal?.dealType || "Letting",
       team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
       agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "",
-      tenantName: "",
+      tenantId: existingDeal?.tenantId || "",
+      tenantName: crmCompanies.find(c => c.id === existingDeal?.tenantId)?.name || "",
+      tenantEntityId: (existingDeal as any)?.tenantEntityId || "",
+      tenantEntityName: (existingDeal as any)?.tenantEntityName || "",
+      landlordEntityId: (existingDeal as any)?.landlordEntityId || "",
+      landlordEntityName: (existingDeal as any)?.landlordEntityName || "",
       fee: (existingDeal?.fee ?? unit.fee)?.toString() || "",
       feeAgreement: existingDeal?.feeAgreement || "",
       askingRent: (existingDeal?.rentPa ?? unit.askingRent)?.toString() || "",
@@ -1564,28 +1582,114 @@ export default function AvailableUnitsPage() {
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1">Agent *</Label>
-                <Select value={wipForm.agent} onValueChange={v => setWipForm(f => ({ ...f, agent: v }))}>
-                  <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
-                  <SelectContent>
-                    {bgpUsers.map(u => (
-                      <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs mb-1">Tenant / Applicant *</Label>
-                <Input
-                  value={wipForm.tenantName}
-                  onChange={e => setWipForm(f => ({ ...f, tenantName: e.target.value }))}
-                  placeholder="Tenant name"
-                  data-testid="wip-tenant"
-                />
-              </div>
+            <div>
+              <Label className="text-xs mb-1">Agent *</Label>
+              <Select value={wipForm.agent} onValueChange={v => setWipForm(f => ({ ...f, agent: v }))}>
+                <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
+                <SelectContent>
+                  {bgpUsers.map(u => (
+                    <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+
+            {/* Contracting entities — required at SOL so AML fires on
+                a real company link, not a name string. Landlord is
+                derived from the property (read-only); tenant is the
+                applicant the agent is contracting with. Both sides
+                also need a Xero billing entity for invoicing. */}
+            {wipUnit && (() => {
+              const prop = propertyMap[wipUnit.propertyId];
+              const landlordBrand = prop?.landlordId ? crmCompanies.find(c => c.id === prop.landlordId) : null;
+              const tenantOptions = crmCompanies.filter(c =>
+                (c.companyType?.startsWith("Tenant") || false) || c.id === wipForm.tenantId
+              );
+              const tenantItems = tenantOptions.map(c => ({
+                id: c.id,
+                label: c.name,
+                subLabel: (c as any).ukEntityName || c.companyType || undefined,
+                keywords: [c.companyType || "", c.domainUrl || ""].filter(Boolean),
+              }));
+              const createTenant = async (name: string) => {
+                const r = await apiRequest("POST", "/api/crm/companies", {
+                  name: name.trim(),
+                  companyType: "Tenant",
+                  isTrackedBrand: true,
+                });
+                const created = await r.json();
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+                toast({ title: "Tenant created", description: `${created.name} added to CRM.` });
+                return { id: String(created.id), label: created.name, subLabel: created.companyType };
+              };
+              return (
+                <div className="border rounded-md p-3 bg-muted/30 space-y-3">
+                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                    Contracting entities (required for AML)
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Landlord brand</Label>
+                      {landlordBrand ? (
+                        <div className="text-sm border rounded-md px-2.5 py-1.5 bg-background">
+                          {landlordBrand.name}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-amber-700 border border-amber-300 rounded-md px-2.5 py-1.5 bg-amber-50">
+                          No landlord linked on {prop?.name || "property"}. Add one on the property page before promoting.
+                        </div>
+                      )}
+                      <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                      <XeroContactPicker
+                        testIdPrefix="wip-landlord-entity"
+                        value={wipForm.landlordEntityId || null}
+                        cachedName={wipForm.landlordEntityName}
+                        onChange={(c) => setWipForm(f => ({
+                          ...f,
+                          landlordEntityId: c?.ContactID || "",
+                          landlordEntityName: c?.Name || "",
+                        }))}
+                        compact
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Tenant brand *</Label>
+                      <EntityCombobox
+                        testId="wip-tenant"
+                        placeholder="Link tenant"
+                        searchPlaceholder="Search tenants…"
+                        value={wipForm.tenantId}
+                        items={tenantItems}
+                        onChange={(v) => {
+                          const picked = crmCompanies.find(c => c.id === v);
+                          setWipForm(f => ({
+                            ...f,
+                            tenantId: v,
+                            tenantName: picked?.name || "",
+                            tenantEntityId: "",
+                            tenantEntityName: "",
+                          }));
+                        }}
+                        onCreate={createTenant}
+                        createLabel="tenant"
+                      />
+                      <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                      <XeroContactPicker
+                        testIdPrefix="wip-tenant-entity"
+                        value={wipForm.tenantEntityId || null}
+                        cachedName={wipForm.tenantEntityName}
+                        onChange={(c) => setWipForm(f => ({
+                          ...f,
+                          tenantEntityId: c?.ContactID || "",
+                          tenantEntityName: c?.Name || "",
+                        }))}
+                        compact
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs mb-1">Fee (£) *</Label>
@@ -1679,7 +1783,7 @@ export default function AvailableUnitsPage() {
           </div>
           {(() => {
             const hardMissing: string[] = [];
-            if (!wipForm.tenantName.trim()) hardMissing.push("Tenant");
+            if (!wipForm.tenantId) hardMissing.push("Tenant brand");
             if (!wipForm.fee.trim()) hardMissing.push("Fee");
             if (!wipForm.agent.trim()) hardMissing.push("Agent");
             const softMissing: string[] = [];
