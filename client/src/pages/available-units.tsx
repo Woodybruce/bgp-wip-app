@@ -2697,27 +2697,55 @@ function UnitFormDialog({
           </div>
           <div className="col-span-2">
             <Label>BGP Contact *</Label>
-            <div className="flex flex-wrap gap-1.5 p-2 border rounded-md min-h-[38px]">
-              {bgpUsers.map(u => {
-                const selected = form.agentUserIds.includes(u.id);
-                return (
-                  <Badge
-                    key={u.id}
-                    variant={selected ? "default" : "outline"}
-                    className={`cursor-pointer text-xs transition-colors ${selected ? "" : "opacity-50 hover:opacity-80"}`}
-                    onClick={() => {
-                      const next = selected
-                        ? form.agentUserIds.filter(id => id !== u.id)
-                        : [...form.agentUserIds, u.id];
-                      setForm({ ...form, agentUserIds: next });
-                    }}
-                    data-testid={`badge-agent-${u.id}`}
-                  >
-                    {u.name}
-                  </Badge>
-                );
-              })}
-            </div>
+            {/* Same DropdownMenu pattern as the New Deal dialog so the
+                two forms feel like one. Stores agentUserIds (user IDs)
+                rather than names, since the server keyed off IDs. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-unit-agent">
+                  {form.agentUserIds.length === 0 ? (
+                    <span className="text-muted-foreground">Select BGP contacts…</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {form.agentUserIds.map(id => {
+                        const u = bgpUsers.find(bu => bu.id === id);
+                        return (
+                          <Badge key={id} variant="secondary" className="text-xs">{u?.name || id}</Badge>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
+                {[...bgpUsers].sort((a, b) => (a.name || "").localeCompare(b.name || "")).map(u => {
+                  const selected = form.agentUserIds.includes(u.id);
+                  return (
+                    <DropdownMenuItem
+                      key={u.id}
+                      onClick={() => {
+                        const next = selected
+                          ? form.agentUserIds.filter(id => id !== u.id)
+                          : [...form.agentUserIds, u.id];
+                        setForm({ ...form, agentUserIds: next });
+                      }}
+                      data-testid={`agent-option-${u.id}`}
+                    >
+                      <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${selected ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
+                        {selected && <span className="text-primary-foreground text-[8px]">✓</span>}
+                      </div>
+                      <span className="truncate">{u.name}</span>
+                    </DropdownMenuItem>
+                  );
+                })}
+                {form.agentUserIds.length > 0 && (
+                  <DropdownMenuItem onClick={() => setForm({ ...form, agentUserIds: [] })} data-testid="agent-clear-all">
+                    <X className="w-3 h-3 mr-2 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Clear all</span>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <div className="col-span-2">
             <Label>Restrictions</Label>
