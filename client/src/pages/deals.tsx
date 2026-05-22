@@ -4580,9 +4580,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     lastInteraction: true,
   });
 
-  const dealsUrl = mode === "wip" ? "/api/crm/deals?excludeTrackerDeals=true" : "/api/crm/deals";
+  // Always hide pre-SOL tracker-backed deals from the Deals CRM. They
+  // live on the Letting Tracker until they get promoted to SOL+, at
+  // which point the server-side filter lets them through naturally
+  // (storage checks the available_units.marketing_status before
+  // suppressing). Cleans up the AVA clutter that used to appear at the
+  // top of the table.
+  const dealsUrl = "/api/crm/deals?excludeTrackerDeals=true";
   const { data: deals = [], isLoading, error } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/deals", { excludeTracker: mode === "wip" }],
+    queryKey: ["/api/crm/deals", { excludeTracker: true }],
     queryFn: async () => {
       const r = await fetch(dealsUrl, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
