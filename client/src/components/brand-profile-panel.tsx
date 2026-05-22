@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
-import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
@@ -1478,9 +1478,58 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
 
 
-            {/* Visual brand banner — street view + first gallery image */}
+            {/* Visual brand banner. Hero images come from any
+                image tagged "brand-hero" (toggle from the gallery
+                lightbox). If fewer than 2 heroes are pinned, the
+                banner falls back to: street view (if available) +
+                first gallery image. Set up to 2 heroes max — any
+                more get ignored. */}
             {(() => {
               const hasStreetView = stores.some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
+              const heroes = (data.images || [])
+                .filter((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"))
+                .slice(0, 2);
+              const srcFor = (img: any) => img.thumbnail_data
+                ? (img.thumbnail_data.startsWith("data:")
+                    ? img.thumbnail_data
+                    : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
+                : `/api/brand/gallery-image/${img.id}`;
+
+              // Two heroes pinned → show both, no street view
+              if (heroes.length === 2) {
+                return (
+                  <div className="grid gap-1.5 rounded-md overflow-hidden grid-cols-2" style={{ height: 220 }}>
+                    {heroes.map((h: any) => (
+                      <div key={h.id} className="overflow-hidden rounded-md bg-muted/40">
+                        <img src={srcFor(h)} alt={h.file_name || ""} className="w-full h-full object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+
+              // One hero pinned → hero + street view (or just hero)
+              if (heroes.length === 1) {
+                return (
+                  <div className={`grid gap-1.5 rounded-md overflow-hidden ${hasStreetView ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 220 }}>
+                    <div className="overflow-hidden rounded-md bg-muted/40">
+                      <img src={srcFor(heroes[0])} alt={heroes[0].file_name || ""} className="w-full h-full object-cover" />
+                    </div>
+                    {hasStreetView && (
+                      <div className="overflow-hidden rounded-md bg-muted/40">
+                        <img
+                          src={`/api/brand/${companyId}/flagship-image`}
+                          alt="Flagship store street view"
+                          className="w-full h-full object-cover"
+                          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              // No heroes → fall back to legacy street-view + first-image layout
               const firstImg = data.images[0];
               if (!hasStreetView && !firstImg) return null;
               return (
@@ -1498,11 +1547,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   {firstImg && (
                     <div className="overflow-hidden rounded-md bg-muted/40">
                       <img
-                        src={firstImg.thumbnail_data
-                          ? (firstImg.thumbnail_data.startsWith("data:")
-                              ? firstImg.thumbnail_data
-                              : `data:${firstImg.mime_type || "image/jpeg"};base64,${firstImg.thumbnail_data}`)
-                          : `/api/brand/gallery-image/${firstImg.id}`}
+                        src={srcFor(firstImg)}
                         alt=""
                         className="w-full h-full object-cover"
                         onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
@@ -4451,6 +4496,32 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     },
     onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
   });
+
+  // Hero toggle. brand-hero tag flips an image into the top banner —
+  // up to two hero images render up there (any more are ignored). PATCH
+  // rewrites the entire tags array; we read the existing tags off the
+  // image row and add/remove brand-hero locally before sending back.
+  const toggleHeroMutation = useMutation({
+    mutationFn: async ({ imageId, currentTags, isHero }: { imageId: string; currentTags: string[]; isHero: boolean }) => {
+      const next = isHero
+        ? currentTags.filter(t => t !== "brand-hero")
+        : Array.from(new Set([...(currentTags || []), "brand-hero"]));
+      const r = await fetch(`/api/image-studio/${imageId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { ...getAuthHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ tags: next }),
+      });
+      if (!r.ok) throw new Error(`Update failed: HTTP ${r.status}`);
+      return r.json();
+    },
+    onSuccess: (_d, vars) => {
+      toast({ title: vars.isHero ? "Removed from hero banner" : "Set as hero image" });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
+  });
+
   const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
     staleTime: 5 * 60_000,
@@ -4912,17 +4983,21 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               </Link>
             </div>
             {data.images.length > 0 && (
-              <div className="grid grid-cols-4 gap-1">
-                {data.images.slice(0, 8).map((img: any) => {
+              // Scrollable grid — show every image, capped at a sensible
+              // height so the gallery doesn't dominate the sidebar. 3-col
+              // gives bigger thumbnails than the previous 4-col.
+              <div className="grid grid-cols-3 gap-1 max-h-[420px] overflow-y-auto pr-1">
+                {data.images.map((img: any) => {
                   const thumbSrc = img.thumbnail_data
                     ? (img.thumbnail_data.startsWith("data:")
                         ? img.thumbnail_data
                         : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
                     : `/api/brand/gallery-image/${img.id}`;
+                  const isHero = Array.isArray(img.tags) && img.tags.includes("brand-hero");
                   return (
                     <div
                       key={img.id}
-                      className="relative aspect-square rounded border border-border/60 overflow-hidden bg-muted cursor-zoom-in group"
+                      className={`relative aspect-square rounded border overflow-hidden bg-muted cursor-zoom-in group ${isHero ? "border-amber-400 ring-1 ring-amber-300" : "border-border/60"}`}
                       onClick={() => setLightboxImg(img)}
                       data-testid={`brand-image-${img.id}`}
                     >
@@ -4932,7 +5007,13 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                         className="w-full h-full object-cover transition-transform group-hover:scale-105"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
-                      {/* Hover delete — stops propagation so click doesn't open the lightbox */}
+                      {/* Hero badge — sits top-left, always visible if pinned */}
+                      {isHero && (
+                        <div className="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-amber-500 text-white flex items-center justify-center shadow" title="Hero image — shown in the banner">
+                          <StarIcon className="w-3 h-3 fill-current" />
+                        </div>
+                      )}
+                      {/* Hover delete */}
                       <button
                         type="button"
                         className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full bg-black/70 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
@@ -4980,26 +5061,49 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                       }}
                     />
                   </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <Link
-                      href={`/image-studio?brand=${encodeURIComponent(c.name)}&imageId=${lightboxImg.id}`}
-                      className="text-xs text-muted-foreground hover:text-foreground underline flex items-center gap-1"
-                      data-testid="lightbox-open-image-studio"
-                    >
-                      Open in Image Studio (enhance, retag, download) <ExternalLinkIcon className="w-3 h-3" />
-                    </Link>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => {
-                        if (confirm("Remove this image?")) deleteImageMutation.mutate(lightboxImg.id);
-                      }}
-                      disabled={deleteImageMutation.isPending}
-                      data-testid="lightbox-delete"
-                    >
-                      <XIcon className="w-3 h-3 mr-1" /> Delete
-                    </Button>
-                  </div>
+                  {(() => {
+                    const isHero = Array.isArray(lightboxImg.tags) && lightboxImg.tags.includes("brand-hero");
+                    const heroCount = (data.images || []).filter((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero")).length;
+                    return (
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant={isHero ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => toggleHeroMutation.mutate({
+                            imageId: lightboxImg.id,
+                            currentTags: lightboxImg.tags || [],
+                            isHero,
+                          })}
+                          disabled={toggleHeroMutation.isPending || (!isHero && heroCount >= 2)}
+                          title={!isHero && heroCount >= 2 ? "Two hero images already pinned — unpin one first" : ""}
+                          data-testid="lightbox-toggle-hero"
+                        >
+                          <StarIcon className={`w-3 h-3 mr-1 ${isHero ? "fill-current" : ""}`} />
+                          {isHero ? "Unpin from banner" : (heroCount >= 2 ? "Banner full (2 of 2)" : "Pin to banner")}
+                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/image-studio?brand=${encodeURIComponent(c.name)}&imageId=${lightboxImg.id}`}
+                            className="text-xs text-muted-foreground hover:text-foreground underline flex items-center gap-1"
+                            data-testid="lightbox-open-image-studio"
+                          >
+                            Open in Image Studio <ExternalLinkIcon className="w-3 h-3" />
+                          </Link>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => {
+                              if (confirm("Remove this image?")) deleteImageMutation.mutate(lightboxImg.id);
+                            }}
+                            disabled={deleteImageMutation.isPending}
+                            data-testid="lightbox-delete"
+                          >
+                            <XIcon className="w-3 h-3 mr-1" /> Delete
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </DialogContent>
