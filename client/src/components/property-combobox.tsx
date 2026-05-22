@@ -198,6 +198,23 @@ export function PropertyCombobox({
         (results, status) => {
           setGoogleLoading(false);
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+            // Two filters here:
+            //   (a) drop BROAD results (postcode-only, country, region)
+            //       that aren't useful as a property — same as before.
+            //   (b) drop BUSINESS ESTABLISHMENTS (Swiss Life Asset Managers,
+            //       The Pantry Cafe, Boots) where the prediction is a
+            //       *tenant occupying* the address rather than the property
+            //       itself. We can't write "Swiss Life Asset Managers Uk Ltd"
+            //       as the property name for 55 Wells Street — that's the
+            //       tenant. Building/landmark premises (Hartsfield Manor,
+            //       The Shard, Bluewater) DO carry premise/landmark types
+            //       even when also tagged establishment, so we let those
+            //       through.
+            const BUILDING_KEEP_TYPES = new Set([
+              "premise", "subpremise", "shopping_mall", "tourist_attraction",
+              "stadium", "convention_center", "airport", "train_station",
+              "transit_station", "university", "school", "hospital",
+            ]);
             const filtered = results.filter((r) => {
               const types = r.types || [];
               const isBroad =
@@ -206,9 +223,15 @@ export function PropertyCombobox({
                 types.includes("administrative_area_level_1") ||
                 types.includes("administrative_area_level_2") ||
                 (types.includes("locality") && !types.includes("street_address") && !types.includes("premise"));
-              return !isBroad;
+              if (isBroad) return false;
+              const isEstablishment = types.includes("establishment");
+              const isLandmarkBuilding = types.some((t) => BUILDING_KEEP_TYPES.has(t));
+              // Establishment without a building/landmark type = tenant.
+              // Drop it so users see the postal address option instead.
+              if (isEstablishment && !isLandmarkBuilding) return false;
+              return true;
             });
-            setPredictions(filtered.length > 0 ? filtered : results);
+            setPredictions(filtered);
           } else {
             setPredictions([]);
           }

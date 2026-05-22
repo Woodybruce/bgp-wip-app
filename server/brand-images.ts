@@ -519,7 +519,15 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
     // we want to KEEP). Tighten by requiring a business-vocabulary
     // word AND excluding rows whose name carries a landmark suffix
     // ("Shopping Centre", "House", "Tower", "Manor", "Galleries"...).
-    const BUSINESS_WORD_PATTERN = "(cafe|café|coffee|restaurant|bistro|brasserie|eatery|kitchen|deli|delicatessen|bakery|patisserie|pizzeria|grill|burger|pub|tavern|bar|lounge|nightclub|club|diner|takeaway|takeout|shop|store|boutique|market|salon|barber|barbers|gym|fitness|spa|pharmacy|clinic|surgery|dentist|optician|opticians|garage|dealership|laundrette|laundromat)";
+    // Two flavours of tenant-as-property:
+    //  - F&B / retail business words (Pantry Cafe, X Pizzeria)
+    //  - Corporate occupier names (Swiss Life Asset Managers Uk Ltd,
+    //    Foo Capital LLP, Bar Holdings Plc). These typically end with
+    //    a legal-form suffix (Ltd, Plc, LLP, Inc) or a sectoral noun
+    //    (Capital, Holdings, Partners, Asset Managers, Investments,
+    //    Management, Group). Landmark filter still wins, so "Capital
+    //    House" / "Holdings Court" / "Partners Place" are kept.
+    const BUSINESS_WORD_PATTERN = "(cafe|café|coffee|restaurant|bistro|brasserie|eatery|kitchen|deli|delicatessen|bakery|patisserie|pizzeria|grill|burger|pub|tavern|bar|lounge|nightclub|club|diner|takeaway|takeout|shop|store|boutique|market|salon|barber|barbers|gym|fitness|spa|pharmacy|clinic|surgery|dentist|optician|opticians|garage|dealership|laundrette|laundromat|ltd|plc|llp|limited|inc|incorporated|capital|holdings|partners|investments?|asset\\s*managers?|asset\\s*management|management|advisors?|advisers?|consultants?|consultancy|consulting|services|solutions|group|technologies|systems|enterprises|industries|corp|corporation|company)";
     const LANDMARK_SUFFIX_PATTERN = "(shopping\\s*centre|shopping\\s*center|mall|plaza|square|park|gardens?|manor|house|tower|towers|galleries|gallery|place|quay|bridge|lights|dock|village|hall|exchange|estate|wharf|works|terrace|crescent|mews|courts?|station|terminal|stadium|arena|arcade|complex|outlet|outlets|island|cross|valley|fields)";
     const { rows } = await pool.query<{ id: string; name: string; uprn: string | null; address: any; postcode: string | null }>(
       `SELECT id, name, uprn, address, postcode
