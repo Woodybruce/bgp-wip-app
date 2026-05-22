@@ -735,12 +735,11 @@ function SimplifiedCreateBody({
   // clientRole below.
   const dt = form.dealType || "";
   const isInvestment = dt === "Purchase" || dt === "Sale";
-  const counterpartyKind: "landlord" | "tenant" | "investment" | "auto" =
-    dt === "Lease Acquisition" ? "landlord"  :
-    dt === "Lease Disposal" ? "tenant"       :
-    dt === "Lease Renewal" || dt === "Rent Review" || dt === "Regear" ? "tenant" :
-    dt === "Purchase" || dt === "Sale" ? "investment" :
-    "auto";
+  // Sale / Purchase use "investment" (vendor + purchaser pickers).
+  // Everything else uses "leasing" (landlord + tenant pickers). Both
+  // pickers are always shown — the client one is marked with *.
+  const counterpartyKind: "leasing" | "investment" =
+    dt === "Purchase" || dt === "Sale" ? "investment" : "leasing";
 
   // Who is OUR client for this deal type? Used to mark the right
   // counterparty picker as required (*) and to drive AML (we KYC the
@@ -946,28 +945,16 @@ function SimplifiedCreateBody({
         );
       })()}
 
-      {/* Counterparty — contextual to deal type. For "auto" (no deal
-          type picked, or a type without an obvious counterparty),
-          show both landlord and tenant pickers. */}
-      {counterpartyKind === "landlord" && (
-        <div>
-          <Label>Landlord{clientRole === "landlord" ? " * (client)" : ""}</Label>
-          <EntityCombobox
-            testId="select-deal-landlord"
-            placeholder="Link landlord"
-            searchPlaceholder="Search landlords…"
-            value={form.landlordId}
-            items={toComboItems(landlordOptions)}
-            onChange={(v) => set("landlordId", v)}
-            onCreate={createLandlord}
-            createLabel="landlord"
-          />
-        </div>
-      )}
-      {counterpartyKind === "tenant" && (
-        <>
+      {/* Counterparties — always BOTH for the chosen deal flavour.
+          - "leasing" types show Landlord + Tenant (one or both required;
+            asterisks show whichever side is the client per clientRole).
+          - "investment" types show Vendor + Purchaser (same shape).
+          Both names are needed to fire the right AML chain (full KYC
+          on the client, lighter screen on the counterparty). */}
+      {counterpartyKind === "leasing" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label>Landlord{clientRole === "landlord" ? " * (client)" : ""}</Label>
+            <Label>Landlord{clientRole === "landlord" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-landlord"
               placeholder="Link landlord"
@@ -980,7 +967,7 @@ function SimplifiedCreateBody({
             />
           </div>
           <div>
-            <Label>Tenant{clientRole === "tenant" ? " * (client)" : ""}</Label>
+            <Label>Tenant{clientRole === "tenant" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-tenant"
               placeholder="Link tenant"
@@ -992,12 +979,12 @@ function SimplifiedCreateBody({
               createLabel="tenant"
             />
           </div>
-        </>
+        </div>
       )}
       {counterpartyKind === "investment" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label>Vendor{clientRole === "vendor" ? " *" : ""}{clientRole === "vendor" ? " (client)" : ""}</Label>
+            <Label>Vendor{clientRole === "vendor" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-vendor"
               placeholder="Link vendor"
@@ -1010,7 +997,7 @@ function SimplifiedCreateBody({
             />
           </div>
           <div>
-            <Label>Purchaser{clientRole === "purchaser" ? " *" : ""}{clientRole === "purchaser" ? " (client)" : ""}</Label>
+            <Label>Purchaser{clientRole === "purchaser" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-purchaser"
               placeholder="Link purchaser"
@@ -1020,36 +1007,6 @@ function SimplifiedCreateBody({
               onChange={(v) => set("purchaserId", v)}
               onCreate={createPurchaser}
               createLabel="purchaser"
-            />
-          </div>
-        </div>
-      )}
-      {counterpartyKind === "auto" && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <Label>Landlord</Label>
-            <EntityCombobox
-              testId="select-deal-landlord"
-              placeholder="Link landlord"
-              searchPlaceholder="Search landlords…"
-              value={form.landlordId}
-              items={toComboItems(landlordOptions)}
-              onChange={(v) => set("landlordId", v)}
-              onCreate={createLandlord}
-              createLabel="landlord"
-            />
-          </div>
-          <div>
-            <Label>Tenant</Label>
-            <EntityCombobox
-              testId="select-deal-tenant"
-              placeholder="Link tenant"
-              searchPlaceholder="Search tenants…"
-              value={form.tenantId}
-              items={toComboItems(tenantOptions)}
-              onChange={(v) => set("tenantId", v)}
-              onCreate={createTenant}
-              createLabel="tenant"
             />
           </div>
         </div>
@@ -1231,6 +1188,35 @@ export function DealFormDialog({
       toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
       return;
     }
+
+    // Enforce client + counterparty per deal type. Both names are needed
+    // so AML can fire full KYC on the client and a lighter screen on the
+    // counterparty. EDIT mode skips this — historic deals may pre-date
+    // the rule and we don't want to block routine edits.
+    if (!isEdit && form.dealType) {
+      const investmentTypes = new Set(["Sale", "Purchase"]);
+      if (investmentTypes.has(form.dealType)) {
+        if (!form.vendorId || !form.purchaserId) {
+          toast({
+            title: "Vendor and Purchaser required",
+            description: "Both parties on an investment deal — link or create each.",
+            variant: "destructive",
+          });
+          return;
+        }
+      } else {
+        // Leasing-side deal types — landlord + tenant both required.
+        if (!form.landlordId || !form.tenantId) {
+          toast({
+            title: "Landlord and Tenant required",
+            description: "Both parties needed to fire AML on the right side.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+    }
+
     mutation.mutate();
   };
 

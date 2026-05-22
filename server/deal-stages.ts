@@ -42,24 +42,34 @@ async function autoLaunchAmlForDeal(
   actorId: string | null,
   actorName: string | null,
 ): Promise<void> {
+  // Pull all four counterparty ids — leasing deals carry tenant + landlord,
+  // investment deals carry vendor + purchaser. The form now requires both
+  // sides for every deal type, so both should fire AML.
   const dealQuery = await pool.query(
-    `SELECT id, tenant_id, landlord_id FROM crm_deals WHERE id = $1`,
+    `SELECT id, tenant_id, landlord_id, vendor_id, purchaser_id, deal_type
+       FROM crm_deals WHERE id = $1`,
     [dealId],
   );
   const deal = dealQuery.rows[0];
   if (!deal) return;
 
-  const companyIds = [deal.tenant_id, deal.landlord_id].filter(Boolean) as string[];
-  if (companyIds.length === 0) {
+  const companyIds = [deal.tenant_id, deal.landlord_id, deal.vendor_id, deal.purchaser_id]
+    .filter(Boolean) as string[];
+  // Dedupe — same company could conceivably appear twice (e.g. a landlord
+  // also flagged as vendor on a hybrid deal).
+  const uniqueIds = Array.from(new Set(companyIds));
+  if (uniqueIds.length === 0) {
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
        VALUES ($1, 'kyc_auto_skipped', $2, $3, $4)`,
-      [dealId, JSON.stringify({ reason: "No tenant or landlord linked to deal" }), actorId, actorName],
+      [dealId, JSON.stringify({ reason: "No counterparty linked to deal (tenant / landlord / vendor / purchaser)" }), actorId, actorName],
     ).catch(() => {});
     return;
   }
+  // Rename for the loop below — preserves the existing log shape.
+  const targetIds = uniqueIds;
 
-  for (const companyId of companyIds) {
+  for (const companyId of targetIds) {
     try {
       const summary = await runAllAmlChecks(companyId, dealId, actorId);
       console.log(
