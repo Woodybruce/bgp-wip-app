@@ -621,6 +621,75 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
   }
 });
 
+// Backfill explicit fee allocations from the legacy internalAgent[]
+// equal-split convention. The commission calc currently falls back to
+// equal-split when no deal_fee_allocations rows exist — that's drift
+// risk (allocations can disappear, internal_agent can change). Before
+// removing the fallback we need every deal to have explicit rows.
+//
+//   POST /api/admin/backfill-fee-allocations  { dryRun?: true, limit?: 500 }
+//
+// Returns the count of deals seen + deals backfilled + samples. Only
+// touches deals that have BOTH:
+//   - non-empty internal_agent[] AND
+//   - zero existing deal_fee_allocations rows
+// Allocations are created as equal-percentage splits matching the
+// fallback. Safe to re-run — only operates on deals with no existing
+// allocations, so a second run is a no-op for already-backfilled deals.
+router.post("/api/admin/backfill-fee-allocations", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const dryRun = req.body?.dryRun === true;
+    const limit = Math.min(Number(req.body?.limit) || 500, 2000);
+
+    // Find deals with agents listed but no explicit allocations.
+    const { rows: candidates } = await pool.query<{ id: string; name: string; internal_agent: string[] | null }>(
+      `SELECT d.id, d.name, d.internal_agent
+         FROM crm_deals d
+        WHERE d.internal_agent IS NOT NULL
+          AND array_length(d.internal_agent, 1) > 0
+          AND NOT EXISTS (
+            SELECT 1 FROM deal_fee_allocations a WHERE a.deal_id = d.id
+          )
+        ORDER BY d.updated_at DESC NULLS LAST
+        LIMIT $1`,
+      [limit],
+    );
+
+    const samples: { id: string; name: string; agents: string[]; eachPct: number }[] = [];
+    let backfilled = 0;
+
+    for (const d of candidates) {
+      const agents = (d.internal_agent || []).filter((a): a is string => !!a && a.trim().length > 0);
+      if (agents.length === 0) continue;
+      const eachPct = Math.round((100 / agents.length) * 100) / 100; // 2dp
+      samples.push({ id: d.id, name: d.name, agents, eachPct });
+      if (!dryRun) {
+        // Build all rows for this deal, then insert in one statement.
+        for (const agent of agents) {
+          await pool.query(
+            `INSERT INTO deal_fee_allocations
+               (id, deal_id, agent_name, allocation_type, percentage, is_bgp_house, created_at)
+             VALUES (gen_random_uuid(), $1, $2, 'percentage', $3, false, NOW())`,
+            [d.id, agent, eachPct],
+          );
+        }
+        backfilled++;
+      }
+    }
+
+    res.json({
+      scanned: candidates.length,
+      backfilled,
+      dryRun,
+      samples: samples.slice(0, 30),
+      remaining: candidates.length > limit ? `${candidates.length - limit}+ more — re-run with limit raised` : 0,
+    });
+  } catch (e: any) {
+    console.error("[backfill-fee-allocations] failed:", e?.message);
+    res.status(500).json({ error: e?.message || "backfill failed" });
+  }
+});
+
 // Inspect a single crm_property to decide what to do with it. Returns
 // the row's full state plus a count of linked deals / units / etc so
 // we can decide whether to safely delete + recreate vs rename in place.
