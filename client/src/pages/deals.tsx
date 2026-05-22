@@ -117,7 +117,6 @@ import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { PropertyCombobox } from "@/components/property-combobox";
 import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
-import { TradingEntityPicker } from "@/components/trading-entity-picker";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 
@@ -421,13 +420,18 @@ interface DealFormData {
   poNumber: string;
   invoicingEmail: string;
   feePercentage: string;
-  // Trading-entity FKs per counterparty role — set after the user picks
-  // the parent brand, picked from the brand's entities list (with
-  // inline-create). AML reads these to KYC the right legal entity.
+  // Per-counterparty Xero contact link — the formal legal/billing
+  // entity for each role. ID is a Xero ContactID GUID; cached name lets
+  // the picker render without a Xero round-trip. AML reads these to
+  // KYC the right legal entity.
   landlordEntityId: string;
+  landlordEntityName: string;
   tenantEntityId: string;
+  tenantEntityName: string;
   vendorEntityId: string;
+  vendorEntityName: string;
   purchaserEntityId: string;
+  purchaserEntityName: string;
 }
 
 const emptyForm: DealFormData = {
@@ -482,9 +486,13 @@ const emptyForm: DealFormData = {
   invoicingEmail: "",
   feePercentage: "",
   landlordEntityId: "",
+  landlordEntityName: "",
   tenantEntityId: "",
+  tenantEntityName: "",
   vendorEntityId: "",
+  vendorEntityName: "",
   purchaserEntityId: "",
+  purchaserEntityName: "",
 };
 
 function dealToForm(deal: CrmDeal): DealFormData {
@@ -540,9 +548,13 @@ function dealToForm(deal: CrmDeal): DealFormData {
     invoicingEmail: (deal as any).invoicingEmail || "",
     feePercentage: (deal as any).feePercentage != null ? String((deal as any).feePercentage) : "",
     landlordEntityId: (deal as any).landlordEntityId || "",
+    landlordEntityName: (deal as any).landlordEntityName || "",
     tenantEntityId: (deal as any).tenantEntityId || "",
+    tenantEntityName: (deal as any).tenantEntityName || "",
     vendorEntityId: (deal as any).vendorEntityId || "",
+    vendorEntityName: (deal as any).vendorEntityName || "",
     purchaserEntityId: (deal as any).purchaserEntityId || "",
+    purchaserEntityName: (deal as any).purchaserEntityName || "",
   };
 }
 
@@ -600,9 +612,13 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     invoicingEmail: form.invoicingEmail || null,
     feePercentage: parseNum(form.feePercentage),
     landlordEntityId: form.landlordEntityId || null,
+    landlordEntityName: form.landlordEntityName || null,
     tenantEntityId: form.tenantEntityId || null,
+    tenantEntityName: form.tenantEntityName || null,
     vendorEntityId: form.vendorEntityId || null,
+    vendorEntityName: form.vendorEntityName || null,
     purchaserEntityId: form.purchaserEntityId || null,
+    purchaserEntityName: form.purchaserEntityName || null,
   };
   if (changeReason) payload.changeReason = changeReason;
   return payload;
@@ -1002,12 +1018,19 @@ function SimplifiedCreateBody({
             />
             {form.landlordId && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
-                <TradingEntityPicker
-                  testId="select-deal-landlord-entity"
-                  parentCompanyId={form.landlordId}
-                  value={form.landlordEntityId}
-                  onChange={(v) => set("landlordEntityId", v)}
+                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <XeroContactPicker
+                  testIdPrefix="deal-landlord-entity"
+                  value={form.landlordEntityId || null}
+                  cachedName={form.landlordEntityName}
+                  onChange={(c) => {
+                    setForm(prev => ({
+                      ...prev,
+                      landlordEntityId: c?.ContactID || "",
+                      landlordEntityName: c?.Name || "",
+                    }));
+                  }}
+                  compact
                 />
               </div>
             )}
@@ -1026,12 +1049,19 @@ function SimplifiedCreateBody({
             />
             {form.tenantId && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
-                <TradingEntityPicker
-                  testId="select-deal-tenant-entity"
-                  parentCompanyId={form.tenantId}
-                  value={form.tenantEntityId}
-                  onChange={(v) => set("tenantEntityId", v)}
+                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <XeroContactPicker
+                  testIdPrefix="deal-tenant-entity"
+                  value={form.tenantEntityId || null}
+                  cachedName={form.tenantEntityName}
+                  onChange={(c) => {
+                    setForm(prev => ({
+                      ...prev,
+                      tenantEntityId: c?.ContactID || "",
+                      tenantEntityName: c?.Name || "",
+                    }));
+                  }}
+                  compact
                 />
               </div>
             )}
@@ -1054,12 +1084,19 @@ function SimplifiedCreateBody({
             />
             {form.vendorId && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
-                <TradingEntityPicker
-                  testId="select-deal-vendor-entity"
-                  parentCompanyId={form.vendorId}
-                  value={form.vendorEntityId}
-                  onChange={(v) => set("vendorEntityId", v)}
+                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <XeroContactPicker
+                  testIdPrefix="deal-vendor-entity"
+                  value={form.vendorEntityId || null}
+                  cachedName={form.vendorEntityName}
+                  onChange={(c) => {
+                    setForm(prev => ({
+                      ...prev,
+                      vendorEntityId: c?.ContactID || "",
+                      vendorEntityName: c?.Name || "",
+                    }));
+                  }}
+                  compact
                 />
               </div>
             )}
@@ -1078,12 +1115,19 @@ function SimplifiedCreateBody({
             />
             {form.purchaserId && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Trading entity (for AML)</Label>
-                <TradingEntityPicker
-                  testId="select-deal-purchaser-entity"
-                  parentCompanyId={form.purchaserId}
-                  value={form.purchaserEntityId}
-                  onChange={(v) => set("purchaserEntityId", v)}
+                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <XeroContactPicker
+                  testIdPrefix="deal-purchaser-entity"
+                  value={form.purchaserEntityId || null}
+                  cachedName={form.purchaserEntityName}
+                  onChange={(c) => {
+                    setForm(prev => ({
+                      ...prev,
+                      purchaserEntityId: c?.ContactID || "",
+                      purchaserEntityName: c?.Name || "",
+                    }));
+                  }}
+                  compact
                 />
               </div>
             )}

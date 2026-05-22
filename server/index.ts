@@ -1181,13 +1181,18 @@ import { pool } from "./db";
       WHERE te.value->>'name' IS NOT NULL AND length(trim(te.value->>'name')) > 0
      ON CONFLICT (parent_company_id, LOWER(name)) DO NOTHING`,
 
-    // Deal-level FKs to the specific trading entity per counterparty
-    // role. Nullable so existing deals stay valid; AML falls back to the
-    // parent brand when null.
-    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS landlord_entity_id  VARCHAR`,
-    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS tenant_entity_id    VARCHAR`,
-    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_entity_id    VARCHAR`,
-    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_entity_id VARCHAR`,
+    // Per-counterparty Xero contact links. ID holds a Xero ContactID
+    // GUID (the actual legal/billing entity for that role); name cached
+    // locally so the picker renders without a Xero round-trip. Nullable
+    // for back-compat — AML falls back to the parent brand when null.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS landlord_entity_id    VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS landlord_entity_name  TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS tenant_entity_id      VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS tenant_entity_name    TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_entity_id      VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_entity_name    TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_entity_id   VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_entity_name TEXT`,
 
     // deal_fee_allocations.is_bgp_house — explicit boolean for the BGP
     // House (firm overhead/tax) slice. Sage import used to tag this via

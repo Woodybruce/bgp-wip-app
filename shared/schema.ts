@@ -841,14 +841,19 @@ export const crmDeals = pgTable("crm_deals", {
   vendorContactId: varchar("vendor_contact_id"),
   purchaserId: varchar("purchaser_id"),
   purchaserContactId: varchar("purchaser_contact_id"),
-  // Trading-entity FKs — the specific legal entity for each counterparty
-  // role. Lets AML key off the entity's CH number rather than the brand's.
-  // Nullable for back-compat with deals created before entities existed
-  // (AML falls back to the parent in that case).
+  // Per-counterparty Xero contact link — the formal billing / legal
+  // entity for each role. Xero is the source of truth for these. ID is
+  // a Xero ContactID GUID; name cached locally so the picker can
+  // render without a Xero round-trip. Nullable for back-compat —
+  // when null, AML falls back to the parent brand.
   landlordEntityId: varchar("landlord_entity_id"),
+  landlordEntityName: text("landlord_entity_name"),
   tenantEntityId: varchar("tenant_entity_id"),
+  tenantEntityName: text("tenant_entity_name"),
   vendorEntityId: varchar("vendor_entity_id"),
+  vendorEntityName: text("vendor_entity_name"),
   purchaserEntityId: varchar("purchaser_entity_id"),
+  purchaserEntityName: text("purchaser_entity_name"),
   vendorAgentId: varchar("vendor_agent_id"),
   vendorAgentContactId: varchar("vendor_agent_contact_id"),
   acquisitionAgentId: varchar("acquisition_agent_id"),
