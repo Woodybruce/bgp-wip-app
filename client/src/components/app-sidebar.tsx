@@ -82,12 +82,17 @@ import { History } from "lucide-react";
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
-  { title: "Properties", url: "/properties", icon: Building2 },
+  // Properties used to be its own sidebar entry; now lives as a tab
+  // inside Deals (along with WIP / Letting Tracker / Investment / WIP
+  // Report). Sidebar link kept and pointed at the new tab so muscle
+  // memory still works.
+  { title: "Properties", url: "/deals/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Requirements", url: "/requirements", icon: FileText },
   // Items below are still being polished — admin-only until ready for the firm
-  { title: "MAP BGP", url: "/map-bgp", icon: MapPin, adminOnly: true },
+  // MAP BGP retired — the live Goad map is now the Property Intelligence
+  // Map tab; legacy /map-bgp URLs redirect there automatically.
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },

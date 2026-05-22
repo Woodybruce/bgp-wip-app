@@ -132,6 +132,27 @@ function DiaryRedirect() {
   return null;
 }
 
+// Map BGP retired — the live Goad map is now the Property Intelligence
+// Map tab. /map-bgp keeps its query string (address/postcode/layer) so
+// any deep link still lands the user in the right spot.
+function MapBgpRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    const search = window.location.search || "";
+    const sep = search ? "&" : "?";
+    setLocation(`/property-intelligence${search}${sep}tab=map`);
+  }, [setLocation]);
+  return null;
+}
+
+// The old standalone Property Map tab (under /map) was retired when
+// Properties got folded into Deals. /map → live Goad map.
+function MapRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/property-intelligence?tab=map"); }, [setLocation]);
+  return null;
+}
+
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [, navigate] = useLocation();
@@ -147,9 +168,13 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/instructions" component={Instructions} />
-      <Route path="/properties" component={PropertiesHub} />
+      {/* Properties list now lives as a tab inside Deals Hub. /properties
+          keeps working but mounts DealsHub so the user sees the unified
+          tabs. /properties/:id continues to serve the per-property
+          detail page (PropertiesHub still routes to Properties.tsx). */}
+      <Route path="/properties" component={DealsHub} />
       <Route path="/properties/:id" component={PropertiesHub} />
-      <Route path="/map" component={PropertiesHub} />
+      <Route path="/map" component={MapRedirect} />
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
@@ -198,7 +223,7 @@ function Router() {
       {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
           Legacy tool routes redirect here so old links keep working. */}
       <Route path="/property-intelligence" component={PropertyIntelligence} />
-      <Route path="/map-bgp" component={MapBgp} />
+      <Route path="/map-bgp" component={MapBgpRedirect} />
       <Route path="/land-registry" component={PropertyIntelligence} />
       <Route path="/business-rates" component={PropertyIntelligence} />
       {/* AML / KYC hub — compliance-focused tabs (board, training, settings).

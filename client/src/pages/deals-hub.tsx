@@ -1,13 +1,14 @@
 import { lazy, Suspense, useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BarChart3, Store, TrendingUp, FileText } from "lucide-react";
+import { BarChart3, Store, TrendingUp, FileText, Building2 } from "lucide-react";
 import { useTeam } from "@/lib/team-context";
 
 const Deals = lazy(() => import("@/pages/deals"));
 const AvailableUnits = lazy(() => import("@/pages/available-units"));
 const InvestmentTracker = lazy(() => import("@/pages/investment-tracker"));
 const WipReport = lazy(() => import("@/pages/wip-report"));
+const Properties = lazy(() => import("@/pages/properties"));
 
 function PageLoader() {
   return (
@@ -18,14 +19,15 @@ function PageLoader() {
   );
 }
 
-type TabKey = "wip" | "letting" | "investment" | "wip-report";
+type TabKey = "wip" | "letting" | "investment" | "wip-report" | "properties";
 
-const TAB_PATHS = new Set(["letting", "investment", "report"]);
+const TAB_PATHS = new Set(["letting", "investment", "report", "properties"]);
 
 function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/letting")) return "letting";
   if (loc.startsWith("/deals/investment") || loc.startsWith("/investment-tracker")) return "investment";
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
+  if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
   if (loc === "/deals") return "wip";
   return null;
 }
@@ -52,6 +54,7 @@ export default function DealsHub() {
     { key: "wip" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
+    { key: "properties" as const, label: "Properties", icon: Building2 },
     { key: "wip-report" as const, label: "WIP Report", icon: FileText },
   ], []);
 
@@ -76,6 +79,7 @@ export default function DealsHub() {
       letting: "/deals/letting",
       investment: "/deals/investment",
       "wip-report": "/deals/report",
+      properties: "/deals/properties",
     };
     const target = routes[t];
     if (location !== target) setLocation(target);
@@ -107,6 +111,7 @@ export default function DealsHub() {
         {tab === "letting" && <AvailableUnits />}
         {tab === "investment" && <InvestmentTracker />}
         {tab === "wip-report" && <WipReport />}
+        {tab === "properties" && <Properties />}
       </Suspense>
     </div>
   );
