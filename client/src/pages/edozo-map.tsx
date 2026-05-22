@@ -4347,36 +4347,42 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
             if (deg > 90) deg -= 180;
             if (deg < -90) deg += 180;
 
-            // 4b) Only commit to a rotation when the polygon is
-            //     *clearly* elongated AND the angle is *clearly* off
-            //     horizontal. L-shaped / near-square / jagged polygons
-            //     produce small misleading PCA angles that read as
-            //     'stray' tilted labels — Goad PDFs leave those flat.
-            const elongation = longPx / Math.max(shortPx, 1);
-            if (elongation < 1.8 || Math.abs(deg) < 12) {
+            // 4b) HORIZONTAL FIRST. Even on a clearly elongated narrow
+            //     strip, a short fascia like 'VERTEX' or 'MISTO' reads
+            //     better horizontally than rotated 90°. Only commit to
+            //     a rotated label when horizontal genuinely can't fit.
+            const fontFor = (long: number, short: number) => {
+              const safeLong = Math.max(0, long - 6);
+              const safeShort = Math.max(6, short - 2);
+              const byLength = (safeLong / Math.max(fascia.length, 1)) / 0.55;
+              const byHeight = safeShort * 0.9;
+              return Math.floor(Math.min(13, Math.min(byLength, byHeight)));
+            };
+            const horizontalFont = fontFor(widthPx, heightPx);
+            const rotatedFont = fontFor(longPx, shortPx);
+            // Prefer horizontal whenever it gives ≥ 7px AND isn't dramatically
+            // smaller than the rotated alternative (within 2px). The PCA
+            // angle is only used when rotating actually buys us a much bigger,
+            // readable font — typically the case for very long fascias on
+            // very narrow strips ('CHARLES TYRWHITT, BAR DES PRES' etc.).
+            let fontPx: number;
+            if (horizontalFont >= 7 && (horizontalFont + 2 >= rotatedFont || Math.abs(deg) < 12)) {
               deg = 0;
+              fontPx = horizontalFont;
+            } else if (rotatedFont >= 7) {
+              fontPx = rotatedFont;
+            } else {
+              fontPx = 0; // hide
             }
 
-            // 5) Fit text. CRITICAL: the width budget depends on which
-            //    direction the text actually runs after our rotation
-            //    decision above:
-            //      - deg = 0 → text runs along the screen X axis, so
-            //        the budget is the screen-aligned widthPx
-            //      - deg ≠ 0 → text runs along the polygon's principal
-            //        axis, so the budget is longPx
-            //    Using longPx for a horizontal label on a tall-narrow
-            //    polygon was overshooting and spilling into neighbours
-            //    ('ALICE + OLIVIA BY STACEY BENDET' etc.).
             const textBudget = deg === 0 ? widthPx : longPx;
             const shortBudget = deg === 0 ? heightPx : shortPx;
             const safeLong = Math.max(0, textBudget - 6);
             const safeShort = Math.max(6, shortBudget - 2);
-            const maxByLength = (safeLong / Math.max(fascia.length, 1)) / 0.55;
-            const maxByHeight = safeShort * 0.9;
-            const fontPx = Math.floor(Math.min(13, Math.min(maxByLength, maxByHeight)));
             // Skip entirely if the smallest readable font won't fit —
             // better than overflow.
             if (fontPx >= 7) {
+              void safeShort; // size already chosen above; keep for future use
               const innerWidth = Math.round(safeLong);
               // Outer wrapper matches the polygon's screen bbox so
               // overflow:hidden tightly clips anything that escapes.
