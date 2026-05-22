@@ -147,11 +147,16 @@ function extractImageUrls(html: string, baseUrl: string, limit = 30): string[] {
   // /portfolio-2024-q1-flagship.jpg just because "logo" appears in a
   // parent folder. Only reject when "logo" / "placeholder" etc. is
   // clearly the asset's identity, not part of a longer path.
-  const REJECT = /(?:^|[/_-])(favicon|sprite|placeholder|spacer|pixel|tracking|gtm|analytics|1x1)(?:$|[._-])|\bicon-\d+\b|\.svg(?:\?|$)|^data:.*base64,/i;
-  const REJECT_TINY_LOGO = /(?:^|[/_-])logo(?:[-_.][a-z0-9]+)?\.(?:svg|png|gif|webp)(\?|$)/i;
+  const REJECT = /(?:^|[/_-])(favicon|sprite|placeholder|spacer|pixel|tracking|gtm|analytics|1x1|404|error|not[-_]?found)(?:$|[._-])|\bicon-\d+\b|\.svg(?:\?|$)|^data:.*base64,/i;
+  // Broader logo match — covers "logo.png", "logo-b-90x90.png",
+  // "logo_white.svg", "logo2x.webp", etc. Anything where the
+  // filename starts with "logo" is unlikely to be a property shot.
+  const REJECT_TINY_LOGO = /\/logo[^/]*\.(?:svg|png|gif|webp|jpe?g)(?:\?|$)/i;
   // Investor / press / report content — headshots, chart thumbnails,
   // press release covers. Not what we want on the property gallery.
-  const REJECT_INVESTOR = /(?:^|[/_-])(headshot|portrait|chart|graph|infographic|annual[-_]?report|results[-_]?presentation|press[-_]?release|board[-_]?member|director[-_]?profile|interim[-_]?report|prelim|trading[-_]?update)(?:$|[._-])|\/investors?\/[^/]+\.(?:jpe?g|png|webp)/i;
+  // Headshots from CMS photo libraries follow firstname_lastname_NNNN
+  // (Lightroom export pattern, ~5% false positive risk on hero shots).
+  const REJECT_INVESTOR = /(?:^|[/_-])(headshot|portrait|chart|graph|infographic|annual[-_]?report|results[-_]?presentation|press[-_]?release|board[-_]?member|director[-_]?profile|interim[-_]?report|prelim|trading[-_]?update|ceo|chairman|chairwoman|exec)(?:$|[._-])|\/investors?\/[^/]+\.(?:jpe?g|png|webp)|\/[a-z]+_[a-z]+_\d{3,5}\.(?:jpe?g|png|webp)/i;
   const push = (url: string | undefined | null) => {
     if (!url) return;
     let abs: string;
