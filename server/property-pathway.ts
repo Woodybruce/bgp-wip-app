@@ -4994,7 +4994,41 @@ export function registerPropertyPathwayRoutes(app: Express) {
           startedBy: userId,
         })
         .returning();
-      res.json({ success: true, run, existing: false });
+
+      // Auto-pilot stages 1 → 7 (Briefing → Excel Model). Stage 8 is
+      // Image Studio which needs human curation, so we stop there. The
+      // chain runs entirely in the background; the user lands on the
+      // run page and watches each stage tick through. Opt-out via
+      // {autoRun: false} for callers that want manual control.
+      const autoRun = (req.body as any)?.autoRun !== false;
+      if (autoRun) {
+        const newRunId = run.id;
+        (async () => {
+          const chainCap = 8;
+          let cur = 1;
+          while (cur < chainCap) {
+            console.log(`[pathway start auto-chain] running stage ${cur} for ${newRunId}`);
+            try {
+              await runStage(newRunId, cur, req);
+            } catch (err: any) {
+              console.error(`[pathway start auto-chain] stage ${cur} threw:`, err?.message);
+              break;
+            }
+            const updatedRun = await getRun(newRunId).catch(() => null);
+            const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
+            if (status !== "completed" && status !== "skipped") {
+              console.warn(`[pathway start auto-chain] halting at stage ${cur}, status=${status}`);
+              break;
+            }
+            cur++;
+          }
+          console.log(`[pathway start auto-chain] ${newRunId} ended at stage ${cur - 1}`);
+        })().catch((err: any) => {
+          console.error(`[pathway start auto-chain] outer error:`, err?.message);
+        });
+      }
+
+      res.json({ success: true, run, existing: false, autoPiloted: autoRun });
     } catch (err: any) {
       console.error("[pathway start] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to start pathway" });
