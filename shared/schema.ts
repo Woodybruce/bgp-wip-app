@@ -2141,6 +2141,11 @@ export const imageStudioImages = pgTable("image_studio_images", {
   description: text("description"),
   source: text("source").notNull().default("upload"),
   propertyId: varchar("property_id"),
+  // FK into crm_companies for landlord / brand attribution. Set when
+  // an image is imported via the landlord scraper or refresh-images
+  // pipeline. brandName (text) is still populated for backwards-
+  // compatibility, but companyId is the canonical link going forward.
+  companyId: varchar("company_id"),
   area: text("area"),
   address: text("address"),
   brandName: text("brand_name"),

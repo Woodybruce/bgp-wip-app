@@ -491,6 +491,9 @@ export async function refreshBrandImages(companyId: string, opts: {
         description: c.pageUrl ? `Auto-fetched from ${c.source} (${c.pageUrl}) for ${brand.name}` : `Auto-fetched from ${c.source} for ${brand.name}`,
         source: c.source,
         brandName: brand.name,
+        // Hard FK link so future Image Studio queries can filter by
+        // landlord / brand by id rather than fragile name matching.
+        companyId: brand.id,
         mimeType: fetched.mime,
         filenameHint: `${brand.name}-${c.source}`,
       });

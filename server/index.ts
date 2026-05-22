@@ -3413,6 +3413,23 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("tenancy_schedule_units", "underwriting_comments", "text");
           await addColIfMissing("tenancy_schedule_units", "in_leasing_schedule", "boolean DEFAULT false");
           await addColIfMissing("image_studio_images", "brand_sector", "text");
+          // FK into crm_companies for landlord / brand attribution.
+          // Lets us query "all images for this landlord" by FK rather
+          // than fragile lowercase brand_name matching.
+          await addColIfMissing("image_studio_images", "company_id", "varchar");
+          await pool.query(`CREATE INDEX IF NOT EXISTS idx_image_studio_company_id ON image_studio_images(company_id) WHERE company_id IS NOT NULL`).catch(() => {});
+          // One-shot backfill: any auto-fetched image whose brand_name
+          // matches a crm_companies row gets its company_id stamped.
+          // Safe to re-run — the WHERE clause skips rows already linked.
+          await pool.query(
+            `UPDATE image_studio_images i
+                SET company_id = c.id
+               FROM crm_companies c
+              WHERE i.company_id IS NULL
+                AND i.brand_name IS NOT NULL
+                AND LOWER(TRIM(i.brand_name)) = LOWER(TRIM(c.name))
+                AND c.merged_into_id IS NULL`
+          ).catch((e: any) => console.warn("[image-studio backfill company_id] failed:", e.message));
           await addColIfMissing("crm_companies", "brand_analysis", "text");
           await addColIfMissing("crm_companies", "brand_analysis_at", "timestamp");
           await addColIfMissing("crm_companies", "concept_status", "text");

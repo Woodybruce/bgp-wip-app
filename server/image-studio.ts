@@ -11,7 +11,7 @@ const ALL_KINDS = [
   "location_plan", "floor_plan", "covenant_card",
   "comps_chart", "erv_walk", "overlay",
 ] as const;
-import { eq, desc, ilike, or, sql, inArray, count } from "drizzle-orm";
+import { eq, desc, ilike, or, sql, inArray, count, and } from "drizzle-orm";
 import multer from "multer";
 import sharp from "sharp";
 import path from "path";
@@ -365,6 +365,12 @@ export async function storeImageFromBuffer(args: {
   description: string;
   source: string;
   propertyId?: string | null;
+  /**
+   * FK into crm_companies. Set this for any brand / landlord-attributed
+   * image so the Image Studio can filter by company without falling
+   * back on brand_name string matching.
+   */
+  companyId?: string | null;
   address?: string;
   brandName?: string;
   mimeType?: string;
@@ -383,6 +389,7 @@ export async function storeImageFromBuffer(args: {
     description: args.description,
     source: args.source,
     propertyId: args.propertyId || undefined,
+    companyId: args.companyId || undefined,
     address: args.address,
     brandName: args.brandName,
     mimeType: args.mimeType || "image/jpeg",
@@ -708,6 +715,7 @@ export function registerImageStudioRoutes(app: Express) {
     description: imageStudioImages.description,
     source: imageStudioImages.source,
     propertyId: imageStudioImages.propertyId,
+    companyId: imageStudioImages.companyId,
     area: imageStudioImages.area,
     address: imageStudioImages.address,
     brandName: imageStudioImages.brandName,
@@ -737,10 +745,15 @@ export function registerImageStudioRoutes(app: Express) {
   app.get("/api/image-studio/search", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const q = (req.query.q as string || "").trim();
-      if (!q) return res.json([]);
-      const pattern = `%${q}%`;
-      const images = await db.select(LIST_COLS).from(imageStudioImages)
-        .where(or(
+      const companyId = (req.query.companyId as string || "").trim();
+      const propertyId = (req.query.propertyId as string || "").trim();
+      // Need at least one of: free-text query, companyId, or propertyId.
+      // Without any filter we'd return the whole table.
+      if (!q && !companyId && !propertyId) return res.json([]);
+      const pattern = q ? `%${q}%` : null;
+      const conditions: any[] = [];
+      if (pattern) {
+        conditions.push(or(
           ilike(imageStudioImages.fileName, pattern),
           ilike(imageStudioImages.description, pattern),
           ilike(imageStudioImages.area, pattern),
@@ -750,7 +763,12 @@ export function registerImageStudioRoutes(app: Express) {
           ilike(imageStudioImages.brandSector, pattern),
           ilike(imageStudioImages.propertyType, pattern),
           sql`${pattern} ILIKE ANY(${imageStudioImages.tags})`,
-        ))
+        ));
+      }
+      if (companyId) conditions.push(eq(imageStudioImages.companyId, companyId));
+      if (propertyId) conditions.push(eq(imageStudioImages.propertyId, propertyId));
+      const images = await db.select(LIST_COLS).from(imageStudioImages)
+        .where(conditions.length === 1 ? conditions[0] : and(...conditions))
         .orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
     } catch (e: any) {
