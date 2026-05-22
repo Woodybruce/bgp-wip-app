@@ -1744,12 +1744,24 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
                     <BrandPortfolioMap stores={visible as any} height={380} />
                     <div className="max-h-[380px] overflow-y-auto pr-1 text-xs grid grid-cols-2 gap-x-2 gap-y-1 content-start">
-                      {visible.map((s: any) => (
-                        <div key={s.id} className="leading-snug">
-                          <div className="font-medium truncate">{s.name}</div>
-                          {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
-                        </div>
-                      ))}
+                      {visible.map((s: any) => {
+                        // s.address can come back either as a string
+                        // (most CRM rows) or an object {street, city,
+                        // country, postcode} from the Apollo / research
+                        // mutation — stringify defensively so a fresh
+                        // research payload doesn't crash the panel.
+                        const addrStr = typeof s.address === "string"
+                          ? s.address
+                          : s.address && typeof s.address === "object"
+                            ? [s.address.street, s.address.city, s.address.postcode, s.address.country].filter(Boolean).join(", ")
+                            : "";
+                        return (
+                          <div key={s.id} className="leading-snug">
+                            <div className="font-medium truncate">{s.name}</div>
+                            {addrStr && <div className="text-[10px] text-muted-foreground truncate">{addrStr}</div>}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
