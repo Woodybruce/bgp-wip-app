@@ -2012,13 +2012,6 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, onClick }: { 
   );
 }
 
-interface FeeAllocationRow {
-  agentName: string;
-  allocationType: "percentage" | "fixed";
-  percentage: number;
-  fixedAmount: number;
-}
-
 export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId: string; dealFee: number | null | undefined; users: { id: string; name: string }[]; colorMap?: Record<string, string> }) {
   const { toast } = useToast();
   const { data: allocations = [], isLoading } = useQuery<DealFeeAllocation[]>({
@@ -2031,9 +2024,12 @@ export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId
   });
 
   const [editing, setEditing] = useState(false);
-  const [rows, setRows] = useState<FeeAllocationRow[]>([]);
+  const [rows, setRows] = useState<FeeAllocationEditorRow[]>([]);
   const [allocType, setAllocType] = useState<"percentage" | "fixed">("percentage");
 
+  // Hydrate the editor state from the saved allocations whenever they
+  // arrive (or change) and we're not in the middle of editing. Includes
+  // is_bgp_house so the BGP House row reappears flagged on reopen.
   useEffect(() => {
     if (allocations && allocations.length > 0 && !editing) {
       setRows(allocations.map(a => ({
@@ -2041,13 +2037,14 @@ export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId
         allocationType: a.allocationType as "percentage" | "fixed",
         percentage: a.percentage || 0,
         fixedAmount: a.fixedAmount || 0,
+        isBgpHouse: (a as any).isBgpHouse === true || /\(BGP House\)/i.test(a.agentName || ""),
       })));
       setAllocType(allocations[0].allocationType as "percentage" | "fixed");
     }
   }, [allocations, editing]);
 
   const saveMutation = useMutation({
-    mutationFn: async (data: FeeAllocationRow[]) => {
+    mutationFn: async (data: FeeAllocationEditorRow[]) => {
       await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations: data });
     },
     onSuccess: () => {
@@ -2063,28 +2060,22 @@ export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId
 
   const startEditing = () => {
     if (!allocations || allocations.length === 0) {
-      setRows([{ agentName: "", allocationType: "percentage", percentage: 0, fixedAmount: 0 }]);
+      setRows([{ agentName: "", allocationType: "percentage", percentage: 0, fixedAmount: 0, isBgpHouse: false }]);
       setAllocType("percentage");
     }
     setEditing(true);
   };
 
-  const addRow = () => {
-    setRows(prev => [...prev, { agentName: "", allocationType: allocType, percentage: 0, fixedAmount: 0 }]);
-  };
-
-  const removeRow = (idx: number) => {
-    setRows(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const updateRow = (idx: number, field: keyof FeeAllocationRow, value: string | number) => {
-    setRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
-  };
-
   const handleSave = () => {
     const data = rows
-      .filter(r => r.agentName)
-      .map(r => ({ ...r, allocationType: allocType }));
+      .filter(r => r.isBgpHouse || r.agentName)
+      .map(r => ({
+        agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+        allocationType: allocType,
+        percentage: allocType === "percentage" ? r.percentage : 0,
+        fixedAmount: allocType === "fixed" ? r.fixedAmount : 0,
+        isBgpHouse: !!r.isBgpHouse,
+      }));
     if (data.length === 0) {
       saveMutation.mutate([]);
       return;
@@ -2139,98 +2130,19 @@ export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId
         </div>
 
         {editing ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">Split type:</span>
-              <div className="flex items-center rounded-full border p-0.5 gap-0.5">
-                {(["percentage", "fixed"] as const).map(t => (
-                  <button
-                    key={t}
-                    onClick={() => setAllocType(t)}
-                    className={`text-[11px] px-2.5 py-1 rounded-full transition-colors ${
-                      allocType === t
-                        ? "bg-black text-white dark:bg-white dark:text-black"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                    data-testid={`button-alloc-type-${t}`}
-                  >
-                    {t === "percentage" ? "% Split" : "Fixed £"}
-                  </button>
-                ))}
-              </div>
-              {totalFee > 0 && (
-                <span className="text-xs text-muted-foreground ml-auto">Total fee: {formatCurrency(totalFee)}</span>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              {rows.map((row, idx) => (
-                <div key={idx} className="flex items-center gap-2" data-testid={`fee-alloc-row-${idx}`}>
-                  <Select value={row.agentName || undefined} onValueChange={(v) => updateRow(idx, "agentName", v)}>
-                    <SelectTrigger className="h-8 text-xs flex-1" data-testid={`select-agent-${idx}`}>
-                      <SelectValue placeholder="Select BGP Agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {bgpAgents.filter(name => !rows.some((r, i) => i !== idx && r.agentName === name)).map(name => (
-                        <SelectItem key={name} value={name}>
-                          <span className="flex items-center gap-1.5">
-                            <span className={`w-2 h-2 rounded-full ${colorMap?.[name] || "bg-zinc-500"}`} />
-                            {name}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {allocType === "percentage" ? (
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        value={row.percentage || ""}
-                        onChange={(e) => updateRow(idx, "percentage", Number(e.target.value))}
-                        className="w-20 h-8 text-xs text-right"
-                        placeholder="0"
-                        data-testid={`input-percentage-${idx}`}
-                      />
-                      <span className="text-xs text-muted-foreground">%</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs text-muted-foreground">£</span>
-                      <Input
-                        type="number"
-                        value={row.fixedAmount || ""}
-                        onChange={(e) => updateRow(idx, "fixedAmount", Number(e.target.value))}
-                        className="w-24 h-8 text-xs text-right"
-                        placeholder="0"
-                        data-testid={`input-fixed-amount-${idx}`}
-                      />
-                    </div>
-                  )}
-                  {totalFee > 0 && allocType === "percentage" && row.percentage > 0 && (
-                    <span className="text-[10px] text-muted-foreground w-20 text-right shrink-0">
-                      = {formatCurrency(totalFee * row.percentage / 100)}
-                    </span>
-                  )}
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" onClick={() => removeRow(idx)} data-testid={`button-remove-agent-${idx}`}>
-                    <X className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-
-            <Button variant="outline" size="sm" onClick={addRow} className="w-full" data-testid="button-add-agent-row">
-              <Plus className="w-3.5 h-3.5 mr-1" />
-              Add BGP Agent
-            </Button>
-
-            {allocType === "percentage" && rows.length > 0 && (
-              <div className="text-xs text-right">
-                <span className={`font-medium ${Math.abs(rows.reduce((s, r) => s + (r.percentage || 0), 0) - 100) > 0.01 ? "text-red-500" : "text-green-600"}`}>
-                  Total: {rows.reduce((s, r) => s + (r.percentage || 0), 0).toFixed(1)}%
-                </span>
-              </div>
-            )}
-          </div>
+          // Shared editor — same UI as the New Deal create form so the
+          // %/£ toggle, agent picker, BGP House row all behave identically.
+          // FeeAllocationCard keeps ownership of the save mutation; the
+          // editor is purely controlled.
+          <FeeAllocationEditor
+            rows={rows}
+            onChange={setRows}
+            allocType={allocType}
+            onAllocTypeChange={setAllocType}
+            dealFee={totalFee}
+            bgpAgents={users}
+            colorMap={colorMap}
+          />
         ) : isLoading ? (
           <div className="space-y-2">
             {[1, 2].map(i => <Skeleton key={i} className="h-8" />)}
