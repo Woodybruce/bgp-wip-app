@@ -4396,7 +4396,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                 pane: "goadLabelPane",
                 icon: L.divIcon({
                   className: "",
-                  html: `<div data-goad-label-v4="1" style="width:${outerW}px;height:${outerH}px;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden;"><div style="font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;font-size:${fontPx}px;font-weight:600;letter-spacing:-0.2px;color:#0a0a0a;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;width:${innerWidth}px;transform:rotate(${deg.toFixed(1)}deg);transform-origin:center;text-transform:uppercase;line-height:1;">${fascia}</div></div>`,
+                  html: `<div data-goad-label-v5="1" style="width:${outerW}px;height:${outerH}px;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden;"><div style="font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;font-size:${fontPx}px;font-weight:600;letter-spacing:-0.2px;color:#0a0a0a;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;width:${innerWidth}px;max-width:${innerWidth}px;overflow:hidden;text-overflow:ellipsis;transform:rotate(${deg.toFixed(1)}deg);transform-origin:center;text-transform:uppercase;line-height:1;">${fascia}</div></div>`,
                   iconSize: [outerW, outerH],
                   iconAnchor: [outerW / 2, outerH / 2],
                 }),
