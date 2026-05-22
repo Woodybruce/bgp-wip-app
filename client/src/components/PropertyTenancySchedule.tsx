@@ -214,8 +214,8 @@ const COLUMNS: Col[] = [
   { field: "gia_sqft",          label: "GIA",           band: "Areas — Totals", width: 90, align: "right", type: "num" },
   { field: "nia_sqft",          label: "NIA",           band: "Areas — Totals", width: 90, align: "right", type: "num" },
   { field: "itza_sqft",         label: "ITZA",          band: "Areas — Totals", width: 90, align: "right", type: "num" },
-  { field: "passing_rent_pa",   label: "Rent (pa)",     band: "Rental Income", width: 110, align: "right", type: "currency" },
-  { field: "marketing_rent_pa", label: "Marketing Rent", band: "Rental Income", width: 120, align: "right", type: "currency" },
+  { field: "passing_rent_pa",   label: "Passing Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
+  { field: "marketing_rent_pa", label: "Quoting Rent",  band: "Rental Income", width: 120, align: "right", type: "currency" },
   { field: "turnover_rent_payable", label: "T/O Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "erv_profile",       label: "ERV Profile",   band: "Rental Income", width: 100, align: "left" },
   { field: "erv_pa",            label: "ERV (pa)",      band: "Rental Income", width: 110, align: "right", type: "currency" },
@@ -715,7 +715,7 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
         {[
-          { label: "Total NIA", value: fmtNum(totalNIA) + " sqft", filter: null },
+          { label: "Total NIA", value: fmtNum(totalNIA) + " sq ft", filter: null },
           { label: "Passing Rent", value: fmtCurrency(totalRent), filter: null },
           { label: "Avg ERV £psf", value: fmtNum(avgERV, 0), filter: null },
           { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null },
@@ -1192,10 +1192,10 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
             onSave={(_id, _f, val) => setForm({ ...form, trading_name: val })}
           />
         </div>
-        <Input placeholder="Permitted Use" value={form.permitted_use} onChange={e => setForm({ ...form, permitted_use: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-use" />
+        <Input placeholder="Use Class" value={form.permitted_use} onChange={e => setForm({ ...form, permitted_use: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-use" />
         <Input placeholder="Zone/Premises" value={form.premises} onChange={e => setForm({ ...form, premises: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-premises" />
-        <Input placeholder="NIA sqft" value={form.nia_sqft} onChange={e => setForm({ ...form, nia_sqft: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-sqft" />
-        <Input placeholder="Rent PA" value={form.passing_rent_pa} onChange={e => setForm({ ...form, passing_rent_pa: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-rent" />
+        <Input placeholder="NIA sq ft" value={form.nia_sqft} onChange={e => setForm({ ...form, nia_sqft: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-sqft" />
+        <Input placeholder="Passing Rent" value={form.passing_rent_pa} onChange={e => setForm({ ...form, passing_rent_pa: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-rent" />
         <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="h-7 text-xs border rounded px-2 bg-white dark:bg-gray-700" data-testid="add-tenancy-status">
           <option value="Occupied">Occupied</option>
           <option value="Vacant">Vacant</option>

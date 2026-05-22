@@ -1111,7 +1111,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[140px]">Team</TableHead>
                 <TableHead>Floor</TableHead>
                 <TableHead className="min-w-[140px]">Floor Areas</TableHead>
-                <TableHead className="text-right">Asking Rent</TableHead>
+                <TableHead className="text-right">Quoting Rent</TableHead>
                 <TableHead className="text-right">Rates p.a.</TableHead>
                 <TableHead className="text-right">SC p.a.</TableHead>
                 <TableHead>Asset Class</TableHead>
@@ -1792,7 +1792,7 @@ export default function AvailableUnitsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1">Rent p.a. (£)</Label>
+                <Label className="text-xs mb-1">Headline Rent (£ p.a.)</Label>
                 <CurrencyInput
                   value={wipForm.askingRent}
                   onChange={v => setWipForm(f => ({ ...f, askingRent: v }))}
@@ -1835,6 +1835,26 @@ export default function AvailableUnitsPage() {
                 />
               </div>
             </div>
+
+            {/* Net Effective = Headline × (term − rent_free) / term.
+                Derived live — no extra DB column. Hidden when the
+                inputs aren't enough to make the number meaningful. */}
+            {(() => {
+              const headline = parseFloat(wipForm.askingRent) || 0;
+              const termYears = parseFloat(wipForm.leaseLength) || 0;
+              const freeMonths = parseFloat(wipForm.rentFree) || 0;
+              if (!headline || !termYears) return null;
+              const termMonths = termYears * 12;
+              if (freeMonths >= termMonths) return null;
+              const net = Math.round(headline * (termMonths - freeMonths) / termMonths);
+              return (
+                <div className="text-xs text-muted-foreground border rounded-md px-3 py-2 bg-muted/30 flex items-center justify-between">
+                  <span>Net Effective Rent (derived from headline, term, rent free)</span>
+                  <span className="font-medium text-foreground">£{net.toLocaleString()} p.a.</span>
+                </div>
+              );
+            })()}
+
             <div>
               <Label className="text-xs mb-1">Notes</Label>
               <Textarea
@@ -2576,7 +2596,7 @@ function UnitFormDialog({
                               <Badge variant="outline" className="ml-1 text-[9px] border-amber-300 text-amber-700">vacant</Badge>
                             )}
                             {pu.floor && <span className="text-xs text-muted-foreground ml-2">{pu.floor}</span>}
-                            {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sqft</span>}
+                            {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sq ft</span>}
                           </CommandItem>
                         ))}
                       </CommandGroup>
@@ -2600,7 +2620,7 @@ function UnitFormDialog({
             <CurrencyInput value={form.sqft} onChange={v => upd("sqft", v)} placeholder="e.g. 1,500" />
           </div>
           <div>
-            <Label>Asking Rent (£ p.a.)</Label>
+            <Label>Quoting Rent (£ p.a.)</Label>
             <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
           </div>
           <div>

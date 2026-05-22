@@ -256,7 +256,7 @@ const COLUMN_LABELS: Record<string, string> = {
   floorAreas: "Floor Areas",
   pricePsf: "Price PSF",
   priceItza: "Price ITZA",
-  rentPa: "Rent PA",
+  rentPa: "Headline Rent",
   capitalContribution: "Capital Contribution",
   rentFree: "Rent Free",
   leaseLength: "Lease Length",
@@ -1231,7 +1231,7 @@ function SimplifiedCreateBody({
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <Label htmlFor="deal-rent-pa" className="text-xs">Rent £ pa</Label>
+            <Label htmlFor="deal-rent-pa" className="text-xs">Headline Rent (£ p.a.)</Label>
             <Input id="deal-rent-pa" type="number" value={form.rentPa}
               onChange={(e) => set("rentPa", e.target.value)}
               placeholder="e.g. 175000" />
@@ -1935,7 +1935,7 @@ export function DealFormDialog({
 
                   {showRent && (
                     <div>
-                      <Label>Rent PA ({"\u00A3"})</Label>
+                      <Label>Headline Rent (\u00A3 p.a.)</Label>
                       <Input type="number" min="0" value={form.rentPa} onChange={(e) => set("rentPa", e.target.value)} data-testid="input-deal-rent-pa" />
                     </div>
                   )}
@@ -1966,25 +1966,25 @@ export function DealFormDialog({
                   {showArea && (
                     <>
                       <div>
-                        <Label>GF Area (sqft)</Label>
+                        <Label>GF Area (sq ft)</Label>
                         <Input type="number" min="0" value={form.gfAreaSqft} onChange={(e) => set("gfAreaSqft", e.target.value)} data-testid="input-deal-gf-area" />
                       </div>
                       <div>
-                        <Label>FF Area (sqft)</Label>
+                        <Label>FF Area (sq ft)</Label>
                         <Input type="number" min="0" value={form.ffAreaSqft} onChange={(e) => set("ffAreaSqft", e.target.value)} data-testid="input-deal-ff-area" />
                       </div>
                       <div>
-                        <Label>Basement (sqft)</Label>
+                        <Label>Basement (sq ft)</Label>
                         <Input type="number" min="0" value={form.basementAreaSqft} onChange={(e) => set("basementAreaSqft", e.target.value)} data-testid="input-deal-basement-area" />
                       </div>
                       {isRetailAssetClass(form.assetClass) && (
                         <div>
-                          <Label>ITZA (sqft)</Label>
+                          <Label>ITZA (sq ft)</Label>
                           <Input type="number" min="0" value={form.itzaAreaSqft} onChange={(e) => set("itzaAreaSqft", e.target.value)} data-testid="input-deal-itza-area" />
                         </div>
                       )}
                       <div>
-                        <Label>{areaBasisFromAssetClass(form.assetClass)} Area (sqft)</Label>
+                        <Label>{areaBasisFromAssetClass(form.assetClass)} Area (sq ft)</Label>
                         <Input type="number" value={(() => { const t = (parseFloat(form.basementAreaSqft) || 0) + (parseFloat(form.gfAreaSqft) || 0) + (parseFloat(form.ffAreaSqft) || 0); return t > 0 ? String(t) : ""; })()} readOnly className="bg-muted" data-testid="input-deal-total-area" />
                       </div>
                     </>
@@ -2809,7 +2809,7 @@ function HotsChecklistDialog({
               </h4>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <Label className="text-xs">Rent PA (£)</Label>
+                  <Label className="text-xs">Headline Rent (£ p.a.)</Label>
                   <Input type="number" value={form.rentPa || ""} onChange={(e) => setForm(prev => ({ ...prev, rentPa: parseFloat(e.target.value) || 0 }))}
                     placeholder="0" data-testid="input-hots-rent" />
                 </div>
@@ -5328,7 +5328,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       { label: "Agent", value: agents },
                       { label: "Asset Class", value: deal.assetClass },
                       { label: "Fee", value: deal.fee ? `\u00A3${Number(deal.fee).toLocaleString()}` : null },
-                      { label: "Rent PA", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
+                      { label: "Headline Rent", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
                     ],
                   };
                 })}

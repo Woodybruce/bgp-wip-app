@@ -405,11 +405,27 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   const _areaBasis = deal.areaBasis || areaBasisFromAssetClass(deal.assetClass);
   const _isRetail = isRetailAssetClass(deal.assetClass);
+  // Net Effective = Headline Rent × (term − rent_free / 12) / term.
+  // Rent-free is captured in months on the deal, lease length in years.
+  // Only meaningful when all three values are present and the term is
+  // longer than the free period; otherwise hide the row rather than
+  // show a misleading zero or negative.
+  const netEffectiveRent = (() => {
+    const headline = Number(deal.rentPa) || 0;
+    const termYears = Number(deal.leaseLength) || 0;
+    const freeMonths = Number(deal.rentFree) || 0;
+    if (!headline || !termYears) return null;
+    const termMonths = termYears * 12;
+    if (freeMonths >= termMonths) return null;
+    return Math.round(headline * (termMonths - freeMonths) / termMonths);
+  })();
+
   const numericFields: { label: string; value: number | null | undefined; format?: "currency" | "number" | "percent" }[] = [
     { label: "Pricing", value: deal.pricing, format: "currency" },
-    { label: "Rent PA", value: deal.rentPa, format: "currency" },
+    { label: "Headline Rent", value: deal.rentPa, format: "currency" },
+    { label: "Net Effective Rent", value: netEffectiveRent, format: "currency" },
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
-    { label: `${_areaBasis} Area (sqft)`, value: deal.totalAreaSqft, format: "number" },
+    { label: `${_areaBasis} Area (sq ft)`, value: deal.totalAreaSqft, format: "number" },
     { label: "Price PSF", value: deal.pricePsf, format: "currency" },
     ...(_isRetail ? [{ label: "Price ITZA", value: deal.priceItza, format: "currency" as const }] : []),
     { label: "Capital Contribution", value: deal.capitalContribution, format: "currency" },
@@ -1130,7 +1146,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                         <span className="text-muted-foreground shrink-0">{label}</span>
                         <div className="text-right">
                           {rents?.avgQuotingRentPerSqft != null && (
-                            <span className="font-medium">£{rents.avgQuotingRentPerSqft.toFixed(2)}<span className="text-muted-foreground font-normal">/sqft</span></span>
+                            <span className="font-medium">£{rents.avgQuotingRentPerSqft.toFixed(2)}<span className="text-muted-foreground font-normal">/sq ft</span></span>
                           )}
                           {val?.rentEstimate?.low != null && val?.rentEstimate?.high != null && (
                             <span className="text-muted-foreground"> (£{val.rentEstimate.low.toFixed(2)}–{val.rentEstimate.high.toFixed(2)})</span>
