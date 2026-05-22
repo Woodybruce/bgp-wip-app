@@ -282,7 +282,19 @@ export default function PropertyIntelligence() {
     return () => window.removeEventListener("popstate", handler);
   }, []);
 
-  const [pendingSearch, setPendingSearch] = useState<{ address: string; postcode: string | null } | null>(null);
+  // Pre-load a pendingSearch when we arrive via ?address=&postcode= URL params
+  // (e.g. the 'Open in Map' button from the Pathway page). This makes the
+  // Pathway map the canonical Goad/street-plan view across the app — no more
+  // separate Retail Context Plan modal flow.
+  const initialPendingSearch = (() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const address = params.get("address") || "";
+    const postcode = params.get("postcode") || "";
+    if (!address && !postcode) return null;
+    return { address, postcode: postcode || null };
+  })();
+  const [pendingSearch, setPendingSearch] = useState<{ address: string; postcode: string | null } | null>(initialPendingSearch);
   // Canonical property identity for the whole page — once resolved, every tab
   // can read this and stop doing its own ad-hoc lookups. v1: state only;
   // v2 will pass propertyId into the lazy tab components as a prop.

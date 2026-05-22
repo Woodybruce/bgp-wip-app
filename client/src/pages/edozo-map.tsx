@@ -3307,7 +3307,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [postcode, setSelectedPostcode] = useState("");
   const [propertyData, setPropertyData] = useState<PropertyData | null>(null);
   const [loadingData, setLoadingData] = useState(false);
-  const [currentArea, setCurrentArea] = useState("Belgravia");
+  // Starts blank — the PDF export reverse-geocodes the current map
+  // centre at export time so the header reflects what the user is
+  // actually looking at, not a hardcoded default.
+  const [currentArea, setCurrentArea] = useState("");
   const [activeTool, setActiveTool] = useState<string>("select");
   const [saveToOrg, setSaveToOrg] = useState(false);
   const searchTimeout = useRef<ReturnType<typeof setTimeout>>();
@@ -4884,6 +4887,24 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (!map || !container) return;
     setExportingPlan(true);
     try {
+      // Reverse-geocode the current map centre so the header reflects
+      // where the user is *now*, not the stale 'Belgravia' default
+      // (or whatever address was last searched).
+      let areaLabel = currentArea || postcode || "London";
+      try {
+        const c = map.getCenter();
+        const rgResp = await fetch(`/api/reverse-geocode?lat=${c.lat}&lng=${c.lng}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+        });
+        if (rgResp.ok) {
+          const rg = await rgResp.json();
+          // Use a sensible short label — neighbourhood / locality, not the full
+          // formatted address (which can be a 100-char string). Falls back to
+          // postcode then displayAddr.
+          areaLabel = rg.neighbourhood || rg.locality || rg.postcode || rg.displayAddr || areaLabel;
+        }
+      } catch { /* offline / no key — keep existing label */ }
+
       const { toPng } = await import("html-to-image");
       const { jsPDF } = await import("jspdf");
       const dataUrl = await toPng(container, { cacheBust: true, pixelRatio: 2, backgroundColor: "#faf8f2" });
@@ -4900,7 +4921,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       pdf.text("BRUCE GILLINGHAM POLLARD", margin, 9);
       pdf.setFontSize(9);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${currentArea || postcode || "London"}  ·  Intelligence Plan  ·  ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`, pageW - margin, 9, { align: "right" });
+      pdf.text(`${areaLabel}  ·  Intelligence Plan  ·  ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`, pageW - margin, 9, { align: "right" });
 
       const imgW = pageW - margin * 2;
       const imgH = pageH - 14 - margin * 2;
@@ -4908,9 +4929,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
       pdf.setTextColor(80, 80, 80);
       pdf.setFontSize(7);
-      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places. BGP Intelligence Map.", margin, pageH - 4);
+      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places, Experian Goad. BGP Intelligence Map.", margin, pageH - 4);
 
-      const filename = `BGP_Plan_${(currentArea || postcode || "map").replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const filename = `BGP_Plan_${areaLabel.replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
       pdf.save(filename);
     } catch (err: any) {
       console.error("[map] export PDF failed:", err);

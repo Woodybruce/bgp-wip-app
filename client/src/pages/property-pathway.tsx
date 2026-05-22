@@ -3053,9 +3053,12 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
           <Button size="sm" variant="outline" onClick={() => setCaptureOpen(true)} disabled={busy || !propertyAddress} className="h-7 text-xs">
             + New Street View
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setPlanEditorOpen(true)} disabled={busy || !propertyId} className="h-7 text-xs">
-            + Retail Context Plan
-          </Button>
+          <Link
+            href={`/property-intelligence?tab=map${propertyAddress ? `&address=${encodeURIComponent(propertyAddress)}` : ""}${propertyPostcode ? `&postcode=${encodeURIComponent(propertyPostcode)}` : ""}`}
+            className={`h-7 text-xs inline-flex items-center justify-center px-3 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors ${(busy || !propertyId) ? "opacity-50 pointer-events-none" : ""}`}
+          >
+            🗺 Open in Map
+          </Link>
           <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busy || !propertyId} className="h-7 text-xs">
             + Upload
           </Button>
@@ -3348,9 +3351,12 @@ function ImageStudioCard({ runId, stage8, onReload, propertyId, runAddress, runP
             </Button>
           )}
           {propertyId && (
-            <Button size="sm" variant="outline" onClick={() => setPlanEditorOpen(true)} className="h-7 text-xs gap-1">
-              🗺 Edit Retail Plan
-            </Button>
+            <Link
+              href={`/property-intelligence?tab=map${runAddress ? `&address=${encodeURIComponent(runAddress)}` : ""}${runPostcode ? `&postcode=${encodeURIComponent(runPostcode)}` : ""}`}
+              className="h-7 text-xs inline-flex items-center justify-center px-3 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors gap-1"
+            >
+              🗺 Open in Map
+            </Link>
           )}
           <a
             href={collections[0]?.id ? `/image-studio?collection=${encodeURIComponent(collections[0].id)}` : "/image-studio"}
