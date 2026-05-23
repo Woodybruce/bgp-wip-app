@@ -266,6 +266,23 @@ function AuthenticatedApp() {
   const [aiChatRequested, setAiChatRequested] = useState(false);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
+
+  // Sidebar open state is owned here so we can auto-collapse it when
+  // ChatBGP opens (otherwise the main content gets squeezed between
+  // the 256px sidebar and the 340px chat panel and the leftmost column
+  // bleeds against the sidebar edge). We remember the user's manual
+  // preference and restore it when chat closes.
+  const [sidebarManualOpen, setSidebarManualOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("sidebar:open") !== "false"; } catch { return true; }
+  });
+  const sidebarEffectiveOpen = chatOpen ? false : sidebarManualOpen;
+  const handleSidebarOpenChange = (open: boolean) => {
+    // Only the user's deliberate toggle should update the persisted
+    // preference — automatic close-on-chat-open shouldn't overwrite it.
+    if (chatOpen) return;
+    setSidebarManualOpen(open);
+    try { localStorage.setItem("sidebar:open", String(open)); } catch {}
+  };
   const { data: currentUser } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -413,7 +430,11 @@ function AuthenticatedApp() {
 
   return (
     <GlobalDropZone>
-    <SidebarProvider style={style as React.CSSProperties}>
+    <SidebarProvider
+      style={style as React.CSSProperties}
+      open={sidebarEffectiveOpen}
+      onOpenChange={handleSidebarOpenChange}
+    >
       {/* ChatBGPProvider is hoisted to AppContent so the full-page /chatbgp
           view and the side panel share the same messages / activeThreadId —
           toggling between them keeps the conversation alive. */}

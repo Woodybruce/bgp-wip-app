@@ -292,7 +292,11 @@ export function AppSidebar() {
     : "?";
 
   return (
-    <Sidebar>
+    // collapsible="icon" lets the sidebar shrink to a narrow icon rail
+    // instead of sliding fully off-screen. Pairs with the auto-collapse
+    // when ChatBGP opens (in App.tsx) so the main content gets room
+    // without losing nav access.
+    <Sidebar collapsible="icon">
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
           {isLandsec ? (
