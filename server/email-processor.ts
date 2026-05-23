@@ -108,7 +108,7 @@ function htmlToText(html: string): string {
   s = s.replace(/<img\b[^>]*>/gi, "");          // Images without alt → drop silently
   // Block-level and <br> tags become newlines BEFORE stripping remaining tags.
   s = s.replace(/<\s*br\s*\/?\s*>/gi, "\n");
-  s = s.replace(/<\/(p|div|li|tr|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
+  s = s.replace(/<\/(p|div|li|tr|td|th|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
   s = s.replace(/<\s*hr\s*\/?\s*>/gi, "\n---\n");
   // Strip all remaining tags.
   s = s.replace(/<[^>]+>/g, " ");
