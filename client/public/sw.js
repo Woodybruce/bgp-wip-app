@@ -1,4 +1,4 @@
-var CACHE_NAME = 'bgp-v20';
+var CACHE_NAME = 'bgp-v21';
 var SHARE_CACHE = 'bgp-share-target';
 var PRECACHE_URLS = [
   '/',
