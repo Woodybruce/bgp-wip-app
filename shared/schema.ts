@@ -1673,6 +1673,21 @@ export const insertTurnoverDataSchema = createInsertSchema(turnoverData).omit({ 
 export type InsertTurnoverData = z.infer<typeof insertTurnoverDataSchema>;
 export type TurnoverData = typeof turnoverData.$inferSelect;
 
+export const brandMarketCommentary = pgTable("brand_market_commentary", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  scopeKey: text("scope_key").notNull().unique(),
+  scopeLabel: text("scope_label").notNull(),
+  scopeType: text("scope_type").notNull(),
+  parentKey: text("parent_key"),
+  parentLabel: text("parent_label"),
+  content: jsonb("content").notNull(),
+  brandCount: integer("brand_count").default(0),
+  newsCount: integer("news_count").default(0),
+  generatedAt: timestamp("generated_at").defaultNow(),
+});
+
+export type BrandMarketCommentary = typeof brandMarketCommentary.$inferSelect;
+
 export const systemActivityLog = pgTable("system_activity_log", {
   id: serial("id").primaryKey(),
   source: text("source").notNull(),

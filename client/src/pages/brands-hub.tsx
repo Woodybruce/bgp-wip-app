@@ -18,7 +18,7 @@ import {
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
-  ShoppingCart,
+  ShoppingCart, TrendingDown, Eye, Lightbulb,
 } from "lucide-react";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
@@ -709,6 +709,36 @@ function BrandExplorer() {
         </div>
       )}
 
+      {/* Market commentary — sub takes precedence over top */}
+      {activeCatObj && (() => {
+        const activeSubObj = activeSub ? activeCatObj.subs.find(s => s.key === activeSub) : null;
+        if (activeSubObj) {
+          return (
+            <MarketCommentaryBoard
+              scopeKey={activeSubObj.key}
+              scopeLabel={activeSubObj.label}
+              scopeType="sub"
+              parentKey={activeCatObj.key}
+              parentLabel={activeCatObj.label}
+              matches={activeSubObj.match}
+              gradient={activeCatObj.gradient}
+              accent={activeCatObj.color}
+            />
+          );
+        }
+        const allMatches = activeCatObj.subs.flatMap(s => s.match);
+        return (
+          <MarketCommentaryBoard
+            scopeKey={activeCatObj.key}
+            scopeLabel={activeCatObj.label}
+            scopeType="top"
+            matches={allMatches}
+            gradient={activeCatObj.gradient}
+            accent={activeCatObj.color}
+          />
+        );
+      })()}
+
       {/* Search + count */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
@@ -802,6 +832,224 @@ function BrandExplorer() {
         </div>
       )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Market Commentary Board — AI-generated sector view above the brand grid
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CommentaryEntry { name: string; reason: string }
+interface CommentaryContent {
+  headline: string;
+  summary: string;
+  trends: string[];
+  winners: CommentaryEntry[];
+  losers: CommentaryEntry[];
+  watch: CommentaryEntry[];
+  outlook: string;
+}
+interface MarketCommentary {
+  scopeKey: string;
+  scopeLabel: string;
+  scopeType: "top" | "sub";
+  parentKey: string | null;
+  parentLabel: string | null;
+  content: CommentaryContent;
+  brandCount: number;
+  newsCount: number;
+  generatedAt: string;
+  cached?: boolean;
+  stale?: boolean;
+}
+
+function MarketCommentaryBoard({
+  scopeKey, scopeLabel, scopeType, parentKey, parentLabel, matches, gradient, accent,
+}: {
+  scopeKey: string;
+  scopeLabel: string;
+  scopeType: "top" | "sub";
+  parentKey?: string;
+  parentLabel?: string;
+  matches: string[];
+  gradient: string;
+  accent: string;
+}) {
+  const { toast } = useToast();
+  const params = new URLSearchParams({
+    scope: scopeKey,
+    label: scopeLabel,
+    type: scopeType,
+    matches: JSON.stringify(matches),
+  });
+  if (parentKey) params.set("parentKey", parentKey);
+  if (parentLabel) params.set("parentLabel", parentLabel);
+  const url = `/api/brands/market-commentary?${params.toString()}`;
+
+  const { data, isLoading, refetch, isFetching } = useQuery<MarketCommentary>({
+    queryKey: ["/api/brands/market-commentary", scopeKey],
+    queryFn: async () => {
+      const res = await apiRequest("GET", url);
+      return res.json();
+    },
+    staleTime: 60 * 60 * 1000, // 1h — server has 24h TTL, this just stops refetch on tab switch
+  });
+
+  const regenMut = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/brands/market-commentary/regenerate", {
+        scope: scopeKey,
+        label: scopeLabel,
+        type: scopeType,
+        parentKey: parentKey || null,
+        parentLabel: parentLabel || null,
+        matches,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Commentary refreshed" });
+      refetch();
+    },
+    onError: (err: any) => {
+      toast({ title: "Refresh failed", description: err?.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return <Skeleton className="h-48 w-full rounded-xl" />;
+  }
+  if (!data) return null;
+
+  const c = data.content;
+  const generatedAgo = (() => {
+    const ms = Date.now() - new Date(data.generatedAt).getTime();
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  })();
+
+  const refreshing = regenMut.isPending || isFetching;
+  const hasWinners = c.winners?.length > 0;
+  const hasLosers = c.losers?.length > 0;
+  const hasWatch = c.watch?.length > 0;
+
+  return (
+    <Card className="overflow-hidden border">
+      <div className={`bg-gradient-to-br ${gradient} text-white px-5 py-4`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <Sparkles className="w-4 h-4 mt-0.5 shrink-0 opacity-90" />
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-wide opacity-80 font-medium">
+                Market View {parentLabel ? `· ${parentLabel}` : ""}
+              </div>
+              <div className="text-lg font-bold leading-snug">
+                {c.headline || scopeLabel}
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-[11px] text-white hover:bg-white/20 hover:text-white shrink-0"
+            onClick={() => regenMut.mutate()}
+            disabled={refreshing}
+            title="Regenerate commentary"
+          >
+            <RefreshCw className={`w-3 h-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <CardContent className="p-5 space-y-4">
+        {c.summary && (
+          <p className="text-sm leading-relaxed">{c.summary}</p>
+        )}
+
+        {(hasWinners || hasLosers || hasWatch) && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {hasWinners && (
+              <div className="rounded-lg border bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200/60 dark:border-emerald-900/40 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 mb-2">
+                  <TrendingUp className="w-3.5 h-3.5" /> Winners
+                </div>
+                <ul className="space-y-2">
+                  {c.winners.map((w, i) => (
+                    <li key={i}>
+                      <div className="text-sm font-medium leading-tight">{w.name}</div>
+                      <div className="text-[11px] text-muted-foreground leading-snug">{w.reason}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {hasLosers && (
+              <div className="rounded-lg border bg-rose-50/60 dark:bg-rose-950/20 border-rose-200/60 dark:border-rose-900/40 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 dark:text-rose-400 mb-2">
+                  <TrendingDown className="w-3.5 h-3.5" /> Losers
+                </div>
+                <ul className="space-y-2">
+                  {c.losers.map((w, i) => (
+                    <li key={i}>
+                      <div className="text-sm font-medium leading-tight">{w.name}</div>
+                      <div className="text-[11px] text-muted-foreground leading-snug">{w.reason}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {hasWatch && (
+              <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 border-amber-200/60 dark:border-amber-900/40 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400 mb-2">
+                  <Eye className="w-3.5 h-3.5" /> Watch
+                </div>
+                <ul className="space-y-2">
+                  {c.watch.map((w, i) => (
+                    <li key={i}>
+                      <div className="text-sm font-medium leading-tight">{w.name}</div>
+                      <div className="text-[11px] text-muted-foreground leading-snug">{w.reason}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {c.trends?.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground mb-1.5">
+              <Lightbulb className="w-3.5 h-3.5" /> Trends
+            </div>
+            <ul className="space-y-1">
+              {c.trends.map((t, i) => (
+                <li key={i} className="text-sm flex gap-2">
+                  <span className={`mt-1.5 w-1 h-1 rounded-full ${accent} shrink-0`} />
+                  <span>{t}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {c.outlook && (
+          <div className="pt-2 border-t">
+            <span className="text-xs font-semibold text-muted-foreground">Outlook · </span>
+            <span className="text-sm italic">{c.outlook}</span>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1">
+          <span>Generated by ChatBGP from {data.brandCount} brands · {data.newsCount} recent articles</span>
+          <span>Updated {generatedAgo}{data.stale ? " · stale" : ""}</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -28,7 +28,7 @@ import {
   dealAuditLog,
 } from "@shared/schema";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
-import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
+import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { searchPipnetRequirements } from "./pipnet";
 import { xeroApi, refreshXeroToken } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
@@ -4913,6 +4913,276 @@ Rules:
     }
     runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Manual trigger error:", err.message));
     res.json({ message: "Turnover research cycle started", running: true });
+  });
+
+  // ── Market commentary for a brand category / sub-category ────────────
+  // Cached AI-generated sector view. Grounded on actual BGP brand list,
+  // turnover_data and recent news. Returns cached row if fresh; else
+  // (or on POST /regenerate) calls Claude and stores the result.
+  const MARKET_COMMENTARY_TTL_HOURS = 24;
+
+  async function generateMarketCommentary(opts: {
+    scopeKey: string;
+    scopeLabel: string;
+    scopeType: "top" | "sub";
+    parentKey?: string | null;
+    parentLabel?: string | null;
+    matches: string[];
+  }) {
+    const { scopeKey, scopeLabel, scopeType, parentKey, parentLabel, matches } = opts;
+
+    if (!Array.isArray(matches) || matches.length === 0) {
+      throw new Error("matches[] is required");
+    }
+
+    // Brands in scope, with their latest turnover figure if we have one
+    const brandRows = await pool.query(
+      `SELECT c.id, c.name, c.company_type, c.domain, c.description,
+              t.turnover, t.period, t.confidence
+       FROM crm_companies c
+       LEFT JOIN LATERAL (
+         SELECT turnover, period, confidence
+         FROM turnover_data
+         WHERE company_id = c.id AND turnover IS NOT NULL
+         ORDER BY period DESC NULLS LAST, updated_at DESC
+         LIMIT 1
+       ) t ON true
+       WHERE c.company_type = ANY($1::text[])
+       ORDER BY (t.turnover IS NULL), t.turnover DESC NULLS LAST, c.name
+       LIMIT 40`,
+      [matches]
+    ).then(r => r.rows);
+
+    // Recent activity (last 90 days) so we know who's actually moving
+    const hotRows = await pool.query(
+      `SELECT c.id, c.name,
+              COUNT(DISTINCT d.id) AS deal_count,
+              COUNT(DISTINCT rl.id) AS req_count
+       FROM crm_companies c
+       LEFT JOIN crm_deals d ON d.tenant_id = c.id AND d.updated_at > NOW() - INTERVAL '90 days'
+       LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND rl.updated_at > NOW() - INTERVAL '90 days'
+       WHERE c.company_type = ANY($1::text[])
+       GROUP BY c.id, c.name
+       HAVING COUNT(DISTINCT d.id) + COUNT(DISTINCT rl.id) > 0
+       ORDER BY (COUNT(DISTINCT d.id) + COUNT(DISTINCT rl.id)) DESC
+       LIMIT 15`,
+      [matches]
+    ).then(r => r.rows);
+
+    // News articles mentioning any of these brands in the last 90 days
+    let newsRows: any[] = [];
+    if (brandRows.length > 0) {
+      const brandNames = brandRows.map((b: any) => b.name).slice(0, 30);
+      const titleClause = brandNames.map((_: any, i: number) => `title ILIKE '%' || $${i + 1} || '%'`).join(" OR ");
+      newsRows = await pool.query(
+        `SELECT title, source_name, published_at, ai_summary
+         FROM news_articles
+         WHERE published_at > NOW() - INTERVAL '90 days'
+           AND (${titleClause})
+         ORDER BY published_at DESC
+         LIMIT 25`,
+        brandNames
+      ).then(r => r.rows).catch(() => []);
+    }
+
+    // Compose context for Claude. Numbers in £m for readability.
+    const fmtM = (n: number | null) => n && n > 0 ? `£${(n / 1_000_000).toFixed(n >= 100_000_000 ? 0 : 1)}m` : null;
+    const brandLines = brandRows.map((b: any) => {
+      const t = fmtM(b.turnover);
+      const parts = [`- ${b.name}`];
+      if (t) parts.push(`turnover ${t} (${b.period || "?"})`);
+      return parts.join(" — ");
+    }).join("\n");
+
+    const hotLines = hotRows.map((h: any) =>
+      `- ${h.name} (${h.deal_count} deal${h.deal_count !== "1" ? "s" : ""}, ${h.req_count} req${h.req_count !== "1" ? "s" : ""} in last 90d)`
+    ).join("\n");
+
+    const newsLines = newsRows.map((n: any) => {
+      const d = n.published_at ? new Date(n.published_at).toLocaleDateString("en-GB") : "";
+      return `- [${d}] ${n.title}${n.ai_summary ? ` — ${String(n.ai_summary).slice(0, 200)}` : ""}`;
+    }).join("\n");
+
+    const scopeDescription = scopeType === "sub" && parentLabel
+      ? `${scopeLabel} (sub-category within ${parentLabel})`
+      : scopeLabel;
+
+    const prompt = `You are a UK retail and leasing market analyst writing a short briefing for the Bruce Gillingham Pollard agency team. They advise on prime retail and leisure leasing across the UK.
+
+Write a market commentary on the **${scopeDescription}** sector, grounded in the data below from BGP's own systems.
+
+BRANDS IN THIS SECTOR THAT BGP TRACKS:
+${brandLines || "(none on file)"}
+
+BRANDS WITH RECENT ACTIVITY IN BGP'S PIPELINE (last 90 days):
+${hotLines || "(no recent deals or requirements logged)"}
+
+RECENT NEWS HEADLINES MENTIONING THESE BRANDS (last 90 days):
+${newsLines || "(no recent press)"}
+
+Return ONLY valid JSON in this exact shape:
+{
+  "headline": "<one punchy sentence summarising the current state of the sector, max 90 chars>",
+  "summary": "<2-3 sentences of plain-English market commentary. Be concrete, not generic.>",
+  "trends": ["<trend 1>", "<trend 2>", "<trend 3>"],
+  "winners": [
+    {"name": "<brand name>", "reason": "<one short sentence on why they're winning>"}
+  ],
+  "losers": [
+    {"name": "<brand name>", "reason": "<one short sentence on what's gone wrong>"}
+  ],
+  "watch": [
+    {"name": "<brand name>", "reason": "<one short sentence on what to watch>"}
+  ],
+  "outlook": "<one sentence on the 6-12 month outlook for this sector>"
+}
+
+Rules:
+- Winners/losers/watch MUST be brands from the BGP list above. Do not invent brands.
+- 2-4 entries per list. If you genuinely cannot identify a loser or a watch-list brand, return an empty array for that key — do not pad.
+- Reasons should be specific (refits, store closures, new openings, turnover trajectory, M&A, format pivots) — not vague ("strong brand").
+- Trends should be UK-market-relevant and concrete (e.g. "Outlet centres outperforming high street", "Athleisure crossover into casual wear").
+- Tone: professional agency briefing — confident, no hype, no marketing fluff.
+- If the data is thin, say so honestly in the summary rather than fabricating insight.`;
+
+    const completion = await callClaude({
+      model: CHATBGP_HELPER_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_completion_tokens: 1500,
+      temperature: 0.4,
+    });
+
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = safeParseJSON(raw);
+
+    const content = {
+      headline: String(parsed.headline || "").slice(0, 200),
+      summary: String(parsed.summary || ""),
+      trends: Array.isArray(parsed.trends) ? parsed.trends.slice(0, 6).map((t: any) => String(t)) : [],
+      winners: Array.isArray(parsed.winners) ? parsed.winners.slice(0, 4).map((w: any) => ({ name: String(w.name || ""), reason: String(w.reason || "") })) : [],
+      losers: Array.isArray(parsed.losers) ? parsed.losers.slice(0, 4).map((w: any) => ({ name: String(w.name || ""), reason: String(w.reason || "") })) : [],
+      watch: Array.isArray(parsed.watch) ? parsed.watch.slice(0, 4).map((w: any) => ({ name: String(w.name || ""), reason: String(w.reason || "") })) : [],
+      outlook: String(parsed.outlook || ""),
+    };
+
+    await pool.query(
+      `INSERT INTO brand_market_commentary
+         (scope_key, scope_label, scope_type, parent_key, parent_label, content, brand_count, news_count, generated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, NOW())
+       ON CONFLICT (scope_key) DO UPDATE SET
+         scope_label = EXCLUDED.scope_label,
+         scope_type = EXCLUDED.scope_type,
+         parent_key = EXCLUDED.parent_key,
+         parent_label = EXCLUDED.parent_label,
+         content = EXCLUDED.content,
+         brand_count = EXCLUDED.brand_count,
+         news_count = EXCLUDED.news_count,
+         generated_at = NOW()`,
+      [scopeKey, scopeLabel, scopeType, parentKey || null, parentLabel || null,
+       JSON.stringify(content), brandRows.length, newsRows.length]
+    );
+
+    return {
+      scopeKey, scopeLabel, scopeType, parentKey: parentKey || null, parentLabel: parentLabel || null,
+      content, brandCount: brandRows.length, newsCount: newsRows.length,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  app.get("/api/brands/market-commentary", requireAuth, async (req, res) => {
+    try {
+      const scopeKey = String(req.query.scope || "").trim();
+      const scopeLabel = String(req.query.label || "").trim();
+      const scopeType = (req.query.type === "sub" ? "sub" : "top") as "top" | "sub";
+      const parentKey = req.query.parentKey ? String(req.query.parentKey).trim() : null;
+      const parentLabel = req.query.parentLabel ? String(req.query.parentLabel).trim() : null;
+      let matches: string[] = [];
+      try {
+        matches = JSON.parse(String(req.query.matches || "[]"));
+      } catch { matches = []; }
+
+      if (!scopeKey || !scopeLabel) {
+        return res.status(400).json({ error: "scope and label are required" });
+      }
+
+      const existing = await pool.query(
+        `SELECT scope_key, scope_label, scope_type, parent_key, parent_label,
+                content, brand_count, news_count, generated_at
+         FROM brand_market_commentary
+         WHERE scope_key = $1`,
+        [scopeKey]
+      ).then(r => r.rows[0]);
+
+      if (existing) {
+        const ageMs = Date.now() - new Date(existing.generated_at).getTime();
+        const fresh = ageMs < MARKET_COMMENTARY_TTL_HOURS * 60 * 60 * 1000;
+        if (fresh) {
+          return res.json({
+            scopeKey: existing.scope_key,
+            scopeLabel: existing.scope_label,
+            scopeType: existing.scope_type,
+            parentKey: existing.parent_key,
+            parentLabel: existing.parent_label,
+            content: existing.content,
+            brandCount: existing.brand_count,
+            newsCount: existing.news_count,
+            generatedAt: existing.generated_at,
+            cached: true,
+          });
+        }
+      }
+
+      if (matches.length === 0) {
+        // No cache and no matches provided — return existing stale row if any,
+        // otherwise indicate the client must supply matches to generate.
+        if (existing) {
+          return res.json({
+            scopeKey: existing.scope_key,
+            scopeLabel: existing.scope_label,
+            scopeType: existing.scope_type,
+            parentKey: existing.parent_key,
+            parentLabel: existing.parent_label,
+            content: existing.content,
+            brandCount: existing.brand_count,
+            newsCount: existing.news_count,
+            generatedAt: existing.generated_at,
+            cached: true,
+            stale: true,
+          });
+        }
+        return res.status(400).json({ error: "matches[] required to generate commentary" });
+      }
+
+      const result = await generateMarketCommentary({
+        scopeKey, scopeLabel, scopeType,
+        parentKey, parentLabel, matches,
+      });
+      res.json({ ...result, cached: false });
+    } catch (err: any) {
+      console.error("[market-commentary]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/brands/market-commentary/regenerate", requireAuth, async (req, res) => {
+    try {
+      const { scope, label, type, parentKey, parentLabel, matches } = req.body || {};
+      if (!scope || !label || !Array.isArray(matches) || matches.length === 0) {
+        return res.status(400).json({ error: "scope, label and matches[] are required" });
+      }
+      const result = await generateMarketCommentary({
+        scopeKey: String(scope),
+        scopeLabel: String(label),
+        scopeType: type === "sub" ? "sub" : "top",
+        parentKey: parentKey || null,
+        parentLabel: parentLabel || null,
+        matches,
+      });
+      res.json({ ...result, cached: false });
+    } catch (err: any) {
+      console.error("[market-commentary/regenerate]", err.message);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ── My Portfolio dashboard endpoint ──────────────────────────────────

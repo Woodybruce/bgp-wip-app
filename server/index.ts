@@ -375,6 +375,20 @@ import { pool } from "./db";
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS formatted_address TEXT`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
+
+    // Cached AI-generated market commentary for Brand Explorer categories
+    `CREATE TABLE IF NOT EXISTS brand_market_commentary (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      scope_key TEXT NOT NULL UNIQUE,
+      scope_label TEXT NOT NULL,
+      scope_type TEXT NOT NULL,
+      parent_key TEXT,
+      parent_label TEXT,
+      content JSONB NOT NULL,
+      brand_count INTEGER DEFAULT 0,
+      news_count INTEGER DEFAULT 0,
+      generated_at TIMESTAMP DEFAULT now()
+    )`,
   ];
 
   let ok = 0, skipped = 0;
