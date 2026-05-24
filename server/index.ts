@@ -2058,6 +2058,20 @@ import { pool } from "./db";
        ON property_imagery_assets (property_id, kind) WHERE pinned = true`,
     `CREATE INDEX IF NOT EXISTS idx_pia_pathway
        ON property_imagery_assets (pathway_run_id) WHERE pathway_run_id IS NOT NULL`,
+
+    // Cached AI-generated market commentary for Brand Explorer categories
+    `CREATE TABLE IF NOT EXISTS brand_market_commentary (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      scope_key TEXT NOT NULL UNIQUE,
+      scope_label TEXT NOT NULL,
+      scope_type TEXT NOT NULL,
+      parent_key TEXT,
+      parent_label TEXT,
+      content JSONB NOT NULL,
+      brand_count INTEGER DEFAULT 0,
+      news_count INTEGER DEFAULT 0,
+      generated_at TIMESTAMP DEFAULT now()
+    )`,
   ];
 
   let ok = 0, skipped = 0;
