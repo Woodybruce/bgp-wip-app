@@ -1411,8 +1411,22 @@ export default function ImageStudio() {
                     </Button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    {collections.map((col: any) => (
+                  (() => {
+                    // Group by kind so the new auto-folders (Property,
+                    // Brand) and Pathway runs surface as distinct
+                    // sections rather than disappearing into a flat
+                    // list with everything else.
+                    const groups: Record<string, { label: string; items: any[] }> = {
+                      property: { label: "Properties", items: [] },
+                      brand: { label: "Brands", items: [] },
+                      pathway: { label: "Pathway runs", items: [] },
+                      other: { label: "Other collections", items: [] },
+                    };
+                    for (const col of collections) {
+                      const key = col.kind && groups[col.kind] ? col.kind : "other";
+                      groups[key].items.push(col);
+                    }
+                    const renderCard = (col: any) => (
                       <div
                         key={col.id}
                         className="group rounded-lg border bg-card overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all"
@@ -1438,8 +1452,27 @@ export default function ImageStudio() {
                           )}
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    );
+                    return (
+                      <div className="space-y-6">
+                        {(["property", "brand", "pathway", "other"] as const).map(k => {
+                          const g = groups[k];
+                          if (!g.items.length) return null;
+                          return (
+                            <div key={k}>
+                              <div className="flex items-baseline gap-2 mb-3">
+                                <h4 className="text-sm font-semibold">{g.label}</h4>
+                                <span className="text-xs text-muted-foreground">{g.items.length}</span>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                {g.items.map(renderCard)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()
                 )}
               </div>
             )}

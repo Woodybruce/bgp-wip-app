@@ -450,6 +450,20 @@ export async function storeImageFromBuffer(args: {
     thumbnailData: thumbnail,
     localPath: filePath,
   }).returning();
+
+  // Auto-fold into the umbrella property / brand folders. Fire-and-
+  // forget so any failure here never blocks the actual image save.
+  if (args.propertyId) {
+    maybeAddToPropertyCollection({ imageId: inserted.id, propertyId: args.propertyId }).catch(e =>
+      console.warn("[image-studio] property auto-fold failed:", e?.message)
+    );
+  }
+  if (args.companyId) {
+    maybeAddToBrandCollection({ imageId: inserted.id, companyId: args.companyId, brandName: args.brandName || null }).catch(e =>
+      console.warn("[image-studio] brand auto-fold failed:", e?.message)
+    );
+  }
+
   return { id: inserted.id, localPath: filePath };
 }
 
@@ -521,6 +535,88 @@ export async function ensureBrandCollection(args: {
     createdBy: args.userId || undefined,
   }).returning();
   return created.id;
+}
+
+// Property auto-folder — same pattern as the brand version. A property
+// might accumulate images from many Pathway runs, brochure imports,
+// manual captures and ChatBGP saves. The umbrella "Property · <Name>"
+// collection groups them all in one place; the per-run sub-collections
+// ("Pathway · <Addr> · Building") stay for context.
+export async function ensurePropertyCollection(args: {
+  propertyId: string;
+  propertyName?: string;
+  userId?: string;
+}): Promise<string | null> {
+  if (!args.propertyId) return null;
+  const existing = await db.select().from(imageStudioCollections)
+    .where(and(eq(imageStudioCollections.propertyId, args.propertyId), eq(imageStudioCollections.kind, "property"))).limit(1);
+  if (existing[0]?.id) return existing[0].id;
+
+  // Resolve a display name from the CRM if the caller didn't provide one.
+  let displayName = args.propertyName || "";
+  if (!displayName) {
+    const r = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [args.propertyId]).catch(() => ({ rows: [] as any[] }));
+    displayName = r.rows[0]?.name || "Property";
+  }
+
+  // Pick a cover: prefer the oldest brochure exterior, else the first image.
+  const coverRow = await pool.query(
+    `SELECT id FROM image_studio_images
+     WHERE property_id = $1
+     ORDER BY
+       CASE WHEN category IN ('Exteriors', 'Brochures') THEN 0
+            WHEN category = 'Properties' THEN 1
+            ELSE 2 END,
+       created_at ASC
+     LIMIT 1`,
+    [args.propertyId]
+  ).catch(() => ({ rows: [] as any[] }));
+  const coverImageId = coverRow.rows[0]?.id || null;
+
+  const [created] = await db.insert(imageStudioCollections).values({
+    name: `Property · ${displayName}`,
+    description: `Auto-created umbrella folder for all imagery filed against ${displayName}.`,
+    coverImageId: coverImageId || undefined,
+    propertyId: args.propertyId,
+    kind: "property",
+    createdBy: args.userId || undefined,
+  }).returning();
+  return created.id;
+}
+
+export async function maybeAddToPropertyCollection(args: {
+  imageId: string;
+  propertyId: string;
+  propertyName?: string;
+  userId?: string;
+}): Promise<{ collectionId: string | null; created: boolean }> {
+  if (!args.propertyId) return { collectionId: null, created: false };
+  const countRes = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM image_studio_images WHERE property_id = $1`,
+    [args.propertyId]
+  );
+  const count = countRes.rows[0]?.n || 0;
+  if (count < 2) return { collectionId: null, created: false };
+  const before = await db.select().from(imageStudioCollections)
+    .where(and(eq(imageStudioCollections.propertyId, args.propertyId), eq(imageStudioCollections.kind, "property"))).limit(1);
+  const wasNew = !before[0];
+  const collectionId = await ensurePropertyCollection({ propertyId: args.propertyId, propertyName: args.propertyName, userId: args.userId });
+  if (!collectionId) return { collectionId: null, created: false };
+  if (wasNew) {
+    const all = await pool.query(`SELECT id FROM image_studio_images WHERE property_id = $1`, [args.propertyId]);
+    for (const r of all.rows) {
+      await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [collectionId, r.id]
+      ).catch(() => {});
+    }
+  } else {
+    await pool.query(
+      `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [collectionId, args.imageId]
+    ).catch(() => {});
+  }
+  return { collectionId, created: wasNew };
 }
 
 // Wrapper: when an image is saved with companyId set, ensure the brand
