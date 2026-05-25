@@ -3018,6 +3018,8 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           imageUrl: { type: "string", description: "Alternative to imageStudioId — a /api/chat-media/... URL of a photo the user has just uploaded/pasted into chat. The photo is imported into the Image Studio first (so subsequent edit_image calls can refer to it by imageStudioId) and then edited in the same call. The response's imageStudioId is the persistent id to use for further edits." },
           editPrompt: { type: "string", description: "Plain-English description of the edit to apply, max 1000 chars. Be specific about what should change AND what should be preserved (e.g. 'add festoon lighting strung across the lane and a few outdoor cafe tables — keep the same buildings, perspective and daylight'). Avoid vague terms like 'better' or 'nicer'." },
           preferProvider: { type: "string", enum: ["gemini", "openai"], description: "Which AI editor to try first. 'gemini' (default) is most pixel-faithful and best for lighting/mood/small touch-ups. 'openai' (gpt-image-1) is better at compositional adds like inserting market stalls, signage, multiple new elements at specific positions. If the preferred provider fails, the other is tried as fallback." },
+          propertyId: { type: "string", description: "Optional crm_properties.id to link the imported photo to a property. Only used when auto-importing via imageUrl — once a studio row exists, repeat edits stay linked to whatever it was originally tagged with. Pass when the user is editing a photo of a specific BGP-tracked property so the result is filed against it in the CRM." },
+          companyId: { type: "string", description: "Optional crm_companies.id to link the imported photo to a landlord or brand. Only used when auto-importing via imageUrl." },
         },
         required: ["editPrompt"],
       },
@@ -3061,6 +3063,8 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           address: { type: "string", description: "Optional full address, e.g. '100 Oxford Street, London W1D 1LL'" },
           brandName: { type: "string", description: "Optional brand name (for Brands category), e.g. 'Pret A Manger'" },
           propertyType: { type: "string", description: "Optional property type", enum: ["Office", "Retail", "Industrial", "Warehouse", "Mixed Use", "Residential", "Restaurant", "Leisure", "Development", "Other"] },
+          propertyId: { type: "string", description: "Optional crm_properties.id to link this image to a property in the CRM. Pass when the image is of a specific BGP-tracked property — surfaces the image on the property detail page and lets future browse_image_studio calls find it by property. Look it up first via the page context, a recent CRM search, or browse_crm." },
+          companyId: { type: "string", description: "Optional crm_companies.id to link this image to a landlord or tenant brand. Use for brand pack imagery (Brands category) or landlord portfolio photos. Look it up first via the page context or a recent CRM search." },
           tags: { type: "array", items: { type: "string" }, description: "Optional tags for the image" },
         },
         required: ["fileName", "category"],
@@ -5997,16 +6001,18 @@ async function executeCrmToolRaw(
 
         const mime = inferredExt === "png" ? "image/png" : inferredExt === "webp" ? "image/webp" : "image/jpeg";
         const userId = req.session?.userId || (req as any).tokenUserId || null;
+        const linkPropertyId = fnArgs.propertyId ? String(fnArgs.propertyId) : null;
+        const linkCompanyId = fnArgs.companyId ? String(fnArgs.companyId) : null;
         const insertRes = await pool.query(
           `INSERT INTO image_studio_images
-             (file_name, category, tags, description, source, mime_type, file_size, width, height, thumbnail_data, local_path, uploaded_by, created_at)
-           VALUES ($1, $2, $3::text[], $4, 'upload', $5, $6, $7, $8, $9, $10, $11, NOW())
+             (file_name, category, tags, description, source, mime_type, file_size, width, height, thumbnail_data, local_path, uploaded_by, property_id, company_id, created_at)
+           VALUES ($1, $2, $3::text[], $4, 'upload', $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
            RETURNING id`,
           [fileData.originalName || mediaName, "Other", ["User Upload", "For Edit"], "Imported from chat for AI edit",
-           mime, fileData.data.length, width, height, thumbnailData, localPath, userId]
+           mime, fileData.data.length, width, height, thumbnailData, localPath, userId, linkPropertyId, linkCompanyId]
         );
         imageStudioId = insertRes.rows[0].id;
-        console.log(`[chatbgp] edit_image: imported chat-media ${mediaName} as studio row ${imageStudioId}`);
+        console.log(`[chatbgp] edit_image: imported chat-media ${mediaName} as studio row ${imageStudioId}${linkPropertyId ? ` linked to property ${linkPropertyId}` : ""}${linkCompanyId ? ` linked to company ${linkCompanyId}` : ""}`);
       }
 
       // Internal call to the existing /api/image-studio/ai-edit handler so
@@ -6216,15 +6222,17 @@ async function executeCrmToolRaw(
       } catch {}
 
       const sessionUserId = req.session?.userId || "chatbgp";
+      const propertyId = fnArgs.propertyId ? String(fnArgs.propertyId) : null;
+      const companyId = fnArgs.companyId ? String(fnArgs.companyId) : null;
       const insertResult = await pool.query(
-        `INSERT INTO image_studio_images (file_name, category, area, tags, description, source, width, height, file_size, thumbnail_data, local_path, uploaded_by, address, brand_name, property_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
-        [fileName, category, area || null, tags, description || null, "chatbgp", width, height, imageBuffer.length, thumbnailData, localPath, sessionUserId, address || null, brandName || null, propertyType || null]
+        `INSERT INTO image_studio_images (file_name, category, area, tags, description, source, width, height, file_size, thumbnail_data, local_path, uploaded_by, address, brand_name, property_type, property_id, company_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
+        [fileName, category, area || null, tags, description || null, "chatbgp", width, height, imageBuffer.length, thumbnailData, localPath, sessionUserId, address || null, brandName || null, propertyType || null, propertyId, companyId]
       );
 
       const imageId = insertResult.rows[0].id;
-      console.log(`[chatbgp] Saved image to Image Studio: ${fileName} (id=${imageId}, ${(imageBuffer.length / 1024).toFixed(0)}KB)`);
+      console.log(`[chatbgp] Saved image to Image Studio: ${fileName} (id=${imageId}, ${(imageBuffer.length / 1024).toFixed(0)}KB${propertyId ? `, propertyId=${propertyId}` : ""}${companyId ? `, companyId=${companyId}` : ""})`);
 
-      return { data: { success: true, imageId, fileName, category, message: `Image "${fileName}" saved to Image Studio in the ${category} category.` } };
+      return { data: { success: true, imageId, fileName, category, propertyId, companyId, message: `Image "${fileName}" saved to Image Studio in the ${category} category${propertyId ? " and linked to the CRM property" : ""}${companyId ? " and linked to the CRM company" : ""}.` } };
     } catch (err: any) {
       console.error("[chatbgp] Save to Image Studio error:", err?.message);
       return { data: { success: false, error: `Failed to save to Image Studio: ${err?.message}` } };
@@ -11842,6 +11850,7 @@ export function setupChatBGPRoutes(app: Express) {
               const addr = typeof prop.address === "object" && prop.address ? ((prop.address as any).formatted || (prop.address as any).address || "") : (prop.address || "");
               threadContext = `\n\n## ACTIVE PROPERTY CONTEXT — You are chatting about this property\n`;
               threadContext += `**${prop.name}**${addr ? " — " + addr : ""}\n`;
+              threadContext += `Property id (use for save_to_image_studio.propertyId, edit_image.propertyId, and any other tool that takes a propertyId): ${prop.id}\n`;
               threadContext += `Asset class: ${prop.asset_class || "Unknown"} | Status: ${prop.status || "Unknown"}\n`;
               if (prop.tenure) threadContext += `Tenure: ${prop.tenure}\n`;
               if (prop.sqft) threadContext += `Total area: ${Number(prop.sqft).toLocaleString()} sqft\n`;
