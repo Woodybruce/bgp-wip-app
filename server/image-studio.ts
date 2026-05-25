@@ -133,6 +133,34 @@ async function enhanceLocally(buffer: Buffer, opts: { cropBottomPx?: number } = 
     .toBuffer();
 }
 
+async function editWithOpenAI(prompt: string, imageBuffer: Buffer, inputMime: string): Promise<Buffer | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const openai = new OpenAI({ apiKey });
+    const { toFile } = await import("openai");
+    const ext = inputMime.includes("png") ? "png" : inputMime.includes("webp") ? "webp" : "jpg";
+    const file = await toFile(imageBuffer, `source.${ext}`, { type: inputMime });
+    console.log(`[image-studio] OpenAI edit: trying gpt-image-1`);
+    const response = await openai.images.edit({
+      model: "gpt-image-1",
+      image: file,
+      prompt,
+      n: 1,
+      size: "auto" as any,
+    });
+    const b64 = response?.data?.[0]?.b64_json;
+    if (b64) {
+      console.log(`[image-studio] OpenAI edit: success with gpt-image-1`);
+      return Buffer.from(b64, "base64");
+    }
+    return null;
+  } catch (e: any) {
+    console.warn("[image-studio] OpenAI edit failed:", e?.message);
+    return null;
+  }
+}
+
 async function editWithGemini(prompt: string, imageBase64: string, inputMime: string): Promise<Buffer | null> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
@@ -1381,10 +1409,14 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.post("/api/image-studio/ai-edit", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { imageId, editPrompt } = req.body;
+      const { imageId, editPrompt, preferProvider } = req.body;
       const trimmedEdit = (editPrompt || "").trim();
       if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
       if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
+      // Caller can prefer 'gemini' (default — most pixel-faithful) or
+      // 'openai' (gpt-image-1, stronger at instruction-following for
+      // compositional adds like "place stalls along the street").
+      const preferred = (typeof preferProvider === "string" ? preferProvider : "gemini").toLowerCase();
 
       const userId = req.session?.userId || (req as any).tokenUserId;
 
@@ -1404,19 +1436,38 @@ export function registerImageStudioRoutes(app: Express) {
 
       const fullPrompt = `Edit this specific photograph: ${trimmedEdit}. PRESERVE the exact building, composition, and architectural details — only apply the requested edit. Professional property photography standard.`;
 
-      // Gemini first — real image-to-image editing with the source pixels
-      // as inline input. DALL-E 3 is a text-to-image model so it regenerated
-      // an entirely new building from the prompt ('mad different buildings'
-      // bug). Local Sharp enhancement is a deterministic fallback when the
-      // user's edit is generic enough ('enhance', 'brighten', etc).
+      // Two real image-to-image providers — Gemini (pixel-faithful, cheap)
+      // and OpenAI gpt-image-1 (stronger at compositional/instruction-led
+      // adds like "add festoon lighting and outdoor tables"). Caller's
+      // preferProvider picks which goes first; the other is the fallback.
+      // DALL-E 3 is deliberately not in this chain — it's text-to-image
+      // and regenerated entirely new buildings ('mad different buildings'
+      // bug). Local Sharp is a last-resort polish for generic edits.
       let resultBuffer: Buffer | null = null;
       let provider = "unknown";
 
-      console.log("[image-studio] AI edit: trying Gemini...");
-      resultBuffer = await editWithGemini(fullPrompt, base64, inputMime);
-      if (resultBuffer) provider = "gemini";
+      const tryGemini = async () => {
+        console.log("[image-studio] AI edit: trying Gemini...");
+        const r = await editWithGemini(fullPrompt, base64, inputMime);
+        if (r) provider = "gemini";
+        return r;
+      };
+      const tryOpenAI = async () => {
+        console.log("[image-studio] AI edit: trying OpenAI gpt-image-1...");
+        const r = await editWithOpenAI(fullPrompt, sourceBuffer, inputMime);
+        if (r) provider = "openai";
+        return r;
+      };
 
-      // If Gemini is unavailable AND the user's request is a generic visual
+      if (preferred === "openai") {
+        resultBuffer = await tryOpenAI();
+        if (!resultBuffer) resultBuffer = await tryGemini();
+      } else {
+        resultBuffer = await tryGemini();
+        if (!resultBuffer) resultBuffer = await tryOpenAI();
+      }
+
+      // If neither real editor returned anything AND the user's request is a generic visual
       // polish (enhance/brighten/sharpen/cleanup), try the local Sharp path
       // so they at least get a cropped + colour-graded result — never a
       // different building. For other requests, report failure honestly.

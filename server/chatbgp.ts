@@ -3009,6 +3009,23 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
+      name: "edit_image",
+      description: "Iteratively edit an existing Image Studio image with AI image-to-image. Two providers: Gemini (default — most pixel-faithful, great at lighting / mood / small adds) and OpenAI gpt-image-1 (stronger at compositional, instruction-led adds like 'place market stalls in pairs down the centre of the street'). Preserves the source building / composition / architectural detail and only applies the requested edit. Use for placemaking CGI iteration — adding stalls, planting, festoon lighting, outdoor seating, evening mood, dressing facades, removing clutter, etc. Chain after `generate_image` + `save_to_image_studio`, or call on any existing studio image. The image row is updated in place and a single undo snapshot is kept, so successive edits build on each other.",
+      parameters: {
+        type: "object",
+        properties: {
+          imageStudioId: { type: "string", description: "image_studio_images.id of the source image to edit. Use browse_image_studio or save_to_image_studio output to find it." },
+          editPrompt: { type: "string", description: "Plain-English description of the edit to apply, max 1000 chars. Be specific about what should change AND what should be preserved (e.g. 'add festoon lighting strung across the lane and a few outdoor cafe tables — keep the same buildings, perspective and daylight'). Avoid vague terms like 'better' or 'nicer'." },
+          preferProvider: { type: "string", enum: ["gemini", "openai"], description: "Which AI editor to try first. 'gemini' (default) is most pixel-faithful and best for lighting/mood/small touch-ups. 'openai' (gpt-image-1) is better at compositional adds like inserting market stalls, signage, multiple new elements at specific positions. If the preferred provider fails, the other is tried as fallback." },
+        },
+        required: ["imageStudioId", "editPrompt"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "browse_image_studio",
       description: "Search and browse the BGP Image Studio library. Returns images with their file names, categories, tags, descriptions, areas, addresses, brand names, and property types. Use when the user asks about images in the studio, wants to find a specific photo, or asks what images are available.",
       parameters: {
@@ -5925,6 +5942,57 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] Image generation error:", err?.message);
       return { data: { success: false, error: `Image generation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "edit_image") {
+    try {
+      const imageStudioId = String(fnArgs.imageStudioId || "").trim();
+      const editPrompt = String(fnArgs.editPrompt || "").trim();
+      if (!imageStudioId) return { data: { success: false, error: "imageStudioId is required" } };
+      if (!editPrompt) return { data: { success: false, error: "editPrompt is required" } };
+      if (editPrompt.length > 1000) return { data: { success: false, error: "editPrompt too long (max 1000 chars)" } };
+
+      // Internal call to the existing /api/image-studio/ai-edit handler so
+      // we reuse its Gemini chain, undo snapshot, row update and SharePoint
+      // sync. Same forwarding pattern as capture_pdf_pages above.
+      const sessionCookie = req.headers.cookie || "";
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+      const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
+      const baseUrl = `${protocol}://${host}`;
+
+      const preferProvider = typeof fnArgs.preferProvider === "string" ? fnArgs.preferProvider : undefined;
+      const editRes = await fetch(`${baseUrl}/api/image-studio/ai-edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: sessionCookie },
+        body: JSON.stringify({ imageId: imageStudioId, editPrompt, preferProvider }),
+      });
+
+      if (!editRes.ok) {
+        const errBody = await editRes.text().catch(() => "");
+        let errMsg = `Image edit failed: HTTP ${editRes.status}`;
+        try { const j = JSON.parse(errBody); if (j?.error) errMsg = j.error; } catch {}
+        return { data: { success: false, error: errMsg } };
+      }
+
+      const updated = await editRes.json();
+      const imageUrl = `/api/image-studio/${updated.id}/full`;
+      console.log(`[chatbgp] edit_image: ${updated.id} via ${updated.provider}`);
+      return {
+        data: {
+          success: true,
+          imageStudioId: updated.id,
+          provider: updated.provider,
+          width: updated.width,
+          height: updated.height,
+          tags: updated.tags,
+          message: `Edit applied via ${updated.provider}. The image studio row was updated in place — call edit_image again on the same id to iterate further.`,
+        },
+        action: { type: "show_image", imageUrl, prompt: editPrompt },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] edit_image error:", err?.message);
+      return { data: { success: false, error: `Image edit failed: ${err?.message}` } };
     }
   }
 
