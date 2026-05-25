@@ -1529,10 +1529,18 @@ export function registerImageStudioRoutes(app: Express) {
       const trimmedEdit = (editPrompt || "").trim();
       if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
       if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
-      // Caller can prefer 'gemini' (default — most pixel-faithful) or
-      // 'openai' (gpt-image-1, stronger at instruction-following for
-      // compositional adds like "place stalls along the street").
-      const preferred = (typeof preferProvider === "string" ? preferProvider : "gemini").toLowerCase();
+      // Provider selection:
+      //   1. If caller explicitly passed preferProvider, honour it.
+      //   2. Otherwise, pick by prompt keywords — Gemini for atmospheric
+      //      tweaks (lighting/mood/weather/colour grade), OpenAI for
+      //      everything else. gpt-image-1 is the stronger default for
+      //      placemaking CGI work (compositional adds, text on signage,
+      //      multi-element placement). Gemini is the fallback either way.
+      const isAtmospheric = /\b(lighting|lit|dusk|dawn|night|evening|morning|sunset|sunrise|golden hour|mood|moody|weather|rain|snow|fog|cloud(y|s)?|sunny|overcast|colour\s*grade|color\s*grade|warmth|tone|bright(er|en)?|darken|saturat\w*|contrast|hdr|polish|enhance|sharpen|filter)\b/i.test(trimmedEdit);
+      const preferred = (typeof preferProvider === "string" && preferProvider
+        ? preferProvider
+        : isAtmospheric ? "gemini" : "openai"
+      ).toLowerCase();
 
       const userId = req.session?.userId || (req as any).tokenUserId;
 
