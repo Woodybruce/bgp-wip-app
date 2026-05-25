@@ -323,6 +323,29 @@ async function ensureTable() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+  // CRM linkage columns added later — keep existing rows untouched.
+  await pool.query(`ALTER TABLE image_studio_collections ADD COLUMN IF NOT EXISTS property_id VARCHAR`);
+  await pool.query(`ALTER TABLE image_studio_collections ADD COLUMN IF NOT EXISTS company_id VARCHAR`);
+  await pool.query(`ALTER TABLE image_studio_collections ADD COLUMN IF NOT EXISTS kind TEXT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_collections_property ON image_studio_collections (property_id) WHERE property_id IS NOT NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_collections_company ON image_studio_collections (company_id) WHERE company_id IS NOT NULL`);
+  // One-shot backfill: every existing "Pathway · ..." collection inherits
+  // the propertyId from the majority of its images (which always carry
+  // it). Safe to re-run — only updates rows where property_id IS NULL.
+  await pool.query(`
+    UPDATE image_studio_collections c
+    SET property_id = sub.property_id,
+        kind = COALESCE(c.kind, 'pathway')
+    FROM (
+      SELECT ci.collection_id, i.property_id, COUNT(*) AS n,
+             ROW_NUMBER() OVER (PARTITION BY ci.collection_id ORDER BY COUNT(*) DESC) AS rn
+      FROM image_studio_collection_images ci
+      JOIN image_studio_images i ON i.id = ci.image_id
+      WHERE i.property_id IS NOT NULL
+      GROUP BY ci.collection_id, i.property_id
+    ) sub
+    WHERE c.id = sub.collection_id AND sub.rn = 1 AND c.property_id IS NULL AND c.name LIKE 'Pathway · %'
+  `).catch((e: any) => console.warn("[image-studio] pathway backfill skipped:", e?.message));
   await pool.query(`
     CREATE TABLE IF NOT EXISTS image_studio_collection_images (
       id SERIAL PRIMARY KEY,
@@ -434,18 +457,111 @@ async function ensureRunCollection(args: {
   runId: string;
   address: string;
   bucket: "Building" | "Tenants" | "Area";
+  propertyId?: string | null;
   userId?: string;
 }): Promise<string> {
   const name = `Pathway · ${args.address} · ${args.bucket}`;
   const existing = await db.select().from(imageStudioCollections)
     .where(eq(imageStudioCollections.name, name)).limit(1);
-  if (existing[0]?.id) return existing[0].id;
+  if (existing[0]?.id) {
+    // Backfill propertyId on existing rows once we know it — older runs
+    // pre-date the CRM link and would otherwise stay orphaned.
+    if (args.propertyId && !existing[0].propertyId) {
+      await pool.query(
+        `UPDATE image_studio_collections SET property_id = $1, kind = COALESCE(kind, 'pathway') WHERE id = $2`,
+        [args.propertyId, existing[0].id]
+      );
+    }
+    return existing[0].id;
+  }
   const [created] = await db.insert(imageStudioCollections).values({
     name,
     description: `Auto-created for property pathway run ${args.runId} (${args.bucket})`,
+    propertyId: args.propertyId || undefined,
+    kind: "pathway",
     createdBy: args.userId || undefined,
   }).returning();
   return created.id;
+}
+
+// Brand auto-folder — created when a company has 2+ images so the logo
+// stops being the sole marker. Cover defaults to the first image tagged
+// 'logo' (or just the first image, if no logo is on file yet).
+export async function ensureBrandCollection(args: {
+  companyId: string;
+  brandName: string;
+  userId?: string;
+}): Promise<string | null> {
+  if (!args.companyId) return null;
+  const name = `Brand · ${args.brandName}`;
+  const existing = await db.select().from(imageStudioCollections)
+    .where(eq(imageStudioCollections.companyId, args.companyId)).limit(1);
+  if (existing[0]?.id) return existing[0].id;
+
+  // Pick a sensible cover: prefer a logo, fall back to oldest image.
+  const coverRow = await pool.query(
+    `SELECT id FROM image_studio_images
+     WHERE company_id = $1
+     ORDER BY
+       CASE WHEN 'logo' = ANY(LOWER(ARRAY(SELECT lower(t) FROM unnest(tags) AS t))::text[]) THEN 0
+            WHEN category = 'Brands' THEN 1
+            ELSE 2 END,
+       created_at ASC
+     LIMIT 1`,
+    [args.companyId]
+  ).catch(() => ({ rows: [] as any[] }));
+  const coverImageId = coverRow.rows[0]?.id || null;
+
+  const [created] = await db.insert(imageStudioCollections).values({
+    name,
+    description: `Auto-created brand folder for ${args.brandName}.`,
+    coverImageId: coverImageId || undefined,
+    companyId: args.companyId,
+    kind: "brand",
+    createdBy: args.userId || undefined,
+  }).returning();
+  return created.id;
+}
+
+// Wrapper: when an image is saved with companyId set, ensure the brand
+// folder exists (only once the company has 2+ images — single-logo
+// companies don't need a folder yet) and add this image to it.
+export async function maybeAddToBrandCollection(args: {
+  imageId: string;
+  companyId: string;
+  brandName?: string | null;
+  userId?: string;
+}): Promise<{ collectionId: string | null; created: boolean }> {
+  if (!args.companyId) return { collectionId: null, created: false };
+  const countRes = await pool.query(
+    `SELECT COUNT(*)::int AS n, MAX(brand_name) AS brand FROM image_studio_images WHERE company_id = $1`,
+    [args.companyId]
+  );
+  const count = countRes.rows[0]?.n || 0;
+  if (count < 2) return { collectionId: null, created: false }; // logo-only, no folder yet
+  const resolvedBrand = args.brandName || countRes.rows[0]?.brand || "Brand";
+  const before = await db.select().from(imageStudioCollections)
+    .where(eq(imageStudioCollections.companyId, args.companyId)).limit(1);
+  const wasNew = !before[0];
+  const collectionId = await ensureBrandCollection({ companyId: args.companyId, brandName: resolvedBrand, userId: args.userId });
+  if (!collectionId) return { collectionId: null, created: false };
+  // Add the just-saved image; if folder is brand-new, also retroactively
+  // add every other image for this company so the folder is complete.
+  if (wasNew) {
+    const all = await pool.query(`SELECT id FROM image_studio_images WHERE company_id = $1`, [args.companyId]);
+    for (const r of all.rows) {
+      await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [collectionId, r.id]
+      ).catch(() => {});
+    }
+  } else {
+    await pool.query(
+      `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [collectionId, args.imageId]
+    ).catch(() => {});
+  }
+  return { collectionId, created: wasNew };
 }
 
 async function addImagesToCollection(collectionId: string, imageIds: string[]): Promise<number> {
@@ -565,9 +681,9 @@ export async function sweepStage8ImagesForRun(args: {
   await ensureTable().catch(() => {});
 
   const [buildingId, tenantsId, areaId] = await Promise.all([
-    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Building", userId: args.userId }),
-    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Tenants", userId: args.userId }),
-    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Area", userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Building", propertyId: args.propertyId, userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Tenants", propertyId: args.propertyId, userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Area", propertyId: args.propertyId, userId: args.userId }),
   ]);
 
   const buildingImages: string[] = [];

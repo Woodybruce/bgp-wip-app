@@ -2375,6 +2375,13 @@ export const imageStudioCollections = pgTable("image_studio_collections", {
   name: text("name").notNull(),
   description: text("description"),
   coverImageId: varchar("cover_image_id"),
+  // Optional CRM links — a Pathway-run collection is filed against the
+  // property it was generated for; a brand auto-folder is filed against
+  // the crm_companies row. Either or both may be null for ad-hoc
+  // user-made collections.
+  propertyId: varchar("property_id"),
+  companyId: varchar("company_id"),
+  kind: text("kind"),
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow(),
 });

@@ -6232,7 +6232,31 @@ async function executeCrmToolRaw(
       const imageId = insertResult.rows[0].id;
       console.log(`[chatbgp] Saved image to Image Studio: ${fileName} (id=${imageId}, ${(imageBuffer.length / 1024).toFixed(0)}KB${propertyId ? `, propertyId=${propertyId}` : ""}${companyId ? `, companyId=${companyId}` : ""})`);
 
-      return { data: { success: true, imageId, fileName, category, propertyId, companyId, message: `Image "${fileName}" saved to Image Studio in the ${category} category${propertyId ? " and linked to the CRM property" : ""}${companyId ? " and linked to the CRM company" : ""}.` } };
+      // If linked to a company and that company now has 2+ images, fold
+      // this into a "Brand · <Name>" folder so the brand stops being
+      // tag-only. Folder is auto-created with the logo as cover.
+      let brandCollectionId: string | null = null;
+      let brandCollectionCreated = false;
+      if (companyId) {
+        try {
+          const { maybeAddToBrandCollection } = await import("./image-studio");
+          const r = await maybeAddToBrandCollection({ imageId, companyId, brandName, userId: sessionUserId });
+          brandCollectionId = r.collectionId;
+          brandCollectionCreated = r.created;
+        } catch (e: any) {
+          console.warn("[chatbgp] brand collection link failed:", e?.message);
+        }
+      }
+
+      const linkBits = [
+        propertyId ? "linked to the CRM property" : null,
+        companyId ? "linked to the CRM company" : null,
+        brandCollectionCreated ? `auto-folder "Brand · ${brandName}" created` : null,
+        brandCollectionId && !brandCollectionCreated ? "added to the existing brand folder" : null,
+      ].filter(Boolean);
+      const linkSuffix = linkBits.length ? " — " + linkBits.join(", ") : "";
+
+      return { data: { success: true, imageId, fileName, category, propertyId, companyId, brandCollectionId, message: `Image "${fileName}" saved to Image Studio in the ${category} category${linkSuffix}.` } };
     } catch (err: any) {
       console.error("[chatbgp] Save to Image Studio error:", err?.message);
       return { data: { success: false, error: `Failed to save to Image Studio: ${err?.message}` } };
