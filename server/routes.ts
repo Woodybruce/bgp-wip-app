@@ -351,7 +351,7 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Not authenticated" });
     }
     try {
-      const filename = req.params.filename;
+      const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
@@ -370,7 +370,16 @@ export async function registerRoutes(
       ];
       if (downloadTypes.includes(file.contentType)) {
         const dlName = file.originalName || filename;
-        res.set("Content-Disposition", `attachment; filename="${dlName}"`);
+        // RFC 5987: non-ASCII chars (em dash, £, accents, smart quotes) blow
+        // up Node's HTTP header writer with ERR_HTTP_INVALID_HEADER_VALUE.
+        // Set an ASCII-only `filename=` fallback plus a UTF-8 `filename*=`
+        // version so modern browsers still get the pretty name.
+        const asciiName = dlName.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
+        const encodedName = encodeURIComponent(dlName);
+        res.set(
+          "Content-Disposition",
+          `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`
+        );
       }
       res.send(file.data);
     } catch (err: any) { console.error("[routes] File download error:", err?.message); res.status(500).end(); }
