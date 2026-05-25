@@ -6033,7 +6033,7 @@ async function executeCrmToolRaw(
       }
 
       const updated = await editRes.json();
-      const imageUrl = `/api/image-studio/${updated.id}/full`;
+      const editedImageUrl = `/api/image-studio/${updated.id}/full`;
       console.log(`[chatbgp] edit_image: ${updated.id} via ${updated.provider}`);
       return {
         data: {
@@ -6045,7 +6045,7 @@ async function executeCrmToolRaw(
           tags: updated.tags,
           message: `Edit applied via ${updated.provider}. The image studio row was updated in place — call edit_image again on the same id to iterate further.`,
         },
-        action: { type: "show_image", imageUrl, prompt: editPrompt },
+        action: { type: "show_image", imageUrl: editedImageUrl, prompt: editPrompt },
       };
     } catch (err: any) {
       console.error("[chatbgp] edit_image error:", err?.message);
