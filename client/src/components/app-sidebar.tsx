@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
@@ -60,6 +60,7 @@ import {
   SidebarHeader,
   SidebarFooter,
   SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -197,6 +198,7 @@ function NavSection({
                   asChild
                   data-active={isActive(item.url)}
                   data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                  tooltip={item.title}
                 >
                   <Link href={item.url}>
                     <item.icon className="w-4 h-4" />
@@ -244,6 +246,7 @@ function QuickAccessSection() {
                   asChild
                   className="h-7"
                   data-testid={`nav-recent-${item.type}-${item.id.substring(0, 8)}`}
+                  tooltip={item.name}
                 >
                   <Link href={`${config.path}/${item.id}`}>
                     <Icon className={`w-3.5 h-3.5 ${config.color}`} />
@@ -264,6 +267,30 @@ export function AppSidebar() {
   const { activeTeam, setActiveTeam, userTeam, additionalTeams } = useTeam();
   const { colorScheme, setColorScheme } = useTheme();
   const { brand, isLandsec } = useBrand();
+
+  // Hover-to-peek: when the sidebar is collapsed to an icon rail, hovering
+  // expands it as a floating overlay over the main content (no layout
+  // shift). Click on a nav item or mouse-leave tucks it back.
+  const { open, isMobile, setPeeking } = useSidebar();
+  const peekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePeek = (next: boolean) => {
+    if (open || isMobile) {
+      setPeeking(false);
+      return;
+    }
+    if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    peekTimerRef.current = setTimeout(() => setPeeking(next), next ? 180 : 120);
+  };
+  useEffect(() => {
+    if (open || isMobile) setPeeking(false);
+    return () => {
+      if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    };
+  }, [open, isMobile, setPeeking]);
+  const collapsePeekNow = () => {
+    if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    setPeeking(false);
+  };
 
   // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
   // Items flagged adminOnly are work-in-progress — moved out of Core entirely
@@ -295,8 +322,18 @@ export function AppSidebar() {
     // collapsible="icon" lets the sidebar shrink to a narrow icon rail
     // instead of sliding fully off-screen. Pairs with the auto-collapse
     // when ChatBGP opens (in App.tsx) so the main content gets room
-    // without losing nav access.
-    <Sidebar collapsible="icon">
+    // without losing nav access. Hover handlers drive the floating
+    // peek-expand behaviour wired through useSidebar above.
+    <Sidebar
+      collapsible="icon"
+      onMouseEnter={() => schedulePeek(true)}
+      onMouseLeave={() => schedulePeek(false)}
+      onClick={(e) => {
+        // Tuck peek when the user actually navigates (clicked a link),
+        // but leave it open when they're just expanding a section header.
+        if ((e.target as HTMLElement).closest("a")) collapsePeekNow();
+      }}
+    >
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
           {isLandsec ? (
