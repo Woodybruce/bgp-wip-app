@@ -8,6 +8,7 @@ import * as XLSX from "xlsx";
 import multer from "multer";
 import mammoth from "mammoth";
 import { renderCvPdf, renderCvDocx, type CvData } from "./cv-renderer";
+import { contentDispositionFor } from "./utils/http-headers";
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
 // using the session/token user id. Used by hybrid (admin-or-self) endpoints
@@ -1327,7 +1328,7 @@ export function setupHrRoutes(app: Express) {
       if (!fileRes.ok) return res.status(502).json({ error: `Graph returned ${fileRes.status}` });
 
       res.setHeader("Content-Type", mime_type || fileRes.headers.get("content-type") || "application/octet-stream");
-      res.setHeader("Content-Disposition", `inline; filename="${file_name || "policy"}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(file_name || "policy", "inline"));
       const buf = Buffer.from(await fileRes.arrayBuffer());
       res.send(buf);
     } catch (e: any) {
@@ -3393,7 +3394,7 @@ Rules: British English, no exclamation marks, no "I'm pleased to" / "delighted" 
       const file = await getFile(row.letter_storage_key);
       if (!file) return res.status(404).json({ error: "Stored file missing" });
       res.setHeader("Content-Type", file.contentType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-      res.setHeader("Content-Disposition", `inline; filename="${file.originalName || "review-letter.docx"}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(file.originalName || "review-letter.docx", "inline"));
       res.end(file.data);
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "stream failed" });
@@ -4237,7 +4238,7 @@ Use the language and tone of BGP's review docs.`,
       const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [req.params.id]);
       if (!blob.rows[0]) return res.status(404).json({ error: "File missing" });
       res.setHeader("Content-Type", meta.rows[0].mime_type || "application/octet-stream");
-      res.setHeader("Content-Disposition", `inline; filename="${meta.rows[0].name}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(meta.rows[0].name || "file", "inline"));
       res.send(blob.rows[0].data);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

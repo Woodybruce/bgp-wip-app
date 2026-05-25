@@ -27,6 +27,7 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { saveFile, getFile } from "./file-storage";
 import { ingestBrochure } from "./brochure-ingest";
+import { contentDispositionFor } from "./utils/http-headers";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -305,10 +306,10 @@ export function registerPropertyBrochureRoutes(app: Express) {
       res.setHeader("Content-Type", file.contentType || r.mime_type || "application/pdf");
       res.setHeader("Content-Length", String(file.data.length));
       if (req.query.download) {
-        res.setHeader("Content-Disposition", `attachment; filename="${r.original_name.replace(/"/g, "")}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(r.original_name, "attachment"));
       } else {
         // Inline preview for the iframe.
-        res.setHeader("Content-Disposition", `inline; filename="${r.original_name.replace(/"/g, "")}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(r.original_name, "inline"));
       }
       res.send(file.data);
     } catch (e: any) {

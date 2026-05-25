@@ -4,6 +4,7 @@ import type { Express, Request, Response } from "express";
 import multer from "multer";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
+import { contentDispositionFor } from "./utils/http-headers";
 
 const SCOPES = [
   "User.Read",
@@ -536,7 +537,7 @@ export function setupMicrosoftRoutes(app: Express) {
       res.setHeader("Content-Type", contentType);
       const fileName = req.query.fileName as string;
       if (fileName) {
-        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(fileName));
       }
       const buffer = Buffer.from(await r.arrayBuffer());
       res.send(buffer);

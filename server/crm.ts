@@ -30,6 +30,7 @@ import {
 import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
 import { xeroApi, refreshXeroToken } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
@@ -3782,7 +3783,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         return res.status(404).json({ error: "File not found" });
       }
       res.set("Content-Type", file.contentType);
-      res.set("Content-Disposition", `attachment; filename="${file.originalName || sanitized}"`);
+      res.set("Content-Disposition", contentDispositionFor(file.originalName || sanitized));
       res.send(file.data);
     } catch (err: any) { console.error("[crm] File download error:", err?.message); res.status(500).end(); }
   });
@@ -4100,7 +4101,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const file = await getFile(row.file_path);
       if (!file) return res.status(404).json({ error: "File data not found" });
       res.setHeader("Content-Type", file.contentType || row.mime_type || "application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${row.file_name}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(row.file_name || "download"));
       res.send(file.data);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

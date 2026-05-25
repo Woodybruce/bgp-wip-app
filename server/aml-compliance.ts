@@ -3,6 +3,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { contentDispositionFor } from "./utils/http-headers";
 import { requireAuth, getUserIdFromToken } from "./auth";
 import { pool } from "./db";
 import { saveFile } from "./file-storage";
@@ -1462,7 +1463,7 @@ router.get("/api/aml/deal/:id/mlro-report", requireAuth, async (req: Request, re
     const result = await generateMlroReportBuffer(req.params.id);
     if (!result) return res.status(404).json({ error: "deal not found" });
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    res.setHeader("Content-Disposition", contentDispositionFor(result.filename));
     res.send(result.buffer);
   } catch (err: any) {
     console.error("[aml/mlro-report] failed:", err?.message);

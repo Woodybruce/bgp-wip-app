@@ -1,6 +1,7 @@
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
+import { contentDispositionFor } from "./utils/http-headers";
 import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -669,7 +670,7 @@ export function setupSharedMailboxRoutes(app: Express) {
       const attachment = await graphRes.json();
       const buffer = Buffer.from(attachment.contentBytes, "base64");
       res.setHeader("Content-Type", attachment.contentType || "application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(attachment.name || "download")}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(attachment.name || "download"));
       res.setHeader("Content-Length", buffer.length.toString());
       res.send(buffer);
     } catch (err: any) {
@@ -710,7 +711,7 @@ export function setupSharedMailboxRoutes(app: Express) {
       const attachment = await graphRes.json();
       const buffer = Buffer.from(attachment.contentBytes, "base64");
       res.setHeader("Content-Type", attachment.contentType || "application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(attachment.name || "download")}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(attachment.name || "download"));
       res.setHeader("Content-Length", buffer.length.toString());
       res.send(buffer);
     } catch (err: any) {

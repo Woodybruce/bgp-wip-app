@@ -11,6 +11,7 @@ import fs from "fs";
 import os from "os";
 import crypto from "crypto";
 import { saveFile, getFile, recordUserUpload } from "./file-storage";
+import { contentDispositionFor } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
@@ -370,16 +371,7 @@ export async function registerRoutes(
       ];
       if (downloadTypes.includes(file.contentType)) {
         const dlName = file.originalName || filename;
-        // RFC 5987: non-ASCII chars (em dash, £, accents, smart quotes) blow
-        // up Node's HTTP header writer with ERR_HTTP_INVALID_HEADER_VALUE.
-        // Set an ASCII-only `filename=` fallback plus a UTF-8 `filename*=`
-        // version so modern browsers still get the pretty name.
-        const asciiName = dlName.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
-        const encodedName = encodeURIComponent(dlName);
-        res.set(
-          "Content-Disposition",
-          `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`
-        );
+        res.set("Content-Disposition", contentDispositionFor(dlName));
       }
       res.send(file.data);
     } catch (err: any) { console.error("[routes] File download error:", err?.message); res.status(500).end(); }
@@ -4312,10 +4304,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const ext = path.extname(sanitized).toLowerCase();
       const viewable = [".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp"];
+      const dlName = file.originalName || sanitized;
       if (req.query.view === "1" && viewable.includes(ext)) {
-        res.setHeader("Content-Disposition", `inline; filename="${file.originalName || sanitized}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(dlName, "inline"));
       } else {
-        res.setHeader("Content-Disposition", `attachment; filename="${file.originalName || sanitized}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(dlName));
       }
       res.set("Content-Type", file.contentType);
       res.send(file.data);
@@ -4485,7 +4478,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(404).json({ message: "File not found" });
       }
       res.set("Content-Type", stored.contentType);
-      res.set("Content-Disposition", `attachment; filename="${file.fileName}"`);
+      res.set("Content-Disposition", contentDispositionFor(file.fileName));
       res.send(stored.data);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });

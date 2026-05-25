@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
 import { requireAuth } from "./auth";
+import { contentDispositionFor } from "./utils/http-headers";
 import { db, pool } from "./db";
 import {
   propertyPathwayRuns,
@@ -4700,9 +4701,9 @@ export function registerPropertyPathwayRoutes(app: Express) {
       }
 
       const buffer = Buffer.from(att.contentBytes, "base64");
-      const filename = String(att.name || "attachment").replace(/"/g, "");
+      const filename = String(att.name || "attachment");
       res.setHeader("Content-Type", att.contentType || "application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(filename));
       res.setHeader("Content-Length", String(buffer.length));
       res.end(buffer);
     } catch (err: any) {
