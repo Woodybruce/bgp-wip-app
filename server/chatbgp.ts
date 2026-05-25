@@ -3010,15 +3010,16 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "edit_image",
-      description: "Iteratively edit an existing Image Studio image with AI image-to-image. Two providers: Gemini (default — most pixel-faithful, great at lighting / mood / small adds) and OpenAI gpt-image-1 (stronger at compositional, instruction-led adds like 'place market stalls in pairs down the centre of the street'). Preserves the source building / composition / architectural detail and only applies the requested edit. Use for placemaking CGI iteration — adding stalls, planting, festoon lighting, outdoor seating, evening mood, dressing facades, removing clutter, etc. Chain after `generate_image` + `save_to_image_studio`, or call on any existing studio image. The image row is updated in place and a single undo snapshot is kept, so successive edits build on each other.",
+      description: "Iteratively edit an existing image with AI image-to-image. Source can be either (a) an image already in the Image Studio (pass imageStudioId) or (b) a photo the user has just pasted/dropped into chat (pass imageUrl '/api/chat-media/...') — in which case the photo is auto-imported into the Image Studio first so iterative edits stack. Two providers: Gemini (default — most pixel-faithful, great at lighting / mood / small adds) and OpenAI gpt-image-1 (stronger at compositional, instruction-led adds like 'place market stalls in pairs down the centre of the street'). Preserves the source building / composition / architectural detail and only applies the requested edit. Use for placemaking CGI iteration — adding stalls, planting, festoon lighting, outdoor seating, evening mood, dressing facades, removing clutter, etc. The image row is updated in place and a single undo snapshot is kept, so successive edits build on each other.",
       parameters: {
         type: "object",
         properties: {
-          imageStudioId: { type: "string", description: "image_studio_images.id of the source image to edit. Use browse_image_studio or save_to_image_studio output to find it." },
+          imageStudioId: { type: "string", description: "image_studio_images.id of an existing studio image. Either this OR imageUrl is required." },
+          imageUrl: { type: "string", description: "Alternative to imageStudioId — a /api/chat-media/... URL of a photo the user has just uploaded/pasted into chat. The photo is imported into the Image Studio first (so subsequent edit_image calls can refer to it by imageStudioId) and then edited in the same call. The response's imageStudioId is the persistent id to use for further edits." },
           editPrompt: { type: "string", description: "Plain-English description of the edit to apply, max 1000 chars. Be specific about what should change AND what should be preserved (e.g. 'add festoon lighting strung across the lane and a few outdoor cafe tables — keep the same buildings, perspective and daylight'). Avoid vague terms like 'better' or 'nicer'." },
           preferProvider: { type: "string", enum: ["gemini", "openai"], description: "Which AI editor to try first. 'gemini' (default) is most pixel-faithful and best for lighting/mood/small touch-ups. 'openai' (gpt-image-1) is better at compositional adds like inserting market stalls, signage, multiple new elements at specific positions. If the preferred provider fails, the other is tried as fallback." },
         },
-        required: ["imageStudioId", "editPrompt"],
+        required: ["editPrompt"],
       },
     },
   });
@@ -5947,20 +5948,70 @@ async function executeCrmToolRaw(
 
   if (fnName === "edit_image") {
     try {
-      const imageStudioId = String(fnArgs.imageStudioId || "").trim();
+      let imageStudioId = String(fnArgs.imageStudioId || "").trim();
+      const imageUrl = String(fnArgs.imageUrl || "").trim();
       const editPrompt = String(fnArgs.editPrompt || "").trim();
-      if (!imageStudioId) return { data: { success: false, error: "imageStudioId is required" } };
+      if (!imageStudioId && !imageUrl) return { data: { success: false, error: "Pass either imageStudioId (existing studio image) or imageUrl (a /api/chat-media/... URL of a freshly uploaded photo)." } };
       if (!editPrompt) return { data: { success: false, error: "editPrompt is required" } };
       if (editPrompt.length > 1000) return { data: { success: false, error: "editPrompt too long (max 1000 chars)" } };
 
-      // Internal call to the existing /api/image-studio/ai-edit handler so
-      // we reuse its Gemini chain, undo snapshot, row update and SharePoint
-      // sync. Same forwarding pattern as capture_pdf_pages above.
       const sessionCookie = req.headers.cookie || "";
       const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
       const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
       const baseUrl = `${protocol}://${host}`;
 
+      // If the caller passed a chat-media URL, import the photo into the
+      // Image Studio first so the edit + future iterations all reference a
+      // persistent studio row. Done in-process so we don't need a second
+      // tool round-trip from the model.
+      if (!imageStudioId && imageUrl) {
+        if (!imageUrl.startsWith("/api/chat-media/")) {
+          return { data: { success: false, error: "imageUrl must be a /api/chat-media/... URL (a file the user uploaded into chat)." } };
+        }
+        const mediaName = imageUrl.replace("/api/chat-media/", "");
+        const { getFile } = await import("./file-storage");
+        const fileData = await getFile(`chat-media/${mediaName}`);
+        if (!fileData) return { data: { success: false, error: "Could not find that chat-media file — it may have expired or the URL is wrong." } };
+
+        const fsModule = await import("fs");
+        const pathModule = await import("path");
+        const sharp = (await import("sharp")).default;
+        const uploadsDir = pathModule.default.join(process.cwd(), "uploads", "image-studio");
+        if (!fsModule.default.existsSync(uploadsDir)) fsModule.default.mkdirSync(uploadsDir, { recursive: true });
+        const inferredExt = mediaName.toLowerCase().endsWith(".png") ? "png"
+          : mediaName.toLowerCase().match(/\.(jpe?g)$/) ? "jpg"
+          : mediaName.toLowerCase().endsWith(".webp") ? "webp"
+          : "jpg";
+        const localName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${inferredExt}`;
+        const localPath = pathModule.default.join(uploadsDir, localName);
+        fsModule.default.writeFileSync(localPath, fileData.data);
+
+        let width: number | null = null, height: number | null = null, thumbnailData: string | null = null;
+        try {
+          const meta = await sharp(fileData.data).metadata();
+          width = meta.width || null;
+          height = meta.height || null;
+          const thumbBuf = await sharp(fileData.data).resize(200, 200, { fit: "inside" }).jpeg({ quality: 70 }).toBuffer();
+          thumbnailData = `data:image/jpeg;base64,${thumbBuf.toString("base64")}`;
+        } catch {}
+
+        const mime = inferredExt === "png" ? "image/png" : inferredExt === "webp" ? "image/webp" : "image/jpeg";
+        const userId = req.session?.userId || (req as any).tokenUserId || null;
+        const insertRes = await pool.query(
+          `INSERT INTO image_studio_images
+             (file_name, category, tags, description, source, mime_type, file_size, width, height, thumbnail_data, local_path, uploaded_by, created_at)
+           VALUES ($1, $2, $3::text[], $4, 'upload', $5, $6, $7, $8, $9, $10, $11, NOW())
+           RETURNING id`,
+          [fileData.originalName || mediaName, "Other", ["User Upload", "For Edit"], "Imported from chat for AI edit",
+           mime, fileData.data.length, width, height, thumbnailData, localPath, userId]
+        );
+        imageStudioId = insertRes.rows[0].id;
+        console.log(`[chatbgp] edit_image: imported chat-media ${mediaName} as studio row ${imageStudioId}`);
+      }
+
+      // Internal call to the existing /api/image-studio/ai-edit handler so
+      // we reuse its Gemini/OpenAI chain, undo snapshot, row update and
+      // SharePoint sync. Same forwarding pattern as capture_pdf_pages.
       const preferProvider = typeof fnArgs.preferProvider === "string" ? fnArgs.preferProvider : undefined;
       const editRes = await fetch(`${baseUrl}/api/image-studio/ai-edit`, {
         method: "POST",
