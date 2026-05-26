@@ -3829,6 +3829,93 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     },
   });
 
+  tools.push({
+    type: "function",
+    function: {
+      name: "create_deck",
+      description: "Create a new Deck — BGP's composable document primitive used for any deliverable (Why Buy memo, AM/IM pitch, leasing pitch, rent review pack, brand pack). Pass a templateKey and the deck is seeded with that template's default cards as drafts. You can also pre-populate specific cards (overrides the template defaults). After creating, ChatBGP can use the returned deck.id to update cards, lock them, and call assemble_deck to produce the designed PDF. Use this whenever the user asks for any multi-section document — prefer it over generate_claude_designed_pdf because decks are editable and re-assemblable.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Deck name — what shows in the list (e.g. 'Brixton Market Quarter — AM/IM Strategy')." },
+          templateKey: { type: "string", enum: ["why_buy", "am_im", "leasing_pitch", "rent_review", "brand_pack"], description: "Which template to base the deck on. Picks the default card set and the PDF design scope." },
+          propertyId: { type: "string", description: "Optional crm_properties.id to anchor the deck to a property — surfaces it on the property page and lets the assembler pick the right map." },
+          companyId: { type: "string", description: "Optional crm_companies.id (landlord or brand) to anchor the deck to a company — useful for brand packs and rent reviews." },
+          dealId: { type: "string", description: "Optional crm_deals.id to anchor the deck to a specific live deal." },
+          notes: { type: "string", description: "Free-text brief / one-liner. Visible on the deck list view." },
+          cards: {
+            type: "array",
+            description: "Optional explicit card set — overrides the template defaults. Use when you've already drafted content and want to pre-populate cards rather than starting from blanks. Each card is { type, title?, sortOrder?, content?, state? }. Content shape depends on type — see the universal vocabulary below.",
+            items: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["cover", "narrative", "image", "image_grid", "map", "kpi_block", "data_table", "model_link", "risk_register", "next_steps", "signature_block"] },
+                title: { type: "string" },
+                sortOrder: { type: "number" },
+                state: { type: "string", enum: ["draft", "locked"] },
+                content: { type: "object", description: "Shape per type: narrative={markdown}, kpi_block={kpis:[{value,label,note}]}, data_table={headers,rows}, risk_register={items:[{risk,mitigant,severity}]}, next_steps={items:[{action,owner,by}]}, signature_block={team:[{name,role,email}],fee}, image={imageStudioId,caption}, image_grid={imageIds[]}, map={propertyId,zoom}, model_link={modelRef,summary}, cover={subtitle,hero}." },
+              },
+              required: ["type"],
+            },
+          },
+        },
+        required: ["name", "templateKey"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_deck_card",
+      description: "Update a single deck card — title, content, or state (draft → locked). Use to refine a card the user wants changed, or to lock cards ready for assembly. To assemble the deck into a PDF, all cards must be locked.",
+      parameters: {
+        type: "object",
+        properties: {
+          deckId: { type: "string", description: "decks.id" },
+          cardId: { type: "string", description: "deck_cards.id" },
+          title: { type: "string" },
+          content: { type: "object", description: "New card content (full replacement; merge client-side first if you only want to patch)." },
+          state: { type: "string", enum: ["draft", "locked"], description: "Set to 'locked' to mark this card ready for assembly. Locked cards can't be edited via this tool — unlock first." },
+        },
+        required: ["deckId", "cardId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "assemble_deck",
+      description: "Assemble a deck into a designed BGP PDF using the template's house style. Every card must be locked first — call update_deck_card with state='locked' on each. Returns a download URL the user can open. Use after a back-and-forth where the deck content is settled.",
+      parameters: {
+        type: "object",
+        properties: {
+          deckId: { type: "string", description: "decks.id" },
+        },
+        required: ["deckId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_decks",
+      description: "List existing decks, optionally filtered by template, status, property, company, or deal. Use when the user asks 'what decks do I have', 'show me the Why Buy decks', or wants to find a deck to update.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateKey: { type: "string", description: "Filter by template (why_buy, am_im, etc.)." },
+          status: { type: "string", enum: ["draft", "ready", "archived"] },
+          propertyId: { type: "string", description: "Filter by anchor property." },
+          companyId: { type: "string", description: "Filter by anchor company." },
+          dealId: { type: "string", description: "Filter by anchor deal." },
+        },
+      },
+    },
+  });
+
   const result = { modelTemplates, docTemplates, tools };
   setCache("availableTools", result, 10 * 60 * 1000);
   return result;
@@ -8910,6 +8997,161 @@ Be thorough — include every unit row you can classify, across all properties i
     } catch (err: any) {
       console.error("[chatbgp] search_chat_history error:", err?.message);
       return { data: { error: `Chat history search failed: ${err?.message || "unknown error"}` } };
+    }
+  }
+
+  // ─── Decks — composable document primitive ──────────────────────────
+  if (fnName === "create_deck") {
+    try {
+      const name = String(fnArgs.name || "").trim();
+      const templateKey = String(fnArgs.templateKey || "").trim();
+      if (!name || !templateKey) return { data: { success: false, error: "name and templateKey are required" } };
+
+      const tpl = await pool.query(
+        `SELECT key, default_cards FROM deck_templates WHERE key = $1 AND active = true`,
+        [templateKey]
+      );
+      if (!tpl.rows[0]) return { data: { success: false, error: `Unknown template '${templateKey}'. Try: why_buy, am_im, leasing_pitch, rent_review, brand_pack.` } };
+
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      const deckRow = await pool.query(
+        `INSERT INTO decks (name, template_key, property_id, company_id, deal_id, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [
+          name,
+          templateKey,
+          fnArgs.propertyId || null,
+          fnArgs.companyId || null,
+          fnArgs.dealId || null,
+          fnArgs.notes || null,
+          userId,
+        ]
+      );
+      const deck = deckRow.rows[0];
+
+      const seeds: any[] = Array.isArray(fnArgs.cards) && fnArgs.cards.length
+        ? fnArgs.cards
+        : (tpl.rows[0].default_cards as any[]);
+
+      const cardIds: { id: string; type: string; title: string | null }[] = [];
+      for (const seed of seeds) {
+        const inserted = await pool.query(
+          `INSERT INTO deck_cards (deck_id, type, sort_order, state, title, content)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, type, title`,
+          [
+            deck.id,
+            seed.type,
+            typeof seed.sortOrder === "number" ? seed.sortOrder : 0,
+            seed.state === "locked" ? "locked" : "draft",
+            seed.title || null,
+            seed.content ? JSON.stringify(seed.content) : null,
+          ]
+        );
+        cardIds.push(inserted.rows[0]);
+      }
+
+      return {
+        data: {
+          success: true,
+          deckId: deck.id,
+          name: deck.name,
+          templateKey: deck.template_key,
+          cards: cardIds,
+          deckUrl: `/decks/${deck.id}`,
+          message: `Deck "${deck.name}" created with ${cardIds.length} cards. Edit cards with update_deck_card, then assemble_deck once they're all locked.`,
+        },
+      };
+    } catch (e: any) {
+      console.error("[chatbgp] create_deck:", e?.message);
+      return { data: { success: false, error: `Couldn't create deck: ${e?.message}` } };
+    }
+  }
+
+  if (fnName === "update_deck_card") {
+    try {
+      const deckId = String(fnArgs.deckId || "").trim();
+      const cardId = String(fnArgs.cardId || "").trim();
+      if (!deckId || !cardId) return { data: { success: false, error: "deckId and cardId are required" } };
+
+      const updates: string[] = [];
+      const params: any[] = [];
+      const push = (col: string, val: any) => { params.push(val); updates.push(`${col} = $${params.length}`); };
+
+      if (fnArgs.title !== undefined) push("title", fnArgs.title);
+      if (fnArgs.content !== undefined) push("content", JSON.stringify(fnArgs.content));
+      if (fnArgs.state !== undefined) {
+        push("state", fnArgs.state);
+        if (fnArgs.state === "locked") {
+          const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+          push("locked_at", new Date().toISOString());
+          push("locked_by", userId);
+        } else {
+          push("locked_at", null);
+          push("locked_by", null);
+        }
+      }
+      if (!updates.length) return { data: { success: false, error: "No fields to update" } };
+
+      updates.push("updated_at = NOW()");
+      params.push(deckId, cardId);
+      const r = await pool.query(
+        `UPDATE deck_cards SET ${updates.join(", ")}
+         WHERE deck_id = $${params.length - 1} AND id = $${params.length}
+         RETURNING id, type, title, state`,
+        params
+      );
+      if (!r.rows[0]) return { data: { success: false, error: "Card not found" } };
+      await pool.query(`UPDATE decks SET updated_at = NOW() WHERE id = $1`, [deckId]).catch(() => {});
+      return { data: { success: true, card: r.rows[0], message: `Card ${r.rows[0].title || r.rows[0].type} ${fnArgs.state ? `is now ${fnArgs.state}` : "updated"}.` } };
+    } catch (e: any) {
+      console.error("[chatbgp] update_deck_card:", e?.message);
+      return { data: { success: false, error: `Couldn't update card: ${e?.message}` } };
+    }
+  }
+
+  if (fnName === "assemble_deck") {
+    try {
+      const deckId = String(fnArgs.deckId || "").trim();
+      if (!deckId) return { data: { success: false, error: "deckId is required" } };
+      const { assembleDeck } = await import("./deck-assembler");
+      const result = await assembleDeck(deckId);
+      if (!result.success) return { data: result };
+      return {
+        data: {
+          ...result,
+          downloadMarkdown: `[Download ${result.title}.pdf](${result.downloadUrl})`,
+          message: `Deck assembled — ${result.cardCount} cards rendered. PDF ready for download.`,
+        },
+      };
+    } catch (e: any) {
+      console.error("[chatbgp] assemble_deck:", e?.message);
+      return { data: { success: false, error: `Assemble failed: ${e?.message}` } };
+    }
+  }
+
+  if (fnName === "list_decks") {
+    try {
+      const where: string[] = [];
+      const params: any[] = [];
+      const push = (clause: string, value: any) => { params.push(value); where.push(clause.replace("$$", `$${params.length}`)); };
+      if (fnArgs.templateKey) push(`template_key = $$`, String(fnArgs.templateKey));
+      if (fnArgs.status) push(`status = $$`, String(fnArgs.status));
+      if (fnArgs.propertyId) push(`property_id = $$`, String(fnArgs.propertyId));
+      if (fnArgs.companyId) push(`company_id = $$`, String(fnArgs.companyId));
+      if (fnArgs.dealId) push(`deal_id = $$`, String(fnArgs.dealId));
+      const r = await pool.query(
+        `SELECT d.id, d.name, d.template_key, d.status, d.property_id, d.company_id, d.deal_id, d.updated_at,
+                (SELECT COUNT(*)::int FROM deck_cards c WHERE c.deck_id = d.id) AS card_count,
+                (SELECT COUNT(*)::int FROM deck_cards c WHERE c.deck_id = d.id AND c.state = 'locked') AS locked_count
+         FROM decks d
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY d.updated_at DESC LIMIT 30`,
+        params
+      );
+      return { data: { success: true, decks: r.rows, count: r.rows.length } };
+    } catch (e: any) {
+      console.error("[chatbgp] list_decks:", e?.message);
+      return { data: { success: false, error: `List failed: ${e?.message}` } };
     }
   }
 

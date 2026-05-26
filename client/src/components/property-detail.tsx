@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
 import { PropertyBrochuresPanel } from "@/components/property-brochures-panel";
+import { PropertyDecksPanel } from "@/components/decks/property-decks-panel";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -716,6 +717,9 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               <ErrorBoundary compact name="Property brochures">
                 <PropertyBrochuresPanel propertyId={property.id} />
+              </ErrorBoundary>
+              <ErrorBoundary compact name="Property decks">
+                <PropertyDecksPanel propertyId={property.id} />
               </ErrorBoundary>
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">

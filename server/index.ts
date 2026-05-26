@@ -2140,6 +2140,83 @@ import { pool } from "./db";
       'why_buy'
     ) ON CONFLICT (key) DO NOTHING`,
 
+    // Seed the AM/IM template — asset management / investment memo for
+    // pitching BGP as delivery partner on an existing instruction.
+    `INSERT INTO deck_templates (key, name, description, default_cards, pdf_scope) VALUES (
+      'am_im',
+      'AM/IM Pitch',
+      'Asset management / investment memo — pitch BGP as the delivery partner. Used for AG-style mandate pitches.',
+      '[
+        {"type":"cover","title":"Cover","sortOrder":10,"content":{"hero":"","subtitle":""}},
+        {"type":"narrative","title":"Executive summary","sortOrder":20,"content":{"markdown":""}},
+        {"type":"narrative","title":"The value gap","sortOrder":30,"content":{"markdown":""}},
+        {"type":"kpi_block","title":"Scenario summary","sortOrder":40,"content":{"kpis":[]}},
+        {"type":"model_link","title":"Financial model","sortOrder":50,"content":{"modelRef":"","summary":""}},
+        {"type":"data_table","title":"Capex programme","sortOrder":60,"content":{"headers":["Item","Cost","Phase","Status"],"rows":[]}},
+        {"type":"data_table","title":"Leasing strategy","sortOrder":70,"content":{"headers":["Unit","Target","Rent","Timeline"],"rows":[]}},
+        {"type":"image_grid","title":"Concept imagery","sortOrder":80,"content":{"imageIds":[]}},
+        {"type":"map","title":"Location & scheme context","sortOrder":90,"content":{"propertyId":null}},
+        {"type":"risk_register","title":"Risks and mitigants","sortOrder":100,"content":{"items":[]}},
+        {"type":"signature_block","title":"BGP mandate","sortOrder":110,"content":{"team":[],"fee":""}},
+        {"type":"next_steps","title":"Next steps","sortOrder":120,"content":{"items":[]}}
+      ]'::jsonb,
+      'placemaking'
+    ) ON CONFLICT (key) DO NOTHING`,
+
+    // Seed Leasing Pitch + Rent Review + Brand Pack templates so the
+    // primitive has the full set Woody outlined. Each can be refined
+    // later by editing default_cards.
+    `INSERT INTO deck_templates (key, name, description, default_cards, pdf_scope) VALUES (
+      'leasing_pitch',
+      'Leasing Pitch',
+      'Pitch deck for a leasing instruction — property overview, available units, target tenants, comparable evidence.',
+      '[
+        {"type":"cover","title":"Cover","sortOrder":10,"content":{}},
+        {"type":"narrative","title":"The opportunity","sortOrder":20,"content":{"markdown":""}},
+        {"type":"image_grid","title":"Property imagery","sortOrder":30,"content":{"imageIds":[]}},
+        {"type":"data_table","title":"Available units","sortOrder":40,"content":{"headers":["Unit","Use","Sqft","Rent","Status"],"rows":[]}},
+        {"type":"data_table","title":"Target tenants","sortOrder":50,"content":{"headers":["Brand","Sector","Requirement","Status"],"rows":[]}},
+        {"type":"data_table","title":"Comparable evidence","sortOrder":60,"content":{"headers":["Address","Tenant","Sqft","Rent psf","Date"],"rows":[]}},
+        {"type":"map","title":"Location","sortOrder":70,"content":{}},
+        {"type":"signature_block","title":"BGP leasing team","sortOrder":80,"content":{"team":[],"fee":""}},
+        {"type":"next_steps","title":"Next steps","sortOrder":90,"content":{"items":[]}}
+      ]'::jsonb,
+      'pitch'
+    ) ON CONFLICT (key) DO NOTHING`,
+
+    `INSERT INTO deck_templates (key, name, description, default_cards, pdf_scope) VALUES (
+      'rent_review',
+      'Rent Review Pack',
+      'Tenant-rep or landlord rent review submission — subject property, comps, analysis, representations.',
+      '[
+        {"type":"cover","title":"Cover","sortOrder":10,"content":{}},
+        {"type":"narrative","title":"Subject property","sortOrder":20,"content":{"markdown":""}},
+        {"type":"data_table","title":"Comparable evidence","sortOrder":30,"content":{"headers":["Address","Tenant","Zone A","ITZA","Date"],"rows":[]}},
+        {"type":"narrative","title":"Zone A analysis","sortOrder":40,"content":{"markdown":""}},
+        {"type":"narrative","title":"Representations","sortOrder":50,"content":{"markdown":""}},
+        {"type":"map","title":"Pitch & local context","sortOrder":60,"content":{}},
+        {"type":"signature_block","title":"BGP team","sortOrder":70,"content":{"team":[],"fee":""}}
+      ]'::jsonb,
+      'general'
+    ) ON CONFLICT (key) DO NOTHING`,
+
+    `INSERT INTO deck_templates (key, name, description, default_cards, pdf_scope) VALUES (
+      'brand_pack',
+      'Brand Pack',
+      'Brand-side intelligence pack — covenant, store estate, target sites, recent news.',
+      '[
+        {"type":"cover","title":"Cover","sortOrder":10,"content":{}},
+        {"type":"narrative","title":"Brand overview","sortOrder":20,"content":{"markdown":""}},
+        {"type":"kpi_block","title":"Headline metrics","sortOrder":30,"content":{"kpis":[]}},
+        {"type":"image_grid","title":"Brand imagery","sortOrder":40,"content":{"imageIds":[]}},
+        {"type":"data_table","title":"Store estate","sortOrder":50,"content":{"headers":["Location","Sqft","Type","Opened"],"rows":[]}},
+        {"type":"narrative","title":"Current requirements","sortOrder":60,"content":{"markdown":""}},
+        {"type":"narrative","title":"Recent news","sortOrder":70,"content":{"markdown":""}},
+        {"type":"next_steps","title":"Approach","sortOrder":80,"content":{"items":[]}}
+      ]'::jsonb,
+      'general'
+    ) ON CONFLICT (key) DO NOTHING`,
+
     // Log the Deck primitive itself as a formal change request so it
     // shows up in Settings → Change Requests with a proper paper trail.
     // ON CONFLICT keyed by a fingerprint in the description so re-runs

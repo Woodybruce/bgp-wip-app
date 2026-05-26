@@ -330,12 +330,18 @@ export function setupDeckRoutes(app: Express) {
     }
   });
 
-  // ── Assemble (Phase 1.5 — placeholder) ──────────────────────────────
-  app.post("/api/decks/:id/assemble", requireAuth, async (_req, res) => {
-    res.status(501).json({
-      error: "Assembler not built yet — Phase 1.5",
-      hint: "Will pipe locked-card content to generate_claude_designed_pdf with the template's pdf_scope.",
-    });
+  // ── Assemble ────────────────────────────────────────────────────────
+  // Pipes the deck's locked cards through the assembler → designed PDF.
+  app.post("/api/decks/:id/assemble", requireAuth, async (req, res) => {
+    try {
+      const { assembleDeck } = await import("./deck-assembler");
+      const result = await assembleDeck(req.params.id);
+      if (!result.success) return res.status(400).json(result);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[decks] assemble:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ── Lightweight change-request creator (general utility) ────────────

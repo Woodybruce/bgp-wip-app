@@ -4591,6 +4591,44 @@ async function runStage9(runId: string, req: Request): Promise<void> {
       },
     });
     await updateRun(runId, { whyBuyDocumentUrl: result.sharepointUrl || result.documentUrl, completedAt: new Date() });
+
+    // Seed a Why Buy Deck in the new Decks primitive so the team can
+    // refine the output via the card editor without regenerating the
+    // whole PDF. Fire-and-forget — failure here must never break the
+    // Pathway run.
+    if (run.propertyId) {
+      pool.query(
+        `SELECT id FROM decks WHERE property_id = $1 AND template_key = 'why_buy' LIMIT 1`,
+        [run.propertyId]
+      ).then(async (existing) => {
+        if (existing.rows[0]) return; // user / earlier run already seeded one
+        const tpl = await pool.query(
+          `SELECT default_cards FROM deck_templates WHERE key = 'why_buy' AND active = true`
+        );
+        const defaultCards = (tpl.rows[0]?.default_cards as any[]) || [];
+        const deckName = `Why Buy — ${run.formattedAddress || run.address || "Property"}`;
+        const deckRow = await pool.query(
+          `INSERT INTO decks (name, template_key, property_id, status, notes)
+           VALUES ($1, 'why_buy', $2, 'draft', $3) RETURNING id`,
+          [deckName, run.propertyId, `Seeded from Pathway run ${runId}.`]
+        );
+        const deckId = deckRow.rows[0].id;
+        for (const seed of defaultCards) {
+          await pool.query(
+            `INSERT INTO deck_cards (deck_id, type, sort_order, state, title, content)
+             VALUES ($1, $2, $3, 'draft', $4, $5)`,
+            [
+              deckId,
+              seed.type,
+              typeof seed.sortOrder === "number" ? seed.sortOrder : 0,
+              seed.title || null,
+              seed.content ? JSON.stringify(seed.content) : null,
+            ]
+          ).catch(() => {});
+        }
+        console.log(`[pathway stage9] seeded Why Buy deck ${deckId} for property ${run.propertyId}`);
+      }).catch(e => console.warn("[pathway stage9] deck seed failed:", e?.message));
+    }
   } catch (err: any) {
     console.error("[pathway stage9] failed:", err?.message, err?.stack?.split("\n")[1]);
     await setStageStatus(runId, "stage9", "failed", {
