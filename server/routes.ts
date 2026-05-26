@@ -47,6 +47,7 @@ import { setupRefreshImageRoutes } from "./refresh-website-images";
 import { setupHrRoutes } from "./hr-routes";
 import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { setupDocumentPreferencesRoutes } from "./document-preferences";
+import { setupDeckRoutes } from "./decks";
 import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
@@ -6628,6 +6629,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   setupHrRoutes(app);
   setupWhyBuyDesignRoutes(app);
   setupDocumentPreferencesRoutes(app);
+  setupDeckRoutes(app);
 
   return httpServer;
 }

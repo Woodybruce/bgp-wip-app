@@ -2072,6 +2072,104 @@ import { pool } from "./db";
       news_count INTEGER DEFAULT 0,
       generated_at TIMESTAMP DEFAULT now()
     )`,
+
+    // Decks — generic, app-wide composable document primitive.
+    // See shared/schema.ts for the full architectural notes.
+    `CREATE TABLE IF NOT EXISTS decks (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      template_key TEXT NOT NULL,
+      property_id VARCHAR,
+      company_id VARCHAR,
+      deal_id VARCHAR,
+      status TEXT NOT NULL DEFAULT 'draft',
+      notes TEXT,
+      created_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_decks_property ON decks (property_id) WHERE property_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_decks_company  ON decks (company_id)  WHERE company_id  IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_decks_deal     ON decks (deal_id)     WHERE deal_id     IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_decks_template ON decks (template_key)`,
+
+    `CREATE TABLE IF NOT EXISTS deck_cards (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      deck_id VARCHAR NOT NULL,
+      type TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      state TEXT NOT NULL DEFAULT 'draft',
+      title TEXT,
+      content JSONB,
+      asset_refs JSONB,
+      locked_at TIMESTAMP,
+      locked_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deck_cards_deck ON deck_cards (deck_id, sort_order)`,
+
+    `CREATE TABLE IF NOT EXISTS deck_templates (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      default_cards JSONB NOT NULL,
+      pdf_scope TEXT NOT NULL DEFAULT 'general',
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+
+    // Seed the Why Buy template — first end-to-end deck template.
+    // ON CONFLICT DO NOTHING so re-deploys never overwrite local edits.
+    `INSERT INTO deck_templates (key, name, description, default_cards, pdf_scope) VALUES (
+      'why_buy',
+      'Why Buy Memo',
+      'Buy-side pitch for a single instruction — opportunity, evidence, returns, asks.',
+      '[
+        {"type":"cover","title":"Cover","sortOrder":10,"content":{"hero":"","subtitle":""}},
+        {"type":"narrative","title":"Executive summary","sortOrder":20,"content":{"markdown":""}},
+        {"type":"narrative","title":"The opportunity","sortOrder":30,"content":{"markdown":""}},
+        {"type":"image_grid","title":"Property imagery","sortOrder":40,"content":{"imageIds":[]}},
+        {"type":"kpi_block","title":"Headline numbers","sortOrder":50,"content":{"kpis":[]}},
+        {"type":"data_table","title":"Comparable evidence","sortOrder":60,"content":{"headers":[],"rows":[]}},
+        {"type":"map","title":"Location","sortOrder":70,"content":{"propertyId":null}},
+        {"type":"risk_register","title":"Risks and mitigants","sortOrder":80,"content":{"items":[]}},
+        {"type":"next_steps","title":"Next steps","sortOrder":90,"content":{"items":[]}},
+        {"type":"signature_block","title":"BGP team","sortOrder":100,"content":{"team":[],"fee":""}}
+      ]'::jsonb,
+      'why_buy'
+    ) ON CONFLICT (key) DO NOTHING`,
+
+    // Log the Deck primitive itself as a formal change request so it
+    // shows up in Settings → Change Requests with a proper paper trail.
+    // ON CONFLICT keyed by a fingerprint in the description so re-runs
+    // don't duplicate.
+    `INSERT INTO app_change_requests (description, requested_by, requested_by_user_id, category, priority, status)
+     SELECT $deck_request_marker$ [Deck primitive · app-wide composable document layer]
+
+Generic, app-wide system for any BGP deliverable (Why Buy, AM/IM pitch, leasing brochure, rent review pack, brand pack). Pathway is one populator, not the owner — same shared-primitive pattern as Image Studio.
+
+Architecture:
+- decks (id, name, template_key, property_id?, company_id?, deal_id?, status, notes)
+- deck_cards (id, deck_id, type, sort_order, state {draft|locked}, title, content jsonb, asset_refs jsonb)
+- deck_templates (key, name, default_cards jsonb, pdf_scope) — opinions about card sets, not code branches
+
+Universal card vocabulary: cover, narrative, image, image_grid, map, kpi_block, data_table, model_link, risk_register, next_steps, signature_block. Same set serves every template.
+
+Phase 1 (foundation — this commit): schema + Why Buy template seed + REST CRUD + stub /decks page (read-only).
+Phase 1.5: assembler endpoint (pipes locked-card content to generate_claude_designed_pdf with the template''s pdf_scope) + Pathway auto-creates a deck at end of run + ChatBGP create_deck tool.
+Phase 2: full card editor UI + AM/IM template + first end-to-end Why Buy.
+Phase 3: leasing pitch, rent review, brand pack templates.
+
+Deferred for v2: Excel model live-link (cells editable through the board), review/approval workflow with audit trail, multi-user co-editing. $deck_request_marker$,
+       'Claude Code',
+       NULL,
+       'feature',
+       'high',
+       'pending'
+     WHERE NOT EXISTS (
+       SELECT 1 FROM app_change_requests WHERE description LIKE '%[Deck primitive · app-wide composable document layer]%'
+     )`,
   ];
 
   let ok = 0, skipped = 0;

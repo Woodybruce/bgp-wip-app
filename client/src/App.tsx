@@ -51,6 +51,8 @@ const Mail = lazy(() => import("@/pages/mail"));
 const WhatsApp = lazy(() => import("@/pages/whatsapp"));
 const Models = lazy(() => import("@/pages/models"));
 const DocumentTemplates = lazy(() => import("@/pages/document-templates"));
+const Decks = lazy(() => import("@/pages/decks"));
+const DeckDetail = lazy(() => import("@/pages/deck-detail"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
@@ -199,6 +201,8 @@ function Router() {
       <Route path="/whatsapp" component={WhatsApp} />
       <Route path="/models" component={Models} />
       <Route path="/templates" component={DocumentTemplates} />
+      <Route path="/decks" component={Decks} />
+      <Route path="/decks/:id" component={DeckDetail} />
       <Route path="/image-studio">{() => <AdminRoute><ImageStudio /></AdminRoute>}</Route>
       <Route path="/settings" component={SettingsPage} />
       <Route path="/comps" component={Comps} />

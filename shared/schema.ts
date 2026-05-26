@@ -3089,3 +3089,87 @@ export const propertyImageryAssets = pgTable("property_imagery_assets", {
 
 export type PropertyImageryAsset = typeof propertyImageryAssets.$inferSelect;
 export type InsertPropertyImageryAsset = typeof propertyImageryAssets.$inferInsert;
+
+// ─── Decks — generic, app-wide document primitive ──────────────────────────
+// A "deck" is any composable BGP deliverable: Why Buy memo, AM/IM pitch,
+// leasing brochure, rent review pack. Each one is a set of cards that can
+// be individually edited, locked, and assembled into a PDF. Pathway is one
+// populator; ChatBGP is another; manual creation is a third. Templates are
+// just default card sets — not code branches.
+export const decks = pgTable("decks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  // Which template this deck conforms to — drives the default card set,
+  // the assembler's PDF design (passed as scope to generate_claude_designed_pdf),
+  // and any template-specific defaults. New templates are seeded rows in
+  // deck_templates, not new code paths.
+  templateKey: text("template_key").notNull(),
+  // Optional CRM anchors — a deck about a property, brand, deal, or any
+  // combination. Anchors drive auto-population (Pathway run for property,
+  // brand pack for company, etc.) and surface on the relevant CRM pages.
+  propertyId: varchar("property_id"),
+  companyId: varchar("company_id"),
+  dealId: varchar("deal_id"),
+  // Status: draft → ready → archived. Distinct from card-level state.
+  // 'ready' means the deck as a whole is past first review.
+  status: text("status").notNull().default("draft"),
+  // Free-form notes, brief, instructions to the assembler.
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const deckCards = pgTable("deck_cards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  deckId: varchar("deck_id").notNull(),
+  // Card type — drives the editor UI and the assembler's render path.
+  // Universal vocabulary across every template: cover, narrative, image,
+  // image_grid, map, kpi_block, data_table, model_link, risk_register,
+  // next_steps, signature_block. New types are additive — render fallback
+  // to narrative if a type isn't recognised.
+  type: text("type").notNull(),
+  // Display order within the deck.
+  sortOrder: integer("sort_order").notNull().default(0),
+  // 'draft' = auto-populated or new, user hasn't approved.
+  // 'locked' = approved, assembler uses this content as-is.
+  state: text("state").notNull().default("draft"),
+  // Card title (e.g. "Executive Summary"). Independent of type.
+  title: text("title"),
+  // Content blob — shape depends on type. e.g.
+  //   narrative: { markdown: string }
+  //   image:     { imageStudioId: string, caption?: string }
+  //   data_table:{ headers: string[], rows: string[][] }
+  // The assembler is responsible for understanding each shape.
+  content: jsonb("content"),
+  // Optional foreign references to assets the card depends on.
+  // Useful for re-resolving images / model files at assembly time even
+  // if the content blob has gone stale.
+  assetRefs: jsonb("asset_refs"),
+  lockedAt: timestamp("locked_at"),
+  lockedBy: varchar("locked_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const deckTemplates = pgTable("deck_templates", {
+  key: text("key").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Default card set the deck starts with when created from this
+  // template. Shape: [{ type, title, sortOrder, content? }, ...]
+  defaultCards: jsonb("default_cards").notNull(),
+  // PDF design scope passed to generate_claude_designed_pdf at assembly
+  // time. Maps to the existing house-style preference scopes:
+  // 'why_buy' | 'placemaking' | 'pitch' | 'general'.
+  pdfScope: text("pdf_scope").notNull().default("general"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Deck = typeof decks.$inferSelect;
+export type InsertDeck = typeof decks.$inferInsert;
+export type DeckCard = typeof deckCards.$inferSelect;
+export type InsertDeckCard = typeof deckCards.$inferInsert;
+export type DeckTemplate = typeof deckTemplates.$inferSelect;
+export type InsertDeckTemplate = typeof deckTemplates.$inferInsert;
