@@ -80,15 +80,21 @@ export function FeeAllocationEditor({
           isBgpHouse: true,
         },
       ]);
-    } else if (allocType === "fixed") {
-      // Keep BGP House's fixed amount in sync with the deal fee.
-      const bgpRow = rows.find((r) => r.isBgpHouse);
-      if (bgpRow) {
-        const expected = (dealFee || 0) * BGP_HOUSE_PCT / 100;
-        if (Math.abs((bgpRow.fixedAmount || 0) - expected) > 0.5) {
-          onChange(rows.map((r) => r.isBgpHouse ? { ...r, fixedAmount: expected } : r));
-        }
-      }
+      return;
+    }
+    // Keep the BGP House row canonical in BOTH directions. The previous
+    // version only synced fixedAmount when allocType==='fixed', so
+    // toggling £ → % left the BGP House percentage at whatever stale
+    // value it had been initialised with — never re-set to BGP_HOUSE_PCT.
+    const bgpRow = rows.find((r) => r.isBgpHouse)!;
+    const expectedFixed = (dealFee || 0) * BGP_HOUSE_PCT / 100;
+    const fixedStale = Math.abs((bgpRow.fixedAmount || 0) - expectedFixed) > 0.5;
+    const pctStale = Math.abs((bgpRow.percentage || 0) - BGP_HOUSE_PCT) > 0.01;
+    if (fixedStale || pctStale) {
+      onChange(rows.map((r) => r.isBgpHouse
+        ? { ...r, fixedAmount: expectedFixed, percentage: BGP_HOUSE_PCT, allocationType: allocType }
+        : r
+      ));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows.length, dealFee, allocType]);
@@ -279,10 +285,19 @@ export function FeeAllocationEditor({
             variant="ghost"
             size="sm"
             onClick={() => {
-              const each = Math.round((agentPctTarget / agentRows.length) * 100) / 100;
-              onChange(rows.map((r) =>
-                r.isBgpHouse ? r : { ...r, percentage: each }
-              ));
+              // Round each agent to 2dp; the last agent gets the remainder
+              // so the total lands exactly on agentPctTarget (avoids the
+              // 33.33×3 = 99.99 / 100.01 rounding drift that triggered the
+              // amber 'not balanced' warning).
+              const n = agentRows.length;
+              const each = Math.round((agentPctTarget / n) * 100) / 100;
+              const remainder = Math.round((agentPctTarget - each * (n - 1)) * 100) / 100;
+              let assigned = 0;
+              onChange(rows.map((r) => {
+                if (r.isBgpHouse) return r;
+                assigned += 1;
+                return { ...r, percentage: assigned === n ? remainder : each };
+              }));
             }}
             className="h-7 text-xs text-muted-foreground"
             data-testid="fee-editor-equal-split"

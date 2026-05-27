@@ -4743,6 +4743,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       invalidateDealCaches();
     },
     onError: (err: Error) => {
+      // Roll back the kanban card's optimistic move: invalidate so the
+      // server-source-of-truth re-paints and the dragged card snaps back
+      // to its old column. Otherwise the card looks like it landed in
+      // the new status while the server actually rejected the write.
+      invalidateDealCaches();
       if (err.message.includes("Senior approval required")) {
         const msg = err.message.replace(/^\d+:\s*/, "").replace(/^{?"?error"?:?\s*"?/, "").replace(/"?\s*}?$/, "");
         setListApprovalGateMsg(msg);
