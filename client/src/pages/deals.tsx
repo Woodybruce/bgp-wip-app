@@ -4709,12 +4709,25 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const bulkUpdateMutation = useMutation({
     mutationFn: async ({ ids, field, value }: { ids: string[]; field: string; value: unknown }) => {
-      await apiRequest("POST", "/api/crm/deals/bulk-update", { ids, field, value });
+      const res = await apiRequest("POST", "/api/crm/deals/bulk-update", { ids, field, value });
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (json: any) => {
       invalidateDealCaches();
       setSelectedIds(new Set());
-      toast({ title: "Deals updated" });
+      // Server now runs the same AML / senior-approval gates as the
+      // single-row PUT. Some rows can be skipped while others apply —
+      // surface that so the user isn't silently misled.
+      const skipped = Array.isArray(json?.failures) ? json.failures : [];
+      if (skipped.length > 0) {
+        toast({
+          title: `${json.updated} updated, ${skipped.length} skipped`,
+          description: skipped.slice(0, 3).map((f: any) => f.reason).join(" • ") + (skipped.length > 3 ? ` (+${skipped.length - 3} more)` : ""),
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Deals updated" });
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });

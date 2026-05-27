@@ -140,52 +140,21 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     // own AML team). Logged to deal_events so the audit captures it.
     const GATED_STAGES = new Set(["sols", "agreed", "completed", "invoiced"]);
     if (GATED_STAGES.has(toStage) && req.body?.amlOverride !== true) {
-      const pairs: { role: string; parentId: string | null; entityId: string | null }[] = [
-        { role: "landlord",  parentId: c.landlord_id  ?? null, entityId: c.landlord_entity_id  ?? null },
-        { role: "tenant",    parentId: c.tenant_id    ?? null, entityId: c.tenant_entity_id    ?? null },
-        { role: "vendor",    parentId: c.vendor_id    ?? null, entityId: c.vendor_entity_id    ?? null },
-        { role: "purchaser", parentId: c.purchaser_id ?? null, entityId: c.purchaser_entity_id ?? null },
-      ].filter(p => p.parentId);
-
-      if (pairs.length === 0) {
+      const { checkCounterpartyAml } = await import("./deal-gates");
+      const result = await checkCounterpartyAml({
+        landlordId: c.landlord_id,
+        tenantId: c.tenant_id,
+        vendorId: c.vendor_id,
+        purchaserId: c.purchaser_id,
+      });
+      if (!result.hasCounterparties) {
         return res.status(403).json({
           error: "Deal needs at least one counterparty linked before moving to Solicitors+. AML can't run on nothing.",
         });
       }
-
-      const parentIds = Array.from(new Set(pairs.map(p => p.parentId!).filter(Boolean)));
-      const entityIds = Array.from(new Set(pairs.map(p => p.entityId).filter(Boolean) as string[]));
-      const [parentRes, entityRes] = await Promise.all([
-        pool.query(
-          `SELECT id, name, kyc_status, kyc_expires_at FROM crm_companies WHERE id = ANY($1::varchar[])`,
-          [parentIds]
-        ),
-        entityIds.length > 0
-          ? pool.query(
-              `SELECT id, name, kyc_status, kyc_expires_at FROM crm_trading_entities WHERE id = ANY($1::varchar[])`,
-              [entityIds]
-            )
-          : Promise.resolve({ rows: [] as any[] }),
-      ]);
-      const parentById = new Map(parentRes.rows.map((r: any) => [r.id, r]));
-      const entityById = new Map(entityRes.rows.map((r: any) => [r.id, r]));
-
-      const notReady: { name: string; reason: string }[] = [];
-      for (const p of pairs) {
-        const entity = p.entityId ? entityById.get(p.entityId) : null;
-        const parent = p.parentId ? parentById.get(p.parentId) : null;
-        const kycStatus = entity?.kyc_status ?? parent?.kyc_status ?? null;
-        const kycExpiresAt = entity?.kyc_expires_at ?? parent?.kyc_expires_at ?? null;
-        const displayName = entity?.name || parent?.name || `(unknown ${p.role})`;
-        if (kycStatus !== "approved") {
-          notReady.push({ name: displayName, reason: kycStatus || "no checks run" });
-        } else if (kycExpiresAt && new Date(kycExpiresAt) < new Date()) {
-          notReady.push({ name: displayName, reason: "expired" });
-        }
-      }
-      if (notReady.length > 0) {
+      if (result.notReady.length > 0) {
         return res.status(403).json({
-          error: `AML not complete: ${notReady.map((c: any) => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true if you have senior approval.`,
+          error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true if you have senior approval.`,
         });
       }
     }

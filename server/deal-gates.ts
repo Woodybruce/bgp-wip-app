@@ -1,8 +1,15 @@
-// Shared AML / KYC counterparty gate. Both PUT /api/crm/deals/:id and the
-// deal-stages.ts SOL+ transition handler enforce this as a blocking check;
-// the promote-unit (AVA → SOL) flow uses it in warn-but-allow mode so
-// promotions still go through but Layla gets a heads-up about which
-// counterparties are missing KYC.
+// Shared AML / KYC counterparty gate. Used by PUT /api/crm/deals/:id, the
+// deal-stages.ts SOL+ transition handler, the available-units promote
+// (warn-but-allow), and the bulk-status update.
+//
+// KYC scope: brand-level only. The deal table carries `*EntityId` columns
+// (landlordEntityId etc.) for Xero billing context — those are Xero
+// ContactID GUIDs per the schema comment at shared/schema.ts:845. They
+// are NOT linked to crm_trading_entities, so this gate doesn't attempt
+// an entity-level KYC lookup. (Earlier versions queried
+// crm_trading_entities by id and silently always missed because of the
+// id-shape mismatch; the entity-aware branch was dead code that masked
+// the brand-level result.)
 import { pool } from "./db";
 
 export type AmlGateInput = {
@@ -10,10 +17,6 @@ export type AmlGateInput = {
   tenantId?: string | null;
   vendorId?: string | null;
   purchaserId?: string | null;
-  landlordEntityId?: string | null;
-  tenantEntityId?: string | null;
-  vendorEntityId?: string | null;
-  purchaserEntityId?: string | null;
 };
 
 export type AmlNotReady = { name: string; reason: string; role: string };
@@ -24,43 +27,30 @@ export type AmlGateResult = {
 };
 
 export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateResult> {
-  const pairs: { role: string; parentId: string | null; entityId: string | null }[] = [
-    { role: "landlord",  parentId: deal.landlordId  ?? null, entityId: deal.landlordEntityId  ?? null },
-    { role: "tenant",    parentId: deal.tenantId    ?? null, entityId: deal.tenantEntityId    ?? null },
-    { role: "vendor",    parentId: deal.vendorId    ?? null, entityId: deal.vendorEntityId    ?? null },
-    { role: "purchaser", parentId: deal.purchaserId ?? null, entityId: deal.purchaserEntityId ?? null },
+  const pairs: { role: string; parentId: string }[] = [
+    { role: "landlord",  parentId: deal.landlordId  ?? "" },
+    { role: "tenant",    parentId: deal.tenantId    ?? "" },
+    { role: "vendor",    parentId: deal.vendorId    ?? "" },
+    { role: "purchaser", parentId: deal.purchaserId ?? "" },
   ].filter(p => p.parentId);
 
   if (pairs.length === 0) {
     return { hasCounterparties: false, notReady: [] };
   }
 
-  const parentIds = Array.from(new Set(pairs.map(p => p.parentId!).filter(Boolean)));
-  const entityIds = Array.from(new Set(pairs.map(p => p.entityId).filter(Boolean) as string[]));
-
-  const [parentRes, entityRes] = await Promise.all([
-    pool.query(
-      `SELECT id, name, kyc_status, kyc_expires_at FROM crm_companies WHERE id = ANY($1::varchar[])`,
-      [parentIds]
-    ),
-    entityIds.length > 0
-      ? pool.query(
-          `SELECT id, name, kyc_status, kyc_expires_at FROM crm_trading_entities WHERE id = ANY($1::varchar[])`,
-          [entityIds]
-        )
-      : Promise.resolve({ rows: [] as any[] }),
-  ]);
-
+  const parentIds = Array.from(new Set(pairs.map(p => p.parentId)));
+  const parentRes = await pool.query(
+    `SELECT id, name, kyc_status, kyc_expires_at FROM crm_companies WHERE id = ANY($1::varchar[])`,
+    [parentIds]
+  );
   const parentById = new Map(parentRes.rows.map((r: any) => [r.id, r]));
-  const entityById = new Map(entityRes.rows.map((r: any) => [r.id, r]));
 
   const notReady: AmlNotReady[] = [];
   for (const p of pairs) {
-    const entity = p.entityId ? entityById.get(p.entityId) : null;
-    const parent = p.parentId ? parentById.get(p.parentId) : null;
-    const kycStatus = entity?.kyc_status ?? parent?.kyc_status ?? null;
-    const kycExpiresAt = entity?.kyc_expires_at ?? parent?.kyc_expires_at ?? null;
-    const displayName = entity?.name || parent?.name || `(unknown ${p.role})`;
+    const parent = parentById.get(p.parentId);
+    const kycStatus = parent?.kyc_status ?? null;
+    const kycExpiresAt = parent?.kyc_expires_at ?? null;
+    const displayName = parent?.name || `(unknown ${p.role})`;
     if (kycStatus !== "approved") {
       notReady.push({ name: displayName, reason: kycStatus || "no checks run", role: p.role });
     } else if (kycExpiresAt && new Date(kycExpiresAt) < new Date()) {

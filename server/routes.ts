@@ -3108,6 +3108,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           const feePct = feePctRaw != null && feePctRaw !== ""
             ? parseFloat(String(feePctRaw))
             : null;
+          // available_units stores agent user IDs (text[] of user.id),
+          // but crm_deals.internal_agent stores display names (the
+          // deal-detail chip render + add-agent dropdown both look up
+          // by name). Resolve IDs → names here so the auto-created deal
+          // matches the shape the rest of the UI expects.
+          const agentNames: string[] = [];
+          if (Array.isArray(unit.agentUserIds) && unit.agentUserIds.length > 0) {
+            const u = await pool.query<{ name: string }>(
+              `SELECT name FROM users WHERE id = ANY($1::varchar[])`,
+              [unit.agentUserIds]
+            );
+            for (const r of u.rows) if (r.name) agentNames.push(r.name);
+          }
           const deal = await storage.createCrmDeal({
             name: property
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
@@ -3116,7 +3129,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             unitId: unitMasterId || undefined,
             status: unit.marketingStatus || "AVA",
             dealType: (req.body as any).dealType || "New Letting",
-            internalAgent: unit.agentUserIds || [],
+            internalAgent: agentNames,
             fee: unit.fee ?? undefined,
             feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : undefined,
             rentPa: unit.askingRent ?? undefined,

@@ -2013,10 +2013,81 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
       const allowedFields = ["team", "status", "dealType", "assetClass"];
       if (!allowedFields.includes(field)) return res.status(400).json({ error: `Field '${field}' not allowed for bulk update` });
-      for (const id of ids) {
+
+      // When the bulk field is `status`, mirror the two gates that
+      // PUT /api/crm/deals/:id enforces: senior approval for INV/COM,
+      // and AML counterparty KYC for SOL+. Without this, bulk-flipping
+      // rows on the deals list bypassed both gates entirely.
+      const failures: { id: string; reason: string }[] = [];
+      const passing: string[] = [];
+
+      if (field === "status") {
+        const userId = (req as any).session?.userId || (req as any).tokenUserId;
+        let changedByEmail = "";
+        let isUserAdmin = false;
+        if (userId) {
+          const u = await pool.query(`SELECT email, is_admin FROM users WHERE id = $1 LIMIT 1`, [userId]);
+          if (u.rows[0]) {
+            changedByEmail = (u.rows[0].email || "").toLowerCase();
+            isUserAdmin = !!u.rows[0].is_admin;
+          }
+        }
+        const APPROVAL_STATUSES = new Set(["INV", "COM", "Invoiced", "Completed", "Billed"]);
+        const SENIOR_EMAILS = new Set([
+          "woody@brucegillinghampollard.com",
+          "charlotte@brucegillinghampollard.com",
+          "rupert@brucegillinghampollard.com",
+          "jack@brucegillinghampollard.com",
+        ]);
+        const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
+        const GATED = new Set(["SOL", "EXC", "COM", "INV"]);
+        const newCode = legacyToCode(value);
+        const { checkCounterpartyAml } = await import("./deal-gates");
+
+        for (const id of ids) {
+          const oldDeal = await storage.getCrmDeal(id);
+          if (!oldDeal) { failures.push({ id, reason: "deal not found" }); continue; }
+          if (oldDeal.status === value) { passing.push(id); continue; }
+
+          if (APPROVAL_STATUSES.has(value) && !isSenior) {
+            failures.push({ id, reason: `senior approval required for ${value}` });
+            continue;
+          }
+          const oldCode = legacyToCode(oldDeal.status);
+          if (newCode && GATED.has(newCode) && newCode !== oldCode) {
+            const result = await checkCounterpartyAml({
+              landlordId: oldDeal.landlordId,
+              tenantId: oldDeal.tenantId,
+              vendorId: (oldDeal as any).vendorId,
+              purchaserId: (oldDeal as any).purchaserId,
+            });
+            if (!result.hasCounterparties) {
+              failures.push({ id, reason: `no counterparties — AML can't run` });
+              continue;
+            }
+            if (result.notReady.length > 0) {
+              failures.push({
+                id,
+                reason: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}`,
+              });
+              continue;
+            }
+          }
+          passing.push(id);
+        }
+      } else {
+        passing.push(...ids);
+      }
+
+      for (const id of passing) {
         await storage.updateCrmDeal(id, { [field]: value });
       }
-      res.json({ ok: true, updated: ids.length });
+      res.json({
+        ok: true,
+        updated: passing.length,
+        skipped: failures.length,
+        failures: failures.length > 0 ? failures : undefined,
+      });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2697,54 +2768,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const oldCode = legacyToCode(oldDeal.status);
         const GATED = new Set(["SOL", "EXC", "COM", "INV"]);
         if (newCode && GATED.has(newCode) && newCode !== oldCode && req.body.amlOverride !== true) {
-          // Build pairs of (parent, entity) per role so we can prefer the
-          // entity's KYC fields when set.
-          const pairs: { role: string; parentId: string | null; entityId: string | null }[] = [
-            { role: "landlord",  parentId: oldDeal.landlordId  ?? null, entityId: (oldDeal as any).landlordEntityId  ?? null },
-            { role: "tenant",    parentId: oldDeal.tenantId    ?? null, entityId: (oldDeal as any).tenantEntityId    ?? null },
-            { role: "vendor",    parentId: (oldDeal as any).vendorId    ?? null, entityId: (oldDeal as any).vendorEntityId    ?? null },
-            { role: "purchaser", parentId: (oldDeal as any).purchaserId ?? null, entityId: (oldDeal as any).purchaserEntityId ?? null },
-          ].filter(p => p.parentId);
-          if (pairs.length === 0) {
+          const { checkCounterpartyAml } = await import("./deal-gates");
+          const result = await checkCounterpartyAml({
+            landlordId: oldDeal.landlordId,
+            tenantId: oldDeal.tenantId,
+            vendorId: (oldDeal as any).vendorId,
+            purchaserId: (oldDeal as any).purchaserId,
+          });
+          if (!result.hasCounterparties) {
             return res.status(403).json({ error: `Cannot move to ${newCode}: deal has no counterparties linked, so AML can't run.` });
           }
-          const parentIds = Array.from(new Set(pairs.map(p => p.parentId!).filter(Boolean)));
-          const entityIds = Array.from(new Set(pairs.map(p => p.entityId).filter(Boolean) as string[]));
-          const [parentRows, entityRows] = await Promise.all([
-            db.select({
-              id: crmCompanies.id,
-              name: crmCompanies.name,
-              kycStatus: crmCompanies.kycStatus,
-              kycExpiresAt: crmCompanies.kycExpiresAt,
-            }).from(crmCompanies).where(inArray(crmCompanies.id, parentIds)),
-            entityIds.length > 0
-              ? pool.query<{ id: string; name: string; kyc_status: string | null; kyc_expires_at: Date | null }>(
-                  `SELECT id, name, kyc_status, kyc_expires_at FROM crm_trading_entities
-                    WHERE id = ANY($1::varchar[])`,
-                  [entityIds]
-                ).then(r => r.rows)
-              : Promise.resolve([]),
-          ]);
-          const parentById = new Map(parentRows.map((p: any) => [p.id, p]));
-          const entityById = new Map(entityRows.map((e: any) => [e.id, e]));
-
-          const notReady: { name: string; reason: string }[] = [];
-          for (const p of pairs) {
-            // Prefer entity KYC when linked, fall back to parent.
-            const entity = p.entityId ? entityById.get(p.entityId) : null;
-            const parent = p.parentId ? parentById.get(p.parentId) : null;
-            const kycStatus = entity?.kyc_status ?? parent?.kycStatus ?? null;
-            const kycExpiresAt = entity?.kyc_expires_at ?? parent?.kycExpiresAt ?? null;
-            const displayName = entity?.name || parent?.name || `(unknown ${p.role})`;
-            if (kycStatus !== "approved") {
-              notReady.push({ name: displayName, reason: kycStatus || "no checks run" });
-            } else if (kycExpiresAt && new Date(kycExpiresAt) < new Date()) {
-              notReady.push({ name: displayName, reason: "expired" });
-            }
-          }
-          if (notReady.length > 0) {
+          if (result.notReady.length > 0) {
             return res.status(403).json({
-              error: `AML not complete: ${notReady.map((c: any) => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true with senior approval.`,
+              error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true with senior approval.`,
             });
           }
         }
