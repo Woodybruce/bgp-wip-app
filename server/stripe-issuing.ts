@@ -528,11 +528,25 @@ export function setupStripeIssuingRoutes(app: Express) {
     try {
       const id = String(req.params.id);
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
-      const allowed = ["category", "xeroAccountCode", "businessPurpose", "attendees", "isPersonal",
-                       "isClientRechargeable", "relatedDealId", "notes", "status"];
+      const allowed = ["merchant", "transactionDate", "category", "xeroAccountCode",
+                       "businessPurpose", "attendees", "isPersonal", "isClientRechargeable",
+                       "relatedDealId", "notes", "status"];
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const k of allowed) {
         if (req.body[k] !== undefined) updates[k] = req.body[k];
+      }
+      // Coerce transactionDate string → Date for the Drizzle timestamp col.
+      if (updates.transactionDate && typeof updates.transactionDate === "string") {
+        const d = new Date(updates.transactionDate);
+        if (!Number.isNaN(d.getTime())) updates.transactionDate = d;
+        else delete updates.transactionDate;
+      }
+      // Once an expense is on Xero, edits to merchant/date/amount shouldn't
+      // diverge silently from what Wendy can see in Xero. Block here so the
+      // PATCH 200 doesn't lie about persistence.
+      const [existing] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (existing?.xeroExpenseId && (updates.merchant !== undefined || updates.transactionDate !== undefined || updates.category !== undefined)) {
+        return res.status(409).json({ error: "Expense is already posted to Xero — edit it in Xero instead, or unpost first." });
       }
       if (updates.category) {
         // Prefer the live Xero list (Wendy's source of truth); fall back
@@ -798,6 +812,147 @@ export function setupStripeIssuingRoutes(app: Express) {
       }
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Bulk receipt upload from the dashboard. Agent drops N receipts at
+  // once; each gets parsed, matched to a pending_receipt row (by amount
+  // ±£1 + date ±2 days), and either attached to that match or turned
+  // into a cardless cash claim if nothing matches. Mirrors the WhatsApp
+  // inbound matcher in expense-receipt-handler.ts so both surfaces
+  // behave identically.
+  const bulkReceiptUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 20 } });
+  app.post("/api/expenses/bulk-receipts", requireAuth, bulkReceiptUpload.array("receipts", 20), async (req: Request, res: Response) => {
+    try {
+      const files = (req.files as Express.Multer.File[]) || [];
+      if (files.length === 0) return res.status(400).json({ error: "No files uploaded" });
+
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+
+      // Resolve the current user's cardholder + pending rows once.
+      const [u] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+      const allCh = await db.select().from(stripeCardholders);
+      const ch = allCh.find(c => c.userId === userId)
+        || (u?.email ? allCh.find(c => (c.email || "").toLowerCase() === u.email!.toLowerCase()) : undefined);
+
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      let pending: typeof expenses.$inferSelect[] = [];
+      if (ch) {
+        pending = await db
+          .select()
+          .from(expenses)
+          .where(and(
+            eq(expenses.cardholderId, ch.id),
+            eq(expenses.status, "pending_receipt"),
+            gte(expenses.createdAt, sevenDaysAgo),
+          ))
+          .orderBy(desc(expenses.transactionDate));
+      }
+
+      const { parseReceiptImage } = await import("./expense-receipt-parser");
+      const { getCategoryCode } = await import("./expense-categories");
+      const { createExpenseFromReceipt } = await import("./expense-from-receipt");
+
+      const used = new Set<string>(); // pending row ids already consumed in this batch
+      const results: any[] = [];
+
+      for (const file of files) {
+        try {
+          const parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
+
+          // Try to match an unused pending row. Same tolerances as the
+          // WhatsApp matcher: ±50p on amount, ±2 days on transaction
+          // date. Picks the closest amount match first when tied.
+          const txnDate = parsed.date ? new Date(parsed.date) : null;
+          const candidates = pending
+            .filter(p => !used.has(p.id))
+            .filter(p => Math.abs(p.amountPence - parsed.totalPence) <= 100)
+            .filter(p => {
+              if (!txnDate || !p.transactionDate) return true;
+              const diffDays = Math.abs((new Date(p.transactionDate).getTime() - txnDate.getTime()) / (1000 * 60 * 60 * 24));
+              return diffDays <= 2;
+            })
+            .sort((a, b) => Math.abs(a.amountPence - parsed.totalPence) - Math.abs(b.amountPence - parsed.totalPence));
+
+          const target = candidates[0];
+
+          if (target) {
+            // Attach to existing pending row — same shape as POST /:id/receipt.
+            used.add(target.id);
+            const storageKey = `expense-receipts/${target.id}-${Date.now()}-${file.originalname}`;
+            await saveFile(storageKey, file.buffer, file.mimetype, file.originalname);
+            await db.insert(expenseReceipts).values({
+              expenseId: target.id,
+              storageKey,
+              mimeType: file.mimetype,
+              filename: file.originalname,
+            });
+
+            const updates: Record<string, any> = {
+              receiptFilename: file.originalname,
+              receiptUrl: storageKey,
+              updatedAt: new Date(),
+              status: "pending_approval",
+            };
+            if (parsed.merchant && !target.merchant) updates.merchant = parsed.merchant;
+            if (parsed.category && !target.category) {
+              updates.category = parsed.category;
+              const code = await getCategoryCode(parsed.category);
+              if (code) updates.xeroAccountCode = code;
+            }
+            await db.update(expenses).set(updates).where(eq(expenses.id, target.id));
+
+            results.push({
+              filename: file.originalname,
+              outcome: "matched",
+              expenseId: target.id,
+              merchant: parsed.merchant,
+              amountPence: parsed.totalPence,
+              confidence: parsed.confidence,
+            });
+          } else {
+            // No pending row matches — create a cardless cash claim.
+            const result = await createExpenseFromReceipt({
+              receiptBytes: file.buffer,
+              mimeType: file.mimetype,
+              filename: file.originalname,
+              submitter: {
+                cardholderId: ch?.id,
+                userId,
+                phone: u?.phone || undefined,
+                email: u?.email || ch?.email,
+                displayName: u?.name || ch?.userName,
+              },
+              caption: "",
+              source: "dashboard-bulk",
+            });
+            if (result.ok) {
+              results.push({
+                filename: file.originalname,
+                outcome: result.duplicateOf ? "duplicate" : "created",
+                expenseId: result.expenseId,
+                merchant: result.parsed?.merchant,
+                amountPence: result.parsed?.totalPence,
+              });
+            } else {
+              results.push({ filename: file.originalname, outcome: "failed", error: result.error });
+            }
+          }
+        } catch (e: any) {
+          results.push({ filename: file.originalname, outcome: "failed", error: e?.message });
+        }
+      }
+
+      const matched = results.filter(r => r.outcome === "matched").length;
+      const created = results.filter(r => r.outcome === "created").length;
+      const failed = results.filter(r => r.outcome === "failed").length;
+      const duplicates = results.filter(r => r.outcome === "duplicate").length;
+
+      res.json({ ok: true, matched, created, failed, duplicates, results });
+    } catch (e: any) {
+      console.error("[expenses] bulk-receipts error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

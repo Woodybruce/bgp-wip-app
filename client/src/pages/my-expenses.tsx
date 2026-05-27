@@ -1,13 +1,17 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   CreditCard, Eye, EyeOff, Copy, Check, Upload, Receipt, AlertCircle,
-  CheckCircle2, Loader2, RefreshCw, Sparkles,
+  CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -20,10 +24,13 @@ interface Expense {
   category: string | null;
   transactionDate: string | null;
   businessPurpose: string | null;
+  attendees: string | null;
+  relatedDealId: string | null;
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
 }
+interface NominalCode { code: string; name: string; }
 interface Cardholder {
   id: string; userName: string; email: string; phone: string | null;
   monthlyLimit: number; dailyLimit: number; singleTxLimit: number;
@@ -59,7 +66,12 @@ export default function MyExpenses() {
   const [showCardDetails, setShowCardDetails] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Expense | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ total: number; done: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bulkInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, refetch } = useQuery<MyData>({
     queryKey: ["/api/expenses/me"],
@@ -106,6 +118,66 @@ export default function MyExpenses() {
     setUploadingFor(id);
     uploadMutation.mutate({ id, file });
   };
+
+  // Bulk upload: server matches each file to a pending_receipt row by
+  // amount + date, otherwise creates a cardless cash claim. Server takes
+  // up to 20 files per request; we batch in slices of 20 if user drops
+  // more.
+  const bulkUploadMutation = useMutation({
+    mutationFn: async (files: File[]) => {
+      const results: any[] = [];
+      const chunkSize = 20;
+      setBulkProgress({ total: files.length, done: 0 });
+      for (let i = 0; i < files.length; i += chunkSize) {
+        const chunk = files.slice(i, i + chunkSize);
+        const fd = new FormData();
+        for (const f of chunk) fd.append("receipts", f);
+        const r = await fetch("/api/expenses/bulk-receipts", { method: "POST", credentials: "include", body: fd });
+        if (!r.ok) throw new Error((await r.json()).error || "Bulk upload failed");
+        const json = await r.json();
+        results.push(...(json.results || []));
+        setBulkProgress({ total: files.length, done: Math.min(i + chunk.length, files.length) });
+      }
+      return { results };
+    },
+    onSuccess: ({ results }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      setBulkProgress(null);
+      const matched = results.filter((r: any) => r.outcome === "matched").length;
+      const created = results.filter((r: any) => r.outcome === "created").length;
+      const failed = results.filter((r: any) => r.outcome === "failed").length;
+      const duplicates = results.filter((r: any) => r.outcome === "duplicate").length;
+      const parts = [
+        matched > 0 ? `${matched} matched to card spend` : null,
+        created > 0 ? `${created} new cash claim${created === 1 ? "" : "s"}` : null,
+        duplicates > 0 ? `${duplicates} duplicate skip` : null,
+        failed > 0 ? `${failed} failed` : null,
+      ].filter(Boolean);
+      toast({
+        title: "Receipts processed",
+        description: parts.join(" · "),
+        variant: failed > 0 ? "destructive" : "default",
+      });
+    },
+    onError: (e: any) => {
+      setBulkProgress(null);
+      toast({ title: "Upload failed", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const onBulkFiles = (files: FileList | File[] | null | undefined) => {
+    if (!files) return;
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+    bulkUploadMutation.mutate(arr);
+  };
+
+  const onDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    onBulkFiles(e.dataTransfer?.files);
+  }, []);
 
   if (isLoading) {
     return <div className="container mx-auto p-6"><Loader2 className="w-6 h-6 animate-spin" /></div>;
@@ -215,6 +287,75 @@ export default function MyExpenses() {
         </CardContent>
       </Card>
 
+      {/* Bulk receipt dropzone — desktop drag-drop, phone gallery/camera */}
+      <Card
+        onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
+        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(false); }}
+        onDrop={onDrop}
+        className={`border-dashed border-2 transition-colors ${dragActive ? "border-primary bg-primary/5" : "border-muted-foreground/20"}`}
+      >
+        <CardContent className="p-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <ImagePlus className={`w-5 h-5 shrink-0 ${dragActive ? "text-primary" : "text-muted-foreground"}`} />
+            <div className="text-sm flex-1 min-w-[200px]">
+              <div className="font-medium">Drop receipts here, or pick from your device</div>
+              <div className="text-xs text-muted-foreground">
+                Each file gets matched to a pending card transaction by amount + date. No match → logged as a cash claim.
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => bulkInputRef.current?.click()}
+              disabled={bulkUploadMutation.isPending}
+              data-testid="button-upload-receipts"
+            >
+              {bulkUploadMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Upload className="w-4 h-4 mr-1.5" />}
+              Choose files
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="md:hidden"
+              onClick={() => cameraInputRef.current?.click()}
+              disabled={bulkUploadMutation.isPending}
+              data-testid="button-camera-receipt"
+            >
+              <Camera className="w-4 h-4 mr-1.5" />
+              Camera
+            </Button>
+          </div>
+          {bulkProgress && (
+            <div className="mt-3 space-y-1">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Processing receipts…</span>
+                <span>{bulkProgress.done} / {bulkProgress.total}</span>
+              </div>
+              <Progress value={(bulkProgress.done / bulkProgress.total) * 100} className="h-1.5" />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <input
+        ref={bulkInputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        multiple
+        className="hidden"
+        onChange={(e) => { onBulkFiles(e.target.files); e.target.value = ""; }}
+      />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        multiple
+        className="hidden"
+        onChange={(e) => { onBulkFiles(e.target.files); e.target.value = ""; }}
+      />
+
       {/* Expenses table */}
       <Card>
         <CardHeader className="pb-3">
@@ -273,6 +414,18 @@ export default function MyExpenses() {
                               <CheckCircle2 className="w-3 h-3 mr-1" /> Receipt
                             </Badge>
                           )}
+                          {e.status !== "posted_to_xero" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={() => setEditing(e)}
+                              data-testid={`button-edit-expense-${e.id}`}
+                            >
+                              <Pencil className="w-3 h-3 mr-1" />
+                              Edit
+                            </Button>
+                          )}
                           {!e.isPersonal && e.status !== "posted_to_xero" && (
                             <Button
                               size="sm"
@@ -309,7 +462,155 @@ export default function MyExpenses() {
 
       <CardDetailsDialog open={showCardDetails} onOpenChange={setShowCardDetails} />
       <AppleWalletDialog open={showWallet} onOpenChange={setShowWallet} onShowDetails={() => { setShowWallet(false); setShowCardDetails(true); }} />
+      <EditExpenseDialog
+        expense={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => { setEditing(null); queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] }); }}
+      />
     </div>
+  );
+}
+
+function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | null; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast();
+  const open = !!expense;
+
+  // Category dropdown is sourced from Xero (via /api/expenses/nominal-codes)
+  // — Wendy edits the chart of accounts; categories update within 10 min.
+  const { data: nominalCodes = [] } = useQuery<NominalCode[]>({
+    queryKey: ["/api/expenses/nominal-codes"],
+    enabled: open,
+  });
+
+  const [merchant, setMerchant] = useState("");
+  const [transactionDate, setTransactionDate] = useState("");
+  const [category, setCategory] = useState("");
+  const [businessPurpose, setBusinessPurpose] = useState("");
+  const [attendees, setAttendees] = useState("");
+
+  // Re-seed the form whenever a new expense opens — useEffect via key prop.
+  const seedKey = expense?.id || "none";
+  const lastSeedRef = useRef<string>("");
+  if (expense && lastSeedRef.current !== seedKey) {
+    lastSeedRef.current = seedKey;
+    setMerchant(expense.merchant || "");
+    setTransactionDate(expense.transactionDate ? expense.transactionDate.slice(0, 10) : "");
+    setCategory(expense.category || "");
+    setBusinessPurpose(expense.businessPurpose || "");
+    setAttendees(expense.attendees || "");
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!expense) throw new Error("No expense");
+      const payload: Record<string, unknown> = {
+        merchant: merchant || null,
+        transactionDate: transactionDate ? new Date(transactionDate).toISOString() : null,
+        category: category || null,
+        businessPurpose: businessPurpose || null,
+        attendees: attendees || null,
+      };
+      await apiRequest("PATCH", `/api/expenses/${expense.id}`, payload);
+    },
+    onSuccess: () => {
+      toast({ title: "Expense updated" });
+      onSaved();
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
+  });
+
+  if (!expense) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit expense</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="text-xs text-muted-foreground">
+            Amount: <span className="font-mono font-medium">{fmt(expense.amountPence)}</span>
+            {expense.xeroExpenseId && <span className="ml-3 text-emerald-600">Posted to Xero — cannot edit</span>}
+          </div>
+
+          <div>
+            <Label htmlFor="exp-merchant" className="text-xs">Merchant</Label>
+            <Input
+              id="exp-merchant"
+              value={merchant}
+              onChange={(e) => setMerchant(e.target.value)}
+              placeholder="e.g. Quo Vadis"
+              data-testid="input-expense-merchant"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="exp-date" className="text-xs">Transaction date</Label>
+            <Input
+              id="exp-date"
+              type="date"
+              value={transactionDate}
+              onChange={(e) => setTransactionDate(e.target.value)}
+              data-testid="input-expense-date"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="exp-category" className="text-xs">Category (Xero nominal)</Label>
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger id="exp-category" data-testid="select-expense-category">
+                <SelectValue placeholder="Pick a category…" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[300px]">
+                {nominalCodes.map((c) => (
+                  <SelectItem key={c.code} value={c.name}>
+                    <span className="text-muted-foreground mr-2 font-mono text-[10px]">{c.code}</span>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label htmlFor="exp-purpose" className="text-xs">Business purpose</Label>
+            <Textarea
+              id="exp-purpose"
+              value={businessPurpose}
+              onChange={(e) => setBusinessPurpose(e.target.value)}
+              placeholder="What was this for? (e.g. 'Pitch dinner with John Smith from BlackRock — Bond St freehold deal')"
+              rows={3}
+              data-testid="input-expense-purpose"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="exp-attendees" className="text-xs">Attendees</Label>
+            <Input
+              id="exp-attendees"
+              value={attendees}
+              onChange={(e) => setAttendees(e.target.value)}
+              placeholder="John Smith (BlackRock), Sarah Jones (M&G)"
+              data-testid="input-expense-attendees"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Free text for now — CRM contact picker coming in the next update.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending || !!expense.xeroExpenseId}
+            data-testid="button-save-expense"
+          >
+            {saveMutation.isPending && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
