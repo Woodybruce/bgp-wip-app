@@ -536,15 +536,40 @@ export async function registerRoutes(
   // VOA / Companies House / Land Registry can be layered on later; this
   // first cut is the join most useful day-to-day.
   app.get("/api/goad/polygon-context", requireAuth, async (req: any, res) => {
-    const postcode = String(req.query.postcode || "").trim().toUpperCase();
+    let postcode = String(req.query.postcode || "").trim().toUpperCase();
     const streetNum = String(req.query.streetNum || "").trim();
     const street = String(req.query.street || "").trim().toUpperCase();
     const holding = String(req.query.holding || "").trim();
     const fascia = String(req.query.fascia || "").trim();
     const lat = req.query.lat ? Number(req.query.lat) : undefined;
     const lng = req.query.lng ? Number(req.query.lng) : undefined;
-    if (!postcode && !street) {
+    if (!postcode && !street && !(lat && lng)) {
       return res.json({ crmProperties: [], deals: [], parentCompany: null, landRegistry: null, rates: [], planningApplications: [], pathwayRun: null, tenantCompany: null });
+    }
+
+    // Goad polygons don't always carry a Postcode attribute. When the click
+    // only gave us coords, reverse-geocode once via Google to recover the
+    // postcode — every downstream search (VOA, Planning, Land Registry,
+    // Pathway) is keyed on postcode, so without this they all return empty
+    // and only the fascia/holding company lookups survive.
+    let postcodeRecoveredFromGeocode = false;
+    if (!postcode && typeof lat === "number" && typeof lng === "number" && process.env.GOOGLE_API_KEY) {
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${process.env.GOOGLE_API_KEY}&result_type=premise|street_address|subpremise|establishment`;
+        const gResp = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
+        if (gResp.ok) {
+          const gData = await gResp.json() as any;
+          const pc = (gData.results?.[0]?.address_components || [])
+            .find((c: any) => c.types?.includes("postal_code"))?.long_name || "";
+          if (pc) {
+            postcode = pc.toUpperCase();
+            postcodeRecoveredFromGeocode = true;
+            console.log(`[polygon-context] postcode recovered from geocode: ${postcode} (lat=${lat}, lng=${lng})`);
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[polygon-context] reverse-geocode for postcode failed:`, e?.message);
+      }
     }
 
     const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
@@ -721,6 +746,8 @@ export async function registerRoutes(
           propertyDataKeyAvailable: !!PD_KEY,
           landRegistryRan: lrResult && (lrResult as any).ok === true,
           landRegistryError: (lrResult as any)?.ok === false ? (lrResult as any).error : null,
+          postcodeUsed: postcode || null,
+          postcodeRecoveredFromGeocode,
         },
       });
     } catch (e: any) {
