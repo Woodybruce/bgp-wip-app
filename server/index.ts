@@ -3175,6 +3175,16 @@ app.use("/api/branding/assets", express.static(
         }
       }, 60 * 60 * 1000); // Check every hour
 
+      // Expenses: weekly agent chase (Mon 09:00) + monthly approver
+      // digest (28th 09:00). Both fire in production AND development —
+      // dev firing is gated by whether WHATSAPP_TOKEN_V2 is set.
+      try {
+        const { startExpenseCron } = await import("./expense-cron");
+        startExpenseCron();
+      } catch (e: any) {
+        console.warn("[expense-cron] start failed:", e?.message);
+      }
+
       // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
       // company whose KYC has gone stale (past the firm's recheck_interval_days,
       // default 365) or has an overdue aml_recheck_reminders row, and re-run

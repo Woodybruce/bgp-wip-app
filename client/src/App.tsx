@@ -81,6 +81,7 @@ const AddinsPage = lazy(() => import("@/pages/addins"));
 const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
 const MyExpenses = lazy(() => import("@/pages/my-expenses"));
 const ExpensesApprovals = lazy(() => import("@/pages/expenses-approvals"));
+const ExpensesRevolut = lazy(() => import("@/pages/expenses-revolut"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
@@ -252,6 +253,7 @@ function Router() {
       <Route path="/edozo" component={PropertiesHub} />
       <Route path="/expenses" component={ExpensesAdmin} />
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
+      <Route path="/expenses/revolut" component={ExpensesRevolut} />
       <Route path="/my-expenses" component={MyExpenses} />
       <Route path="/hr" component={HRPage} />
       <Route path="/hr/:userId">{(params) => <HRPage />}</Route>

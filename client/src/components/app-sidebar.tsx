@@ -129,6 +129,7 @@ const microsoftNav = [
 
 const adminNavBase = [
   { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "Revolut", url: "/expenses/revolut", icon: CreditCard },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
