@@ -105,7 +105,6 @@ const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurant
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
-const TeamPage = lazy(() => import("@/pages/team"));
 
 function PublicKycUploadRoute() {
   return (
@@ -242,7 +241,6 @@ function Router() {
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
       <Route path="/property-pathway" component={PropertyPathway} />
-      <Route path="/team" component={TeamPage} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />

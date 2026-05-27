@@ -409,7 +409,7 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
       <div className="p-2 space-y-1">
         {head && <MemberRow m={head} isHead />}
         {others.length > 0 && (
-          <div className="space-y-0.5 pl-2 border-l border-white/40 dark:border-black/20 ml-3 mt-1">
+          <div className="space-y-0.5 mt-1">
             {others.map(m => <MemberRow key={m.id} m={m} />)}
           </div>
         )}
