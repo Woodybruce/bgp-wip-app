@@ -2373,7 +2373,7 @@ function HotsChecklistDialog({
 }) {
   const { toast } = useToast();
 
-  const [step, setStep] = useState<"upload" | "parsing" | "form" | "saving" | "kyc">("upload");
+  const [step, setStep] = useState<"upload" | "parsing" | "form" | "saving">("upload");
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [aiSummary, setAiSummary] = useState("");
   const [extractedData, setExtractedData] = useState<any>(null);
@@ -2405,13 +2405,6 @@ function HotsChecklistDialog({
     { agentName: "", percentage: 100 },
   ]);
   const [propertySearch, setPropertySearch] = useState("");
-  const [kycResult, setKycResult] = useState<{
-    running: boolean;
-    status?: string;
-    profile?: any;
-    officers?: any[];
-    error?: string;
-  } | null>(null);
 
   const { data: existingAllocations = [] } = useQuery<DealFeeAllocation[]>({
     queryKey: ["/api/crm/deals", deal?.id, "fee-allocations"],
@@ -2644,7 +2637,6 @@ function HotsChecklistDialog({
               ? `Extracted from HOTs — please complete the ${missingFields.length} missing field${missingFields.length > 1 ? "s" : ""} highlighted below.`
               : "All fields extracted from HOTs. Review and confirm the details below.")}
             {step === "saving" && "Saving deal details..."}
-            {step === "kyc" && "Running Companies House KYC check..."}
           </DialogDescription>
         </DialogHeader>
 
@@ -2922,85 +2914,6 @@ function HotsChecklistDialog({
           </div>
         )}
 
-        {step === "kyc" && kycResult && (
-          <div className="rounded-md border p-3 space-y-3 bg-muted/20" data-testid="hots-kyc-result">
-            <h4 className="text-sm font-semibold flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4" />
-              Companies House KYC
-              {kycResult.running && <Loader2 className="w-3 h-3 animate-spin" />}
-            </h4>
-            {kycResult.running && <p className="text-xs text-muted-foreground">Running automated KYC check against Companies House...</p>}
-            {!kycResult.running && kycResult.status === "pass" && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-green-500" />
-                  <span className="text-sm font-medium text-green-700">Verified — Active Company</span>
-                </div>
-                {kycResult.profile && (
-                  <div className="grid grid-cols-2 gap-1 text-xs">
-                    <span className="text-muted-foreground">Company:</span><span>{kycResult.profile.companyName}</span>
-                    <span className="text-muted-foreground">Number:</span><span>{kycResult.profile.companyNumber}</span>
-                    <span className="text-muted-foreground">Status:</span><span className="capitalize">{kycResult.profile.companyStatus}</span>
-                    <span className="text-muted-foreground">Incorporated:</span><span>{kycResult.profile.dateOfCreation}</span>
-                  </div>
-                )}
-                {kycResult.officers && kycResult.officers.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium mt-2 mb-1">Active Officers / Advisors:</p>
-                    <div className="space-y-1">
-                      {kycResult.officers.map((o: any, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          <Badge variant="outline" className="text-[9px]">{o.officerRole?.replace(/-/g, " ")}</Badge>
-                          <span>{o.name}</span>
-                          {o.appointedOn && <span className="text-muted-foreground">since {o.appointedOn}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            {!kycResult.running && kycResult.status === "warning" && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-yellow-500" />
-                  <span className="text-sm font-medium text-yellow-700">Needs Review</span>
-                </div>
-                {kycResult.profile && (
-                  <div className="text-xs space-y-1">
-                    <p>{kycResult.profile.companyName} ({kycResult.profile.companyNumber})</p>
-                    {kycResult.profile.hasInsolvencyHistory && <p className="text-amber-600">Insolvency history found</p>}
-                    {kycResult.profile.accountsOverdue && <p className="text-amber-600">Accounts overdue</p>}
-                  </div>
-                )}
-                {kycResult.officers && kycResult.officers.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium mt-1 mb-1">Active Officers:</p>
-                    {kycResult.officers.map((o: any, i: number) => (
-                      <div key={i} className="flex items-center gap-2 text-xs">
-                        <Badge variant="outline" className="text-[9px]">{o.officerRole?.replace(/-/g, " ")}</Badge>
-                        <span>{o.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {!kycResult.running && kycResult.status === "fail" && (
-              <div className="flex items-center gap-2">
-                <XCircle className="w-4 h-4 text-red-500" />
-                <span className="text-sm font-medium text-red-700">Failed — Company Not Active</span>
-              </div>
-            )}
-            {!kycResult.running && (kycResult.status === "not_found" || kycResult.status === "error") && (
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">{kycResult.error || "KYC check could not complete"}</span>
-              </div>
-            )}
-          </div>
-        )}
-
         <DialogFooter>
           {step === "upload" && (
             <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-hots-cancel">Cancel</Button>
@@ -3014,12 +2927,6 @@ function HotsChecklistDialog({
                 Complete & Move to HOTs
               </Button>
             </>
-          )}
-          {step === "kyc" && (
-            <Button onClick={() => { setKycResult(null); onOpenChange(false); onComplete(); }}
-              disabled={kycResult?.running} data-testid="button-hots-done">
-              {kycResult?.running ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Running KYC...</> : "Done"}
-            </Button>
           )}
         </DialogFooter>
       </DialogContent>
