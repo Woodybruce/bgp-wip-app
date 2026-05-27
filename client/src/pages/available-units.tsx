@@ -1138,7 +1138,12 @@ export default function AvailableUnitsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {MARKETING_STATUSES.map(s => (
+              {/* SOL is excluded from bulk — flipping to Solicitors needs
+                  the WIP-capture modal (tenant, landlord, fee split,
+                  AML check) that the inline per-row path runs. Bulk
+                  flipping skipped all of that and let deals land in
+                  SOL with no counterparties. */}
+              {MARKETING_STATUSES.filter(s => s !== "SOL").map(s => (
                 <DropdownMenuItem
                   key={s}
                   onClick={() => bulkStatusMutation.mutate({ ids: Array.from(selectedIds), status: s })}

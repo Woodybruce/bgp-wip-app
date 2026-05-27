@@ -3413,12 +3413,24 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // the form now sends the boolean directly. Accept either signal.
         isBgpHouse: a.isBgpHouse === true || /\(BGP House\)/i.test(String(a.agentName || "")),
       })).filter((a: any) => a.agentName.length > 0);
-      // Validate percentage allocations don't exceed 100%
-      const totalPct = validated
-        .filter((a: any) => a.allocationType === "percentage")
-        .reduce((sum: number, a: any) => sum + (a.percentage || 0), 0);
-      if (totalPct > 100) {
-        return res.status(400).json({ error: `Percentage allocations sum to ${totalPct}%, cannot exceed 100%` });
+      // Validate percentage allocations: sum must land on 100% (with a
+      // small tolerance for 33.33 × 3 type splits) AND a BGP House row
+      // must be present. Allowing partial saves silently let deals land
+      // with 30%-total splits or no firm slice at all.
+      const pctRows = validated.filter((a: any) => a.allocationType === "percentage");
+      if (pctRows.length > 0) {
+        const totalPct = pctRows.reduce((sum: number, a: any) => sum + (a.percentage || 0), 0);
+        if (Math.abs(totalPct - 100) > 0.05) {
+          return res.status(400).json({
+            error: `Percentage allocations must sum to 100% — currently ${totalPct.toFixed(2)}%. Adjust the agent rows to make the total balance.`,
+          });
+        }
+        const hasBgpHouse = validated.some((a: any) => a.isBgpHouse);
+        if (!hasBgpHouse) {
+          return res.status(400).json({
+            error: "Fee split must include the BGP House row. Open the editor to re-add it (it should auto-insert).",
+          });
+        }
       }
       const result = await storage.setDealFeeAllocations(req.params.id, validated);
       res.json(result);
