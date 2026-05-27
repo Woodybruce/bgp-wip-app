@@ -1251,17 +1251,14 @@ function SimplifiedCreateBody({
           </div>
           <div>
             <Label htmlFor="deal-fee-pct" className="text-xs">% Agency fee</Label>
-            <Input id="deal-fee-pct" type="number" step="0.1" value={form.feePercentage}
+            <Input id="deal-fee-pct" type="number" step="0.01" value={form.feePercentage}
               onChange={(e) => {
                 const pct = e.target.value;
                 set("feePercentage", pct);
-                // Auto-calc total fee from rent × fee%. Only sets if the
-                // user hasn't already typed a custom fee, so manual
-                // overrides survive.
                 const rent = parseFloat(form.rentPa);
                 const pctNum = parseFloat(pct);
-                if (!isNaN(rent) && !isNaN(pctNum) && !form.fee) {
-                  set("fee", String(Math.round(rent * pctNum) / 100));
+                if (!isNaN(rent) && !isNaN(pctNum) && pctNum > 0) {
+                  set("fee", String(Math.round((rent * pctNum) / 100)));
                 }
               }}
               placeholder="e.g. 6" />
