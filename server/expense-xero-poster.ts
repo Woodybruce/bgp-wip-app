@@ -113,9 +113,42 @@ async function attachReceiptToXero(session: any, expenseId: string, xeroTransact
   const [receipt] = await db.select().from(expenseReceipts).where(eq(expenseReceipts.expenseId, expenseId)).limit(1);
   if (!receipt) return;
 
-  // For now: receipt body is stored at receipt.storageKey as a base64 string or path.
+  // Two storage shapes co-exist:
+  //  - Dashboard / bulk uploads write the file to file_storage and put the
+  //    key (e.g. "expense-receipts/<id>-<ts>-<name>") into receipt.storageKey.
+  //  - The historical WhatsApp inbound path inlines the base64 bytes in
+  //    receipt.storageKey directly (no file_storage row). Detected here by
+  //    the absence of the expense-receipts/ prefix.
+  let bytes: Buffer | null = null;
+  let contentType = receipt.mimeType || "image/jpeg";
+  if (receipt.storageKey?.startsWith("expense-receipts/")) {
+    const { getFile } = await import("./file-storage");
+    const file = await getFile(receipt.storageKey);
+    if (file) {
+      bytes = file.data;
+      contentType = file.contentType || contentType;
+    }
+  } else if (receipt.storageKey) {
+    // Treat as inline base64 (the legacy WhatsApp path).
+    try { bytes = Buffer.from(receipt.storageKey, "base64"); } catch { /* fall through to skip */ }
+  }
+  if (!bytes || bytes.length === 0) {
+    console.warn(`[xero-post] receipt ${receipt.id} has no bytes — skipping attach`);
+    return;
+  }
+
   // Xero attachment endpoint: PUT /BankTransactions/{ID}/Attachments/{filename}
-  // Body: raw bytes of the file with appropriate Content-Type.
-  // This will be wired once we finalise receipt storage (object storage vs DB blob).
-  console.log(`[xero-post] receipt attach pending — txn ${xeroTransactionId}, receipt ${receipt.id}`);
+  // Body: raw file bytes with the correct Content-Type. Filename gets URL
+  // encoded — it's used by Xero as the display name in the attachment list.
+  const safeFilename = (receipt.filename || `receipt-${receipt.id}.${(contentType.split("/")[1] || "bin").replace(/[^a-z0-9]/gi, "")}`)
+    .replace(/[^\w.\- ]+/g, "_")
+    .slice(0, 100);
+  const path = `/BankTransactions/${xeroTransactionId}/Attachments/${encodeURIComponent(safeFilename)}`;
+
+  await xeroApi(session, path, {
+    method: "PUT",
+    body: bytes as any,
+    headers: { "Content-Type": contentType },
+  });
+  console.log(`[xero-post] receipt attached to ${xeroTransactionId} (${safeFilename}, ${bytes.length} bytes)`);
 }
