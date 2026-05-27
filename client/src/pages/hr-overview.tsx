@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -6,6 +6,7 @@ import {
   Coffee, Beer, Pizza, Star, Flame, Target, ChevronRight, ChevronDown,
   Loader2, Plus, Check, Briefcase, BarChart3, GitBranch, Eye,
   Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText, Info,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -677,17 +678,136 @@ function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSe
 // ── 🎡 Brucey Wheel dialog — animated spinner that lands on a random prize ──
 // Server picks the prize on /api/hr/brucey-winners/spin (so a refresh can't
 // game it). The wheel just animates to the slice the server picked.
+// Six-slice vibrant palette — classic "wheel of fortune" rainbow rather
+// than the amber-only shades we started with. Each slice gets a fill +
+// a slightly darker stroke for the divider. If you ever go above 6
+// prizes the palette wraps cleanly.
+const WHEEL_PALETTE = [
+  { fill: "#ef4444", stroke: "#991b1b", text: "#ffffff" }, // red
+  { fill: "#f97316", stroke: "#9a3412", text: "#ffffff" }, // orange
+  { fill: "#facc15", stroke: "#854d0e", text: "#3f3f00" }, // yellow
+  { fill: "#22c55e", stroke: "#15803d", text: "#ffffff" }, // green
+  { fill: "#3b82f6", stroke: "#1d4ed8", text: "#ffffff" }, // blue
+  { fill: "#a855f7", stroke: "#6b21a8", text: "#ffffff" }, // purple
+  { fill: "#ec4899", stroke: "#9d174d", text: "#ffffff" }, // pink (>6)
+  { fill: "#06b6d4", stroke: "#0e7490", text: "#ffffff" }, // cyan (>6)
+];
+
+// Funny win quips — one chosen at random when the wheel lands. {name} and
+// {prize} interpolate. Keep it brief; this is a victory lap not a speech.
+const WIN_QUIPS = [
+  "{name}, the gods of property smile upon you.",
+  "Brucey himself would be proud.",
+  "Layla will be in touch about the spreadsheet.",
+  "Behold: {name}, vanquisher of pipelines.",
+  "Just don't tell Wendy about this one.",
+  "Tom & Pete have already approved the {prize}.",
+  "Verified by Companies House: you're a legend.",
+  "The watch house bows. The fizz is on order.",
+  "Charlotte is updating the noticeboard as we speak.",
+  "Forty-five pence per receipt won't pay for this. Just take the W.",
+  "Achievement unlocked: {prize}. HMRC has questions.",
+  "Section 21 of the Bonus Act 2024: {name} gets {prize}.",
+];
+
+// Web Audio synth — generates the clicker + fanfare without bundling
+// any audio files. Created lazily on the first user gesture (Spin click)
+// so browsers don't suspend the context.
+class WheelSounds {
+  private ctx: AudioContext | null = null;
+  private getCtx(): AudioContext {
+    if (!this.ctx) {
+      // Safari still ships under webkitAudioContext.
+      const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+      this.ctx = new Ctx();
+    }
+    if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
+    return this.ctx;
+  }
+  /** Short click — one per slice as the wheel rotates past the pointer. */
+  click(): void {
+    try {
+      const ctx = this.getCtx();
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(1800, t);
+      osc.frequency.exponentialRampToValueAtTime(900, t + 0.04);
+      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.06);
+    } catch { /* sound is decoration — never block a spin on it */ }
+  }
+  /** Three-note fanfare on the win reveal. */
+  fanfare(): void {
+    try {
+      const ctx = this.getCtx();
+      const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+      notes.forEach((freq, i) => {
+        const t = ctx.currentTime + i * 0.12;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.5);
+      });
+    } catch { /* */ }
+  }
+  /** A descending "no winner" trombone if the spin fails. */
+  fail(): void {
+    try {
+      const ctx = this.getCtx();
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(400, t);
+      osc.frequency.exponentialRampToValueAtTime(100, t + 0.6);
+      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.65);
+    } catch { /* */ }
+  }
+}
+
+const wheelSounds = new WheelSounds();
+
 function BruceyWheelDialog({
   open, onClose, period, winnerUserId, winnerName,
 }: { open: boolean; onClose: () => void; period: "month" | "quarter"; winnerUserId: string; winnerName: string }) {
   const { toast } = useToast();
+  const { data: currentUser } = useQuery<AuthUser | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+  const isAdmin = !!currentUser?.isAdmin;
+
   const { data: prizes = [], isLoading: prizesLoading } = useQuery<Array<{ id: string; label: string; emoji: string | null; tier: string }>>({
     queryKey: ["/api/hr/brucey-prizes"],
   });
   const tierPrizes = prizes.filter(p => p.tier === (period === "quarter" ? "quarterly" : "monthly"));
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
-  const [result, setResult] = useState<{ prizeLabel: string; prizeEmoji: string | null } | null>(null);
+  const [result, setResult] = useState<{ prizeLabel: string; prizeEmoji: string | null; quip: string } | null>(null);
+  const [managingPrizes, setManagingPrizes] = useState(false);
+  // Chase the perimeter lights — animation runs faster during a spin
+  // so it feels like a fairground sign coming to life.
+  const [lightTick, setLightTick] = useState(0);
+  useEffect(() => {
+    const speed = spinning ? 120 : 600;
+    const interval = setInterval(() => setLightTick(t => t + 1), speed);
+    return () => clearInterval(interval);
+  }, [spinning]);
 
   const spin = useMutation({
     mutationFn: async () => {
@@ -701,24 +821,45 @@ function BruceyWheelDialog({
       return r.json() as Promise<{ prize_label: string; prizes: Array<{ id: string; label: string; emoji: string | null }>; prizeIndex: number }>;
     },
     onSuccess: (out) => {
-      // Land the wheel on the chosen prize. 5 full rotations + the slice angle
-      // so it's clearly spinning before stopping on the right slice.
+      // Spin 6 full rotations + a small jitter on top of the target so
+      // every spin lands slightly differently within the same slice.
       const sliceCount = out.prizes.length;
       const sliceAngle = 360 / sliceCount;
-      // Pointer is at the top (0°); spin clockwise so finalAngle = -(prizeIndex * sliceAngle + sliceAngle/2)
-      const target = -(out.prizeIndex * sliceAngle + sliceAngle / 2);
-      const finalRotation = 360 * 5 + target;
+      const jitter = (Math.random() - 0.5) * sliceAngle * 0.6; // ±30% of slice
+      const target = -(out.prizeIndex * sliceAngle + sliceAngle / 2) + jitter;
+      const finalRotation = 360 * 6 + target;
       setSpinning(true);
       setRotation(finalRotation);
+
+      // Schedule decelerating ticks across the 5.2s spin — slow down on
+      // a curve so it feels like the wheel is actually slowing. ~32
+      // ticks total, easing from ~80ms apart at the start to ~400ms at
+      // the end.
+      const SPIN_MS = 5200;
+      const TICK_COUNT = 32;
+      const tickTimers: number[] = [];
+      for (let i = 0; i < TICK_COUNT; i++) {
+        const t = i / (TICK_COUNT - 1);
+        // Quadratic ease-out: most ticks early, sparse late.
+        const at = SPIN_MS * (1 - (1 - t) * (1 - t));
+        tickTimers.push(window.setTimeout(() => wheelSounds.click(), at));
+      }
+
       const matched = out.prizes[out.prizeIndex];
+      const quip = WIN_QUIPS[Math.floor(Math.random() * WIN_QUIPS.length)]
+        .replace("{name}", winnerName.split(" ")[0])
+        .replace("{prize}", matched.label);
       setTimeout(() => {
+        tickTimers.forEach(id => clearTimeout(id));
         setSpinning(false);
-        setResult({ prizeLabel: matched.label, prizeEmoji: matched.emoji });
+        setResult({ prizeLabel: matched.label, prizeEmoji: matched.emoji, quip });
+        wheelSounds.fanfare();
         queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
         queryClient.invalidateQueries({ queryKey: ["/api/hr/awards"] });
-      }, 4500);
+      }, SPIN_MS);
     },
     onError: (e: any) => {
+      wheelSounds.fail();
       toast({ title: "Spin failed", description: e?.message, variant: "destructive" });
       setSpinning(false);
     },
@@ -726,94 +867,276 @@ function BruceyWheelDialog({
 
   const sliceCount = tierPrizes.length || 1;
   const sliceAngle = 360 / sliceCount;
-  const palette = [
-    "#fef3c7", "#fde68a", "#fcd34d", "#fbbf24", "#f59e0b", "#d97706",
-    "#fee2e2", "#fecaca", "#fca5a5", "#f87171", "#ef4444", "#dc2626",
-  ];
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) { onClose(); setResult(null); setRotation(0); } }}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { onClose(); setResult(null); setRotation(0); setManagingPrizes(false); } }}>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 text-xl">
             🎡 Brucey {period === "quarter" ? "Quarterly Grand" : "Monthly"} Wheel
           </DialogTitle>
           <DialogDescription>
-            {winnerName} is the {period} leader. Spin to claim your prize — selection is random and saved on the server.
+            {winnerName} is the {period} leader. Spin to claim your prize — selection is random, server-decided, and saved.
           </DialogDescription>
         </DialogHeader>
-        {prizesLoading ? (
+
+        {managingPrizes ? (
+          <PrizeManager
+            prizes={prizes}
+            tier={period === "quarter" ? "quarterly" : "monthly"}
+            onClose={() => setManagingPrizes(false)}
+          />
+        ) : prizesLoading ? (
           <Skeleton className="aspect-square w-full" />
         ) : tierPrizes.length === 0 ? (
-          <p className="text-sm text-muted-foreground italic">No prizes seeded for this tier. Add some via the admin endpoint.</p>
+          <div className="text-center py-6 space-y-2">
+            <p className="text-sm text-muted-foreground italic">No prizes seeded for this tier yet.</p>
+            {isAdmin && (
+              <Button size="sm" variant="outline" onClick={() => setManagingPrizes(true)}>Add prizes</Button>
+            )}
+          </div>
         ) : (
-          <div className="relative aspect-square w-full max-w-sm mx-auto">
-            {/* Pointer */}
-            <div className="absolute left-1/2 -translate-x-1/2 -top-1 w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[16px] border-t-amber-700 z-10" />
+          <div className="relative aspect-square w-full max-w-md mx-auto py-4">
+            {/* Fairground perimeter lights — 16 bulbs that chase around. */}
+            <PerimeterLights tick={lightTick} winning={!!result} />
+
+            {/* Outer glow ring */}
+            <div className="absolute inset-2 rounded-full bg-gradient-to-br from-amber-400 via-orange-500 to-red-500 blur-md opacity-50" />
+
+            {/* Pointer — a chunky triangle with a shadow, sitting on top of the wheel */}
             <div
-              className="relative w-full h-full rounded-full border-4 border-amber-700 shadow-lg overflow-hidden transition-transform"
+              className="absolute left-1/2 -translate-x-1/2 top-0 z-20"
+              style={{ filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.35))" }}
+            >
+              <svg width="36" height="32" viewBox="0 0 36 32">
+                <path d="M 18 28 L 4 4 L 32 4 Z" fill="#92400e" stroke="#451a03" strokeWidth="1.5" strokeLinejoin="round" />
+                <path d="M 18 26 L 8 6 L 28 6 Z" fill="#fbbf24" />
+              </svg>
+            </div>
+
+            {/* Wheel */}
+            <div
+              className="relative w-full h-full rounded-full overflow-hidden"
               style={{
                 transform: `rotate(${rotation}deg)`,
-                transitionDuration: spinning ? "4500ms" : "0ms",
-                transitionTimingFunction: "cubic-bezier(0.2, 0.85, 0.3, 1)",
+                transitionDuration: spinning ? "5200ms" : "0ms",
+                transitionTimingFunction: "cubic-bezier(0.17, 0.67, 0.21, 0.99)",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.35), inset 0 0 0 6px #92400e, inset 0 0 0 8px #fbbf24",
               }}
             >
-              {tierPrizes.map((p, i) => {
-                const startAngle = i * sliceAngle - 90;
-                const endAngle = startAngle + sliceAngle;
-                const start = polar(50, 50, 50, startAngle);
-                const end = polar(50, 50, 50, endAngle);
-                const largeArc = sliceAngle > 180 ? 1 : 0;
-                const labelAngle = startAngle + sliceAngle / 2;
-                const label = polar(50, 50, 32, labelAngle);
-                return (
-                  <svg key={p.id} viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
-                    <path
-                      d={`M 50 50 L ${start.x} ${start.y} A 50 50 0 ${largeArc} 1 ${end.x} ${end.y} Z`}
-                      fill={palette[i % palette.length]}
-                      stroke="#92400e"
-                      strokeWidth="0.5"
-                    />
-                    <text
-                      x={label.x}
-                      y={label.y}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      transform={`rotate(${labelAngle + 90}, ${label.x}, ${label.y})`}
-                      fontSize="4"
-                      fontWeight="600"
-                      fill="#78350f"
-                    >
-                      {p.emoji || "🏅"} {p.label.slice(0, 14)}
-                    </text>
-                  </svg>
-                );
-              })}
+              <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
+                {tierPrizes.map((p, i) => {
+                  const startAngle = i * sliceAngle - 90;
+                  const endAngle = startAngle + sliceAngle;
+                  const start = polar(50, 50, 50, startAngle);
+                  const end = polar(50, 50, 50, endAngle);
+                  const largeArc = sliceAngle > 180 ? 1 : 0;
+                  const labelAngle = startAngle + sliceAngle / 2;
+                  // Pull the label slightly further out for longer labels.
+                  const labelRadius = p.label.length > 12 ? 36 : 32;
+                  const label = polar(50, 50, labelRadius, labelAngle);
+                  const emojiPos = polar(50, 50, 20, labelAngle);
+                  const colour = WHEEL_PALETTE[i % WHEEL_PALETTE.length];
+                  return (
+                    <g key={p.id}>
+                      <path
+                        d={`M 50 50 L ${start.x} ${start.y} A 50 50 0 ${largeArc} 1 ${end.x} ${end.y} Z`}
+                        fill={colour.fill}
+                        stroke={colour.stroke}
+                        strokeWidth="0.8"
+                      />
+                      {/* Emoji further in towards the centre — easier to read at speed */}
+                      <text
+                        x={emojiPos.x}
+                        y={emojiPos.y}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        transform={`rotate(${labelAngle + 90}, ${emojiPos.x}, ${emojiPos.y})`}
+                        fontSize="8"
+                      >
+                        {p.emoji || "🏅"}
+                      </text>
+                      {/* Label nearer the rim */}
+                      <text
+                        x={label.x}
+                        y={label.y}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        transform={`rotate(${labelAngle + 90}, ${label.x}, ${label.y})`}
+                        fontSize="3.4"
+                        fontWeight="700"
+                        fill={colour.text}
+                        style={{ paintOrder: "stroke", stroke: colour.stroke, strokeWidth: 0.3 }}
+                      >
+                        {p.label.length > 18 ? p.label.slice(0, 17) + "…" : p.label}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+
+            {/* Centre hub — sits ON TOP of the wheel, doesn't rotate */}
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-amber-300 to-amber-600 border-4 border-amber-900 shadow-md flex items-center justify-center">
+                <span className="text-xl">🏆</span>
+              </div>
             </div>
           </div>
         )}
+
         {result && (
-          <div className="mt-3 p-3 rounded-md border bg-amber-50 dark:bg-amber-950/40 text-center">
-            <div className="text-2xl">{result.prizeEmoji || "🏆"}</div>
-            <div className="text-sm font-medium mt-1">You won {result.prizeLabel}!</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">Woody will confirm and arrange.</div>
+          <div className="relative mt-3 p-4 rounded-lg border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-amber-950/40 dark:to-yellow-950/40 text-center overflow-hidden">
+            <Fireworks />
+            <div className="relative z-10">
+              <div className="text-5xl mb-2 animate-bounce">{result.prizeEmoji || "🏆"}</div>
+              <div className="text-lg font-extrabold text-amber-900 dark:text-amber-200 drop-shadow-sm">
+                You won {result.prizeLabel}!
+              </div>
+              <div className="text-xs italic text-amber-800 dark:text-amber-300 mt-1.5">"{result.quip}"</div>
+              <div className="text-[10px] text-muted-foreground mt-2">Woody will confirm and arrange.</div>
+            </div>
           </div>
         )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => { onClose(); setResult(null); setRotation(0); }}>
-            {result ? "Close" : "Cancel"}
-          </Button>
-          {!result && (
-            <Button
-              onClick={() => spin.mutate()}
-              disabled={spin.isPending || spinning || tierPrizes.length === 0}
-            >
-              {spinning ? "Spinning…" : spin.isPending ? "Starting…" : "Spin"}
+
+        <DialogFooter className="flex-row items-center justify-between sm:justify-between gap-2">
+          <div>
+            {isAdmin && !spinning && !result && !managingPrizes && (
+              <Button variant="ghost" size="sm" onClick={() => setManagingPrizes(true)} className="text-xs">
+                Manage prizes
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => { onClose(); setResult(null); setRotation(0); setManagingPrizes(false); }}>
+              {result ? "Close" : managingPrizes ? "Back" : "Cancel"}
             </Button>
-          )}
+            {!result && !managingPrizes && (
+              <Button
+                onClick={() => spin.mutate()}
+                disabled={spin.isPending || spinning || tierPrizes.length === 0}
+                className="bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-md"
+              >
+                {spinning ? "Spinning…" : spin.isPending ? "Starting…" : "Spin"}
+              </Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Inline admin prize manager — add / soft-delete prizes without leaving
+// the wheel dialog. Surfaced via the "Manage prizes" button (admin-only).
+// ChatBGP can also drive the same INSERT/UPDATE/DELETE via sql_write —
+// the table is `brucey_prizes` (label, description, emoji, tier,
+// sort_order, is_active).
+function PrizeManager({
+  prizes, tier, onClose,
+}: { prizes: Array<{ id: string; label: string; emoji: string | null; tier: string }>; tier: "monthly" | "quarterly"; onClose: () => void }) {
+  const { toast } = useToast();
+  const [label, setLabel] = useState("");
+  const [emoji, setEmoji] = useState("");
+  const tierPrizes = prizes.filter(p => p.tier === tier);
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/hr/brucey-prizes", {
+        method: "POST", credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: label.trim(), emoji: emoji.trim() || null, tier }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Add failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      setLabel(""); setEmoji("");
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-prizes"] });
+      toast({ title: "Prize added" });
+    },
+    onError: (e: any) => toast({ title: "Add failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/hr/brucey-prizes/${id}`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error("Remove failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-prizes"] });
+      toast({ title: "Prize removed" });
+    },
+    onError: (e: any) => toast({ title: "Remove failed", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="space-y-3 py-2">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        {tier} prizes — {tierPrizes.length} active
+      </div>
+
+      <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1">
+        {tierPrizes.length === 0 && (
+          <p className="text-sm text-muted-foreground italic">No prizes yet — add one below.</p>
+        )}
+        {tierPrizes.map(p => (
+          <div key={p.id} className="flex items-center gap-2 rounded border bg-card px-2 py-1.5 text-sm">
+            <span className="text-lg w-6 text-center">{p.emoji || "🏅"}</span>
+            <span className="flex-1">{p.label}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+              onClick={() => {
+                if (window.confirm(`Remove "${p.label}" from the wheel?`)) removeMutation.mutate(p.id);
+              }}
+              disabled={removeMutation.isPending}
+              data-testid={`button-remove-prize-${p.id}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex gap-2 items-end pt-2 border-t">
+        <div className="w-14">
+          <label className="text-[10px] text-muted-foreground">Emoji</label>
+          <input
+            value={emoji}
+            onChange={(e) => setEmoji(e.target.value)}
+            placeholder="🍾"
+            className="w-full h-9 rounded border bg-background px-2 text-center text-lg"
+            data-testid="input-prize-emoji"
+          />
+        </div>
+        <div className="flex-1">
+          <label className="text-[10px] text-muted-foreground">Prize label</label>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Brunch on the firm"
+            className="w-full h-9 rounded border bg-background px-2 text-sm"
+            onKeyDown={(e) => { if (e.key === "Enter" && label.trim()) addMutation.mutate(); }}
+            data-testid="input-prize-label"
+          />
+        </div>
+        <Button
+          size="sm"
+          onClick={() => addMutation.mutate()}
+          disabled={addMutation.isPending || !label.trim()}
+          className="h-9"
+          data-testid="button-add-prize"
+        >
+          Add
+        </Button>
+      </div>
+      <p className="text-[10px] text-muted-foreground italic">
+        Six prizes makes the wheel look most balanced — you can have more or fewer. Removed prizes are kept in history but won't appear on future spins.
+      </p>
+    </div>
   );
 }
 
@@ -821,6 +1144,83 @@ function BruceyWheelDialog({
 function polar(cx: number, cy: number, r: number, deg: number) {
   const rad = (deg * Math.PI) / 180;
   return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+// 16 fairground bulbs around the wheel rim. Chase pattern: every other
+// bulb on, swap every tick. When the spin lands ("winning"), all bulbs
+// light up bright. Lights flicker faster during a spin because the
+// parent component changes the tick interval.
+function PerimeterLights({ tick, winning }: { tick: number; winning: boolean }) {
+  const COUNT = 16;
+  const bulbs: React.ReactNode[] = [];
+  for (let i = 0; i < COUNT; i++) {
+    const angle = (i / COUNT) * 360;
+    const x = 50 + 48 * Math.cos((angle - 90) * Math.PI / 180);
+    const y = 50 + 48 * Math.sin((angle - 90) * Math.PI / 180);
+    const on = winning ? true : (i + tick) % 2 === 0;
+    bulbs.push(
+      <div
+        key={i}
+        className={`absolute w-2.5 h-2.5 rounded-full transition-all duration-150 ${
+          on
+            ? "bg-yellow-200 shadow-[0_0_8px_4px_rgba(253,224,71,0.7)]"
+            : "bg-amber-900/40"
+        }`}
+        style={{
+          left: `${x}%`,
+          top: `${y}%`,
+          transform: "translate(-50%, -50%)",
+          zIndex: 5,
+        }}
+      />
+    );
+  }
+  return <>{bulbs}</>;
+}
+
+// Fireworks burst — 24 particles fly outward from the centre of the
+// result box with random colours and angles. Pure CSS animation; the
+// component just renders the divs with inline keyframe styles.
+function Fireworks() {
+  const COUNT = 28;
+  const colours = ["#ef4444", "#f97316", "#facc15", "#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#06b6d4"];
+  const particles: React.ReactNode[] = [];
+  for (let i = 0; i < COUNT; i++) {
+    const angle = (i / COUNT) * 360 + (Math.random() - 0.5) * 20;
+    const distance = 80 + Math.random() * 60;
+    const dx = Math.cos(angle * Math.PI / 180) * distance;
+    const dy = Math.sin(angle * Math.PI / 180) * distance;
+    const colour = colours[Math.floor(Math.random() * colours.length)];
+    const delay = Math.random() * 0.2;
+    particles.push(
+      <span
+        key={i}
+        className="absolute left-1/2 top-1/2 w-1.5 h-1.5 rounded-full pointer-events-none"
+        style={{
+          backgroundColor: colour,
+          boxShadow: `0 0 6px 2px ${colour}`,
+          animation: `firework-fly 1.2s ${delay}s ease-out forwards`,
+          // Pass the trajectory via CSS custom properties so the
+          // keyframes (declared inline below in the global style block)
+          // pick them up.
+          ["--fx" as any]: `${dx}px`,
+          ["--fy" as any]: `${dy}px`,
+        }}
+      />
+    );
+  }
+  return (
+    <>
+      <style>{`
+        @keyframes firework-fly {
+          0%   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+          70%  { opacity: 1; }
+          100% { transform: translate(calc(-50% + var(--fx)), calc(-50% + var(--fy))) scale(0.3); opacity: 0; }
+        }
+      `}</style>
+      {particles}
+    </>
+  );
 }
 
 // ── 🏆 Hunger Games strip ────────────────────────────────────────────────────
