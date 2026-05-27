@@ -2851,14 +2851,14 @@ function UnitFormDialog({
               </div>
               <div>
                 <Label className="text-xs">% Agency fee</Label>
-                <Input type="number" step="0.1" value={form.feePercentage}
+                <Input type="number" step="0.01" value={form.feePercentage}
                   onChange={(e) => {
                     const pct = e.target.value;
                     const rent = parseFloat(form.askingRent);
                     const pctNum = parseFloat(pct);
                     const next = { ...form, feePercentage: pct } as UnitFormState;
-                    if (!isNaN(rent) && !isNaN(pctNum) && !form.fee) {
-                      next.fee = String(Math.round(rent * pctNum) / 100);
+                    if (!isNaN(rent) && !isNaN(pctNum) && pctNum > 0) {
+                      next.fee = String(Math.round((rent * pctNum) / 100));
                     }
                     setForm(next);
                   }}

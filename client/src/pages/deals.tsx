@@ -2467,7 +2467,7 @@ function HotsChecklistDialog({
 
   useEffect(() => {
     if (form.rentPa > 0 && form.feePercentage > 0) {
-      setForm(prev => ({ ...prev, fee: Math.round(prev.rentPa * prev.feePercentage) / 100 }));
+      setForm(prev => ({ ...prev, fee: Math.round((prev.rentPa * prev.feePercentage) / 100) }));
     }
   }, [form.rentPa, form.feePercentage]);
 
