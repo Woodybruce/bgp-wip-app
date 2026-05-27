@@ -975,26 +975,41 @@ export function setupHrRoutes(app: Express) {
       const weekAgo = new Date(now.getTime() - 7 * 86400000);
 
       // Per-agent share of each deal: explicit allocation OR even split.
+      // Prefer internal_agent_ids (resolved through users) so a rename or
+      // departure doesn't leave commission credited to a stale name.
+      // Falls back to internal_agent names for any row whose IDs column
+      // is still NULL.
       const dealsRes = await pool.query(
-        `WITH deal_share AS (
-           SELECT a.agent_lower AS agent,
-                  d.id, d.status, d.fee,
+        `WITH deal_agents AS (
+           SELECT d.id, d.status, d.fee,
                   COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
+                  COALESCE(
+                    (SELECT array_agg(DISTINCT u.name)
+                       FROM unnest(d.internal_agent_ids) AS aid
+                       JOIN users u ON u.id = aid),
+                    d.internal_agent,
+                    ARRAY[]::text[]
+                  ) AS agent_names
+             FROM crm_deals d
+            WHERE d.fee IS NOT NULL AND d.fee > 0
+         ),
+         deal_share AS (
+           SELECT a.agent_lower AS agent,
+                  d.id, d.status, d.fee, d.dt,
                   CASE
                     WHEN dfa.percentage IS NOT NULL THEN d.fee * dfa.percentage / 100.0
                     WHEN dfa.fixed_amount IS NOT NULL THEN dfa.fixed_amount
-                    ELSE d.fee::numeric / GREATEST(COALESCE(array_length(d.internal_agent, 1), 1), 1)
+                    ELSE d.fee::numeric / GREATEST(COALESCE(array_length(d.agent_names, 1), 1), 1)
                   END AS portion
-           FROM crm_deals d
-           CROSS JOIN LATERAL (
-             SELECT DISTINCT LOWER(ag) AS agent_lower FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) ag
-           ) a
-           LEFT JOIN deal_fee_allocations dfa
-             ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = a.agent_lower
-           WHERE d.fee IS NOT NULL AND d.fee > 0
+             FROM deal_agents d
+            CROSS JOIN LATERAL (
+              SELECT DISTINCT LOWER(ag) AS agent_lower FROM unnest(d.agent_names) ag
+            ) a
+            LEFT JOIN deal_fee_allocations dfa
+                   ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = a.agent_lower
          )
          SELECT agent, status, dt, portion FROM deal_share
-         WHERE dt BETWEEN $1 AND $2`,
+          WHERE dt BETWEEN $1 AND $2`,
         [schemeStart.toISOString(), schemeEnd.toISOString()]
       );
 

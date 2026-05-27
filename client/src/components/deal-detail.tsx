@@ -63,7 +63,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, invalidateDealCaches, getAuthHeaders } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
-import { buildUserColorMap } from "@/lib/agent-colors";
+import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
@@ -678,44 +678,52 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       <Card>
         <CardContent className="p-3 space-y-1.5">
           <p className="text-[10px] text-muted-foreground font-medium">BGP Contacts</p>
-          <div className="flex items-center gap-1 flex-wrap">
-            {(deal.internalAgent || []).map((name: string) => {
-              const bg = userColorMap[name] || "bg-zinc-500";
-              return (
-                <span key={name} className="inline-flex items-center gap-0.5">
-                  <Badge className={`text-[10px] px-1.5 py-0 text-white ${bg}`} data-testid={`badge-deal-agent-${name}`}>
-                    {name}
-                  </Badge>
-                  <button
-                    onClick={() => updateAgentsMutation.mutate((deal.internalAgent || []).filter((a: string) => a !== name))}
-                    className="text-muted-foreground hover:text-red-500 transition-colors"
-                    data-testid={`button-remove-agent-${name}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              );
-            })}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full" data-testid="button-add-deal-agent">
-                  <Plus className="w-3.5 h-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-                {users.filter(u => !(deal.internalAgent || []).includes(u.name)).map(u => (
-                  <DropdownMenuItem
-                    key={u.id}
-                    onClick={() => updateAgentsMutation.mutate([...(deal.internalAgent || []), u.name])}
-                    data-testid={`option-add-agent-${u.name}`}
-                  >
-                    <div className={`w-2 h-2 rounded-full ${userColorMap[u.name] || "bg-zinc-500"} mr-2`} />
-                    {u.name}
-                  </DropdownMenuItem>
+          {(() => {
+            // Resolve via internalAgentIds when present (survives renames),
+            // fall back to internalAgent names for historic rows whose
+            // IDs column hasn't been backfilled.
+            const resolved = resolveDealAgents(deal as any, users as any);
+            const resolvedNames = new Set(resolved.map(r => r.name));
+            return (
+              <div className="flex items-center gap-1 flex-wrap">
+                {resolved.map(({ userId, name, color }) => (
+                  <span key={userId} className="inline-flex items-center gap-0.5">
+                    <Badge className={`text-[10px] px-1.5 py-0 text-white ${color}`} data-testid={`badge-deal-agent-${name}`}>
+                      {name}
+                    </Badge>
+                    <button
+                      onClick={() => updateAgentsMutation.mutate(
+                        (deal.internalAgent || []).filter((a: string) => a !== name)
+                      )}
+                      className="text-muted-foreground hover:text-red-500 transition-colors"
+                      data-testid={`button-remove-agent-${name}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
                 ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full" data-testid="button-add-deal-agent">
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
+                    {users.filter(u => !resolvedNames.has(u.name)).map(u => (
+                      <DropdownMenuItem
+                        key={u.id}
+                        onClick={() => updateAgentsMutation.mutate([...(deal.internalAgent || []), u.name])}
+                        data-testid={`option-add-agent-${u.name}`}
+                      >
+                        <div className={`w-2 h-2 rounded-full ${userColorMap[u.name] || "bg-zinc-500"} mr-2`} />
+                        {u.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 

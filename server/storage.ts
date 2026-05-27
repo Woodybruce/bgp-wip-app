@@ -49,6 +49,61 @@ import { escapeLike } from "./utils/escape-like";
 import { db, pool } from "./db";
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull } from "drizzle-orm";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve an internalAgent payload (which historically was a `text[]` of
+ * display names but came to leak user-id GUIDs from the available-units
+ * auto-create paths) into the canonical pair of columns:
+ *   - internalAgent      = display names (legacy readers — kanban color
+ *                           map, hr-routes fee allocation, aml filters)
+ *   - internalAgentIds   = user IDs (new readers — survives renames)
+ *
+ * Caller can pass either internalAgent (names or IDs) or internalAgentIds
+ * (IDs); both columns get filled in. Entries that can't be resolved to a
+ * users row are dropped — better to lose an unmatched chip than to leave
+ * a stale name lingering in the array.
+ */
+async function normaliseInternalAgents<T extends Record<string, any>>(payload: T): Promise<T> {
+  const hasNames = Array.isArray(payload?.internalAgent);
+  const hasIds   = Array.isArray(payload?.internalAgentIds);
+  if (!hasNames && !hasIds) return payload;
+
+  const collected = new Set<string>();
+  if (hasNames) for (const v of payload.internalAgent) { if (v) collected.add(String(v)); }
+  if (hasIds)   for (const v of payload.internalAgentIds) { if (v) collected.add(String(v)); }
+  if (collected.size === 0) return { ...payload, internalAgent: [], internalAgentIds: [] };
+
+  const inputs = Array.from(collected);
+  const idCandidates = inputs.filter(s => UUID_RE.test(s));
+  const nameCandidates = inputs.filter(s => !UUID_RE.test(s));
+
+  const matched: { id: string; name: string }[] = [];
+  if (idCandidates.length > 0 || nameCandidates.length > 0) {
+    const { rows } = await pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM users
+        WHERE ($1::varchar[] IS NOT NULL AND id   = ANY($1::varchar[]))
+           OR ($2::text[]    IS NOT NULL AND name = ANY($2::text[]))`,
+      [
+        idCandidates.length > 0 ? idCandidates : null,
+        nameCandidates.length > 0 ? nameCandidates : null,
+      ]
+    );
+    for (const r of rows) matched.push({ id: r.id, name: r.name });
+  }
+
+  // De-dup by id, preserving first-seen order from the original input
+  // when possible.
+  const byId = new Map<string, { id: string; name: string }>();
+  for (const m of matched) if (!byId.has(m.id)) byId.set(m.id, m);
+
+  return {
+    ...payload,
+    internalAgent: Array.from(byId.values()).map(m => m.name),
+    internalAgentIds: Array.from(byId.values()).map(m => m.id),
+  };
+}
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -994,7 +1049,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCrmDeal(deal: InsertCrmDeal): Promise<CrmDeal> {
-    const [d] = await db.insert(crmDeals).values(deal).returning();
+    const normalised = await normaliseInternalAgents(deal as any);
+    const [d] = await db.insert(crmDeals).values(normalised).returning();
     return d;
   }
 
@@ -1007,7 +1063,8 @@ export class DatabaseStorage implements IStorage {
         coerced[f] = new Date(coerced[f]);
       }
     }
-    const [d] = await db.update(crmDeals).set({ ...coerced, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
+    const normalised = await normaliseInternalAgents(coerced);
+    const [d] = await db.update(crmDeals).set({ ...normalised, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
     return d;
   }
 

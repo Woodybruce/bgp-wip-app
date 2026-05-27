@@ -1116,6 +1116,34 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS tenant_company_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS landlord_company_id VARCHAR`).catch(() => {});
 
+  // internalAgentIds shadow column for the name → id migration. The
+  // name column stays in place (dual-write) until every reader migrates.
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS internal_agent_ids VARCHAR[]`)
+    .then(() => {
+      // One-time backfill: any deal that has internal_agent names but no
+      // matching internal_agent_ids gets its IDs resolved via users.name.
+      // Idempotent — only fills rows where the IDs column is still NULL.
+      // Renames done AFTER this boot won't be retroactively picked up;
+      // the dual-write at the REST layer keeps subsequent writes in sync.
+      return pool.query(`
+        UPDATE crm_deals d
+           SET internal_agent_ids = sub.ids
+          FROM (
+            SELECT d.id AS deal_id,
+                   ARRAY_AGG(u.id) FILTER (WHERE u.id IS NOT NULL) AS ids
+              FROM crm_deals d
+              LEFT JOIN LATERAL unnest(d.internal_agent) AS name(n) ON true
+              LEFT JOIN users u ON u.name = name.n
+             WHERE d.internal_agent IS NOT NULL
+               AND array_length(d.internal_agent, 1) > 0
+               AND d.internal_agent_ids IS NULL
+             GROUP BY d.id
+          ) sub
+         WHERE d.id = sub.deal_id
+      `);
+    })
+    .catch((e) => console.warn("[boot] internal_agent_ids backfill failed (non-fatal):", e?.message));
+
   // wip_entries hard FKs (mirror schema.ts) — safe to re-run on each boot
   pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS deal_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS property_id VARCHAR`).catch(() => {});

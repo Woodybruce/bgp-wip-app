@@ -987,6 +987,10 @@ router.get("/api/kyc/my-deals", requireAuth, async (req: Request, res: Response)
          AND (
            d.vendor_agent_id = $1 OR d.acquisition_agent_id = $1 OR
            d.purchaser_agent_id = $1 OR d.leasing_agent_id = $1 OR
+           -- Prefer the IDs column (rename-proof) but keep the legacy
+           -- names array as a fallback for rows whose IDs haven't been
+           -- backfilled or filled by dual-write yet.
+           ($1::varchar = ANY(COALESCE(d.internal_agent_ids, ARRAY[]::varchar[]))) OR
            ($2::text[] && d.internal_agent)
          )
        ORDER BY d.updated_at DESC NULLS LAST

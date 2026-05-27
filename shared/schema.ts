@@ -833,7 +833,15 @@ export const crmDeals = pgTable("crm_deals", {
   dealType: text("deal_type"),
   status: text("status"),
   team: text("team").array(),
+  // internalAgent (names) is the legacy column — kept in sync via
+  // dual-write so existing readers (kanban color map, hr-routes fee
+  // allocation, aml-compliance agent filter) keep working until they
+  // migrate. New reads should prefer internalAgentIds; renames and
+  // departures don't break the ID column the way they break the name
+  // column. Boot-time backfill at server/crm.ts populates IDs from
+  // names by matching users.name. See #12 of the linkage audit.
   internalAgent: text("internal_agent").array(),
+  internalAgentIds: varchar("internal_agent_ids").array(),
   tenantId: varchar("tenant_id"),
   tenantContactId: varchar("tenant_contact_id"),
   clientContactId: varchar("client_contact_id"),
