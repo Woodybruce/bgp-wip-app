@@ -1507,7 +1507,12 @@ export function DealFormDialog({
     // a historic deal missing a side needs the missing party filled in
     // before any further changes save.
     if (form.dealType) {
-      const investmentTypes = new Set(["Sale", "Purchase"]);
+      // Include both the canonical "Sale"/"Purchase" and the legacy
+      // "Investment Sale"/"Investment Acquisition" labels still present
+      // in DEAL_TYPE_COLORS — without these, legacy-typed deals bypass
+      // the vendor/purchaser AML gate and fall through to the landlord/
+      // tenant check, which fails confusingly.
+      const investmentTypes = new Set(["Sale", "Purchase", "Investment Sale", "Investment Acquisition"]);
       if (investmentTypes.has(form.dealType)) {
         if (!form.vendorId || !form.purchaserId) {
           toast({
@@ -2386,9 +2391,15 @@ function HotsChecklistDialog({
     xeroBillingAddress: null as any,
     invoicingEmail: "",
     propertyId: "",
-    rentPa: 0,
-    feePercentage: 0,
-    fee: 0,
+    // Money / percentage fields are nullable — using 0 as "empty" caused
+    // the controlled-input to wipe user typing mid-keystroke (typing
+    // "10.5" went 1 → 10 → 10 → 10.5, and the "10" intermediate where
+    // state==10 then ".5" tried to extend caused React to reset value
+    // because `0 || ""` rendered as empty). Now `null` means empty and
+    // any numeric (including 0) is preserved.
+    rentPa: null as number | null,
+    feePercentage: null as number | null,
+    fee: null as number | null,
     targetDate: "",
     amlCheckCompleted: "",
     invoicingNotes: "",
@@ -2463,8 +2474,10 @@ function HotsChecklistDialog({
   }, [open, existingAllocations]);
 
   useEffect(() => {
-    if (form.rentPa > 0 && form.feePercentage > 0) {
-      setForm(prev => ({ ...prev, fee: Math.round((prev.rentPa * prev.feePercentage) / 100) }));
+    const rent = form.rentPa;
+    const pct = form.feePercentage;
+    if (rent != null && rent > 0 && pct != null && pct > 0) {
+      setForm(prev => ({ ...prev, fee: Math.round((rent * pct) / 100) }));
     }
   }, [form.rentPa, form.feePercentage]);
 
@@ -2597,14 +2610,20 @@ function HotsChecklistDialog({
       if (form.assetClass) payload.assetClass = form.assetClass;
       if (form.totalAreaSqft) payload.totalAreaSqft = form.totalAreaSqft;
 
-      await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
+      // Save allocations FIRST so the status flip is the commit point.
+      // Previously the deal was flipped to HOTs before allocations, so a
+      // 400 on the allocations write (now stricter — 100% sum + BGP House
+      // required) left the deal in HOTs without a valid fee split.
       const allocations = feeRows.filter(r => r.agentName).map(r => ({
         agentName: r.agentName,
         allocationType: "percentage",
         percentage: r.percentage,
         fixedAmount: 0,
       }));
-      await apiRequest("PUT", `/api/crm/deals/${deal.id}/fee-allocations`, { allocations });
+      if (allocations.length > 0) {
+        await apiRequest("PUT", `/api/crm/deals/${deal.id}/fee-allocations`, { allocations });
+      }
+      await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
     },
     onSuccess: async () => {
       toast({ title: "HOTs checklist completed", description: "Deal moved to HOTs with all details saved." });
@@ -2816,19 +2835,28 @@ function HotsChecklistDialog({
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs">Headline Rent (£ p.a.)</Label>
-                  <Input type="number" value={form.rentPa || ""} onChange={(e) => setForm(prev => ({ ...prev, rentPa: parseFloat(e.target.value) || 0 }))}
+                  <Input type="number" value={form.rentPa ?? ""} onChange={(e) => {
+                    const v = e.target.value;
+                    setForm(prev => ({ ...prev, rentPa: v === "" ? null : (Number.isNaN(parseFloat(v)) ? prev.rentPa : parseFloat(v)) }));
+                  }}
                     placeholder="0" data-testid="input-hots-rent" />
                 </div>
                 <div>
                   <Label className="text-xs">% Agency Fee</Label>
-                  <Input type="number" step="0.01" value={form.feePercentage || ""}
-                    onChange={(e) => setForm(prev => ({ ...prev, feePercentage: parseFloat(e.target.value) || 0 }))}
+                  <Input type="number" step="0.01" value={form.feePercentage ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setForm(prev => ({ ...prev, feePercentage: v === "" ? null : (Number.isNaN(parseFloat(v)) ? prev.feePercentage : parseFloat(v)) }));
+                    }}
                     placeholder="e.g. 10" data-testid="input-hots-fee-pct" />
                 </div>
                 <div>
                   <Label className="text-xs">Total Fee (£) +VAT</Label>
-                  <Input type="number" step="0.01" value={form.fee || ""}
-                    onChange={(e) => setForm(prev => ({ ...prev, fee: parseFloat(e.target.value) || 0 }))}
+                  <Input type="number" step="0.01" value={form.fee ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setForm(prev => ({ ...prev, fee: v === "" ? null : (Number.isNaN(parseFloat(v)) ? prev.fee : parseFloat(v)) }));
+                    }}
                     placeholder="0.00" data-testid="input-hots-fee" />
                 </div>
               </div>
