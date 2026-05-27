@@ -779,11 +779,22 @@ export default function AvailableUnitsPage() {
       }
       return json;
     },
-    onSuccess: () => {
+    onSuccess: (json: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
       setWipUnit(null);
-      toast({ title: "Promoted to Solicitors" });
+      // Surface the server's AML warn-but-allow result. Promotion went
+      // through, but some counterparties are still missing KYC — flag it
+      // so Layla can chase before the deal reaches exchange.
+      if (json?.amlWarning?.message) {
+        toast({
+          title: "Promoted — AML follow-up needed",
+          description: json.amlWarning.message,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Promoted to Solicitors" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });

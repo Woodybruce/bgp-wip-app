@@ -4206,7 +4206,37 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
-      res.json({ deal, unit: { ...unit, dealId: deal?.id ?? unit.dealId, marketingStatus: "SOL" } });
+      // AML warn-but-allow: run the same KYC counterparty check that
+      // PUT /api/crm/deals/:id enforces as a hard block. We don't reject
+      // here because the promotion is the moment of capture (Layla has
+      // just filled in the tenant + landlord on the WIP modal) — but we
+      // do attach the warning to the response so the UI can flag any
+      // counterparty that's still missing KYC, and log it server-side.
+      let amlWarning: { hasCounterparties: boolean; notReady: any[]; message: string | null } | null = null;
+      if (deal) {
+        try {
+          const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
+          const result = await checkCounterpartyAml({
+            landlordId: (deal as any).landlordId,
+            tenantId: (deal as any).tenantId,
+            vendorId: (deal as any).vendorId,
+            purchaserId: (deal as any).purchaserId,
+            landlordEntityId: (deal as any).landlordEntityId,
+            tenantEntityId: (deal as any).tenantEntityId,
+            vendorEntityId: (deal as any).vendorEntityId,
+            purchaserEntityId: (deal as any).purchaserEntityId,
+          });
+          const msg = formatAmlWarning(result);
+          if (msg) {
+            amlWarning = { hasCounterparties: result.hasCounterparties, notReady: result.notReady, message: msg };
+            console.warn(`[promote-unit] AML warning for deal ${deal.id}: ${msg}`);
+          }
+        } catch (e: any) {
+          console.warn(`[promote-unit] AML pre-check failed:`, e?.message);
+        }
+      }
+
+      res.json({ deal, unit: { ...unit, dealId: deal?.id ?? unit.dealId, marketingStatus: "SOL" }, amlWarning });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to promote unit" });
     }
