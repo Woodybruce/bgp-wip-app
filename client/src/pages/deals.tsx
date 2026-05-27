@@ -4591,6 +4591,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { activeTeam } = useTeam();
+  // Saved Views / per-user localStorage key — without scoping by user id,
+  // two users sharing a browser see each other's saved views.
+  const { data: currentUserForViews } = useQuery<{ id?: string | number; email?: string }>({ queryKey: ["/api/auth/me"] });
   const urlParams = new URLSearchParams(window.location.search);
   const urlTeamParam = urlParams.get("team");
   const [search, setSearch] = useState("");
@@ -4906,15 +4909,26 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   }, [columnFilters]);
 
   // --- Saved filter views (localStorage) ---
-  const SAVED_VIEWS_KEY = "bgp_saved_deal_views";
+  // Scoped per user so two people sharing a browser don't pollute each
+  // other's saved views. Falls back to the legacy unscoped key for
+  // anonymous sessions / first paint before the user query resolves.
+  const SAVED_VIEWS_KEY = currentUserForViews?.id
+    ? `bgp_saved_deal_views:${currentUserForViews.id}`
+    : currentUserForViews?.email
+      ? `bgp_saved_deal_views:${currentUserForViews.email.toLowerCase()}`
+      : "bgp_saved_deal_views";
   type SavedView = { name: string; filters: { search: string; activeGroup: string; columnFilters: Record<string, string[]> } };
 
   const getSavedViews = useCallback((): SavedView[] => {
     try { return JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY) || "[]"); } catch { return []; }
-  }, []);
+  }, [SAVED_VIEWS_KEY]);
 
   const [savedViews, setSavedViews] = useState<SavedView[]>(getSavedViews);
   const [savedViewsOpen, setSavedViewsOpen] = useState(false);
+
+  // Re-load when the storage key changes (e.g. user query resolves and
+  // we switch from the unscoped fallback to the per-user key).
+  useEffect(() => { setSavedViews(getSavedViews()); }, [getSavedViews]);
 
   const handleSaveView = useCallback(() => {
     const name = window.prompt("Name this saved view:");
@@ -4927,7 +4941,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views));
     setSavedViews(views);
     toast({ title: "View saved", description: `"${name.trim()}" has been saved.` });
-  }, [search, activeGroup, columnFilters, getSavedViews, toast]);
+  }, [search, activeGroup, columnFilters, getSavedViews, toast, SAVED_VIEWS_KEY]);
 
   const handleApplyView = useCallback((view: SavedView) => {
     setSearch(view.filters.search || "");
@@ -4942,7 +4956,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views));
     setSavedViews(views);
     toast({ title: "View deleted" });
-  }, [getSavedViews, toast]);
+  }, [getSavedViews, toast, SAVED_VIEWS_KEY]);
   // --- End saved filter views ---
 
   const baseDeals = useMemo(() => {
@@ -5040,6 +5054,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }))
       .filter(s => s.count > 0);
   }, [teamFilteredDeals, statusValues, isCompsMode, mode]);
+
+  // If the last deal matching the active filter chip moves out of the
+  // view, the chip itself is hidden (count==0 filter above). Without
+  // this, activeGroup stays pointing at a now-invisible chip and the
+  // board reads as empty with no way to clear the filter.
+  useEffect(() => {
+    if (activeGroup !== "all" && !statusCounts.some(s => s.name === activeGroup)) {
+      setActiveGroup("all");
+    }
+  }, [statusCounts, activeGroup]);
 
   if (params?.id && !isNegotiationsMode) {
     return <DealDetail id={params.id} isComps={isCompsMode} />;

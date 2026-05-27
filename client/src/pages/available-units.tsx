@@ -241,6 +241,7 @@ function formToPayload(f: UnitFormState) {
     notes: f.notes || null,
     restrictions: f.restrictions || null,
     fee: f.fee ? parseFloat(f.fee) : null,
+    feePercentage: f.feePercentage ? parseFloat(f.feePercentage) : null,
     marketingStartDate: f.marketingStartDate || null,
     agentUserIds: f.agentUserIds.length > 0 ? f.agentUserIds : null,
     landlordId: f.landlordId || null,

@@ -3101,6 +3101,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               console.warn("[available-units POST] property landlord backfill failed:", e.message);
             }
           }
+          // feePercentage: comes only from the Add-Unit form body (the
+          // available_units table doesn't carry it). Without this the
+          // auto-created deal loses the % the user typed and reopens blank.
+          const feePctRaw = (req.body as any).feePercentage;
+          const feePct = feePctRaw != null && feePctRaw !== ""
+            ? parseFloat(String(feePctRaw))
+            : null;
           const deal = await storage.createCrmDeal({
             name: property
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
@@ -3111,6 +3118,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             dealType: (req.body as any).dealType || "New Letting",
             internalAgent: unit.agentUserIds || [],
             fee: unit.fee ?? undefined,
+            feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : undefined,
             rentPa: unit.askingRent ?? undefined,
             totalAreaSqft: unit.sqft ?? undefined,
             landlordId: landlordId || undefined,
@@ -4119,6 +4127,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         team: body.team || [],
         internalAgent: body.agent ? [body.agent] : [],
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
+        feePercentage: body.feePercentage != null && body.feePercentage !== ""
+          ? parseFloat(String(body.feePercentage))
+          : undefined,
         feeAgreement: body.feeAgreement || undefined,
         rentPa: body.askingRent ? parseFloat(body.askingRent) : (unit.askingRent || undefined),
         totalAreaSqft: body.totalAreaSqft ? parseFloat(body.totalAreaSqft) : (unit.sqft || undefined),
