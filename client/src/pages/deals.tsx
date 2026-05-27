@@ -118,7 +118,7 @@ import { EntityCombobox } from "@/components/entity-combobox";
 import { PropertyCombobox } from "@/components/property-combobox";
 import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
-import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
+import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
 
 // Canonical 10-code colour map. Legacy strings retained as fallbacks for any
 // rows that haven't yet been touched by the migration.
@@ -1386,9 +1386,13 @@ export function DealFormDialog({
   }, [open, deal]);
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
-  const APPROVAL_STATUSES = ["Invoiced", "Completed"];
-  const isApprovalStatus = statusChanged && APPROVAL_STATUSES.includes(form.status);
-  const isCompletingNow = statusChanged && form.status === "Completed";
+  // Compare against canonical codes — form.status holds the code after the
+  // status migration, so the old label-based check ["Invoiced","Completed"]
+  // never fired and let users save past the approval gate without warning.
+  const APPROVAL_STATUS_CODES: DealStatusCode[] = ["INV", "COM"];
+  const formStatusCode = legacyToCode(form.status);
+  const isApprovalStatus = statusChanged && formStatusCode !== null && APPROVAL_STATUS_CODES.includes(formStatusCode);
+  const isCompletingNow = statusChanged && formStatusCode === "COM";
 
   const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string }>({
     queryKey: ["/api/auth/me"],
@@ -1945,7 +1949,7 @@ export function DealFormDialog({
 
                   {showRent && (
                     <div>
-                      <Label>Headline Rent (\u00A3 p.a.)</Label>
+                      <Label>Headline Rent ({"\u00A3"} p.a.)</Label>
                       <Input type="number" min="0" value={form.rentPa} onChange={(e) => set("rentPa", e.target.value)} data-testid="input-deal-rent-pa" />
                     </div>
                   )}
@@ -4571,8 +4575,11 @@ function AiMatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   );
 }
 
-const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
-const COMPLETED_STATUSES = ["Invoiced", "Billed", "Exchanged", "Completed"];
+// Canonical codes only — `crm_deals.status` is the source of truth post-migration.
+// All comparison sites must route through legacyToCode() so legacy free-text rows
+// still in the DB (e.g. "Under Negotiation", "Billed") match correctly.
+const NEGOTIATION_STATUS_CODES: DealStatusCode[] = ["NEG"];
+const COMPLETED_STATUS_CODES: DealStatusCode[] = ["EXC", "COM", "INV"];
 const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "negotiations" } = {}) {
@@ -4863,8 +4870,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     // pre-instruction codes (REP/SPEC/LIVE/AVA) live on the Letting/Investment
     // trackers and WIT is hidden from WIP.
     if (mode === "wip") return [...WIP_STATUSES];
-    const s = new Set<string>();
-    deals.forEach((d) => { if (d.status) s.add(d.status); });
+    // Always return canonical codes — legacy free-text rows still in the DB
+    // are normalised through legacyToCode so chips bucket correctly.
+    const s = new Set<DealStatusCode>();
+    deals.forEach((d) => {
+      const code = legacyToCode(d.status);
+      if (code) s.add(code);
+    });
     return Array.from(s).sort();
   }, [deals, mode]);
 
@@ -4935,10 +4947,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const baseDeals = useMemo(() => {
     if (isCompsMode) {
-      return deals.filter(d => COMPLETED_STATUSES.includes(d.status || ""));
+      return deals.filter(d => {
+        const code = legacyToCode(d.status);
+        return code !== null && COMPLETED_STATUS_CODES.includes(code);
+      });
     }
     if (isNegotiationsMode) {
-      return deals.filter(d => NEGOTIATION_STATUSES.includes(d.status || "") && !migratedDealIds.has(d.id));
+      return deals.filter(d => {
+        const code = legacyToCode(d.status);
+        return code !== null && NEGOTIATION_STATUS_CODES.includes(code) && !migratedDealIds.has(d.id);
+      });
     }
     // WIP page: client-side guard so pre-instruction tracker deals (REP/SPEC/
     // LIVE/AVA) and WIT can never leak in, regardless of server filter state.
@@ -5013,14 +5031,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const statusCounts = useMemo(() => {
     return statusValues
-      .filter(s => isCompsMode ? COMPLETED_STATUSES.includes(s) : true)
+      .filter(s => isCompsMode ? COMPLETED_STATUS_CODES.includes(s as DealStatusCode) : true)
       .map((s) => ({
         name: s,
-        // On WIP, statusValues are canonical codes; match via legacyToCode so
-        // older free-text statuses still bucket into the right chip.
-        count: teamFilteredDeals.filter((d) =>
-          mode === "wip" ? legacyToCode(d.status) === s : d.status === s
-        ).length,
+        // statusValues are canonical codes across all modes — match via
+        // legacyToCode so older free-text rows still bucket into the right chip.
+        count: teamFilteredDeals.filter((d) => legacyToCode(d.status) === s).length,
       }))
       .filter(s => s.count > 0);
   }, [teamFilteredDeals, statusValues, isCompsMode, mode]);
