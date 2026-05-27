@@ -193,7 +193,8 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
   const { getCategoryCode } = await import("./expense-categories");
   const xeroCode = (await getCategoryCode(refinedCategory)) || EXPENSE_CATEGORY_MAP[refinedCategory]?.code;
 
-  // Update the expense
+  // Update the expense (without status — submitForApproval handles that
+  // along with flag-computation and approver assignment).
   await db.update(expenses).set({
     merchant: parsed.merchant || target.merchant,
     category: refinedCategory,
@@ -204,7 +205,6 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
     transactionDate: target.transactionDate || (parsed.date ? new Date(parsed.date) : new Date()),
     isPersonal: /\bpersonal\b/i.test(args.caption),
     receiptFilename: `receipt_${target.id}.${(mimeType || "image/jpeg").split("/")[1]}`,
-    status: "pending_approval",
     updatedAt: new Date(),
   } as any).where(eq(expenses.id, target.id));
 
@@ -215,6 +215,11 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
     mimeType,
     filename: `receipt_${target.id}.${(mimeType || "image/jpeg").split("/")[1]}`,
   });
+
+  // Submit to approval workflow — computes flags + resolves approver.
+  // Submitter resolved from cardholder.userId by the helper.
+  const { submitForApproval } = await import("./expense-approval");
+  await submitForApproval(target.id, null);
 
   // Auto-post to Xero (Wendy reviews monthly per policy)
   let xeroResult: { posted: boolean; error?: string } = { posted: false };

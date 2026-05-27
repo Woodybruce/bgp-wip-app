@@ -1116,6 +1116,23 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS tenant_company_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS landlord_company_id VARCHAR`).catch(() => {});
 
+  // expenses approval workflow columns — mirror shared/schema.ts. Runtime
+  // DDL so the migration lands without a drizzle-kit step.
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS related_property_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS submitter_user_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS submitted_for_approval_at TIMESTAMP`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approver_user_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_by_user_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approval_notes TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_by_user_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_reason TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS flagged_for_review BOOLEAN DEFAULT false`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS flag_reasons TEXT[]`).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_expenses_approver_user_id ON expenses (approver_user_id) WHERE status = 'pending_approval'`).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_expenses_status_submitted ON expenses (status, submitted_for_approval_at) WHERE status = 'pending_approval'`).catch(() => {});
+
   // internalAgentIds shadow column for the name → id migration. The
   // name column stays in place (dual-write) until every reader migrates.
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS internal_agent_ids VARCHAR[]`)

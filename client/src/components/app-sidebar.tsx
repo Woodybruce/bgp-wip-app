@@ -90,6 +90,7 @@ const coreNavBase = [
   // memory still works.
   { title: "Properties", url: "/deals/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
+  { title: "Expense Approvals", url: "/expenses/approvals", icon: Receipt },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Requirements", url: "/requirements", icon: FileText },
   // Items below are still being polished — admin-only until ready for the firm

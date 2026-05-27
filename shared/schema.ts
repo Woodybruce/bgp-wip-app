@@ -2917,9 +2917,28 @@ export const expenses = pgTable("expenses", {
   isPersonal: boolean("is_personal").default(false),
   isClientRechargeable: boolean("is_client_rechargeable").default(false),
   relatedDealId: varchar("related_deal_id"),
+  relatedPropertyId: varchar("related_property_id"),
   mileageMiles: real("mileage_miles"),
   notes: text("notes"),
   createdBy: text("created_by"),
+  // Approval workflow — populated when the expense is submitted for
+  // approval. submitterUserId is set from the auth session; approverUserId
+  // is resolved from users.managerId at submission time (NULL = falls
+  // into the Layla / Wendy shared inbox). flaggedForReview is auto-set
+  // when the submission fails any of the checks in expense-flags.ts
+  // (no receipt, no business purpose on entertainment, etc.) so the
+  // approver walks into a pre-sorted inbox.
+  submitterUserId: varchar("submitter_user_id"),
+  submittedForApprovalAt: timestamp("submitted_for_approval_at"),
+  approverUserId: varchar("approver_user_id"),
+  approvedAt: timestamp("approved_at"),
+  approvedByUserId: varchar("approved_by_user_id"),
+  approvalNotes: text("approval_notes"),
+  rejectedAt: timestamp("rejected_at"),
+  rejectedByUserId: varchar("rejected_by_user_id"),
+  rejectedReason: text("rejected_reason"),
+  flaggedForReview: boolean("flagged_for_review").default(false),
+  flagReasons: text("flag_reasons").array(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -17,7 +17,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { db } from "./db";
 import { stripeCardholders, stripeCards, expenses, expenseReceipts, users as usersTable } from "@shared/schema";
-import { eq, desc, and, gte, sql } from "drizzle-orm";
+import { eq, desc, and, gte, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
 import { saveFile } from "./file-storage";
@@ -786,8 +786,12 @@ export function setupStripeIssuingRoutes(app: Express) {
           if (code) updates.xeroAccountCode = code;
         }
         if (parsed.totalPence && !exp.amountPence) updates.amountPence = parsed.totalPence;
-        updates.status = "pending_approval";
         await db.update(expenses).set(updates).where(eq(expenses.id, expenseId));
+        // Transition to pending_approval via the workflow helper — computes
+        // flag reasons + resolves the approver from users.managerId.
+        const { submitForApproval } = await import("./expense-approval");
+        const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
+        await submitForApproval(expenseId, userIdForSubmit);
 
         // Auto-post to Xero if confidence is high
         if (parsed.confidence === "high" && updates.category) {
@@ -894,7 +898,6 @@ export function setupStripeIssuingRoutes(app: Express) {
               receiptFilename: file.originalname,
               receiptUrl: storageKey,
               updatedAt: new Date(),
-              status: "pending_approval",
             };
             if (parsed.merchant && !target.merchant) updates.merchant = parsed.merchant;
             if (parsed.category && !target.category) {
@@ -903,6 +906,8 @@ export function setupStripeIssuingRoutes(app: Express) {
               if (code) updates.xeroAccountCode = code;
             }
             await db.update(expenses).set(updates).where(eq(expenses.id, target.id));
+            const { submitForApproval } = await import("./expense-approval");
+            await submitForApproval(target.id, userId);
 
             results.push({
               filename: file.originalname,
@@ -1030,9 +1035,11 @@ export function setupStripeIssuingRoutes(app: Express) {
         isPersonal: true,
         category: "Personal (deduct from payroll)",
         xeroAccountCode: "910",
-        status: "pending_approval",
         updatedAt: new Date(),
       }).where(eq(expenses.id, String(req.params.id)));
+      const { submitForApproval } = await import("./expense-approval");
+      const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
+      await submitForApproval(id, userIdForSubmit);
       res.json({ success: true });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
@@ -1041,7 +1048,164 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Approve & post to Xero (one-click)
-  app.post("/api/expenses/:id/approve", requireAdmin, async (req: Request, res: Response) => {
+  // Approval inbox — what the current user is allowed to act on.
+  // Approvers see: rows where approver_user_id matches them, plus (if
+  // they're in the fallback pool or admin) rows where approver_user_id
+  // is NULL. Grouped by submitter so the UI can show "Layla's pending",
+  // "Tom's pending" etc.
+  app.get("/api/expenses/pending-approval", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      const { listPendingForApprover } = await import("./expense-approval");
+      const rows = await listPendingForApprover(userId);
+
+      // Hydrate with submitter name + cardholder name for display.
+      const submitterIds = Array.from(new Set(rows.map(r => r.submitterUserId).filter(Boolean) as string[]));
+      const cardholderIds = Array.from(new Set(rows.map(r => r.cardholderId).filter(Boolean) as string[]));
+      const [submitters, cardholders] = await Promise.all([
+        submitterIds.length > 0
+          ? db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+              .from(usersTable).where(inArray(usersTable.id, submitterIds))
+          : Promise.resolve([]),
+        cardholderIds.length > 0
+          ? db.select().from(stripeCardholders).where(inArray(stripeCardholders.id, cardholderIds))
+          : Promise.resolve([]),
+      ]);
+      const submitterById = new Map(submitters.map(s => [s.id, s]));
+      const cardholderById = new Map(cardholders.map(c => [c.id, c]));
+
+      const enriched = rows.map(r => ({
+        ...r,
+        submitterName: r.submitterUserId ? submitterById.get(r.submitterUserId)?.name : null,
+        cardholderName: r.cardholderId ? cardholderById.get(r.cardholderId)?.userName : null,
+      }));
+      res.json(enriched);
+    } catch (e: any) {
+      console.error("[expenses] pending-approval error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Approve a single expense. Sets status + audit fields, then posts to
+  // Xero. The Xero post can fail (e.g. not connected) without unwinding
+  // the approval — the row sits at status=approved and Wendy can retry
+  // the post separately.
+  app.post("/api/expenses/:id/approve", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      const expenseId = String(req.params.id);
+
+      const { canApproveExpense } = await import("./expense-approval");
+      if (!(await canApproveExpense(userId, expenseId))) {
+        return res.status(403).json({ error: "Not authorised to approve this expense" });
+      }
+
+      const notes = typeof req.body?.notes === "string" ? req.body.notes : null;
+      await db.update(expenses).set({
+        status: "approved",
+        approvedAt: new Date(),
+        approvedByUserId: userId,
+        approvalNotes: notes,
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, expenseId));
+
+      // Auto-post to Xero. Failure leaves the row at approved=true so
+      // the post can be retried via /post-to-xero without re-approving.
+      let xeroResult: any = null;
+      try {
+        const { withSystemXero } = await import("./xero-system-session");
+        const { postExpenseToXero } = await import("./expense-xero-poster");
+        xeroResult = await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
+      } catch (e: any) {
+        console.warn("[expenses] approve → xero post failed (row stays approved):", e?.message);
+        xeroResult = { posted: false, error: e?.message };
+      }
+
+      res.json({ success: true, xero: xeroResult });
+    } catch (e: any) {
+      console.error("[expenses] approve error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Bulk approve — the "approve all clean" button on the inbox. Only
+  // approves rows the user actually has permission for; silently skips
+  // ones they don't. Returns per-row outcomes.
+  app.post("/api/expenses/approve-bulk", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+      if (ids.length === 0) return res.status(400).json({ error: "ids array required" });
+
+      const { canApproveExpense } = await import("./expense-approval");
+      const { withSystemXero } = await import("./xero-system-session");
+      const { postExpenseToXero } = await import("./expense-xero-poster");
+
+      const outcomes: any[] = [];
+      for (const id of ids) {
+        if (!(await canApproveExpense(userId, id))) {
+          outcomes.push({ id, ok: false, error: "not authorised" });
+          continue;
+        }
+        await db.update(expenses).set({
+          status: "approved",
+          approvedAt: new Date(),
+          approvedByUserId: userId,
+          updatedAt: new Date(),
+        }).where(eq(expenses.id, id));
+        try {
+          const xero = await withSystemXero((session) => postExpenseToXero({ session, expenseId: id }));
+          outcomes.push({ id, ok: true, xero });
+        } catch (e: any) {
+          outcomes.push({ id, ok: true, xero: { posted: false, error: e?.message } });
+        }
+      }
+      const approved = outcomes.filter(o => o.ok).length;
+      const posted = outcomes.filter(o => o.xero?.posted).length;
+      res.json({ ok: true, approved, posted, outcomes });
+    } catch (e: any) {
+      console.error("[expenses] approve-bulk error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Reject an expense. Permanent — the row stays for audit, no Xero
+  // post, agent can resubmit a corrected version.
+  app.post("/api/expenses/:id/reject", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      const expenseId = String(req.params.id);
+
+      const { canApproveExpense } = await import("./expense-approval");
+      if (!(await canApproveExpense(userId, expenseId))) {
+        return res.status(403).json({ error: "Not authorised to reject this expense" });
+      }
+      const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+        ? req.body.reason.trim()
+        : "No reason given";
+
+      await db.update(expenses).set({
+        status: "rejected",
+        rejectedAt: new Date(),
+        rejectedByUserId: userId,
+        rejectedReason: reason,
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, expenseId));
+
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] reject error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Legacy direct-post-to-Xero — keeps working for admin retries on
+  // approved rows whose initial Xero post failed.
+  app.post("/api/expenses/:id/post-to-xero", requireAdmin, async (req: Request, res: Response) => {
     try {
       const expenseId = String(req.params.id);
       const { withSystemXero } = await import("./xero-system-session");

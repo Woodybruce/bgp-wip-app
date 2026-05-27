@@ -100,11 +100,14 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
       };
     }
 
-    // 4. Insert the expense.
+    // 4. Insert the expense. Status starts at pending_receipt; the
+    // submitForApproval helper below transitions it to pending_approval
+    // after the receipt is persisted so flags compute against the
+    // complete row.
     const [inserted] = await db.insert(expenses).values({
       cardholderId,
       type: "cash",                           // non-Stripe submission
-      status: "pending_approval",             // skip pending_receipt — we have the receipt
+      status: "pending_receipt",
       merchant: parsed.merchant || null,
       amountPence: parsed.totalPence,
       currency: parsed.currency || "gbp",
@@ -138,6 +141,11 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
       receiptFilename: fname,
       updatedAt: new Date(),
     } as any).where(eq(expenses.id, inserted.id));
+
+    // Transition to pending_approval — computes flag reasons + assigns
+    // the approver from the submitter's manager.
+    const { submitForApproval } = await import("./expense-approval");
+    await submitForApproval(inserted.id, args.submitter.userId || null);
 
     // 6. Auto-post to Xero when category resolved + parser confidence is high.
     let xeroPosted = false;
