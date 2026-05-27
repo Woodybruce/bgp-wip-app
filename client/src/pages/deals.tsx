@@ -2429,7 +2429,6 @@ function HotsChecklistDialog({
       setAiSummary("");
       setExtractedData(null);
       setMissingFields([]);
-      setKycResult(null);
       setPropertySearch("");
     }
   }, [open]);
