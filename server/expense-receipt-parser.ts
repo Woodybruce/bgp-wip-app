@@ -64,7 +64,8 @@ const CATEGORIES = [
   "Other Expenses",
 ];
 
-const PROMPT = `You are an expense receipt parser for Bruce Gillingham Pollard, a London commercial property agency.
+function buildPrompt(categories: string[]): string {
+  return `You are an expense receipt parser for Bruce Gillingham Pollard, a London commercial property agency.
 
 Extract the following from the receipt image:
 - merchant: business name (e.g. "Quo Vadis", "Pret A Manger", "Uber", "Trainline", "Apple")
@@ -79,7 +80,7 @@ Extract the following from the receipt image:
 - paymentMethod: "card" / "cash" / "contactless" if shown
 - cardLast4: last 4 digits if shown
 - category: best-fit BGP category from this list:
-${CATEGORIES.map(c => `  - ${c}`).join("\n")}
+${categories.map(c => `  - ${c}`).join("\n")}
 
 Categorisation hints:
 - Restaurants/pubs/bars → "Meals & Drinks" by default (the calendar context will refine to Client/Agent/Staff Entertainment later)
@@ -100,6 +101,7 @@ Categorisation hints:
 Set confidence to "high" if the receipt is clear and all key fields visible, "medium" if some fields unclear, "low" if image is blurry/partial.
 
 Respond with ONLY valid JSON, no markdown fence, no commentary. If a field is not visible, omit it (don't guess).`;
+}
 
 export async function parseReceiptImage(args: {
   imageBytes: Buffer;
@@ -108,6 +110,19 @@ export async function parseReceiptImage(args: {
   const { buffer, mediaType } = await normaliseForClaude(args.imageBytes, args.mimeType);
   const base64 = buffer.toString("base64");
 
+  // Pull the live Xero category list at parse time so the LLM picks
+  // from Wendy's current chart of accounts, not the historic static
+  // list. Falls back to the static map if Xero is unreachable.
+  let categoryList: string[];
+  try {
+    const { getExpenseCategories } = await import("./expense-categories");
+    const live = await getExpenseCategories();
+    categoryList = live.length > 0 ? live.map(c => c.name) : CATEGORIES;
+  } catch {
+    categoryList = CATEGORIES;
+  }
+  const liveSet = new Set(categoryList);
+
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
     max_tokens: 1024,
@@ -115,7 +130,7 @@ export async function parseReceiptImage(args: {
       role: "user",
       content: [
         { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-        { type: "text", text: PROMPT },
+        { type: "text", text: buildPrompt(categoryList) },
       ],
     }],
   });
@@ -142,7 +157,7 @@ export async function parseReceiptImage(args: {
     items: parsed.items,
     paymentMethod: parsed.paymentMethod,
     cardLast4: parsed.cardLast4,
-    category: CATEGORIES.includes(parsed.category) ? parsed.category : "Other Expenses",
+    category: liveSet.has(parsed.category) ? parsed.category : "Other Expenses",
     confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "medium",
     rawText: text,
   };

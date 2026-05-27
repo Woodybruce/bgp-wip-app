@@ -72,7 +72,10 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
     const txnDate = args.transactionDate
       || (parsed.date ? new Date(parsed.date) : new Date());
     const category = args.category || parsed.category;
-    const xeroCode = category ? EXPENSE_CATEGORY_MAP[category]?.code : undefined;
+    const { getCategoryCode } = await import("./expense-categories");
+    const xeroCode = category
+      ? (await getCategoryCode(category)) || EXPENSE_CATEGORY_MAP[category]?.code
+      : undefined;
     const isPersonal = /\bpersonal\b/i.test(args.caption || "");
 
     // 3. Dedupe — same cardholder + merchant + amount within 5 minutes is

@@ -190,7 +190,8 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
     refinedCategory = "Personal (deduct from payroll)";
   }
 
-  const xeroCode = EXPENSE_CATEGORY_MAP[refinedCategory]?.code;
+  const { getCategoryCode } = await import("./expense-categories");
+  const xeroCode = (await getCategoryCode(refinedCategory)) || EXPENSE_CATEGORY_MAP[refinedCategory]?.code;
 
   // Update the expense
   await db.update(expenses).set({

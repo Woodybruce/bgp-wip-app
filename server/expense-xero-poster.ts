@@ -22,7 +22,17 @@ export async function postExpenseToXero(args: {
     ? await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1)
     : [null];
 
-  const accountCode = exp.xeroAccountCode || (exp.category && EXPENSE_CATEGORY_MAP[exp.category]?.code) || "900";
+  // Prefer the code stamped on the expense at submission/edit time. Only
+  // fall back to a category → code lookup for rows submitted before the
+  // code stamp existed, or for receipt-parser auto-categorisations that
+  // didn't catch the Xero side. Final fallback "900" = Other Expenses
+  // so a post never blocks on a missing code.
+  let accountCode = exp.xeroAccountCode;
+  if (!accountCode && exp.category) {
+    const { getCategoryCode } = await import("./expense-categories");
+    accountCode = (await getCategoryCode(exp.category)) || EXPENSE_CATEGORY_MAP[exp.category]?.code;
+  }
+  accountCode = accountCode || "900";
   const amountGbp = exp.amountPence / 100;
 
   // Build tracking categories — pull live from Xero so we use the right IDs

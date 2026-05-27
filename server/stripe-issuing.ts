@@ -396,6 +396,36 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Nominal codes / expense categories sourced from Xero. The dropdown
+  // on the expense edit / submit dialogs reads from here; Wendy keeps
+  // the list current in Xero rather than asking a dev to edit a map.
+  // Falls back to the legacy static map when Xero is unreachable so
+  // submissions don't block on connectivity.
+  app.get("/api/expenses/nominal-codes", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { getExpenseCategories } = await import("./expense-categories");
+      const categories = await getExpenseCategories();
+      res.json(categories);
+    } catch (e: any) {
+      console.error("[expenses] nominal-codes error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Force a fresh fetch from Xero (Wendy's button after she edits the chart
+  // of accounts). Admin-only because it bypasses the 10-min TTL cache.
+  app.post("/api/expenses/nominal-codes/refresh", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { getExpenseCategories, invalidateCache } = await import("./expense-categories");
+      invalidateCache();
+      const categories = await getExpenseCategories({ forceRefresh: true });
+      res.json({ ok: true, count: categories.length, categories });
+    } catch (e: any) {
+      console.error("[expenses] nominal-codes refresh error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Create cardholder + issue virtual card
   app.post("/api/expenses/cardholders", requireAdmin, async (req: Request, res: Response) => {
     try {
@@ -504,8 +534,13 @@ export function setupStripeIssuingRoutes(app: Express) {
       for (const k of allowed) {
         if (req.body[k] !== undefined) updates[k] = req.body[k];
       }
-      if (updates.category && EXPENSE_CATEGORY_MAP[updates.category]) {
-        updates.xeroAccountCode = EXPENSE_CATEGORY_MAP[updates.category].code;
+      if (updates.category) {
+        // Prefer the live Xero list (Wendy's source of truth); fall back
+        // to the static map for renamed/removed categories so old rows
+        // still resolve.
+        const { getCategoryCode } = await import("./expense-categories");
+        const code = await getCategoryCode(String(updates.category));
+        if (code) updates.xeroAccountCode = code;
       }
       await db.update(expenses).set(updates as any).where(eq(expenses.id, id));
       res.json({ success: true });
@@ -732,7 +767,9 @@ export function setupStripeIssuingRoutes(app: Express) {
         if (parsed.merchant && !exp.merchant) updates.merchant = parsed.merchant;
         if (parsed.category && !exp.category) {
           updates.category = parsed.category;
-          if (EXPENSE_CATEGORY_MAP[parsed.category]) updates.xeroAccountCode = EXPENSE_CATEGORY_MAP[parsed.category].code;
+          const { getCategoryCode } = await import("./expense-categories");
+          const code = await getCategoryCode(parsed.category);
+          if (code) updates.xeroAccountCode = code;
         }
         if (parsed.totalPence && !exp.amountPence) updates.amountPence = parsed.totalPence;
         updates.status = "pending_approval";
