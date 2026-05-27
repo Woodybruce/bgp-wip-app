@@ -16,7 +16,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { db } from "./db";
-import { stripeCardholders, stripeCards, expenses, expenseReceipts, users as usersTable } from "@shared/schema";
+import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAttendees, crmContacts, users as usersTable } from "@shared/schema";
 import { eq, desc, and, gte, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
@@ -523,6 +523,61 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // List attendees on an entertainment expense — hydrated with current
+  // contact name + company so the picker can show them without an extra
+  // round-trip per chip.
+  app.get("/api/expenses/:id/attendees", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const rows = await db
+        .select({
+          id: expenseAttendees.contactId,
+          name: crmContacts.name,
+          email: crmContacts.email,
+          companyId: crmContacts.companyId,
+        })
+        .from(expenseAttendees)
+        .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
+        .where(eq(expenseAttendees.expenseId, id));
+      res.json(rows);
+    } catch (e: any) {
+      console.error("[expenses] attendees-get error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Replace the attendee list. Caller sends { contactIds: string[] };
+  // we wipe the existing rows and re-insert. Idempotent.
+  app.put("/api/expenses/:id/attendees", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const contactIds: string[] = Array.isArray(req.body?.contactIds)
+        ? req.body.contactIds.filter((x: any) => typeof x === "string" && x.length > 0)
+        : [];
+
+      await db.delete(expenseAttendees).where(eq(expenseAttendees.expenseId, id));
+      if (contactIds.length > 0) {
+        await db.insert(expenseAttendees).values(
+          contactIds.map(cid => ({ expenseId: id, contactId: cid }))
+        ).onConflictDoNothing();
+      }
+      // Re-compute flags — adding attendees clears entertainment_no_attendees.
+      const { computeFlagReasons } = await import("./expense-approval");
+      const reasons = await computeFlagReasons(id);
+      await db.update(expenses).set({
+        flaggedForReview: reasons.length > 0,
+        flagReasons: reasons,
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, id));
+      res.json({ ok: true, count: contactIds.length });
+    } catch (e: any) {
+      console.error("[expenses] attendees-put error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Update expense (owner or admin)
   app.patch("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -622,6 +677,30 @@ export function setupStripeIssuingRoutes(app: Express) {
 
       const myExpenses = await db.select().from(expenses).where(eq(expenses.cardholderId, ch.id)).orderBy(desc(expenses.transactionDate)).limit(100);
 
+      // Hydrate attendees from the join table — saves a per-row fetch
+      // when the dialog opens.
+      const expenseIds = myExpenses.map(e => e.id);
+      const attendeeRows = expenseIds.length > 0
+        ? await db
+            .select({
+              expenseId: expenseAttendees.expenseId,
+              contactId: expenseAttendees.contactId,
+              name: crmContacts.name,
+            })
+            .from(expenseAttendees)
+            .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
+            .where(inArray(expenseAttendees.expenseId, expenseIds))
+        : [];
+      const attendeesByExpense = new Map<string, { id: string; name: string | null }[]>();
+      for (const r of attendeeRows) {
+        if (!attendeesByExpense.has(r.expenseId)) attendeesByExpense.set(r.expenseId, []);
+        attendeesByExpense.get(r.expenseId)!.push({ id: r.contactId, name: r.name });
+      }
+      const enriched = myExpenses.map(e => ({
+        ...e,
+        attendeeContacts: attendeesByExpense.get(e.id) || [],
+      }));
+
       // Month-to-date spend
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
@@ -633,7 +712,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       res.json({
         cardholder: ch,
         card: card || null,
-        expenses: myExpenses,
+        expenses: enriched,
         summary: {
           monthlySpendPence: monthlySpend,
           monthlyLimitPence: ch.monthlyLimit,
@@ -1075,10 +1154,30 @@ export function setupStripeIssuingRoutes(app: Express) {
       const submitterById = new Map(submitters.map(s => [s.id, s]));
       const cardholderById = new Map(cardholders.map(c => [c.id, c]));
 
+      // Hydrate attendees in one query rather than N round-trips.
+      const expenseIds = rows.map(r => r.id);
+      const attendeeRows = expenseIds.length > 0
+        ? await db
+            .select({
+              expenseId: expenseAttendees.expenseId,
+              contactId: expenseAttendees.contactId,
+              name: crmContacts.name,
+            })
+            .from(expenseAttendees)
+            .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
+            .where(inArray(expenseAttendees.expenseId, expenseIds))
+        : [];
+      const attendeesByExpense = new Map<string, { id: string; name: string | null }[]>();
+      for (const r of attendeeRows) {
+        if (!attendeesByExpense.has(r.expenseId)) attendeesByExpense.set(r.expenseId, []);
+        attendeesByExpense.get(r.expenseId)!.push({ id: r.contactId, name: r.name });
+      }
+
       const enriched = rows.map(r => ({
         ...r,
         submitterName: r.submitterUserId ? submitterById.get(r.submitterUserId)?.name : null,
         cardholderName: r.cardholderId ? cardholderById.get(r.cardholderId)?.userName : null,
+        attendeeContacts: attendeesByExpense.get(r.id) || [],
       }));
       res.json(enriched);
     } catch (e: any) {

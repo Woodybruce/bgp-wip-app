@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   CreditCard, Eye, EyeOff, Copy, Check, Upload, Receipt, AlertCircle,
   CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil,
+  Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -26,11 +29,16 @@ interface Expense {
   businessPurpose: string | null;
   attendees: string | null;
   relatedDealId: string | null;
+  relatedPropertyId: string | null;
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  attendeeContacts?: { id: string; name: string | null }[];
 }
 interface NominalCode { code: string; name: string; }
+interface CrmContact { id: string; name: string; email?: string | null; companyId?: string | null; }
+interface CrmProperty { id: string; name: string; postcode?: string | null; }
+interface CrmDeal { id: string; name: string; status?: string | null; }
 interface Cardholder {
   id: string; userName: string; email: string; phone: string | null;
   monthlyLimit: number; dailyLimit: number; singleTxLimit: number;
@@ -471,14 +479,35 @@ export default function MyExpenses() {
   );
 }
 
+// Entertainment categories — when one of these is picked, the dialog
+// surfaces a "this is going to need attendees + a property/deal link
+// for HMRC" hint. Same set the server uses for flag computation.
+const ENTERTAINMENT_CATEGORIES = new Set([
+  "Client Entertainment",
+  "Agent Entertainment (External)",
+  "Staff Entertainment",
+  "Directors Meetings",
+  "Meals & Drinks",
+]);
+
 function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | null; onClose: () => void; onSaved: () => void }) {
   const { toast } = useToast();
   const open = !!expense;
 
-  // Category dropdown is sourced from Xero (via /api/expenses/nominal-codes)
-  // — Wendy edits the chart of accounts; categories update within 10 min.
   const { data: nominalCodes = [] } = useQuery<NominalCode[]>({
     queryKey: ["/api/expenses/nominal-codes"],
+    enabled: open,
+  });
+  const { data: contacts = [] } = useQuery<CrmContact[]>({
+    queryKey: ["/api/crm/contacts"],
+    enabled: open,
+  });
+  const { data: properties = [] } = useQuery<CrmProperty[]>({
+    queryKey: ["/api/crm/properties"],
+    enabled: open,
+  });
+  const { data: deals = [] } = useQuery<CrmDeal[]>({
+    queryKey: ["/api/crm/deals"],
     enabled: open,
   });
 
@@ -486,19 +515,24 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
   const [transactionDate, setTransactionDate] = useState("");
   const [category, setCategory] = useState("");
   const [businessPurpose, setBusinessPurpose] = useState("");
-  const [attendees, setAttendees] = useState("");
+  const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
+  const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
+  const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
 
-  // Re-seed the form whenever a new expense opens — useEffect via key prop.
-  const seedKey = expense?.id || "none";
-  const lastSeedRef = useRef<string>("");
-  if (expense && lastSeedRef.current !== seedKey) {
-    lastSeedRef.current = seedKey;
+  // Re-seed the form whenever a new expense opens.
+  useEffect(() => {
+    if (!expense) return;
     setMerchant(expense.merchant || "");
     setTransactionDate(expense.transactionDate ? expense.transactionDate.slice(0, 10) : "");
     setCategory(expense.category || "");
     setBusinessPurpose(expense.businessPurpose || "");
-    setAttendees(expense.attendees || "");
-  }
+    setAttendeeIds((expense.attendeeContacts || []).map(c => c.id));
+    setRelatedPropertyId(expense.relatedPropertyId || null);
+    setRelatedDealId(expense.relatedDealId || null);
+  }, [expense?.id]);
+
+  const showEntertainmentFields = ENTERTAINMENT_CATEGORIES.has(category);
+  const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -508,9 +542,11 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
         transactionDate: transactionDate ? new Date(transactionDate).toISOString() : null,
         category: category || null,
         businessPurpose: businessPurpose || null,
-        attendees: attendees || null,
+        relatedPropertyId: relatedPropertyId || null,
+        relatedDealId: relatedDealId || null,
       };
       await apiRequest("PATCH", `/api/expenses/${expense.id}`, payload);
+      await apiRequest("PUT", `/api/expenses/${expense.id}/attendees`, { contactIds: attendeeIds });
     },
     onSuccess: () => {
       toast({ title: "Expense updated" });
@@ -520,44 +556,34 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
   });
 
   if (!expense) return null;
+  const isPosted = !!expense.xeroExpenseId;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit expense</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground">
             Amount: <span className="font-mono font-medium">{fmt(expense.amountPence)}</span>
-            {expense.xeroExpenseId && <span className="ml-3 text-emerald-600">Posted to Xero — cannot edit</span>}
+            {isPosted && <span className="ml-3 text-emerald-600">Posted to Xero — cannot edit core fields</span>}
           </div>
 
-          <div>
-            <Label htmlFor="exp-merchant" className="text-xs">Merchant</Label>
-            <Input
-              id="exp-merchant"
-              value={merchant}
-              onChange={(e) => setMerchant(e.target.value)}
-              placeholder="e.g. Quo Vadis"
-              data-testid="input-expense-merchant"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="exp-date" className="text-xs">Transaction date</Label>
-            <Input
-              id="exp-date"
-              type="date"
-              value={transactionDate}
-              onChange={(e) => setTransactionDate(e.target.value)}
-              data-testid="input-expense-date"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="exp-merchant" className="text-xs">Merchant</Label>
+              <Input id="exp-merchant" value={merchant} onChange={(e) => setMerchant(e.target.value)} disabled={isPosted} placeholder="e.g. Quo Vadis" data-testid="input-expense-merchant" />
+            </div>
+            <div>
+              <Label htmlFor="exp-date" className="text-xs">Transaction date</Label>
+              <Input id="exp-date" type="date" value={transactionDate} onChange={(e) => setTransactionDate(e.target.value)} disabled={isPosted} data-testid="input-expense-date" />
+            </div>
           </div>
 
           <div>
             <Label htmlFor="exp-category" className="text-xs">Category (Xero nominal)</Label>
-            <Select value={category} onValueChange={setCategory}>
+            <Select value={category} onValueChange={setCategory} disabled={isPosted}>
               <SelectTrigger id="exp-category" data-testid="select-expense-category">
                 <SelectValue placeholder="Pick a category…" />
               </SelectTrigger>
@@ -582,27 +608,75 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
               rows={3}
               data-testid="input-expense-purpose"
             />
+            {showEntertainmentFields && (
+              <p className="text-[10px] text-amber-600 mt-1">
+                HMRC needs purpose + attendees for entertainment to be deductible — fill both in.
+              </p>
+            )}
           </div>
 
+          {/* Attendees — multi-pick from crm_contacts. Shown for all
+              categories (still useful for staff entertainment + meals),
+              but enforced as a flag only on entertainment. */}
           <div>
-            <Label htmlFor="exp-attendees" className="text-xs">Attendees</Label>
-            <Input
-              id="exp-attendees"
-              value={attendees}
-              onChange={(e) => setAttendees(e.target.value)}
-              placeholder="John Smith (BlackRock), Sarah Jones (M&G)"
-              data-testid="input-expense-attendees"
+            <Label className="text-xs flex items-center gap-1.5"><UsersIcon className="w-3 h-3" /> Attendees</Label>
+            <ContactMultiPicker
+              contacts={contacts}
+              selected={attendeeIds}
+              onChange={setAttendeeIds}
             />
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Free text for now — CRM contact picker coming in the next update.
-            </p>
+            {attendeeIds.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {attendeeIds.map((id) => {
+                  const c = contactById.get(id);
+                  return (
+                    <Badge key={id} variant="secondary" className="text-[10px] gap-1 pl-2 pr-1">
+                      {c?.name || id.slice(0, 8)}
+                      <button
+                        type="button"
+                        className="hover:text-red-500"
+                        onClick={() => setAttendeeIds(attendeeIds.filter(x => x !== id))}
+                        data-testid={`button-remove-attendee-${id}`}
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Property + Deal link — both optional. Useful for filtering
+              the expenses report by deal / property at year end. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs flex items-center gap-1.5"><Building2 className="w-3 h-3" /> Property</Label>
+              <SearchableCombobox
+                items={properties.map(p => ({ value: p.id, label: p.name, sub: p.postcode || undefined }))}
+                value={relatedPropertyId}
+                onChange={setRelatedPropertyId}
+                placeholder="Optional — pick a property"
+                testId="combobox-expense-property"
+              />
+            </div>
+            <div>
+              <Label className="text-xs flex items-center gap-1.5"><Briefcase className="w-3 h-3" /> Deal</Label>
+              <SearchableCombobox
+                items={deals.map(d => ({ value: d.id, label: d.name, sub: d.status || undefined }))}
+                value={relatedDealId}
+                onChange={setRelatedDealId}
+                placeholder="Optional — pick a deal"
+                testId="combobox-expense-deal"
+              />
+            </div>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending || !!expense.xeroExpenseId}
+            disabled={saveMutation.isPending}
             data-testid="button-save-expense"
           >
             {saveMutation.isPending && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
@@ -611,6 +685,116 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Searchable single-select combobox for property + deal pickers.
+// Keeps the dialog self-contained — the existing property-combobox
+// component carries Google Places autocomplete which isn't needed here.
+function SearchableCombobox({
+  items, value, onChange, placeholder, testId,
+}: {
+  items: { value: string; label: string; sub?: string }[];
+  value: string | null;
+  onChange: (v: string | null) => void;
+  placeholder?: string;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = value ? items.find(i => i.value === value) : null;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" role="combobox" className="w-full justify-between font-normal" data-testid={testId}>
+          <span className="truncate">{current?.label || placeholder || "—"}</span>
+          <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 shrink-0 ml-2" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
+        <Command>
+          <CommandInput placeholder="Search…" />
+          <CommandList>
+            <CommandEmpty>None found.</CommandEmpty>
+            <CommandGroup>
+              {value && (
+                <CommandItem
+                  onSelect={() => { onChange(null); setOpen(false); }}
+                  className="text-muted-foreground"
+                >
+                  <XIcon className="w-3.5 h-3.5 mr-2" /> Clear selection
+                </CommandItem>
+              )}
+              {items.slice(0, 200).map((i) => (
+                <CommandItem
+                  key={i.value}
+                  value={`${i.label} ${i.sub || ""}`}
+                  onSelect={() => { onChange(i.value); setOpen(false); }}
+                >
+                  <Check className={`w-3.5 h-3.5 mr-2 ${value === i.value ? "opacity-100" : "opacity-0"}`} />
+                  <div className="flex flex-col">
+                    <span>{i.label}</span>
+                    {i.sub && <span className="text-[10px] text-muted-foreground">{i.sub}</span>}
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// Multi-pick contact picker. Always-on inline command so adding several
+// attendees in sequence is cheap (no dropdown re-open per addition).
+function ContactMultiPicker({
+  contacts, selected, onChange,
+}: {
+  contacts: CrmContact[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" className="w-full justify-between font-normal" data-testid="button-add-attendee">
+          <span className="text-muted-foreground">
+            {selected.length === 0 ? "Add attendee from CRM…" : `${selected.length} added — click to add more`}
+          </span>
+          <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 ml-2" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
+        <Command>
+          <CommandInput placeholder="Search contacts…" />
+          <CommandList>
+            <CommandEmpty>No contacts found.</CommandEmpty>
+            <CommandGroup>
+              {contacts.slice(0, 200).map((c) => {
+                const isSelected = selected.includes(c.id);
+                return (
+                  <CommandItem
+                    key={c.id}
+                    value={`${c.name} ${c.email || ""}`}
+                    onSelect={() => {
+                      onChange(isSelected ? selected.filter(x => x !== c.id) : [...selected, c.id]);
+                    }}
+                    data-testid={`option-attendee-${c.id}`}
+                  >
+                    <Check className={`w-3.5 h-3.5 mr-2 ${isSelected ? "opacity-100" : "opacity-0"}`} />
+                    <div className="flex flex-col">
+                      <span>{c.name}</span>
+                      {c.email && <span className="text-[10px] text-muted-foreground">{c.email}</span>}
+                    </div>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 

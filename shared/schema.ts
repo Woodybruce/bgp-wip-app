@@ -2943,6 +2943,19 @@ export const expenses = pgTable("expenses", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Join table linking entertainment expenses to the CRM contacts who
+// attended. HMRC needs both "who was there" and "what business was
+// discussed" for client/agent entertainment to be deductible — the
+// legacy `expenses.attendees` text column carries the latter as a
+// fallback (calendar context fills it from Outlook attendee emails),
+// but for manual edits this join is the source of truth.
+export const expenseAttendees = pgTable("expense_attendees", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  expenseId: varchar("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+  contactId: varchar("contact_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const expenseReceipts = pgTable("expense_receipts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   expenseId: varchar("expense_id").notNull().references(() => expenses.id),

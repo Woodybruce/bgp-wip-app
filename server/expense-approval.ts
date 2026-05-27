@@ -71,12 +71,17 @@ export async function computeFlagReasons(expenseId: string): Promise<FlagReason[
 
   // Entertainment: HMRC needs purpose + attendees for client/agent meals
   // to be deductible. Staff entertainment is more lenient but still wants
-  // a purpose for audit.
+  // a purpose for audit. Attendees can come from either the structured
+  // join (manual edit via the CRM picker) or the legacy free-text column
+  // (Outlook calendar context for inbound WhatsApp receipts).
   if (exp.category && ENTERTAINMENT_CATEGORIES.has(exp.category)) {
     if (!exp.businessPurpose || exp.businessPurpose.trim().length < 5) {
       reasons.push("entertainment_no_purpose");
     }
-    if (!exp.attendees || exp.attendees.trim().length < 3) {
+    const { expenseAttendees } = await import("@shared/schema");
+    const linkedAttendees = await db.select().from(expenseAttendees).where(eq(expenseAttendees.expenseId, expenseId)).limit(1);
+    const hasFreetextAttendees = !!exp.attendees && exp.attendees.trim().length >= 3;
+    if (linkedAttendees.length === 0 && !hasFreetextAttendees) {
       reasons.push("entertainment_no_attendees");
     }
   }

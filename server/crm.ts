@@ -1133,6 +1133,18 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`CREATE INDEX IF NOT EXISTS idx_expenses_approver_user_id ON expenses (approver_user_id) WHERE status = 'pending_approval'`).catch(() => {});
   pool.query(`CREATE INDEX IF NOT EXISTS idx_expenses_status_submitted ON expenses (status, submitted_for_approval_at) WHERE status = 'pending_approval'`).catch(() => {});
 
+  // expense_attendees join — links entertainment expenses to crm_contacts.
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS expense_attendees (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      expense_id VARCHAR NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+      contact_id VARCHAR NOT NULL,
+      created_at TIMESTAMP DEFAULT now()
+    )
+  `).catch(() => {});
+  pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_attendees_unique ON expense_attendees(expense_id, contact_id)`).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_expense_attendees_contact ON expense_attendees(contact_id)`).catch(() => {});
+
   // internalAgentIds shadow column for the name → id migration. The
   // name column stays in place (dual-write) until every reader migrates.
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS internal_agent_ids VARCHAR[]`)

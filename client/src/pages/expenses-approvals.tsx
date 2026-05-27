@@ -36,6 +36,7 @@ interface PendingExpense {
   submittedForApprovalAt: string | null;
   flaggedForReview: boolean | null;
   flagReasons: string[] | null;
+  attendeeContacts?: { id: string; name: string | null }[];
 }
 
 const fmt = (p: number) => `£${(p / 100).toFixed(2)}`;
@@ -341,8 +342,17 @@ function ExpenseTable({
               <td className="px-3 py-2 text-muted-foreground text-xs">{r.category || <span className="text-amber-600">—</span>}</td>
               <td className="px-3 py-2 text-xs max-w-[280px]">
                 {r.businessPurpose && <div className="truncate">{r.businessPurpose}</div>}
-                {r.attendees && <div className="text-muted-foreground truncate">w/ {r.attendees}</div>}
-                {!r.businessPurpose && !r.attendees && <span className="text-muted-foreground">—</span>}
+                {/* Structured attendees from the CRM picker take precedence
+                    over the legacy free-text column (which is filled by
+                    Outlook calendar context for inbound WhatsApp receipts). */}
+                {(r.attendeeContacts && r.attendeeContacts.length > 0) ? (
+                  <div className="text-muted-foreground truncate">
+                    w/ {r.attendeeContacts.map(c => c.name).filter(Boolean).join(", ")}
+                  </div>
+                ) : r.attendees ? (
+                  <div className="text-muted-foreground truncate">w/ {r.attendees}</div>
+                ) : null}
+                {!r.businessPurpose && !r.attendees && (!r.attendeeContacts || r.attendeeContacts.length === 0) && <span className="text-muted-foreground">—</span>}
                 {showFlags && r.flagReasons && r.flagReasons.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1">
                     {r.flagReasons.map((reason) => (
