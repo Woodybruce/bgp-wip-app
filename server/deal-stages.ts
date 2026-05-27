@@ -252,7 +252,8 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
         const d = await pool.query(
           `SELECT d.name, d.property_id, d.tenancy_unit_id, d.rent_pa, d.pricing, d.lease_length,
                   d.break_option, d.total_area_sqft, d.deal_type, d.completed_at,
-                  lc.name AS landlord_name, tc.name AS tenant_name, tc.id AS tenant_company_id,
+                  lc.id AS landlord_company_id, lc.name AS landlord_name,
+                  tc.id AS tenant_company_id, tc.name AS tenant_name,
                   p.postcode AS property_postcode
              FROM crm_deals d
              LEFT JOIN crm_properties p ON p.id = d.property_id
@@ -266,9 +267,10 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
           await pool.query(
             `INSERT INTO crm_comps (
                name, property_id, deal_id, deal_type, landlord, tenant,
+               landlord_company_id, tenant_company_id,
                passing_rent_pa, pricing, area_sqft, postcode, completion_date, created_by
              )
-             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
              WHERE NOT EXISTS (SELECT 1 FROM crm_comps WHERE deal_id = $3)`,
             [
               row.name,
@@ -277,6 +279,8 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
               row.deal_type || "lease",
               row.landlord_name || null,
               row.tenant_name || null,
+              row.landlord_company_id || null,
+              row.tenant_company_id || null,
               row.rent_pa ? String(row.rent_pa) : null,
               row.pricing ? String(row.pricing) : null,
               row.total_area_sqft ? String(row.total_area_sqft) : null,

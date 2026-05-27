@@ -1111,6 +1111,10 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_company TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_phone TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_email TEXT`).catch(() => {});
+  // FK overlay so comps can reverse-nav to the current brand. Existing
+  // text columns (landlord, tenant) stay as the point-in-time snapshot.
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS tenant_company_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS landlord_company_id VARCHAR`).catch(() => {});
 
   // wip_entries hard FKs (mirror schema.ts) — safe to re-run on each boot
   pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS deal_id VARCHAR`).catch(() => {});

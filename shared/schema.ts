@@ -1068,6 +1068,12 @@ export const crmComps = pgTable("crm_comps", {
   address: jsonb("address"),
   tenant: text("tenant"),
   landlord: text("landlord"),
+  // FK overlay added later so comp views can resolve the *current*
+  // brand name + reverse-nav back to the company. The text columns
+  // above stay as a point-in-time snapshot. Nullable for back-compat
+  // — historic comps from Sage / Monday import don't have these.
+  tenantCompanyId: varchar("tenant_company_id"),
+  landlordCompanyId: varchar("landlord_company_id"),
   transaction: text("transaction"),
   term: text("term"),
   demise: text("demise"),
