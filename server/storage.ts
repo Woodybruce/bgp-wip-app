@@ -751,8 +751,19 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCrmCompany(id: string): Promise<void> {
     await db.transaction(async (tx) => {
+      // Null out every deal FK that can point at this brand. Earlier
+      // versions only handled landlord/tenant — vendor/purchaser and
+      // the four agent FKs were added later and never picked up the
+      // delete unhook, leaving orphan refs that rendered as silent "—"
+      // in the deal detail.
       await tx.update(crmDeals).set({ landlordId: null }).where(eq(crmDeals.landlordId, id));
       await tx.update(crmDeals).set({ tenantId: null }).where(eq(crmDeals.tenantId, id));
+      await tx.update(crmDeals).set({ vendorId: null }).where(eq(crmDeals.vendorId, id));
+      await tx.update(crmDeals).set({ purchaserId: null }).where(eq(crmDeals.purchaserId, id));
+      await tx.update(crmDeals).set({ vendorAgentId: null }).where(eq(crmDeals.vendorAgentId, id));
+      await tx.update(crmDeals).set({ acquisitionAgentId: null }).where(eq(crmDeals.acquisitionAgentId, id));
+      await tx.update(crmDeals).set({ purchaserAgentId: null }).where(eq(crmDeals.purchaserAgentId, id));
+      await tx.update(crmDeals).set({ leasingAgentId: null }).where(eq(crmDeals.leasingAgentId, id));
       await tx.update(crmProperties).set({ landlordId: null }).where(eq(crmProperties.landlordId, id));
       await tx.update(crmProperties).set({ freeholderId: null }).where(eq(crmProperties.freeholderId, id));
       await tx.update(crmProperties).set({ longLeaseholderId: null }).where(eq(crmProperties.longLeaseholderId, id));
@@ -794,10 +805,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCompanyDeals(companyId: string): Promise<CrmDeal[]> {
-    const links = await db.select().from(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, companyId));
-    if (links.length === 0) return [];
-    const dealIds = links.map(l => l.dealId);
-    return db.select().from(crmDeals).where(inArray(crmDeals.id, dealIds));
+    // Source from BOTH the direct counterparty FKs on crm_deals AND the
+    // crm_company_deals join. The join was the original linkage; the four
+    // direct FKs (landlord/tenant/vendor/purchaser) were added later for
+    // kanban perf and deal create/edit only populates those — anything
+    // created through the UI since wouldn't appear if we only queried
+    // the join.
+    const linked = await db.select({ id: crmCompanyDeals.dealId }).from(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, companyId));
+    const linkedIds = linked.map(l => l.id);
+    return db.select().from(crmDeals).where(
+      or(
+        eq(crmDeals.landlordId, companyId),
+        eq(crmDeals.tenantId, companyId),
+        eq(crmDeals.vendorId, companyId),
+        eq(crmDeals.purchaserId, companyId),
+        linkedIds.length > 0 ? inArray(crmDeals.id, linkedIds) : sql`false`,
+      )
+    );
   }
 
   async linkCompanyDeal(companyId: string, dealId: string): Promise<void> {
