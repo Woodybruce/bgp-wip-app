@@ -2293,6 +2293,98 @@ export const landRegistrySearches = pgTable("land_registry_searches", {
 
 export type LandRegistrySearch = typeof landRegistrySearches.$inferSelect;
 
+// Canonical unit spine — created at boot in server/index.ts:578 (runtime
+// CREATE TABLE IF NOT EXISTS + a fleet of ALTER TABLE addColIfMissing
+// migrations). Declared here for compile-time type safety; this declaration
+// does NOT drive migrations. If you ALTER the runtime DDL, mirror the
+// column here so referencing tables (`tenancyUnitId` on availableUnits /
+// leasingScheduleUnits / crmDeals) get caught by tsc on a rename or typo.
+export const tenancyScheduleUnits = pgTable("tenancy_schedule_units", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),
+  // Unit details
+  grouping: text("grouping"),
+  premises: text("premises"),
+  unitNumber: text("unit_number"),
+  permittedUse: text("permitted_use"),
+  status: text("status"),
+  amInitiative: text("am_initiative"),
+  floorLevel: text("floor_level"),
+  // Tenant details
+  tenantName: text("tenant_name"),
+  tradingName: text("trading_name"),
+  tenantMix: text("tenant_mix"),
+  tenantCompanyId: varchar("tenant_company_id"),
+  creditRating: text("credit_rating"),
+  // Lease details
+  leaseStart: timestamp("lease_start"),
+  breakDate: timestamp("break_date"),
+  breakDetails: text("break_details"),
+  breakNotice: text("break_notice"),
+  breakType: text("break_type"),
+  landlordBreakDate: timestamp("landlord_break_date"),
+  leaseExpiry: timestamp("lease_expiry"),
+  termYears: real("term_years"),
+  unexpiredTermBreak: real("unexpired_term_break"),
+  unexpiredTerm: real("unexpired_term"),
+  nextReviewDate: timestamp("next_review_date"),
+  outsideLtAct: text("outside_lt_act"),
+  measurementType: text("measurement_type"),
+  // Areas
+  areaBasementGia: real("area_basement_gia"),
+  areaGroundGia: real("area_ground_gia"),
+  areaFirstGia: real("area_first_gia"),
+  areaOtherGia: real("area_other_gia"),
+  areaBasementNia: real("area_basement_nia"),
+  areaGroundNia: real("area_ground_nia"),
+  areaFirstNia: real("area_first_nia"),
+  areaFirstSalesNia: real("area_first_sales_nia"),
+  areaOtherNia: real("area_other_nia"),
+  areaGroundItza: real("area_ground_itza"),
+  giaSqft: real("gia_sqft"),
+  niaSqft: real("nia_sqft"),
+  itzaSqft: real("itza_sqft"),
+  unitsApplied: real("units_applied"),
+  // Income
+  passingRentPa: real("passing_rent_pa"),
+  marketingRentPa: real("marketing_rent_pa"),
+  turnoverRentPayable: real("turnover_rent_payable"),
+  ervProfile: text("erv_profile"),
+  ervPa: real("erv_pa"),
+  rentFreeValue: real("rent_free_value"),
+  capexValue: real("capex_value"),
+  depositHeld: real("deposit_held"),
+  arrearsBalance: real("arrears_balance"),
+  // Rates / occ costs
+  rateableValue: real("rateable_value"),
+  ratesPayable: real("rates_payable"),
+  serviceCharge: real("service_charge"),
+  serviceChargeCap: real("service_charge_cap"),
+  insurance: real("insurance"),
+  // Shortfalls / NOI
+  shortfallLiability: text("shortfall_liability"),
+  rentalShortfalls: real("rental_shortfalls"),
+  toppedUpNoi: real("topped_up_noi"),
+  noiPa: real("noi_pa"),
+  // Commentary
+  comments: text("comments"),
+  leasingComments: text("leasing_comments"),
+  targetTenants: text("target_tenants"),
+  targetCompanyIds: text("target_company_ids").array(),
+  underwritingComments: text("underwriting_comments"),
+  // BGP overlay
+  epcRating: text("epc_rating"),
+  rentPsf: real("rent_psf"),
+  turnoverPercent: real("turnover_percent"),
+  blendedErv: real("blended_erv"),
+  dealId: varchar("deal_id"),
+  lettingTrackerUnitId: varchar("letting_tracker_unit_id"),
+  inLeasingSchedule: boolean("in_leasing_schedule").default(false),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const leasingScheduleUnits = pgTable("leasing_schedule_units", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
