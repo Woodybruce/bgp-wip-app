@@ -436,6 +436,14 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/available-units/all-offers-counts"],
   });
 
+  // Existing fee-split allocations keyed by dealId. Used by the WIP-flip
+  // dialog to pre-populate the FeeAllocationEditor when a deal already
+  // has a split — otherwise the user gets the default 85/15 split on
+  // every reopen and re-types what was already saved.
+  const { data: allAllocations = {} } = useQuery<Record<string, Array<{ agentName: string; percentage: number | null; fixedAmount: number | null; allocationType: string; isBgpHouse: boolean }>>>({
+    queryKey: ["/api/crm/fee-allocations"],
+  });
+
   const { data: viewingsForUnit = [] } = useQuery<UnitViewing[]>({
     queryKey: ["/api/available-units", viewingsUnit?.id, "viewings"],
     queryFn: () => viewingsUnit ? fetch(`/api/available-units/${viewingsUnit.id}/viewings`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()) : Promise.resolve([]),
@@ -825,17 +833,35 @@ export default function AvailableUnitsPage() {
       amlChecked: existingDeal?.amlCheckCompleted || "",
       overrideCompliance: false,
     });
-    // Start with the picked agent (if any) on 85% so the BGP House
-    // auto-injection at 15% lands the split at a complete 100%.
-    // Editor renders BGP House itself; agent rows owned by us.
-    const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "";
-    setWipFeeRows(initialAgent ? [{
-      agentName: initialAgent,
-      allocationType: "percentage",
-      percentage: 85,
-      fixedAmount: 0,
-    }] : []);
-    setWipFeeAllocType("percentage");
+    // Pre-populate the fee-split editor from the deal's existing
+    // allocations when present — otherwise the user gets the default
+    // 85% agent / 15% BGP House split on every reopen and has to
+    // re-type what they already saved. BGP House rows are dropped from
+    // the seed since the editor auto-injects that row itself.
+    const existingAllocs = existingDeal?.id ? allAllocations[existingDeal.id] : null;
+    if (existingAllocs && existingAllocs.length > 0) {
+      const agentRows = existingAllocs
+        .filter(a => !a.isBgpHouse)
+        .map(a => ({
+          agentName: a.agentName,
+          allocationType: (a.allocationType === "fixed" ? "fixed" : "percentage") as "fixed" | "percentage",
+          percentage: a.percentage || 0,
+          fixedAmount: a.fixedAmount || 0,
+        }));
+      setWipFeeRows(agentRows);
+      setWipFeeAllocType((existingAllocs.find(a => !a.isBgpHouse)?.allocationType === "fixed" ? "fixed" : "percentage"));
+    } else {
+      // No existing split — fall back to picked agent at 85%; FeeAllocationEditor
+      // auto-injects BGP House at 15% to make a complete 100%.
+      const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "";
+      setWipFeeRows(initialAgent ? [{
+        agentName: initialAgent,
+        allocationType: "percentage",
+        percentage: 85,
+        fixedAmount: 0,
+      }] : []);
+      setWipFeeAllocType("percentage");
+    }
     setWipUnit(unit);
   };
 

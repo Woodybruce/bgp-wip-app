@@ -46,7 +46,11 @@ export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
 // Per-tracker subsets — which codes each view's dropdown should offer
 export const LETTING_STATUSES: DealStatusCode[]    = ["REP", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
 export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
-export const WIP_STATUSES: DealStatusCode[]        = ["NEG", "SOL", "EXC", "COM", "INV"];
+// WIP report covers every fee-bearing stage including pre-deal pipeline.
+// REP + AVA + NEG live on the Letting Tracker side; SOL+ live on the
+// Deals Board. Both feed the WIP report (visual reflection of both
+// boards per the post-Sage model).
+export const WIP_STATUSES: DealStatusCode[]        = ["REP", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
 export const DEAL_PAGE_STATUSES: DealStatusCode[]  = [...DEAL_STATUS_CODES];
 
 // INV is set automatically when a Xero invoice syncs onto the deal — UI should
