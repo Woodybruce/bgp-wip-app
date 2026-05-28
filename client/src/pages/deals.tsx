@@ -5655,8 +5655,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const filteredDeals = useMemo(() => {
     return baseDeals.filter((deal) => {
       const dealCode = legacyToCode(deal.status);
-      const statusMatch = (target: string) =>
-        mode === "wip" ? dealCode === target : deal.status === target;
+      // Always compare canonical codes — statusValues only ever offers codes
+      // (legacy free-text rows are normalised through legacyToCode), so the
+      // old raw-string branch silently dropped legacy-status rows from the
+      // comps/negotiations filters.
+      const statusMatch = (target: string) => dealCode === target;
       if (activeGroup !== "all" && !statusMatch(activeGroup)) return false;
       if (columnFilters["status"]?.length) {
         const ok = columnFilters["status"].some(statusMatch);
