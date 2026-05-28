@@ -428,10 +428,23 @@ export function setupXeroRoutes(app: Express) {
   // picker can render account number + address without extra calls.
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
-      const search = (req.query.search as string) || "";
-      let path = "/Contacts?page=1&pageSize=50&includeArchived=false";
+      const rawSearch = ((req.query.search as string) || "").trim();
+      // Strip Xero-filter-incompatible chars, drop multi-token whitespace,
+      // and lowercase both the term + the field. Xero's where-clause is a
+      // .NET expression so Name.ToLower().Contains("landsec") matches
+      // "Landsec", "LANDSEC", "LandSec" — fixes the case-sensitive miss
+      // ("Land Sec" not matching "Landsec" was the original complaint).
+      const search = rawSearch.replace(/"/g, "").toLowerCase();
+      let path = "/Contacts?page=1&pageSize=100&includeArchived=false";
       if (search) {
-        path += `&where=Name.Contains("${search.replace(/"/g, "")}")`;
+        // Multi-token: split on whitespace, require each token to be a
+        // substring of the lower-cased name. "land sec" matches "Landsec",
+        // "London Land Securities Plc", etc. Tokens AND'd together via
+        // chained Contains() — keeps the matching tight without exploding
+        // into typo-tolerance territory.
+        const tokens = search.split(/\s+/).filter(t => t.length > 0);
+        const conds = tokens.map(t => `Name.ToLower().Contains("${t}")`);
+        path += `&where=${encodeURIComponent(conds.join(" AND "))}`;
       }
       // Read-only endpoint — falls back to the firm-wide system Xero
       // session when the caller's session isn't connected. Means agents
