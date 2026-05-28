@@ -1220,33 +1220,25 @@ export default function AvailableUnitsPage() {
                   />
                 </TableHead>
                 <TableHead className="w-[50px]">Ref</TableHead>
-                <TableHead className="w-[110px]">Unit</TableHead>
-                <TableHead className="w-[180px]">Property</TableHead>
+                <TableHead className="min-w-[200px]">Property / Unit</TableHead>
                 <TableHead className="w-[120px]">Deal Type</TableHead>
                 <TableHead className="w-[140px]">Client</TableHead>
                 <TableHead className="w-[140px]">Tenant</TableHead>
-                <TableHead className="w-[140px]">Team</TableHead>
-                <TableHead>Floor</TableHead>
+                <TableHead className="w-[160px]">Team / BGP</TableHead>
                 <TableHead className="min-w-[140px]">Floor Areas</TableHead>
-                <TableHead className="text-right">Quoting Rent</TableHead>
-                <TableHead className="text-right">Rates p.a.</TableHead>
-                <TableHead className="text-right">SC p.a.</TableHead>
-                <TableHead>Asset Class</TableHead>
-                <TableHead>Condition</TableHead>
+                <TableHead className="min-w-[120px] text-right">Costs</TableHead>
+                <TableHead className="min-w-[110px]">Class / Cond</TableHead>
                 <TableHead>Deal Status</TableHead>
-                <TableHead className="text-center">Viewings</TableHead>
-                <TableHead className="text-center">Offers</TableHead>
-                <TableHead className="text-right">Fee</TableHead>
-                <TableHead>BGP Contact</TableHead>
-                <TableHead className="w-[110px]">Fee Agreement</TableHead>
-                <TableHead>Marketing</TableHead>
+                <TableHead className="text-center min-w-[100px]">Activity</TableHead>
+                <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>
+                <TableHead>Files</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={26} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={15} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1301,23 +1293,32 @@ export default function AvailableUnitsPage() {
                           </div>
                         ) : "—"}
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 text-xs font-medium max-w-[110px]">
-                        <InlineText
-                          value={u.unitName}
-                          onSave={(v) => inlineUpdate(u.id, "unitName", v)}
-                          placeholder="Unit name"
-                          className="text-xs font-medium"
-                        />
-                      </TableCell>
-                      <TableCell className="px-1.5 py-1 font-medium max-w-[200px]">
-                        <InlineLinkSelect
-                          value={u.propertyId}
-                          options={properties.map(p => ({ id: p.id, name: p.name }))}
-                          href={`/properties/${u.propertyId}`}
-                          onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
-                          placeholder="Link property"
-                          data-testid={`link-property-${u.id}`}
-                        />
+                      <TableCell className="px-1.5 py-1 max-w-[220px]">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-sm font-medium truncate">
+                            <InlineLinkSelect
+                              value={u.propertyId}
+                              options={properties.map(p => ({ id: p.id, name: p.name }))}
+                              href={`/properties/${u.propertyId}`}
+                              onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
+                              placeholder="Link property"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <InlineText
+                              value={u.unitName}
+                              onSave={(v) => inlineUpdate(u.id, "unitName", v)}
+                              placeholder="Unit name"
+                              className="text-xs"
+                            />
+                            <span className="text-[9px] opacity-60">·</span>
+                            <InlineSelect
+                              value={u.floor || ""}
+                              options={FLOORS}
+                              onSave={v => inlineUpdate(u.id, "floor", v)}
+                            />
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell className="px-1.5">
                         {deal ? (
@@ -1356,23 +1357,25 @@ export default function AvailableUnitsPage() {
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="px-1.5 max-w-[160px]">
-                        {deal ? (
+                      <TableCell className="px-1.5 max-w-[180px]">
+                        <div className="space-y-1">
+                          {deal ? (
+                            <InlineMultiSelect
+                              value={deal.team || []}
+                              options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
+                              colorMap={DEAL_TEAM_COLORS}
+                              placeholder="Set team"
+                              onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
+                            />
+                          ) : <span className="text-xs text-muted-foreground italic">No team</span>}
                           <InlineMultiSelect
-                            value={deal.team || []}
-                            options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
-                            colorMap={DEAL_TEAM_COLORS}
-                            placeholder="Set team"
-                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
+                            value={Array.isArray(u.agentUserIds) ? u.agentUserIds : []}
+                            options={agentOptions}
+                            onSave={v => inlineUpdate(u.id, "agentUserIds", v)}
+                            placeholder="Set agent"
+                            testId={`inline-agent-${u.id}`}
                           />
-                        ) : <span className="text-xs text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell>
-                        <InlineSelect
-                          value={u.floor || ""}
-                          options={FLOORS}
-                          onSave={v => inlineUpdate(u.id, "floor", v)}
-                        />
+                        </div>
                       </TableCell>
                       <TableCell className="px-1.5 py-1">
                         <div className="space-y-0.5">
@@ -1419,48 +1422,68 @@ export default function AvailableUnitsPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.askingRent}
-                          onSave={v => inlineUpdate(u.id, "askingRent", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
+                      <TableCell className="px-1.5 py-1 text-right">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className="w-full text-right flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs"
+                              data-testid={`costs-cell-${u.id}`}
+                            >
+                              {[
+                                { label: "Rent", value: u.askingRent },
+                                { label: "Rates", value: u.ratesPa },
+                                { label: "SC",    value: u.serviceChargePa },
+                              ].filter(r => r.value != null).length === 0 ? (
+                                <span className="text-muted-foreground text-[11px] flex items-center gap-1 justify-end">
+                                  <Plus className="w-3 h-3" /> Add costs
+                                </span>
+                              ) : (
+                                [
+                                  { label: "Rent",  value: u.askingRent },
+                                  { label: "Rates", value: u.ratesPa },
+                                  { label: "SC",    value: u.serviceChargePa },
+                                ].filter(r => r.value != null).map(r => (
+                                  <div key={r.label} className="flex items-center gap-1 justify-end">
+                                    <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{r.label}</span>
+                                    <span className="font-mono text-[11px]">£{Number(r.value).toLocaleString("en-GB")}</span>
+                                  </div>
+                                ))
+                              )}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[280px] p-3 space-y-2.5" align="end">
+                            <p className="text-xs font-semibold">Costs</p>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Quoting Rent</Label>
+                              <InlineNumber value={u.askingRent} onSave={v => inlineUpdate(u.id, "askingRent", v)} prefix="£" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Rates p.a.</Label>
+                              <InlineNumber value={u.ratesPa} onSave={v => inlineUpdate(u.id, "ratesPa", v)} prefix="£" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">SC p.a.</Label>
+                              <InlineNumber value={u.serviceChargePa} onSave={v => inlineUpdate(u.id, "serviceChargePa", v)} prefix="£" />
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.ratesPa}
-                          onSave={v => inlineUpdate(u.id, "ratesPa", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.serviceChargePa}
-                          onSave={v => inlineUpdate(u.id, "serviceChargePa", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineLabelSelect
-                          value={u.useClass || ""}
-                          options={USE_CLASSES}
-                          colorMap={ASSET_CLASS_COLORS}
-                          onSave={v => inlineUpdate(u.id, "useClass", v)}
-                          placeholder="Set class"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineSelect
-                          value={u.condition || ""}
-                          options={CONDITIONS}
-                          onSave={v => inlineUpdate(u.id, "condition", v)}
-                        />
+                      <TableCell className="px-1.5 py-1 max-w-[140px]">
+                        <div className="space-y-1">
+                          <InlineLabelSelect
+                            value={u.useClass || ""}
+                            options={USE_CLASSES}
+                            colorMap={ASSET_CLASS_COLORS}
+                            onSave={v => inlineUpdate(u.id, "useClass", v)}
+                            placeholder="Set class"
+                          />
+                          <InlineSelect
+                            value={u.condition || ""}
+                            options={CONDITIONS}
+                            onSave={v => inlineUpdate(u.id, "condition", v)}
+                          />
+                        </div>
                       </TableCell>
                       <TableCell>
                         <InlineLabelSelect
@@ -1473,89 +1496,82 @@ export default function AvailableUnitsPage() {
                         />
                       </TableCell>
                       <TableCell className="text-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => setViewingsUnit(u)}
-                          data-testid={`button-viewings-${u.id}`}
-                        >
-                          <CalendarDays className="h-3.5 w-3.5" />
-                          {viewingsCounts[u.id] || 0}
-                        </Button>
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1"
+                            onClick={() => setViewingsUnit(u)}
+                            title="Viewings"
+                            data-testid={`button-viewings-${u.id}`}
+                          >
+                            <CalendarDays className="h-3.5 w-3.5" />
+                            {viewingsCounts[u.id] || 0}
+                          </Button>
+                          <span className="text-[9px] text-muted-foreground/60">·</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1"
+                            onClick={() => setOffersUnit(u)}
+                            title="Offers"
+                            data-testid={`button-offers-${u.id}`}
+                          >
+                            <HandCoins className="h-3.5 w-3.5" />
+                            {offersCounts[u.id] || 0}
+                          </Button>
+                        </div>
                       </TableCell>
-                      <TableCell className="text-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => setOffersUnit(u)}
-                          data-testid={`button-offers-${u.id}`}
-                        >
-                          <HandCoins className="h-3.5 w-3.5" />
-                          {offersCounts[u.id] || 0}
-                        </Button>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.fee}
-                          onSave={v => inlineUpdate(u.id, "fee", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineMultiSelect
-                          value={Array.isArray(u.agentUserIds) ? u.agentUserIds : []}
-                          options={agentOptions}
-                          onSave={v => inlineUpdate(u.id, "agentUserIds", v)}
-                          placeholder="Set agent"
-                          testId={`inline-agent-${u.id}`}
-                        />
-                      </TableCell>
-                      <TableCell className="px-1.5 py-1">
-                        {deal ? (
-                          deal.feeAgreementUrl ? (
-                            <div className="flex items-center gap-1">
-                              <a
-                                href={deal.feeAgreementUrl.startsWith("http") ? deal.feeAgreementUrl : `https://${deal.feeAgreementUrl}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-xs text-green-700 hover:underline"
-                                title="Open fee agreement"
-                              >
-                                <FileBadge className="h-3.5 w-3.5" />
-                                View
-                              </a>
+                      <TableCell className="px-1.5 py-1 max-w-[150px]">
+                        <div className="space-y-0.5">
+                          <InlineNumber
+                            value={u.fee}
+                            onSave={v => inlineUpdate(u.id, "fee", v)}
+                            placeholder="—"
+                            prefix="£"
+                          />
+                          {deal ? (
+                            deal.feeAgreementUrl ? (
+                              <div className="flex items-center gap-1">
+                                <a
+                                  href={deal.feeAgreementUrl.startsWith("http") ? deal.feeAgreementUrl : `https://${deal.feeAgreementUrl}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-[11px] text-green-700 hover:underline"
+                                  title="Open fee agreement"
+                                >
+                                  <FileBadge className="h-3 w-3" />
+                                  FA signed
+                                </a>
+                                <button
+                                  className="text-[10px] text-muted-foreground hover:text-foreground"
+                                  title="Change URL"
+                                  onClick={() => {
+                                    const url = window.prompt("Fee agreement URL:", deal.feeAgreementUrl || "");
+                                    if (url !== null) dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url || null });
+                                  }}
+                                >✎</button>
+                              </div>
+                            ) : (
                               <button
-                                className="text-[10px] text-muted-foreground hover:text-foreground ml-1"
-                                title="Change URL"
+                                className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:text-red-800"
+                                title="No fee agreement on file — click to add link"
                                 onClick={() => {
-                                  const url = window.prompt("Fee agreement URL:", deal.feeAgreementUrl || "");
-                                  if (url !== null) dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url || null });
+                                  const url = window.prompt("Paste fee agreement URL (SharePoint / OneDrive link):");
+                                  if (url) {
+                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url });
+                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreement", value: "YES" });
+                                  }
                                 }}
-                              >✎</button>
-                            </div>
+                              >
+                                <AlertTriangle className="h-3 w-3" />
+                                FA missing
+                              </button>
+                            )
                           ) : (
-                            <button
-                              className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-800"
-                              title="No fee agreement on file — click to add link"
-                              onClick={() => {
-                                const url = window.prompt("Paste fee agreement URL (SharePoint / OneDrive link):");
-                                if (url) {
-                                  dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url });
-                                  dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreement", value: "YES" });
-                                }
-                              }}
-                            >
-                              <AlertTriangle className="h-3.5 w-3.5" />
-                              Missing
-                            </button>
-                          )
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
+                            <span className="text-[10px] text-muted-foreground italic">FA n/a</span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Button
