@@ -5715,6 +5715,16 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // Letting Tracker are. Anything in NEG/SOL/EXC/COM/INV with a fee
       // shows up.
       let entries: any[] = [];
+      // Defensive on-the-fly normalisation for legacy deal_type strings so
+      // the WIP report displays canonical labels even on rows where
+      // migration 0025 hasn't run yet. "Letting" was the pre-fix value
+      // written by the SOL flip; canonical is "New Letting".
+      const normaliseDealType = (raw: string | null | undefined): string | null => {
+        if (!raw) return null;
+        const t = String(raw).trim();
+        if (t === "Letting") return "New Letting";
+        return t || null;
+      };
       const eligibleDeals = deals.filter(d => {
         const code = legacyToCode(d.status);
         return code !== null && WIP_STATUSES.includes(code);
@@ -5757,7 +5767,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               id: `${deal.id}_${alloc.agentName}`,
               dealId: deal.id,
               dealRef: deal.dealRef ?? null,
-              dealType: deal.dealType || null,
+              dealType: normaliseDealType(deal.dealType),
               ref: deal.name,
               groupName: deal.groupName || null,
               client: clientName,
@@ -5792,7 +5802,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               id: deal.id,
               dealId: deal.id,
               dealRef: deal.dealRef ?? null,
-              dealType: deal.dealType || null,
+              dealType: normaliseDealType(deal.dealType),
               ref: deal.name,
               groupName: deal.groupName || null,
               client: clientName,

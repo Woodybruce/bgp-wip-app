@@ -899,11 +899,21 @@ export default function AvailableUnitsPage() {
       const q = search.toLowerCase();
       result = result.filter(u => {
         const propName = propertyMap[u.propertyId]?.name || "";
-        return u.unitName.toLowerCase().includes(q) || propName.toLowerCase().includes(q) || (u.floor || "").toLowerCase().includes(q);
+        // Tenant name lives on the linked deal — resolve from dealMap →
+        // crmCompanies. Without this, typing a tenant on the letting
+        // tracker returns nothing.
+        const linkedDeal = u.dealId ? dealMap[u.dealId] : null;
+        const tenantName = linkedDeal?.tenantId
+          ? (crmCompanies.find(c => c.id === linkedDeal.tenantId)?.name || "")
+          : "";
+        return u.unitName.toLowerCase().includes(q)
+          || propName.toLowerCase().includes(q)
+          || (u.floor || "").toLowerCase().includes(q)
+          || tenantName.toLowerCase().includes(q);
       });
     }
     return result;
-  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, search, propertyMap]);
+  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, search, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1056,7 +1066,7 @@ export default function AvailableUnitsPage() {
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search units..."
+            placeholder="Search units, property or tenant..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9"
