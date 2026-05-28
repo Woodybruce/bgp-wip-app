@@ -1368,6 +1368,12 @@ export const dealFeeAllocations = pgTable("deal_fee_allocations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealId: varchar("deal_id").notNull(),
   agentName: text("agent_name").notNull(),
+  // agentUserId is the canonical link going forward — survives name
+  // changes. Populated by storage.setDealFeeAllocations via a name→id
+  // lookup, plus a one-time boot backfill for historic rows. Nullable
+  // for back-compat: Sage imports and rows from before this migration
+  // may carry agent_name only; commission joins COALESCE through both.
+  agentUserId: varchar("agent_user_id"),
   allocationType: text("allocation_type").notNull(),
   percentage: real("percentage"),
   fixedAmount: real("fixed_amount"),

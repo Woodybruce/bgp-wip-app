@@ -153,11 +153,23 @@ export async function submitForApproval(expenseId: string, submitterUserId: stri
 
 /** Resolve the approver for a given submitter. Returns the manager's
  *  user id, or null if the expense should go to the Layla/Wendy shared
- *  inbox (no manager set OR manager is the submitter). */
+ *  inbox (no manager set OR manager is the submitter).
+ *
+ *  Reads users.manager_id first (canonical going forward — mirrored from
+ *  staff_profiles on every write). Falls back to staff_profiles.manager_id
+ *  for rows the boot backfill hasn't reconciled yet, so a fresh install
+ *  with seeded staff still routes correctly before the next HR edit. */
 export async function resolveApproverUserId(submitterUserId: string): Promise<string | null> {
   const [u] = await db.select().from(users).where(eq(users.id, submitterUserId)).limit(1);
   if (!u) return null;
-  const managerId = (u as any).managerId;
+  let managerId: string | null = (u as any).managerId ?? null;
+  if (!managerId) {
+    const sp = await pool.query<{ manager_id: string | null }>(
+      "SELECT manager_id FROM staff_profiles WHERE user_id = $1 LIMIT 1",
+      [submitterUserId]
+    );
+    managerId = sp.rows[0]?.manager_id ?? null;
+  }
   if (!managerId || managerId === submitterUserId) return null;
   return managerId;
 }

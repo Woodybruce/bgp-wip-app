@@ -1520,6 +1520,33 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS idx_salary_history_user ON salary_history(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_holiday_requests_user ON holiday_requests(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_hr_documents_user ON hr_documents(user_id)`,
+    // Mirror manager_id from staff_profiles → users for rows where users
+    // hasn't been populated yet (pre-mirror writes). Idempotent — only
+    // fills rows where users.manager_id IS NULL so subsequent overrides
+    // via the HR edit dialog survive. Downstream expense + holiday
+    // approval routing reads users.manager_id; staff_profiles is the
+    // legacy single-source.
+    `UPDATE users u
+        SET manager_id = sp.manager_id
+       FROM staff_profiles sp
+      WHERE sp.user_id = u.id
+        AND sp.manager_id IS NOT NULL
+        AND u.manager_id IS NULL`,
+    // Commission attribution: deal_fee_allocations historically keyed on
+    // agent_name only. The internalAgentIds dual-write on crm_deals means
+    // we now have a stable id for each agent — add a parallel column on
+    // the allocations table so renames + first-name collisions don't
+    // mis-credit commission. Backfill via users.name lookup, nullable
+    // for any name that doesn't resolve (typos, "(BGP House)" rows,
+    // ex-employees pre-dating the users table).
+    `ALTER TABLE deal_fee_allocations ADD COLUMN IF NOT EXISTS agent_user_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_dfa_agent_user_id ON deal_fee_allocations(agent_user_id) WHERE agent_user_id IS NOT NULL`,
+    `UPDATE deal_fee_allocations dfa
+        SET agent_user_id = u.id
+       FROM users u
+      WHERE LOWER(u.name) = LOWER(dfa.agent_name)
+        AND dfa.agent_user_id IS NULL
+        AND dfa.is_bgp_house = false`,
 
     // ── Brand profile — ensure crm_companies has all columns the API selects ─
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS bgp_contact_crm TEXT`,

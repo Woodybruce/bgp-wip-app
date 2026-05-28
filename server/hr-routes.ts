@@ -392,6 +392,16 @@ export function setupHrRoutes(app: Express) {
           [req.body.team || null, userId]
         );
       }
+      // Mirror manager_id to users.manager_id so downstream routing (expense
+      // approval, holiday approval) can resolve the reporting line without
+      // joining staff_profiles every time. Always runs — manager_id was just
+      // upserted into staff_profiles above so we know the canonical value.
+      if (managerId !== undefined) {
+        await pool.query(
+          "UPDATE users SET manager_id = $1 WHERE id = $2",
+          [managerId || null, userId]
+        );
+      }
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -630,6 +640,9 @@ export function setupHrRoutes(app: Express) {
           // deal has explicit rows. Any future deal without allocations
           // will simply not appear in this agent's pipeline, which is
           // the correct signal that the split is missing.
+          // Prefer the agent_user_id link (rename-safe); fall back to the
+          // legacy agent_name match for historic rows that haven't been
+          // backfilled with a user id.
           `WITH my_deals AS (
              SELECT d.id, d.name, d.status, d.fee, d.invoiced_at,
                     COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
@@ -640,12 +653,16 @@ export function setupHrRoutes(app: Express) {
                     END AS my_portion
              FROM crm_deals d
              INNER JOIN deal_fee_allocations dfa
-               ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = LOWER($1)
+               ON dfa.deal_id = d.id
+              AND (
+                dfa.agent_user_id = $4
+                OR (dfa.agent_user_id IS NULL AND LOWER(dfa.agent_name) = LOWER($1))
+              )
            )
            SELECT id, name, status, fee, dt, invoiced_at, my_portion
            FROM my_deals
            WHERE dt BETWEEN $2 AND $3 AND status IS NOT NULL`,
-          [trackingName, schemeYearStart.toISOString(), schemeYearEnd.toISOString()]
+          [trackingName, schemeYearStart.toISOString(), schemeYearEnd.toISOString(), userId]
         );
         for (const r of dealRows) {
           const pence = Math.round((parseFloat(r.my_portion) || 0) * 100);
@@ -1006,7 +1023,15 @@ export function setupHrRoutes(app: Express) {
               SELECT DISTINCT LOWER(ag) AS agent_lower FROM unnest(d.agent_names) ag
             ) a
             LEFT JOIN deal_fee_allocations dfa
-                   ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = a.agent_lower
+                   ON dfa.deal_id = d.id
+                  AND (
+                    LOWER(dfa.agent_name) = a.agent_lower
+                    OR EXISTS (
+                      SELECT 1 FROM users u
+                       WHERE u.id = dfa.agent_user_id
+                         AND LOWER(u.name) = a.agent_lower
+                    )
+                  )
          )
          SELECT agent, status, dt, portion FROM deal_share
           WHERE dt BETWEEN $1 AND $2`,
@@ -1501,6 +1526,10 @@ export function setupHrRoutes(app: Express) {
            updated_at = now()`,
         [userId, title || null, managerId || null, employmentType || null]
       );
+      // Mirror manager_id to users.manager_id for downstream routing.
+      if (managerId !== undefined) {
+        await pool.query("UPDATE users SET manager_id = $1 WHERE id = $2", [managerId || null, userId]);
+      }
       res.json({ id: userId, name });
     } catch (e: any) {
       if (e?.code === "23505") return res.status(409).json({ error: "That username already exists" });
@@ -1632,7 +1661,7 @@ export function setupHrRoutes(app: Express) {
       const userId = nameToId.get(name);
       if (!userId) continue;
       const managerId = reportsTo ? nameToId.get(reportsTo) ?? null : null;
-      await pool.query("UPDATE users SET role = $2, team = $3 WHERE id = $1", [userId, role, team]);
+      await pool.query("UPDATE users SET role = $2, team = $3, manager_id = $4 WHERE id = $1", [userId, role, team, managerId]);
       await pool.query(
         `INSERT INTO staff_profiles (user_id, title, manager_id, board_member, management_team, status)
          VALUES ($1, $2, $3, $4, $5, 'active')
@@ -1679,19 +1708,26 @@ export function setupHrRoutes(app: Express) {
                 END AS my_portion
          FROM crm_deals d
          LEFT JOIN deal_fee_allocations dfa
-           ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = LOWER($1)
+           ON dfa.deal_id = d.id
+          AND (
+            dfa.agent_user_id = $2
+            OR (dfa.agent_user_id IS NULL AND LOWER(dfa.agent_name) = LOWER($1))
+          )
          WHERE (
-                 EXISTS (SELECT 1 FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a
+                 -- prefer the new ID array; fall back to name array
+                 $2 = ANY(COALESCE(d.internal_agent_ids, ARRAY[]::varchar[]))
+              OR EXISTS (SELECT 1 FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a
                          WHERE LOWER(a) = LOWER($1))
               OR EXISTS (SELECT 1 FROM deal_fee_allocations a2
-                         WHERE a2.deal_id = d.id AND LOWER(a2.agent_name) = LOWER($1))
+                         WHERE a2.deal_id = d.id
+                           AND (a2.agent_user_id = $2 OR LOWER(a2.agent_name) = LOWER($1)))
              )
            AND COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
          ORDER BY
            CASE d.status WHEN 'COM' THEN 0 WHEN 'EXC' THEN 1 WHEN 'NEG' THEN 2 WHEN 'SOL' THEN 2 ELSE 3 END,
            d.fee DESC NULLS LAST
          LIMIT 20`,
-        [trackingName]
+        [trackingName, req.params.userId]
       );
 
       res.json(rows.map((r: any) => ({
@@ -2167,7 +2203,16 @@ export function setupHrRoutes(app: Express) {
            CROSS JOIN LATERAL (
              SELECT DISTINCT LOWER(ag) AS agent_lower FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) ag
            ) a
-           LEFT JOIN deal_fee_allocations dfa ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = a.agent_lower
+           LEFT JOIN deal_fee_allocations dfa
+                  ON dfa.deal_id = d.id
+                 AND (
+                   LOWER(dfa.agent_name) = a.agent_lower
+                   OR EXISTS (
+                     SELECT 1 FROM users u
+                      WHERE u.id = dfa.agent_user_id
+                        AND LOWER(u.name) = a.agent_lower
+                   )
+                 )
            WHERE d.status IN ('INV','COM') AND COALESCE(d.completed_at, d.invoiced_at) >= $1
            GROUP BY a.agent_lower
          )

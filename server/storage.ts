@@ -1085,10 +1085,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   async setDealFeeAllocations(dealId: string, allocations: InsertDealFeeAllocation[]): Promise<DealFeeAllocation[]> {
+    // Resolve agent_user_id from the agent name where we can (case-insensitive)
+    // so commission joins downstream survive renames. BGP House rows aren't
+    // linked to a user — leave the id null.
+    const nameSet = Array.from(new Set(
+      allocations.filter(a => !a.isBgpHouse && a.agentName).map(a => a.agentName.toLowerCase())
+    ));
+    let nameToUserId = new Map<string, string>();
+    if (nameSet.length > 0) {
+      const { rows: userRows } = await pool.query<{ id: string; name: string }>(
+        "SELECT id, name FROM users WHERE LOWER(name) = ANY($1::text[])",
+        [nameSet]
+      );
+      nameToUserId = new Map(userRows.map(r => [r.name.toLowerCase(), r.id]));
+    }
     return await db.transaction(async (tx) => {
       await tx.delete(dealFeeAllocations).where(eq(dealFeeAllocations.dealId, dealId));
       if (allocations.length === 0) return [];
-      const rows = allocations.map(a => ({ ...a, dealId }));
+      const rows = allocations.map(a => ({
+        ...a,
+        dealId,
+        agentUserId: a.isBgpHouse ? null : (nameToUserId.get((a.agentName || "").toLowerCase()) ?? null),
+      }));
       return tx.insert(dealFeeAllocations).values(rows).returning();
     });
   }
