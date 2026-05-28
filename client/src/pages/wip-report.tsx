@@ -41,6 +41,9 @@ interface WipDealEntry {
   dealType: string | null;
   ref: string;
   groupName: string | null;
+  // Resolved counterparty name (landlord → vendor → purchaser fallback)
+  // — this is the "Client" the WIP filter card and drilldown column show.
+  client: string | null;
   project: string | null;
   tenant: string | null;
   billingEntity: string | null;
@@ -87,7 +90,7 @@ const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
 };
 
 type ClickFilter = {
-  field: "groupName" | "team" | "agent" | "project" | "dealStatus" | "month";
+  field: "client" | "groupName" | "team" | "agent" | "project" | "dealStatus" | "month";
   value: string;
 } | null;
 
@@ -857,7 +860,12 @@ export default function WipReport() {
   const groupData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredEntries.forEach((e) => {
-      const g = e.groupName || "Unknown";
+      // "Client" card now groups by the resolved counterparty name
+      // (landlord / vendor / purchaser) so clicking Canary Wharf
+      // actually surfaces every deal where Canary Wharf is the client.
+      // Old behaviour grouped by the stage-bucket `groupName` and never
+      // matched a real client.
+      const g = e.client || "Unknown";
       map[g] = (map[g] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
     });
     return Object.entries(map)
@@ -965,6 +973,7 @@ export default function WipReport() {
         case "dealRef": aVal = a.dealRef || 0; bVal = b.dealRef || 0; break;
         case "ref": aVal = a.ref || ""; bVal = b.ref || ""; break;
         case "groupName": aVal = a.groupName || ""; bVal = b.groupName || ""; break;
+        case "client": aVal = a.client || ""; bVal = b.client || ""; break;
         case "project": aVal = a.project || ""; bVal = b.project || ""; break;
         case "tenant": aVal = a.tenant || ""; bVal = b.tenant || ""; break;
         case "team": aVal = a.team || ""; bVal = b.team || ""; break;
@@ -1207,9 +1216,9 @@ export default function WipReport() {
               title="Client"
               data={groupData}
               valueLabel="Net fees"
-              activeValue={clickFilterActiveField === "groupName" ? clickFilterActiveValue : null}
+              activeValue={clickFilterActiveField === "client" ? clickFilterActiveValue : null}
               onRowClick={handleClickFilter}
-              field="groupName"
+              field="client"
             />
             <ClickableSummaryTable
               title="Team"
@@ -1272,7 +1281,7 @@ export default function WipReport() {
               </div>
               {clickFilter && (
                 <Badge variant="secondary" className="text-[10px]">
-                  Filtered by {clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
+                  Filtered by {clickFilter.field === "client" || clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
                 </Badge>
               )}
             </div>
@@ -1302,7 +1311,7 @@ export default function WipReport() {
                     {[
                       { key: "dealRef", label: "Ref", width: "w-16" },
                       { key: "ref", label: "Deal", width: "w-40" },
-                      { key: "groupName", label: "Client", width: "w-28" },
+                      { key: "client", label: "Client", width: "w-28" },
                       { key: "tenant", label: "Tenant", width: "w-32" },
                       { key: "project", label: "Property", width: "w-32" },
                       { key: "billingEntity", label: "Billing Entity", width: "w-32" },
@@ -1353,7 +1362,7 @@ export default function WipReport() {
                           </Link>
                         ) : (e.ref || "—")}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.groupName || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>

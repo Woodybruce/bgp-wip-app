@@ -5723,6 +5723,17 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
+        // "Client" = the BGP-side counterparty for this deal:
+        //   leasing  → landlord (we act for the landlord)
+        //   sale     → vendor   (we act for the vendor)
+        //   purchase → purchaser
+        // Falls through in that order so legacy rows missing the
+        // primary counterparty still resolve to something useful.
+        const clientName =
+          (deal.landlordId  ? compMap.get(deal.landlordId)  : null) ||
+          ((deal as any).vendorId    ? compMap.get((deal as any).vendorId)    : null) ||
+          ((deal as any).purchaserId ? compMap.get((deal as any).purchaserId) : null) ||
+          null;
         const billingEntityName = deal.xeroContactName || null;
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
@@ -5749,6 +5760,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               dealType: deal.dealType || null,
               ref: deal.name,
               groupName: deal.groupName || null,
+              client: clientName,
               project: propertyName,
               tenant: tenantName,
               billingEntity: billingEntityName,
@@ -5783,6 +5795,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               dealType: deal.dealType || null,
               ref: deal.name,
               groupName: deal.groupName || null,
+              client: clientName,
               project: propertyName,
               tenant: tenantName,
               billingEntity: billingEntityName,
