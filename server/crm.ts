@@ -3532,6 +3532,27 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
       const result = await storage.setDealFeeAllocations(req.params.id, validated);
+      // Keep crm_deals.internal_agent in sync with the fee-allocation
+      // agents. Without this, the Deals board's BGP Contact column
+      // (which reads internal_agent) diverges from the WIP report's
+      // Agent column (which reads from allocations) — Evie North
+      // appeared on the WIP but never on the deal row.
+      try {
+        const allocAgents = validated
+          .filter((a: any) => !a.isBgpHouse && a.agentName)
+          .map((a: any) => String(a.agentName).trim())
+          .filter((n: string) => n.length > 0);
+        const dealRow = await storage.getCrmDeal(req.params.id);
+        const existing: string[] = Array.isArray((dealRow as any)?.internalAgent)
+          ? ((dealRow as any).internalAgent as string[])
+          : ((dealRow as any)?.internalAgent ? [(dealRow as any).internalAgent as string] : []);
+        const merged = Array.from(new Set([...existing, ...allocAgents]));
+        if (merged.length !== existing.length || merged.some((n, i) => n !== existing[i])) {
+          await storage.updateCrmDeal(req.params.id, { internalAgent: merged } as any);
+        }
+      } catch (mergeErr: any) {
+        console.warn(`[fee-allocations] internal_agent sync failed for ${req.params.id}:`, mergeErr?.message);
+      }
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
