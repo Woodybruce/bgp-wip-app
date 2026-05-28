@@ -138,7 +138,11 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     // amlOverride: senior-approved override for edge cases where AML is
     // demonstrably complete outside the system (legacy import, client's
     // own AML team). Logged to deal_events so the audit captures it.
-    const GATED_STAGES = new Set(["sols", "agreed", "completed", "invoiced"]);
+    // "sols" dropped — the team wants to engage solicitors without AML
+    // having to complete first. agreed/completed/invoiced stay gated:
+    // exchange + completion + invoicing are firmer commitments where
+    // AML must be in place before BGP is on the hook.
+    const GATED_STAGES = new Set(["agreed", "completed", "invoiced"]);
     if (GATED_STAGES.has(toStage) && req.body?.amlOverride !== true) {
       const { checkCounterpartyAml } = await import("./deal-gates");
       const result = await checkCounterpartyAml({

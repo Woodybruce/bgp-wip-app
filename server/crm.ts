@@ -2123,7 +2123,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           "jack@brucegillinghampollard.com",
         ]);
         const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
-        const GATED = new Set(["SOL", "EXC", "COM", "INV"]);
+        // SOL dropped from the gate — the team wants to engage solicitors
+        // without AML having to complete first. EXC/COM/INV stay gated:
+        // exchange + completion + invoicing are firmer commitments where
+        // AML must be in place before BGP is on the hook.
+        const GATED = new Set(["EXC", "COM", "INV"]);
         const newCode = legacyToCode(value);
         const { checkCounterpartyAml } = await import("./deal-gates");
 
@@ -2849,7 +2853,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (req.body.status && oldDeal) {
         const newCode = legacyToCode(req.body.status);
         const oldCode = legacyToCode(oldDeal.status);
-        const GATED = new Set(["SOL", "EXC", "COM", "INV"]);
+        // SOL dropped from the gate — the team wants to engage solicitors
+        // without AML having to complete first. EXC/COM/INV stay gated:
+        // exchange + completion + invoicing are firmer commitments where
+        // AML must be in place before BGP is on the hook.
+        const GATED = new Set(["EXC", "COM", "INV"]);
         if (newCode && GATED.has(newCode) && newCode !== oldCode && req.body.amlOverride !== true) {
           const { checkCounterpartyAml } = await import("./deal-gates");
           const result = await checkCounterpartyAml({
