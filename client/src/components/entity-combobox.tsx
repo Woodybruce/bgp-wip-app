@@ -134,7 +134,17 @@ export function EntityCombobox({
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const triggerLabel = selected?.label ?? (value && !loading ? value : placeholder);
+  // When the stored value doesn't resolve to a known item we used to
+  // fall back to the raw value, which surfaced UUIDs in the trigger
+  // ("ea45123e-…") whenever a deal pointed at a deleted/orphan row.
+  // Show a friendly hint instead so the user knows to pick again. UUID
+  // detection is loose on purpose — anything that looks like one is
+  // almost certainly not a human-readable name.
+  const isUuidLike = typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  const triggerLabel = selected?.label
+    ?? (loading ? placeholder
+      : isUuidLike ? "Select again"
+      : (value || placeholder));
 
   return (
     <div ref={containerRef} className={cn("relative w-full", className)}>

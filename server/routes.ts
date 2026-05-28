@@ -112,6 +112,20 @@ const GROUP_CHAT_TOOLS = [
   "navigate_to", "send_email",
 ];
 
+// available_units / investment_tracker store agent user IDs (text[] of
+// user.id), but crm_deals.internal_agent stores display NAMES (the
+// deal-detail chip render + the BGP-Contact dropdown both look up by
+// name). Without this resolver, deals auto-created off the trackers
+// surfaced raw UUIDs in the Edit Deal dialog and on the kanban chip.
+async function resolveAgentNames(userIds: string[] | null | undefined): Promise<string[]> {
+  if (!Array.isArray(userIds) || userIds.length === 0) return [];
+  const r = await pool.query<{ name: string }>(
+    `SELECT name FROM users WHERE id = ANY($1::varchar[])`,
+    [userIds],
+  );
+  return r.rows.map(row => row.name).filter((n): n is string => !!n);
+}
+
 async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request) {
   const startTime = Date.now();
   const TIMEOUT_MS = 60000;
@@ -3113,14 +3127,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           // deal-detail chip render + add-agent dropdown both look up
           // by name). Resolve IDs → names here so the auto-created deal
           // matches the shape the rest of the UI expects.
-          const agentNames: string[] = [];
-          if (Array.isArray(unit.agentUserIds) && unit.agentUserIds.length > 0) {
-            const u = await pool.query<{ name: string }>(
-              `SELECT name FROM users WHERE id = ANY($1::varchar[])`,
-              [unit.agentUserIds]
-            );
-            for (const r of u.rows) if (r.name) agentNames.push(r.name);
-          }
+          const agentNames = await resolveAgentNames(unit.agentUserIds);
           const deal = await storage.createCrmDeal({
             name: property
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
@@ -3514,7 +3521,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             unitId: unit.unitId || undefined,
             status: unit.marketingStatus || "AVA",
             dealType: "Leasing",
-            internalAgent: unit.agentUserIds || [],
+            internalAgent: await resolveAgentNames(unit.agentUserIds),
             fee: unit.fee ?? undefined,
             rentPa: unit.askingRent ?? undefined,
             totalAreaSqft: unit.sqft ?? undefined,
@@ -3536,7 +3543,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             propertyId: row.propertyId,
             status: "REP",
             dealType,
-            internalAgent: row.agentUserIds || [],
+            internalAgent: await resolveAgentNames(row.agentUserIds),
             fee: row.fee ?? undefined,
           });
           await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
@@ -4544,7 +4551,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             propertyId: row.propertyId,
             status: "REP",
             dealType,
-            internalAgent: row.agentUserIds || [],
+            internalAgent: await resolveAgentNames(row.agentUserIds),
             fee: row.fee ?? undefined,
           });
           await db.update(investmentTracker).set({ dealId: deal.id }).where(eq(investmentTracker.id, row.id));
@@ -4651,7 +4658,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         team: ["Investment"],
         landlordId: landlordCompanyId || undefined,
         vendorId:   vendorCompanyId   || undefined,
-        internalAgent: item.agentUserIds || [],
+        internalAgent: await resolveAgentNames(item.agentUserIds),
         fee: item.fee || undefined,
         comments: `Converted from investment tracker on ${new Date().toISOString().slice(0,10)}.`,
       } as any);

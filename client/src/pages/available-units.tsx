@@ -1758,7 +1758,21 @@ export default function AvailableUnitsPage() {
             </div>
             <div>
               <Label className="text-xs mb-1">Agent *</Label>
-              <Select value={wipForm.agent} onValueChange={v => setWipForm(f => ({ ...f, agent: v }))}>
+              <Select
+                value={wipForm.agent}
+                onValueChange={v => setWipForm(f => {
+                  // Auto-grab the agent's team so the user doesn't have
+                  // to set both fields. Only fills when the team is
+                  // currently empty — keep an existing override intact.
+                  const picked = bgpUsers.find(u => u.name === v);
+                  const teamFromUser = picked?.team;
+                  return {
+                    ...f,
+                    agent: v,
+                    team: (f.team.length > 0 || !teamFromUser) ? f.team : [teamFromUser],
+                  };
+                })}
+              >
                 <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
                 <SelectContent>
                   {bgpUsers.map(u => (
