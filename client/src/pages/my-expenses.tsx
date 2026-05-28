@@ -692,7 +692,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
 // Keeps the dialog self-contained — the existing property-combobox
 // component carries Google Places autocomplete which isn't needed here.
 function SearchableCombobox({
-  items, value, onChange, placeholder, testId,
+  items: rawItems, value, onChange, placeholder, testId,
 }: {
   items: { value: string; label: string; sub?: string }[];
   value: string | null;
@@ -701,6 +701,13 @@ function SearchableCombobox({
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Defensive alphabetical sort — particularly important here because
+  // the deal picker call site receives /api/crm/deals output which the
+  // server returns in updatedAt DESC, not name.
+  const items = useMemo(
+    () => [...rawItems].sort((a, b) => a.label.localeCompare(b.label, "en-GB", { sensitivity: "base" })),
+    [rawItems],
+  );
   const current = value ? items.find(i => i.value === value) : null;
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -748,13 +755,19 @@ function SearchableCombobox({
 // Multi-pick contact picker. Always-on inline command so adding several
 // attendees in sequence is cheap (no dropdown re-open per addition).
 function ContactMultiPicker({
-  contacts, selected, onChange,
+  contacts: rawContacts, selected, onChange,
 }: {
   contacts: CrmContact[];
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Defensive alphabetical sort. Filter applied after sort so the visible
+  // 200-row cap doesn't truncate late-alphabet names from the searchable set.
+  const contacts = useMemo(
+    () => [...rawContacts].sort((a, b) => (a.name || "").localeCompare(b.name || "", "en-GB", { sensitivity: "base" })),
+    [rawContacts],
+  );
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>

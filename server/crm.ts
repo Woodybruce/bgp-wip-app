@@ -2608,6 +2608,27 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   });
 
   // ── Deal WIP Badges endpoint ──────────────────────────────────────────
+  // Distinct PO numbers seen across deals + Xero invoices. Used by the
+  // PO number input on the deal form for autocomplete — saves the team
+  // typing the same PO twice. Returns deduped + alphabetically sorted.
+  // MUST also be registered before the /:id route below.
+  app.get("/api/crm/deals/po-numbers", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query<{ po_number: string }>(
+        `SELECT DISTINCT TRIM(po_number) AS po_number FROM (
+           SELECT po_number FROM crm_deals     WHERE po_number IS NOT NULL AND TRIM(po_number) <> ''
+           UNION
+           SELECT po_number FROM xero_invoices WHERE po_number IS NOT NULL AND TRIM(po_number) <> ''
+         ) p
+         ORDER BY 1`
+      );
+      res.json(rows.map(r => r.po_number));
+    } catch (e: any) {
+      console.error("[crm] po-numbers error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // MUST be registered before the /:id route below — Express matches routes
   // in order and "wip-badges" would otherwise be captured as an :id param.
   app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {

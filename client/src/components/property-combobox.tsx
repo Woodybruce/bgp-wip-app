@@ -51,7 +51,7 @@ interface PropertyComboboxProps {
 // label without having that row in `items`. Cleaner as a small bespoke
 // component than as more props on the generic picker.
 export function PropertyCombobox({
-  items,
+  items: rawItems,
   value,
   onChange,
   onCreated,
@@ -60,6 +60,12 @@ export function PropertyCombobox({
   className,
   testId,
 }: PropertyComboboxProps) {
+  // Defensive alphabetical sort — same pattern as EntityCombobox. Caller
+  // historically had to remember to pre-sort; most forgot.
+  const items = React.useMemo(
+    () => [...rawItems].sort((a, b) => a.label.localeCompare(b.label, "en-GB", { sensitivity: "base" })),
+    [rawItems],
+  );
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [creating, setCreating] = React.useState(false);

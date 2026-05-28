@@ -276,7 +276,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllUsers(): Promise<User[]> {
-    return db.select().from(users);
+    // Sort by name so every BGP-contact picker in the app gets
+    // alphabetical order by default. ~80% of callers forgot to re-sort
+    // on the client; doing it at source fixes them all at once.
+    return db.select().from(users).orderBy(sql`lower(${users.name})`);
   }
 
   async updateUserDashboardWidgets(userId: string, widgets: string[]): Promise<void> {
@@ -783,10 +786,10 @@ export class DatabaseStorage implements IStorage {
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmCompanies).where(where);
-      const data = await db.select().from(crmCompanies).where(where).orderBy(crmCompanies.name).limit(filters.limit).offset(offset);
+      const data = await db.select().from(crmCompanies).where(where).orderBy(sql`lower(${crmCompanies.name})`).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    return db.select().from(crmCompanies).where(where).orderBy(crmCompanies.name);
+    return db.select().from(crmCompanies).where(where).orderBy(sql`lower(${crmCompanies.name})`);
   }
 
   async getCrmCompany(id: string): Promise<CrmCompany | undefined> {
@@ -909,10 +912,10 @@ export class DatabaseStorage implements IStorage {
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmContacts).where(where);
-      const data = await db.select().from(crmContacts).where(where).orderBy(crmContacts.name).limit(filters.limit).offset(offset);
+      const data = await db.select().from(crmContacts).where(where).orderBy(sql`lower(${crmContacts.name})`).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    const rows = await db.select().from(crmContacts).where(where).orderBy(crmContacts.name);
+    const rows = await db.select().from(crmContacts).where(where).orderBy(sql`lower(${crmContacts.name})`);
     // Deduplicate within a company scope: keep the most-recently-updated row per (name, companyId).
     if (filters?.companyId) {
       const seen = new Map<string, typeof rows[0]>();
@@ -971,10 +974,10 @@ export class DatabaseStorage implements IStorage {
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmProperties).where(where);
-      const data = await db.select().from(crmProperties).where(where).orderBy(crmProperties.name).limit(filters.limit).offset(offset);
+      const data = await db.select().from(crmProperties).where(where).orderBy(sql`lower(${crmProperties.name})`).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    return db.select().from(crmProperties).where(where).orderBy(crmProperties.name);
+    return db.select().from(crmProperties).where(where).orderBy(sql`lower(${crmProperties.name})`);
   }
 
   async getCrmProperty(id: string): Promise<CrmProperty | undefined> {

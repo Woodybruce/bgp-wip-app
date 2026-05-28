@@ -293,6 +293,22 @@ export function formatDate(val: string | null | undefined): string {
   }
 }
 
+// Native datalist of every PO number already seen on a deal or invoice.
+// Mounted alongside the PO number input so the browser surfaces suggestions
+// as the user types — autocomplete without a custom popover. The Input's
+// `list="deal-po-suggestions"` attribute binds to this.
+function PoNumberDatalist() {
+  const { data: poNumbers = [] } = useQuery<string[]>({
+    queryKey: ["/api/crm/deals/po-numbers"],
+    staleTime: 60_000,
+  });
+  return (
+    <datalist id="deal-po-suggestions">
+      {poNumbers.map(po => <option key={po} value={po} />)}
+    </datalist>
+  );
+}
+
 // Compact "Last Touch" cell — colour-coded by recency. Reads the
 // deal.lastInteraction value populated by the AI activity curator.
 function LastTouchCell({ iso }: { iso: string | null | undefined }) {
@@ -1309,9 +1325,18 @@ function SimplifiedCreateBody({
             status is not complete for all parties. */}
         <div>
           <Label htmlFor="deal-po-number" className="text-xs">PO number (if known)</Label>
-          <Input id="deal-po-number" value={form.poNumber}
+          {/* Native <datalist> autocomplete sourced from every PO already
+              on a deal or Xero invoice (deduped + sorted). The input
+              still accepts arbitrary text — these are suggestions, not
+              a closed list. Works on mobile + desktop without extra JS. */}
+          <Input
+            id="deal-po-number"
+            list="deal-po-suggestions"
+            value={form.poNumber}
             onChange={(e) => set("poNumber", e.target.value)}
-            placeholder="leave blank if finance to request" />
+            placeholder="leave blank if finance to request"
+          />
+          <PoNumberDatalist />
         </div>
 
         <div>

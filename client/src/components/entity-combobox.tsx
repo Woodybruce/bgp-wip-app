@@ -39,6 +39,14 @@ interface EntityComboboxProps {
    */
   onCreate?: (name: string) => Promise<EntityComboboxItem>;
   createLabel?: string;
+  /**
+   * Skip the default alphabetical sort applied to `items` before render.
+   * Use only when the caller passes a semantic order (status pipeline,
+   * marketing-status chips, etc.). The defensive sort exists because
+   * the historic pattern of "caller must sort" was forgotten on most
+   * call sites — see the alphabetisation audit punch list.
+   */
+  presorted?: boolean;
 }
 
 // Inline combobox — renders the cmdk Command list directly under the trigger
@@ -61,17 +69,29 @@ export function EntityCombobox({
   testId,
   onCreate,
   createLabel = "entity",
+  presorted = false,
 }: EntityComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [creating, setCreating] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
+  // Defensive alphabetical sort — every caller used to have to remember
+  // to pre-sort. Most forgot. Doing it here guarantees consistent
+  // ordering regardless of source (server, in-memory cache, filter
+  // chain). en-GB localeCompare handles punctuation + accents sensibly.
+  const sortedItems = React.useMemo(
+    () => presorted
+      ? items
+      : [...items].sort((a, b) => a.label.localeCompare(b.label, "en-GB", { sensitivity: "base" })),
+    [items, presorted],
+  );
+
   // Trim once + lowercase for cheap comparisons below.
   const searchKey = search.trim().toLowerCase();
   const exactMatch = React.useMemo(
-    () => items.find((it) => it.label.toLowerCase() === searchKey),
-    [items, searchKey],
+    () => sortedItems.find((it) => it.label.toLowerCase() === searchKey),
+    [sortedItems, searchKey],
   );
   const handleCreate = async () => {
     if (!onCreate || !searchKey || creating) return;
@@ -89,8 +109,8 @@ export function EntityCombobox({
   };
 
   const selected = React.useMemo(
-    () => items.find((it) => it.id === value) ?? null,
-    [items, value]
+    () => sortedItems.find((it) => it.id === value) ?? null,
+    [sortedItems, value]
   );
 
   // Close when clicking outside the trigger + dropdown
@@ -202,7 +222,7 @@ export function EntityCombobox({
                 </CommandGroup>
               )}
               <CommandGroup>
-                {items.map((it) => {
+                {sortedItems.map((it) => {
                   const cleanKeywords = (it.keywords ?? []).filter(
                     (k) => typeof k === "string" && k.length > 0
                   );
