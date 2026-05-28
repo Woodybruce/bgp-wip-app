@@ -1038,6 +1038,65 @@ function PropertyUnitCell({
   );
 }
 
+// Consolidated Dates cell — Date Added (read-only) sits above the
+// editable Target Date. Target Date is what feeds the WIP report's
+// month / fiscal-year buckets when a deal hasn't yet exchanged, so a
+// hint flags that in the popover.
+function DatesCell({
+  deal, onSave,
+}: {
+  deal: any;
+  onSave: (field: string, value: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const added = deal.createdAt ? formatDate(deal.createdAt) : null;
+  const target = deal.targetDate ? formatDate(deal.targetDate) : null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-[120px]"
+          data-testid={`dates-cell-${deal.id}`}
+        >
+          <span className="text-[11px] text-muted-foreground">
+            {added ? `Added ${added}` : "—"}
+          </span>
+          {target ? (
+            <span className="text-xs font-medium">Target {target}</span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground italic flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Target date
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[300px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Dates</p>
+        <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Date Added</Label>
+          <span className="text-xs">{added || "—"}</span>
+        </div>
+        <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Target Date</Label>
+          <input
+            type="date"
+            className="text-xs border rounded px-2 py-1 cursor-pointer"
+            value={toDateInputValue(deal.targetDate)}
+            onChange={(e) => onSave("targetDate", e.target.value || null)}
+            data-testid={`dates-target-input-${deal.id}`}
+          />
+        </div>
+        <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
+          Target Date drives the WIP report's month / fiscal-year bucket
+          until the deal exchanges.
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Consolidated Pricing cell — folds Pricing (£ headline), Price PSF
 // and Price ITZA into one column. Same stacked-summary + popover
 // pattern as LeaseTermsCell.
@@ -5038,6 +5097,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     pricing: false,
     pricePsf: false,
     priceItza: false,
+    // Dates cell stacks Date Added (read-only) over the editable
+    // Target Date. The legacy single-column Date Added stays toggleable.
+    datesCombined: true,
+    dateAdded: false,
+    targetDate: false,
     // Five lease-term columns now consolidated behind the Lease Terms
     // column. Toggle them back on from the column-visibility menu for
     // the per-column sortable view.
@@ -5047,9 +5111,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     rentFree: false,
     leaseLength: false,
     breakOption: false,
-    dateAdded: true,
     instructedAt: false,
-    targetDate: true,
     exchangedAt: false,
     completedAt: false,
     invoicedAt: false,
@@ -5951,6 +6013,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
                     {visibleColumns.leaseLength && <SortableTableHead sortKey="leaseLength" sort={dealsSort} align="right" className="min-w-[80px]">Lease Length</SortableTableHead>}
                     {visibleColumns.breakOption && <SortableTableHead sortKey="breakOption" sort={dealsSort} align="right" className="min-w-[80px]">Break Option</SortableTableHead>}
+                    {visibleColumns.datesCombined && <TableHead className="min-w-[140px]">Dates</TableHead>}
                     {visibleColumns.dateAdded && <SortableTableHead sortKey="dateAdded" sort={dealsSort} className="min-w-[110px]">Date Added</SortableTableHead>}
                     {visibleColumns.instructedAt && <SortableTableHead sortKey="instructedAt" sort={dealsSort} className="min-w-[110px]">Instructed</SortableTableHead>}
                     {visibleColumns.targetDate && <SortableTableHead sortKey="targetDate" sort={dealsSort} className="min-w-[120px]">Target Date</SortableTableHead>}
@@ -6386,6 +6449,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             value={deal.breakOption}
                             onSave={(v) => handleInlineSave(deal.id, "breakOption", v)}
                             suffix=" years"
+                          />
+                        </TableCell>
+                      )}
+                      {visibleColumns.datesCombined && (
+                        <TableCell className="px-1.5 py-1">
+                          <DatesCell
+                            deal={deal}
+                            onSave={(field, value) => handleInlineSave(deal.id, field, value)}
                           />
                         </TableCell>
                       )}
