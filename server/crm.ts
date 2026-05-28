@@ -5492,13 +5492,21 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     const userId = req.session?.userId || (req as any).tokenUserId;
     if (!userId) return false;
     const user = await storage.getUser(userId);
-    return !!user?.email && WIP_SENIOR_EMAILS.has(user.email.toLowerCase());
+    if (!user) return false;
+    // Admins implicitly count as WIP-senior — see + edit everything,
+    // including BGP-team rows and restricted-agent rows, plus the
+    // delete-all admin tool. Partners (WIP_SENIOR_EMAILS) keep the
+    // same level by email even if their is_admin flag isn't set.
+    if (user.isAdmin) return true;
+    return !!user.email && WIP_SENIOR_EMAILS.has(user.email.toLowerCase());
   }
   async function hasWipFullView(req: Request): Promise<boolean> {
     const userId = req.session?.userId || (req as any).tokenUserId;
     if (!userId) return false;
     const user = await storage.getUser(userId);
-    if (!user?.email) return false;
+    if (!user) return false;
+    if (user.isAdmin) return true;
+    if (!user.email) return false;
     const email = user.email.toLowerCase();
     return WIP_SENIOR_EMAILS.has(email) || WIP_FULL_VIEW_EMAILS.has(email);
   }
