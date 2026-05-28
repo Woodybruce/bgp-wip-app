@@ -380,6 +380,31 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     }
   };
 
+  // Inline create for the party pickers. Mirrors the deal-form's
+  // createLandlord/Tenant/Vendor/Purchaser flow — the inline picker
+  // already supports onCreate; the deal-detail page just wasn't wiring
+  // it, so a "No matches" search had no way out. Returning the new id
+  // from this resolver lets the picker auto-select it.
+  const createCounterparty = async (
+    field: "landlordId" | "tenantId" | "vendorId" | "purchaserId",
+    companyType: string,
+    name: string,
+  ) => {
+    try {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType,
+        isTrackedBrand: companyType.startsWith("Tenant"),
+      });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      await handlePartySave(field, String(created.id));
+      toast({ title: `${companyType} created`, description: `${created.name} added to CRM and linked.` });
+    } catch (e: any) {
+      toast({ title: "Create failed", description: e?.message || "Try again from the Companies page", variant: "destructive" });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="p-4 sm:p-6 space-y-4">
@@ -631,6 +656,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
                 href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
                 onSave={(v) => handlePartySave("landlordId", v || null)}
+                onCreate={(name) => createCounterparty("landlordId", "Landlord", name)}
                 placeholder="Link landlord"
               />
             </div>
@@ -641,6 +667,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
                 href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
                 onSave={(v) => handlePartySave("tenantId", v || null)}
+                onCreate={(name) => createCounterparty("tenantId", "Tenant", name)}
                 placeholder="Link tenant"
               />
             </div>
@@ -651,6 +678,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
                 href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
                 onSave={(v) => handlePartySave("vendorId", v || null)}
+                onCreate={(name) => createCounterparty("vendorId", "Vendor", name)}
                 placeholder="Link vendor"
               />
             </div>
@@ -661,6 +689,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
                 href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
                 onSave={(v) => handlePartySave("purchaserId", v || null)}
+                onCreate={(name) => createCounterparty("purchaserId", "Purchaser", name)}
                 placeholder="Link purchaser"
               />
             </div>
