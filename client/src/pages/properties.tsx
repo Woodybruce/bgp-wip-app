@@ -107,6 +107,8 @@ import { InlineText, InlineSelect, InlineLabelSelect, InlineNumber, InlineMultiS
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, InlineAddress, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
+import { useTableSort } from "@/hooks/use-table-sort";
+import { SortableTableHead } from "@/components/sortable-table-head";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -4814,6 +4816,17 @@ function PropertiesList({
     return new Set(allUsers.filter(u => u.team?.toLowerCase().includes(tf)).map(u => String(u.id)));
   }, [teamFilter, allUsers]);
 
+  // Lower-cased company-name lookup, used by the broadened search below
+  // (landlord + tenant matching) — memoised so we don't rescan allCompanies
+  // per row per keystroke.
+  const companySearchMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of allCompanies) m.set(c.id, (c.name || "").toLowerCase());
+    return m;
+  }, [allCompanies]);
+
+  const propSort = useTableSort<CrmProperty>("name", "asc");
+
   const filteredItems = useMemo(() => {
     const hasSearch = !!search.trim();
     return items.filter((item) => {
@@ -4854,12 +4867,30 @@ function PropertiesList({
         const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
         const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => (u.name || "").toLowerCase());
         const agentMatch = agentNames.some(n => n.includes(s));
-        if (!nameMatch && !addrMatch && !agentMatch) return false;
+        // Broaden search to match the Deals board: landlord/client name,
+        // linked tenant names, status, and postcode.
+        const landlordName = item.landlordId ? (companySearchMap.get(item.landlordId) || "") : "";
+        const landlordMatch = landlordName.includes(s);
+        const tenantNames = tenantLinks.filter(l => l.propertyId === item.id)
+          .map(l => companySearchMap.get(l.companyId) || "");
+        const tenantMatch = tenantNames.some(n => n.includes(s));
+        const statusMatch = (item.status || "").toLowerCase().includes(s);
+        const postcodeMatch = (extractPostcode(item.address) || "").toLowerCase().includes(s);
+        if (!nameMatch && !addrMatch && !agentMatch && !landlordMatch && !tenantMatch && !statusMatch && !postcodeMatch) return false;
       }
 
       return true;
     });
-  }, [items, activeGroup, columnFilters, search, agentLinks, allUsers, teamUserIds]);
+  }, [items, activeGroup, columnFilters, search, agentLinks, allUsers, teamUserIds, tenantLinks, companySearchMap]);
+
+  // Click-to-sort on the Property + Sq Ft headers. Falls back to the
+  // filtered order when no sort column is active.
+  const sortedItems = propSort.sortKey
+    ? propSort.sorted(filteredItems as any[], {
+        name: (p: any) => p.name,
+        sqft: (p: any) => p.sqft,
+      })
+    : filteredItems;
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -5160,7 +5191,7 @@ function PropertiesList({
                         }}
                       />
                     </TableHead>
-                    <TableHead className="min-w-[280px] w-[280px]">Property</TableHead>
+                    <SortableTableHead sortKey="name" sort={propSort} className="min-w-[280px] w-[280px]">Property</SortableTableHead>
                     {visibleColumns.landlord && <TableHead className="w-[110px] max-w-[110px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
@@ -5195,12 +5226,12 @@ function PropertiesList({
                     {visibleColumns.deals && <TableHead className="w-[140px] max-w-[140px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
-                    {visibleColumns.sqft && <TableHead className="min-w-[60px] w-[60px]">Sq Ft</TableHead>}
+                    {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[60px] w-[60px]">Sq Ft</SortableTableHead>}
                     {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folder Tree</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredItems.map((item) => (
+                  {sortedItems.map((item) => (
                     <TableRow
                       key={item.id}
                       className="text-xs hover:bg-muted/50"
