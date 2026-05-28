@@ -1178,6 +1178,7 @@ export default function AvailableUnitsPage() {
                   />
                 </TableHead>
                 <TableHead className="w-[50px]">Ref</TableHead>
+                <TableHead className="w-[110px]">Unit</TableHead>
                 <TableHead className="w-[180px]">Property</TableHead>
                 <TableHead className="w-[120px]">Deal Type</TableHead>
                 <TableHead className="w-[140px]">Client</TableHead>
@@ -1258,6 +1259,14 @@ export default function AvailableUnitsPage() {
                             })()}
                           </div>
                         ) : "—"}
+                      </TableCell>
+                      <TableCell className="px-1.5 py-1 text-xs font-medium max-w-[110px]">
+                        <InlineText
+                          value={u.unitName}
+                          onSave={(v) => inlineUpdate(u.id, "unitName", v)}
+                          placeholder="Unit name"
+                          className="text-xs font-medium"
+                        />
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-medium max-w-[200px]">
                         <InlineLinkSelect
