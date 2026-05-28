@@ -1191,7 +1191,7 @@ export default function InvestmentTrackerPage() {
         guidePrice: (i: any) => i.guidePrice,
         niy: (i: any) => i.niy,
         sqft: (i: any) => i.sqft,
-        rent: (i: any) => i.rentPa,
+        rent: (i: any) => i.currentRent,
         client: (i: any) => i.client,
         vendor: (i: any) => i.vendor || i.vendorAgent,
         buyer: (i: any) => i.buyer,
@@ -1622,7 +1622,10 @@ export default function InvestmentTrackerPage() {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {paginatedData.map(item => {
-              const statusColor = STATUS_LABEL_COLORS[item.status || ""] || "bg-gray-400";
+              // Normalise legacy free-text status (e.g. "Reporting") to a
+              // canonical code so colours + labels resolve like the table view.
+              const statusCode = legacyToCode(item.status) || "REP";
+              const statusColor = STATUS_LABEL_COLORS[statusCode] || "bg-gray-400";
               const classColor = ASSET_CLASS_COLORS[item.assetType || ""] || "bg-gray-500";
               return (
                 <Card key={item.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setEditItem(item)}>
@@ -1633,7 +1636,7 @@ export default function InvestmentTrackerPage() {
                         {item.address && <p className="text-xs text-muted-foreground truncate">{item.address}</p>}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {item.status && <Badge className={`${statusColor} text-white text-[10px]`}>{item.status}</Badge>}
+                        {item.status && <Badge className={`${statusColor} text-white text-[10px]`}>{DEAL_STATUS_LABELS[statusCode] || statusCode}</Badge>}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
