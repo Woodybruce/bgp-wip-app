@@ -903,13 +903,14 @@ function PartiesCell({
 // Consolidated Lease Terms cell — replaces five SOL-stage columns
 // (Rent PA, Capital Contribution, Rent Free, Lease Length, Break
 // Option) with a single column. Same pattern as PartiesCell.
-type LeaseTermKey = "rentPa" | "capitalContribution" | "rentFree" | "leaseLength" | "breakOption";
+type LeaseTermKey = "rentPa" | "capitalContribution" | "rentFree" | "leaseLength" | "breakOption" | "rentAnalysis";
 const LEASE_TERMS: Array<{ key: LeaseTermKey; label: string; prefix?: string; suffix?: string; short: string }> = [
   { key: "rentPa",              label: "Rent PA",             prefix: "£",        short: "Rent" },
   { key: "capitalContribution", label: "Capital Contribution", prefix: "£",       short: "Cap Contrib" },
   { key: "rentFree",            label: "Rent Free",            suffix: " months", short: "RF" },
   { key: "leaseLength",         label: "Lease Length",         suffix: " years",  short: "Term" },
   { key: "breakOption",         label: "Break Option",         suffix: " years",  short: "Break" },
+  { key: "rentAnalysis",        label: "Rent Analysis",        prefix: "£",       short: "Analysis" },
 ];
 
 function formatLeaseTermValue(val: number | null | undefined, prefix?: string, suffix?: string): string {
@@ -1038,6 +1039,85 @@ function PropertyUnitCell({
   );
 }
 
+// Consolidated Team + BGP Contact cell. Teams (colour-tagged) stack
+// over the assigned agent(s); popover holds both InlineMultiSelect
+// editors so a single click captures both. Empty rosters surface a
+// "+ Add team / agent" affordance.
+function TeamAgentCell({
+  deal, users, onSave,
+}: {
+  deal: any;
+  users: Array<{ id: string; name: string }>;
+  onSave: (field: string, value: string[] | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const teams: string[] = Array.isArray(deal.team)
+    ? deal.team
+    : (deal.team ? [deal.team] : []);
+  const agents: string[] = Array.isArray(deal.internalAgent)
+    ? deal.internalAgent
+    : (deal.internalAgent ? [deal.internalAgent] : []);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[140px]"
+          data-testid={`team-agent-cell-${deal.id}`}
+        >
+          {teams.length > 0 ? (
+            <div className="flex flex-wrap gap-0.5">
+              {teams.map(t => (
+                <Badge
+                  key={t}
+                  variant="secondary"
+                  className={`text-[9px] px-1 py-0 leading-tight ${DEAL_TEAM_COLORS[t] || ""}`}
+                >
+                  {t}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add team
+            </span>
+          )}
+          {agents.length > 0 ? (
+            <span className="text-[11px] text-muted-foreground truncate">{agents.join(", ")}</span>
+          ) : (
+            <span className="text-[10px] text-muted-foreground italic">No agent</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[320px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Team &amp; BGP contact</p>
+        <div className="grid grid-cols-[90px_1fr] items-start gap-2">
+          <Label className="text-xs text-muted-foreground pt-1">Team</Label>
+          <InlineMultiSelect
+            value={teams}
+            options={CRM_OPTIONS.dealTeam.map((t: string) => ({ label: t, value: t }))}
+            colorMap={DEAL_TEAM_COLORS}
+            placeholder="Set team"
+            onSave={(v) => onSave("team", v.length > 0 ? v : null)}
+            testId={`team-agent-team-${deal.id}`}
+          />
+        </div>
+        <div className="grid grid-cols-[90px_1fr] items-start gap-2">
+          <Label className="text-xs text-muted-foreground pt-1">BGP Contact</Label>
+          <InlineMultiSelect
+            value={agents}
+            options={users.map((u) => ({ label: u.name, value: u.name }))}
+            placeholder="Set agent"
+            onSave={(v) => onSave("internalAgent", v.length > 0 ? v : null)}
+            testId={`team-agent-agent-${deal.id}`}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Consolidated Dates cell — Date Added (read-only) sits above the
 // editable Target Date. Target Date is what feeds the WIP report's
 // month / fiscal-year buckets when a deal hasn't yet exchanged, so a
@@ -1107,12 +1187,17 @@ function PricingCell({
   onSave: (field: string, value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const rows = [
-    { key: "pricing",  label: "Pricing",   short: "Price" },
-    { key: "pricePsf", label: "Price PSF", short: "PSF" },
-    { key: "priceItza", label: "Price ITZA", short: "ITZA" },
+  const rows: Array<{ key: string; label: string; short: string; prefix?: string; suffix?: string }> = [
+    { key: "pricing",      label: "Pricing",      short: "Price", prefix: "£" },
+    { key: "pricePsf",     label: "Price PSF",    short: "PSF",   prefix: "£" },
+    { key: "priceItza",    label: "Price ITZA",   short: "ITZA",  prefix: "£" },
+    { key: "yieldPercent", label: "Yield",        short: "Yield", suffix: "%" },
   ];
   const populated = rows.filter(r => deal[r.key] != null && deal[r.key] !== "");
+  const fmt = (val: number, prefix?: string, suffix?: string) => {
+    const num = prefix === "£" ? Number(val).toLocaleString("en-GB") : String(val);
+    return `${prefix || ""}${num}${suffix || ""}`;
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -1130,21 +1215,22 @@ function PricingCell({
             populated.map(r => (
               <div key={r.key} className="flex items-center gap-1 truncate">
                 <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{r.short}</span>
-                <span className="font-mono text-[11px]">£{Number(deal[r.key]).toLocaleString("en-GB")}</span>
+                <span className="font-mono text-[11px]">{fmt(deal[r.key], r.prefix, r.suffix)}</span>
               </div>
             ))
           )}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[300px] p-3 space-y-2.5" align="start">
-        <p className="text-xs font-semibold">Pricing</p>
+        <p className="text-xs font-semibold">Pricing &amp; yield</p>
         {rows.map(r => (
           <div key={r.key} className="grid grid-cols-[100px_1fr] items-center gap-2">
             <Label className="text-xs text-muted-foreground">{r.label}</Label>
             <InlineNumber
               value={deal[r.key]}
               onSave={(v) => onSave(r.key, v)}
-              prefix="£"
+              prefix={r.prefix}
+              suffix={r.suffix}
             />
           </div>
         ))}
@@ -5099,8 +5185,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     landlord: false,
     status: true,
     type: true,
-    team: true,
-    agent: true,
+    // Team + BGP Contact now live behind one cell. Toggle the granular
+    // columns back on from the column-visibility menu if you need them.
+    teamAgent: true,
+    team: false,
+    agent: false,
     assetClass: true,
     // The seven role-specific columns now live behind one Parties column
     // by default. Toggle them back on from the column-visibility menu if
@@ -5114,7 +5203,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     acquisitionAgent: false,
     purchaserAgent: false,
     leasingAgent: false,
-    yield: true,
+    yield: false,
     fee: true,
     feeAlloc: true,
     feeAgreement: true,
@@ -5148,7 +5237,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     exchangedAt: false,
     completedAt: false,
     invoicedAt: false,
-    rentAnalysis: true,
+    rentAnalysis: false,
     sharepoint: true,
     lastInteraction: true,
   });
@@ -6010,6 +6099,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
+                    {visibleColumns.teamAgent && <TableHead className="min-w-[150px]">Team / BGP</TableHead>}
                     {visibleColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
                     {visibleColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {visibleColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
@@ -6189,6 +6279,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             placeholder="Set team"
                             onSave={(v) => handleInlineSave(deal.id, "team", v.length > 0 ? v : null)}
                             testId={`inline-deal-team-${deal.id}`}
+                          />
+                        </TableCell>
+                      )}
+                      {visibleColumns.teamAgent && (
+                        <TableCell className="px-1.5 py-1">
+                          <TeamAgentCell
+                            deal={deal}
+                            users={users}
+                            onSave={(field, value) => handleInlineSave(deal.id, field, value)}
                           />
                         </TableCell>
                       )}
