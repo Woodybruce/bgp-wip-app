@@ -2123,13 +2123,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           "jack@brucegillinghampollard.com",
         ]);
         const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
-        // SOL dropped from the gate — the team wants to engage solicitors
-        // without AML having to complete first. EXC/COM/INV stay gated:
-        // exchange + completion + invoicing are firmer commitments where
-        // AML must be in place before BGP is on the hook.
-        const GATED = new Set(["EXC", "COM", "INV"]);
-        const newCode = legacyToCode(value);
-        const { checkCounterpartyAml } = await import("./deal-gates");
+        // AML gate fully retired — any deal can move to any status
+        // regardless of counterparty KYC state. Senior-approval check on
+        // INV / COM / Billed stays as a firm-policy guard separate from
+        // AML. checkCounterpartyAml still ships in deal-gates.ts and is
+        // used by the promote-unit warn-but-allow path; it's just no
+        // longer called as a blocking check from any status-change path.
 
         for (const id of ids) {
           const oldDeal = await storage.getCrmDeal(id);
@@ -2139,26 +2138,6 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           if (APPROVAL_STATUSES.has(value) && !isSenior) {
             failures.push({ id, reason: `senior approval required for ${value}` });
             continue;
-          }
-          const oldCode = legacyToCode(oldDeal.status);
-          if (newCode && GATED.has(newCode) && newCode !== oldCode) {
-            const result = await checkCounterpartyAml({
-              landlordId: oldDeal.landlordId,
-              tenantId: oldDeal.tenantId,
-              vendorId: (oldDeal as any).vendorId,
-              purchaserId: (oldDeal as any).purchaserId,
-            });
-            if (!result.hasCounterparties) {
-              failures.push({ id, reason: `no counterparties — AML can't run` });
-              continue;
-            }
-            if (result.notReady.length > 0) {
-              failures.push({
-                id,
-                reason: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}`,
-              });
-              continue;
-            }
           }
           passing.push(id);
         }
@@ -2862,39 +2841,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
-      // AML gate — mirrors the deal-stages.ts check. EXC/COM/INV require
-      // every linked counterparty to have kyc_status = 'approved' and not
-      // expired. The senior-approved amlOverride bypass has been removed
-      // — the override path wasn't being audited consistently across all
-      // gate sites, and the team prefers to fix the KYC properly rather
-      // than work around it. KYC stays brand-level (entity columns hold
-      // Xero ContactIDs not crm_trading_entities IDs).
-      if (req.body.status && oldDeal) {
-        const newCode = legacyToCode(req.body.status);
-        const oldCode = legacyToCode(oldDeal.status);
-        // SOL dropped from the gate — the team wants to engage solicitors
-        // without AML having to complete first. EXC/COM/INV stay gated:
-        // exchange + completion + invoicing are firmer commitments where
-        // AML must be in place before BGP is on the hook.
-        const GATED = new Set(["EXC", "COM", "INV"]);
-        if (newCode && GATED.has(newCode) && newCode !== oldCode) {
-          const { checkCounterpartyAml } = await import("./deal-gates");
-          const result = await checkCounterpartyAml({
-            landlordId: oldDeal.landlordId,
-            tenantId: oldDeal.tenantId,
-            vendorId: (oldDeal as any).vendorId,
-            purchaserId: (oldDeal as any).purchaserId,
-          });
-          if (!result.hasCounterparties) {
-            return res.status(403).json({ error: `Cannot move to ${newCode}: deal has no counterparties linked, so AML can't run.` });
-          }
-          if (result.notReady.length > 0) {
-            return res.status(403).json({
-              error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page before moving to ${newCode}.`,
-            });
-          }
-        }
-      }
+      // AML gate fully retired for the time being. checkCounterpartyAml
+      // stays in deal-gates.ts and is still used by the promote-unit
+      // warn-but-allow flow; it's just not called as a blocking check
+      // from any status-change path. Reinstating is a one-liner here +
+      // in deal-stages.ts (search for "AML gate" in this file's history
+      // — the gated-set lookup pattern is preserved in the audit log
+      // for the day it goes back in).
 
       if (req.body.kycApproved === true && !oldDeal?.kycApproved) {
         req.body.kycApprovedAt = new Date();

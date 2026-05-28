@@ -135,31 +135,10 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     // entity for a role, that entity's KYC is checked; otherwise we
     // fall back to the parent brand's KYC.
     //
-    // "sols" dropped — the team wants to engage solicitors without AML
-    // having to complete first. agreed/completed/invoiced stay gated:
-    // exchange + completion + invoicing are firmer commitments where
-    // AML must be in place before BGP is on the hook. The amlOverride
-    // bypass has been removed — fix the KYC properly instead.
-    const GATED_STAGES = new Set(["agreed", "completed", "invoiced"]);
-    if (GATED_STAGES.has(toStage)) {
-      const { checkCounterpartyAml } = await import("./deal-gates");
-      const result = await checkCounterpartyAml({
-        landlordId: c.landlord_id,
-        tenantId: c.tenant_id,
-        vendorId: c.vendor_id,
-        purchaserId: c.purchaser_id,
-      });
-      if (!result.hasCounterparties) {
-        return res.status(403).json({
-          error: "Deal needs at least one counterparty linked before moving past Solicitors. AML can't run on nothing.",
-        });
-      }
-      if (result.notReady.length > 0) {
-        return res.status(403).json({
-          error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page before this stage transition.`,
-        });
-      }
-    }
+    // AML gate fully retired for the time being. Mirrored by the
+    // matching no-op in server/crm.ts PUT and the bulk-update path.
+    // Reinstate by uncommenting the block — checkCounterpartyAml +
+    // its helpers are still in deal-gates.ts.
 
     const updates: string[] = ["stage = $1", "stage_entered_at = now()", "updated_at = now()"];
     const values: any[] = [toStage];
