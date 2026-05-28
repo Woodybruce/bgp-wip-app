@@ -116,6 +116,8 @@ import { buildAmlCompanyMap, computeDealAmlStatus, DealAmlBadge } from "@/compon
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { PropertyCombobox } from "@/components/property-combobox";
+import { SortableTableHead } from "@/components/sortable-table-head";
+import { useTableSort } from "@/hooks/use-table-sort";
 import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
@@ -4563,6 +4565,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
   const [deleteListDeal, setDeleteListDeal] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Click-to-sort on the deals schedule headers. Filtered columns
+  // (Type, Status, Team, Asset Class) keep their existing
+  // ColumnFilterPopover; everything else is wired below.
+  const dealsSort = useTableSort(null, "asc");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
@@ -5081,6 +5087,43 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const propertyMap = new Map(properties.map((p) => [p.id, p.name]));
   const companyMap = new Map(companies.map((c) => [c.id, c.name]));
+  // Click-to-sort applied after the existing filter chain. Looks up
+  // names through propertyMap / companyMap so sorts on Property,
+  // Client, Tenant etc. compare against the human label rather than
+  // the FK id. Falls back to filteredDeals when no column is picked.
+  const sortedFilteredDeals = dealsSort.sortKey
+    ? dealsSort.sorted(filteredDeals as any[], {
+        ref: (d: any) => d.dealRef,
+        property: (d: any) => propertyMap.get(d.propertyId) || d.name,
+        landlord: (d: any) => companyMap.get(d.landlordId),
+        tenant: (d: any) => companyMap.get(d.tenantId),
+        vendor: (d: any) => companyMap.get(d.vendorId),
+        purchaser: (d: any) => companyMap.get(d.purchaserId),
+        vendorAgent: (d: any) => companyMap.get(d.vendorAgentId),
+        acquisitionAgent: (d: any) => companyMap.get(d.acquisitionAgentId),
+        purchaserAgent: (d: any) => companyMap.get(d.purchaserAgentId),
+        leasingAgent: (d: any) => companyMap.get(d.leasingAgentId),
+        clientContact: (d: any) => d.clientContactName || d.clientContactId,
+        agent: (d: any) => Array.isArray(d.internalAgent) ? d.internalAgent.join(", ") : d.internalAgent,
+        fee: (d: any) => d.fee,
+        pricing: (d: any) => d.pricing,
+        yield: (d: any) => d.yieldPercent,
+        feeAgreement: (d: any) => d.feeAgreement,
+        xeroContact: (d: any) => d.xeroContactName,
+        rentPa: (d: any) => d.rentPa,
+        capitalContribution: (d: any) => d.capitalContribution,
+        rentFree: (d: any) => d.rentFree,
+        leaseLength: (d: any) => d.leaseLength,
+        breakOption: (d: any) => d.breakOption,
+        dateAdded: (d: any) => d.createdAt ? new Date(d.createdAt) : null,
+        instructedAt: (d: any) => d.instructedAt ? new Date(d.instructedAt) : null,
+        targetDate: (d: any) => d.targetDate ? new Date(d.targetDate) : null,
+        exchangedAt: (d: any) => d.exchangedAt ? new Date(d.exchangedAt) : null,
+        completedAt: (d: any) => d.completedAt ? new Date(d.completedAt) : null,
+        invoicedAt: (d: any) => d.invoicedAt ? new Date(d.invoicedAt) : null,
+        lastInteraction: (d: any) => d.lastInteraction ? new Date(d.lastInteraction) : null,
+      })
+    : filteredDeals;
   // AML lookup for the badge — built from the same companies list so
   // we don't re-fetch. Kept narrow to id/name/kycStatus/expiry.
   const amlCompanyMap = useMemo(() => buildAmlCompanyMap(companies), [companies]);
@@ -5399,9 +5442,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         data-testid="checkbox-select-all-deals"
                       />
                     </TableHead>
-                    <TableHead className="w-[60px]">Ref</TableHead>
-                    <TableHead className="min-w-[200px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[120px] px-1.5">Client</TableHead>}
+                    <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[60px]">Ref</SortableTableHead>
+                    <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property</SortableTableHead>
+                    {visibleColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {visibleColumns.type && (
                       <TableHead className="min-w-[120px]">
                         <ColumnFilterPopover
@@ -5432,10 +5475,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.tenant && <TableHead className="min-w-[120px]">Tenant</TableHead>}
-                    {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
+                    {visibleColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
+                    {visibleColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
                     {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
-                    {visibleColumns.agent && <TableHead className="min-w-[80px]">BGP Contact</TableHead>}
+                    {visibleColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {visibleColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
                         <ColumnFilterPopover
@@ -5446,39 +5489,39 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.clientContact && <TableHead className="min-w-[120px]">Client Contact</TableHead>}
-                    {visibleColumns.vendor && <TableHead className="min-w-[120px]">Vendor</TableHead>}
-                    {visibleColumns.purchaser && <TableHead className="min-w-[120px]">Purchaser</TableHead>}
-                    {visibleColumns.vendorAgent && <TableHead className="min-w-[120px]">Vendor Agent</TableHead>}
-                    {visibleColumns.acquisitionAgent && <TableHead className="min-w-[120px]">Acquisition Agent</TableHead>}
-                    {visibleColumns.purchaserAgent && <TableHead className="min-w-[120px]">Purchaser Agent</TableHead>}
-                    {visibleColumns.leasingAgent && <TableHead className="min-w-[120px]">Leasing Agent</TableHead>}
-                    {visibleColumns.pricing && <TableHead className="min-w-[100px] text-right">Pricing</TableHead>}
-                    {visibleColumns.yield && <TableHead className="min-w-[80px] text-right">Yield %</TableHead>}
-                    {visibleColumns.feeAgreement && <TableHead className="min-w-[100px]">Fee Agreement</TableHead>}
-                    {visibleColumns.xeroContact && <TableHead className="min-w-[180px]">Xero Contact</TableHead>}
+                    {visibleColumns.clientContact && <SortableTableHead sortKey="clientContact" sort={dealsSort} className="min-w-[120px]">Client Contact</SortableTableHead>}
+                    {visibleColumns.vendor && <SortableTableHead sortKey="vendor" sort={dealsSort} className="min-w-[120px]">Vendor</SortableTableHead>}
+                    {visibleColumns.purchaser && <SortableTableHead sortKey="purchaser" sort={dealsSort} className="min-w-[120px]">Purchaser</SortableTableHead>}
+                    {visibleColumns.vendorAgent && <SortableTableHead sortKey="vendorAgent" sort={dealsSort} className="min-w-[120px]">Vendor Agent</SortableTableHead>}
+                    {visibleColumns.acquisitionAgent && <SortableTableHead sortKey="acquisitionAgent" sort={dealsSort} className="min-w-[120px]">Acquisition Agent</SortableTableHead>}
+                    {visibleColumns.purchaserAgent && <SortableTableHead sortKey="purchaserAgent" sort={dealsSort} className="min-w-[120px]">Purchaser Agent</SortableTableHead>}
+                    {visibleColumns.leasingAgent && <SortableTableHead sortKey="leasingAgent" sort={dealsSort} className="min-w-[120px]">Leasing Agent</SortableTableHead>}
+                    {visibleColumns.pricing && <SortableTableHead sortKey="pricing" sort={dealsSort} align="right" className="min-w-[100px]">Pricing</SortableTableHead>}
+                    {visibleColumns.yield && <SortableTableHead sortKey="yield" sort={dealsSort} align="right" className="min-w-[80px]">Yield %</SortableTableHead>}
+                    {visibleColumns.feeAgreement && <SortableTableHead sortKey="feeAgreement" sort={dealsSort} className="min-w-[100px]">Fee Agreement</SortableTableHead>}
+                    {visibleColumns.xeroContact && <SortableTableHead sortKey="xeroContact" sort={dealsSort} className="min-w-[180px]">Xero Contact</SortableTableHead>}
                     {visibleColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
                     {visibleColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
                     {visibleColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
-                    {visibleColumns.rentPa && <TableHead className="min-w-[100px] text-right">Rent PA</TableHead>}
-                    {visibleColumns.capitalContribution && <TableHead className="min-w-[100px] text-right">Capital Contribution</TableHead>}
-                    {visibleColumns.rentFree && <TableHead className="min-w-[80px] text-right">Rent Free</TableHead>}
-                    {visibleColumns.leaseLength && <TableHead className="min-w-[80px] text-right">Lease Length</TableHead>}
-                    {visibleColumns.breakOption && <TableHead className="min-w-[80px] text-right">Break Option</TableHead>}
-                    {visibleColumns.dateAdded && <TableHead className="min-w-[110px]">Date Added</TableHead>}
-                    {visibleColumns.instructedAt && <TableHead className="min-w-[110px]">Instructed</TableHead>}
-                    {visibleColumns.targetDate && <TableHead className="min-w-[120px]">Target Date</TableHead>}
-                    {visibleColumns.exchangedAt && <TableHead className="min-w-[110px]">Exchanged</TableHead>}
-                    {visibleColumns.completedAt && <TableHead className="min-w-[110px]">Completed</TableHead>}
-                    {visibleColumns.invoicedAt && <TableHead className="min-w-[110px]">Invoiced</TableHead>}
+                    {visibleColumns.rentPa && <SortableTableHead sortKey="rentPa" sort={dealsSort} align="right" className="min-w-[100px]">Rent PA</SortableTableHead>}
+                    {visibleColumns.capitalContribution && <SortableTableHead sortKey="capitalContribution" sort={dealsSort} align="right" className="min-w-[100px]">Capital Contribution</SortableTableHead>}
+                    {visibleColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
+                    {visibleColumns.leaseLength && <SortableTableHead sortKey="leaseLength" sort={dealsSort} align="right" className="min-w-[80px]">Lease Length</SortableTableHead>}
+                    {visibleColumns.breakOption && <SortableTableHead sortKey="breakOption" sort={dealsSort} align="right" className="min-w-[80px]">Break Option</SortableTableHead>}
+                    {visibleColumns.dateAdded && <SortableTableHead sortKey="dateAdded" sort={dealsSort} className="min-w-[110px]">Date Added</SortableTableHead>}
+                    {visibleColumns.instructedAt && <SortableTableHead sortKey="instructedAt" sort={dealsSort} className="min-w-[110px]">Instructed</SortableTableHead>}
+                    {visibleColumns.targetDate && <SortableTableHead sortKey="targetDate" sort={dealsSort} className="min-w-[120px]">Target Date</SortableTableHead>}
+                    {visibleColumns.exchangedAt && <SortableTableHead sortKey="exchangedAt" sort={dealsSort} className="min-w-[110px]">Exchanged</SortableTableHead>}
+                    {visibleColumns.completedAt && <SortableTableHead sortKey="completedAt" sort={dealsSort} className="min-w-[110px]">Completed</SortableTableHead>}
+                    {visibleColumns.invoicedAt && <SortableTableHead sortKey="invoicedAt" sort={dealsSort} className="min-w-[110px]">Invoiced</SortableTableHead>}
                     {visibleColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {visibleColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
-                    {visibleColumns.lastInteraction && <TableHead className="min-w-[100px]">Last Touch</TableHead>}
+                    {visibleColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="min-w-[100px]">Last Touch</SortableTableHead>}
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredDeals.map((deal) => (
+                  {sortedFilteredDeals.map((deal: any) => (
                     <TableRow
                       key={deal.id}
                       className="text-xs"
