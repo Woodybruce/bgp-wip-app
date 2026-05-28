@@ -1039,6 +1039,69 @@ function PropertyUnitCell({
   );
 }
 
+// Consolidated Fee cell — £ amount on top, Fee Agreement chip
+// underneath. Popover lets the team set both without touching two
+// columns.
+function FeeCombinedCell({
+  deal, onSave,
+}: {
+  deal: any;
+  onSave: (field: string, value: number | string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const feeStr = deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[100px]"
+          data-testid={`fee-combined-cell-${deal.id}`}
+        >
+          {feeStr ? (
+            <span className="font-mono text-xs font-medium">{feeStr}</span>
+          ) : (
+            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add fee
+            </span>
+          )}
+          {deal.feeAgreement ? (
+            <Badge
+              variant="secondary"
+              className={`text-[9px] px-1 py-0 leading-tight w-fit ${DEAL_FEE_AGREEMENT_COLORS[deal.feeAgreement] || ""}`}
+            >
+              FA {deal.feeAgreement}
+            </Badge>
+          ) : (
+            <span className="text-[10px] text-muted-foreground italic">No FA</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[260px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Fee &amp; agreement</p>
+        <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Fee</Label>
+          <InlineNumber
+            value={deal.fee}
+            onSave={(v) => onSave("fee", v)}
+            prefix="£"
+          />
+        </div>
+        <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Fee Agreement</Label>
+          <InlineLabelSelect
+            value={deal.feeAgreement}
+            options={CRM_OPTIONS.dealFeeAgreement}
+            colorMap={DEAL_FEE_AGREEMENT_COLORS}
+            onSave={(v) => onSave("feeAgreement", v || null)}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Consolidated Team + BGP Contact cell. Teams (colour-tagged) stack
 // over the assigned agent(s); popover holds both InlineMultiSelect
 // editors so a single click captures both. Empty rosters surface a
@@ -5204,9 +5267,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     purchaserAgent: false,
     leasingAgent: false,
     yield: false,
-    fee: true,
+    // Fee + Fee Agreement collapse into one cell. Toggle granular
+    // columns back on from column visibility if needed.
+    feeCombined: true,
+    fee: false,
+    feeAgreement: false,
     feeAlloc: true,
-    feeAgreement: true,
     floorAreas: true,
     // Client (landlord) + Xero billing contact now live behind one
     // 'Client / Billing' cell. Toggle the granular columns back on
@@ -6102,6 +6168,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.teamAgent && <TableHead className="min-w-[150px]">Team / BGP</TableHead>}
                     {visibleColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
                     {visibleColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
+                    {visibleColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {visibleColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
                     {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
                     {visibleColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
@@ -6313,6 +6380,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             agentCompanies={agentCompanies}
                             onSave={(field, value) => handleInlineSave(deal.id, field, value)}
                             onCreated={() => invalidateDealCaches()}
+                          />
+                        </TableCell>
+                      )}
+                      {visibleColumns.feeCombined && (
+                        <TableCell className="px-1.5 py-1">
+                          <FeeCombinedCell
+                            deal={deal}
+                            onSave={(field, value) => handleInlineSave(deal.id, field, value)}
                           />
                         </TableCell>
                       )}
