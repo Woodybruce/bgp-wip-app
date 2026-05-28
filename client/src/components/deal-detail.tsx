@@ -67,7 +67,7 @@ import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
-import { InlineLinkSelect } from "@/components/inline-edit";
+import { InlineLinkSelect, InlineText } from "@/components/inline-edit";
 import {
   DEAL_STATUS_COLORS,
   DEAL_TYPE_COLORS,
@@ -1225,11 +1225,18 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               </SidebarSection>
             )}
 
-            {deal.comments && (
-              <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
-                <p className="text-xs whitespace-pre-wrap text-muted-foreground" data-testid="text-deal-comments">{deal.comments}</p>
-              </SidebarSection>
-            )}
+            <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
+              <InlineText
+                value={deal.comments}
+                multiline
+                placeholder="Click to add a comment…"
+                className="text-xs whitespace-pre-wrap text-muted-foreground w-full"
+                onSave={async (val) => {
+                  await apiRequest("PUT", `/api/crm/deals/${id}`, { comments: val || null });
+                  invalidateDealCaches(id);
+                }}
+              />
+            </SidebarSection>
           </ScrollArea>
         </div>
       </div>
