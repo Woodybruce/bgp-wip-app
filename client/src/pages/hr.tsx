@@ -5854,9 +5854,22 @@ function AddStaffDialog({ allStaff, open, onClose }: { allStaff: StaffMember[]; 
 
 export default function HRPage() {
   const { toast } = useToast();
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [initialTab, setInitialTab] = useState<string | undefined>(undefined);
+
+  // Push the user's selection to the URL so browser back works.
+  // The useEffect below already reads ?person= back into state, so a
+  // back navigation pops the URL and clears the selection automatically.
+  const selectPerson = (id: string, tab?: string) => {
+    const params = new URLSearchParams();
+    params.set("person", id);
+    if (tab) params.set("tab", tab);
+    navigate(`/hr?${params.toString()}`);
+  };
+  const clearSelection = () => {
+    navigate("/hr");
+  };
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
   const [addStaffOpen, setAddStaffOpen] = useState(false);
@@ -5865,11 +5878,13 @@ export default function HRPage() {
 
   // Honour ?person=:id (and optional &tab=:name) from the URL — links from
   // the You panel set both so 'My Card & Expenses' lands on the right tab.
+  // Also drives browser-back: clearSelection() navigates to /hr (no params)
+  // which fires this effect and clears the selected user.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const personId = params.get("person");
     const tab = params.get("tab") || undefined;
-    if (personId) setSelectedUserId(personId);
+    setSelectedUserId(personId);   // null when ?person= absent — clears drill-in on back
     setInitialTab(tab);
   }, [location]);
 
@@ -5933,7 +5948,7 @@ export default function HRPage() {
           allStaff={allStaff}
           isAdmin={isAdmin}
           currentUserId={currentUser?.id || ""}
-          onBack={() => { setSelectedUserId(null); setInitialTab(undefined); }}
+          onBack={clearSelection}
           initialTab={initialTab}
         />
       </div>
@@ -5991,7 +6006,7 @@ export default function HRPage() {
         </TabsList>
 
         <TabsContent value="overview">
-          <HrOverview onSelectPerson={(id, tab) => { setSelectedUserId(id); if (tab) setInitialTab(tab); }} />
+          <HrOverview onSelectPerson={(id, tab) => selectPerson(id, tab)} />
         </TabsContent>
 
         <TabsContent value="my-tasks">

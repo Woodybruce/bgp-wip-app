@@ -38,7 +38,8 @@ export default function KycHub() {
     setTab(nextTab);
     const params = new URLSearchParams(window.location.search);
     params.set("tab", nextTab);
-    navigate(`/kyc-clouseau?${params.toString()}`, { replace: true });
+    // Push (don't replace) so browser back steps through tab history.
+    navigate(`/kyc-clouseau?${params.toString()}`);
   };
 
   useEffect(() => {

@@ -273,7 +273,8 @@ export default function PropertyIntelligence() {
     setTab(nextTab);
     const params = new URLSearchParams(window.location.search);
     params.set("tab", nextTab);
-    navigate(`/property-intelligence?${params.toString()}`, { replace: true });
+    // Push (don't replace) so browser back steps through tab history.
+    navigate(`/property-intelligence?${params.toString()}`);
   };
 
   useEffect(() => {

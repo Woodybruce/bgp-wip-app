@@ -380,7 +380,14 @@ function AuthenticatedApp() {
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0" style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
           {!isBottomNavRoute && (
-            <button onClick={() => navigate("/")} className="p-1" data-testid="button-mobile-page-back">
+            <button
+              onClick={() => {
+                if (window.history.length > 1) window.history.back();
+                else navigate("/");
+              }}
+              className="p-1"
+              data-testid="button-mobile-page-back"
+            >
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
