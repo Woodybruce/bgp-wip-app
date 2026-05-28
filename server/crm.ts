@@ -5770,19 +5770,29 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const stage = deriveStage(deal.status);
         const isInvoiced = stage === "invoiced";
         const totalFee = deal.fee || 0;
-        const totalInvoiceAmt = invoice?.totalAmount || (isInvoiced ? totalFee : 0);
+        // Presence check, not truthiness — a genuine £0 invoice must NOT fall
+        // through to deal.fee (that overstated the invoiced column).
+        const totalInvoiceAmt = invoice ? invoice.totalAmount : (isInvoiced ? totalFee : 0);
 
         const dealAllocations = allocsByDealId.get(deal.id);
 
         if (dealAllocations && dealAllocations.length > 0) {
-          // Use fee allocations: one WIP entry per allocation
+          // Reconcile allocations to the deal total so the deal contributes
+          // exactly its fee (or invoiced amount) to the headline, regardless
+          // of whether splits are percentage- or fixed-based and whether they
+          // sum to 100%. Each allocation's raw weight (fixedAmount, else
+          // pct×fee) becomes a proportional share of the real deal total.
+          const rawWeight = (a: any) => a.fixedAmount != null && a.fixedAmount !== 0
+            ? a.fixedAmount
+            : totalFee * ((a.percentage || 0) / 100);
+          const weightTotal = dealAllocations.reduce((s, a) => s + rawWeight(a), 0);
           for (const alloc of dealAllocations) {
-            const allocPct = (alloc.percentage || 0) / 100;
-            const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
-            // Only emit invoice amount when deal is actually invoiced — otherwise
-            // fixedAmount gets reused for both columns and doubles the totals.
+            const share = weightTotal > 0 ? rawWeight(alloc) / weightTotal : 1 / dealAllocations.length;
+            const agentFee = Math.round(totalFee * share * 100) / 100;
+            // Only the invoiced column carries a value once invoiced; WIP is
+            // zeroed below so a deal is never counted in both columns.
             const agentInvoiceAmt = isInvoiced
-              ? (alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100)
+              ? Math.round(totalInvoiceAmt * share * 100) / 100
               : 0;
             entries.push({
               id: `${deal.id}_${alloc.agentName}`,
@@ -7471,15 +7481,20 @@ Rules:
         const stage = deriveStageExcel(deal.status);
         const isInvoiced = stage === "invoiced";
         const totalFee = deal.fee || 0;
-        const totalInvoiceAmt = invoice?.totalAmount || (isInvoiced ? totalFee : 0);
+        const totalInvoiceAmt = invoice ? invoice.totalAmount : (isInvoiced ? totalFee : 0);
         const dealAllocations = allocsByDealId.get(deal.id);
 
         if (dealAllocations && dealAllocations.length > 0) {
+          // Same proportional reconciliation as the live /api/wip builder.
+          const rawWeight = (a: any) => a.fixedAmount != null && a.fixedAmount !== 0
+            ? a.fixedAmount
+            : totalFee * ((a.percentage || 0) / 100);
+          const weightTotal = dealAllocations.reduce((s, a) => s + rawWeight(a), 0);
           for (const alloc of dealAllocations) {
-            const allocPct = (alloc.percentage || 0) / 100;
-            const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
+            const share = weightTotal > 0 ? rawWeight(alloc) / weightTotal : 1 / dealAllocations.length;
+            const agentFee = Math.round(totalFee * share * 100) / 100;
             const agentInvoiceAmt = isInvoiced
-              ? (alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100)
+              ? Math.round(totalInvoiceAmt * share * 100) / 100
               : 0;
             entries.push({
               id: `${deal.id}_${alloc.agentName}`, dealId: deal.id, dealType: deal.dealType || null,
