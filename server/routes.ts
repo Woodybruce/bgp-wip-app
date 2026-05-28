@@ -3216,6 +3216,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const unit = await storage.updateAvailableUnit(req.params.id, partial);
 
+      // Mirror deal-bearing fields onto the backing crm_deal so the Deals
+      // board + WIP report don't drift from inline tracker edits. Without
+      // this, editing agent/fee/rent here updated only the unit row while
+      // the deal kept the value captured at create/promote time.
+      if (existing.dealId) {
+        const dealPatch: Record<string, any> = {};
+        if ("agentUserIds" in partial) {
+          dealPatch.internalAgent = await resolveAgentNames((partial as any).agentUserIds);
+        }
+        if ("fee" in partial) dealPatch.fee = (partial as any).fee;
+        if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
+        if (Object.keys(dealPatch).length > 0) {
+          try {
+            await storage.updateCrmDeal(existing.dealId, dealPatch as any);
+          } catch (e: any) {
+            console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
+          }
+        }
+      }
+
       // Re-stamp tenancy_unit_id when the unit name changes — keeps
       // the canonical unit FK aligned with the new label.
       if ("unitName" in partial) {
@@ -4628,6 +4648,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       });
 
       if (!row) return res.status(404).json({ message: "Not found" });
+
+      // Mirror status/fee/agent/parties onto the backing crm_deal so the
+      // Deals board + WIP stay in step with inline investment-tracker edits.
+      if (row.dealId) {
+        const dealPatch: Record<string, any> = {};
+        if ("status" in updates) dealPatch.status = updates.status;
+        if ("fee" in updates) dealPatch.fee = updates.fee;
+        if ("agentUserIds" in updates) dealPatch.internalAgent = await resolveAgentNames(updates.agentUserIds);
+        if ("clientId" in updates) dealPatch.landlordId = updates.clientId || null;
+        if ("vendorId" in updates) dealPatch.vendorId = updates.vendorId || null;
+        if (Object.keys(dealPatch).length > 0) {
+          try {
+            await storage.updateCrmDeal(row.dealId, dealPatch as any);
+          } catch (e: any) {
+            console.warn(`[investment-tracker PATCH] deal sync failed for ${row.dealId}:`, e?.message);
+          }
+        }
+      }
+
       res.json(row);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
