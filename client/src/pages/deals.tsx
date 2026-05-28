@@ -1038,6 +1038,137 @@ function PropertyUnitCell({
   );
 }
 
+// Consolidated Pricing cell — folds Pricing (£ headline), Price PSF
+// and Price ITZA into one column. Same stacked-summary + popover
+// pattern as LeaseTermsCell.
+function PricingCell({
+  deal, onSave,
+}: {
+  deal: any;
+  onSave: (field: string, value: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rows = [
+    { key: "pricing",  label: "Pricing",   short: "Price" },
+    { key: "pricePsf", label: "Price PSF", short: "PSF" },
+    { key: "priceItza", label: "Price ITZA", short: "ITZA" },
+  ];
+  const populated = rows.filter(r => deal[r.key] != null && deal[r.key] !== "");
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[120px]"
+          data-testid={`pricing-cell-${deal.id}`}
+        >
+          {populated.length === 0 ? (
+            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add pricing
+            </span>
+          ) : (
+            populated.map(r => (
+              <div key={r.key} className="flex items-center gap-1 truncate">
+                <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{r.short}</span>
+                <span className="font-mono text-[11px]">£{Number(deal[r.key]).toLocaleString("en-GB")}</span>
+              </div>
+            ))
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[300px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Pricing</p>
+        {rows.map(r => (
+          <div key={r.key} className="grid grid-cols-[100px_1fr] items-center gap-2">
+            <Label className="text-xs text-muted-foreground">{r.label}</Label>
+            <InlineNumber
+              value={deal[r.key]}
+              onSave={(v) => onSave(r.key, v)}
+              prefix="£"
+            />
+          </div>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// Consolidated Client + Xero contact cell. Stacks client (landlord)
+// over the linked Xero billing contact. Click opens a popover with
+// the landlord picker (inline-create wired) and the Xero contact
+// picker (which writes id + cached name/account/address in one go).
+function ClientXeroCell({
+  deal, companies, onLandlordSave, onLandlordCreate, onXeroChange,
+}: {
+  deal: any;
+  companies: CrmCompany[];
+  onLandlordSave: (v: string | null) => void;
+  onLandlordCreate: (name: string) => Promise<void> | void;
+  onXeroChange: (c: { ContactID: string; Name: string; AccountNumber: string | null; BillingAddress: any } | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const clientName = deal.landlordId
+    ? (companies.find(c => c.id === deal.landlordId)?.name || "Linked client")
+    : null;
+  const xeroName = (deal as any).xeroContactName || null;
+  const xeroAcct = (deal as any).xeroAccountNumber || null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-[170px]"
+          data-testid={`client-xero-cell-${deal.id}`}
+        >
+          {clientName ? (
+            <span className="text-sm font-medium truncate">{clientName}</span>
+          ) : (
+            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add client
+            </span>
+          )}
+          {xeroName ? (
+            <span className="text-[11px] text-muted-foreground truncate flex items-center gap-1">
+              <Receipt className="w-2.5 h-2.5 shrink-0" />
+              <span className="truncate">{xeroName}{xeroAcct ? ` · A/C ${xeroAcct}` : ""}</span>
+            </span>
+          ) : (
+            <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[380px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Client &amp; billing</p>
+        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Client</Label>
+          <InlineLinkSelect
+            value={deal.landlordId}
+            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
+            href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
+            onSave={onLandlordSave}
+            onCreate={(name) => onLandlordCreate(name)}
+            placeholder="Link client"
+          />
+        </div>
+        <div className="grid grid-cols-[80px_1fr] items-start gap-2">
+          <Label className="text-xs text-muted-foreground pt-1.5">Xero contact</Label>
+          <XeroContactPicker
+            value={(deal as any).xeroContactId || null}
+            cachedName={(deal as any).xeroContactName}
+            cachedAccountNumber={(deal as any).xeroAccountNumber}
+            cachedAddress={(deal as any).xeroBillingAddress}
+            onChange={(c) => onXeroChange(c as any)}
+            testIdPrefix={`deal-${deal.id}-xero`}
+            compact
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Simplified create-deal body — shown by default when opening "New
 // Deal". Five fields, all the team needs to spin a deal up: property,
@@ -4872,7 +5003,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   }, [activeTeam]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     unit: false,
-    landlord: true,
+    // 'landlord' (renders as 'Client') is folded into clientXero by default
+    landlord: false,
     status: true,
     type: true,
     team: true,
@@ -4890,15 +5022,22 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     acquisitionAgent: false,
     purchaserAgent: false,
     leasingAgent: false,
-    pricing: true,
     yield: true,
     fee: true,
     feeAlloc: true,
     feeAgreement: true,
-    xeroContact: true,
     floorAreas: true,
-    pricePsf: true,
-    priceItza: true,
+    // Client (landlord) + Xero billing contact now live behind one
+    // 'Client / Billing' cell. Toggle the granular columns back on
+    // from the column-visibility menu if you ever need them.
+    clientXero: true,
+    xeroContact: false,
+    // Pricing column rolls up Pricing / Price PSF / Price ITZA — same
+    // stack-and-popover pattern as Lease Terms.
+    pricingCombined: true,
+    pricing: false,
+    pricePsf: false,
+    priceItza: false,
     // Five lease-term columns now consolidated behind the Lease Terms
     // column. Toggle them back on from the column-visibility menu for
     // the per-column sortable view.
@@ -5744,6 +5883,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[60px]">Ref</SortableTableHead>
                     <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property / Unit</SortableTableHead>
                     {visibleColumns.unit && <SortableTableHead sortKey="unit" sort={dealsSort} className="min-w-[100px]">Unit</SortableTableHead>}
+                    {visibleColumns.clientXero && <TableHead className="min-w-[160px]">Client / Billing</TableHead>}
                     {visibleColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {visibleColumns.type && (
                       <TableHead className="min-w-[120px]">
@@ -5797,6 +5937,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.acquisitionAgent && <SortableTableHead sortKey="acquisitionAgent" sort={dealsSort} className="min-w-[120px]">Acquisition Agent</SortableTableHead>}
                     {visibleColumns.purchaserAgent && <SortableTableHead sortKey="purchaserAgent" sort={dealsSort} className="min-w-[120px]">Purchaser Agent</SortableTableHead>}
                     {visibleColumns.leasingAgent && <SortableTableHead sortKey="leasingAgent" sort={dealsSort} className="min-w-[120px]">Leasing Agent</SortableTableHead>}
+                    {visibleColumns.pricingCombined && <TableHead className="min-w-[130px]">Pricing</TableHead>}
                     {visibleColumns.pricing && <SortableTableHead sortKey="pricing" sort={dealsSort} align="right" className="min-w-[100px]">Pricing</SortableTableHead>}
                     {visibleColumns.yield && <SortableTableHead sortKey="yield" sort={dealsSort} align="right" className="min-w-[80px]">Yield %</SortableTableHead>}
                     {visibleColumns.feeAgreement && <SortableTableHead sortKey="feeAgreement" sort={dealsSort} className="min-w-[100px]">Fee Agreement</SortableTableHead>}
@@ -5876,6 +6017,37 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {visibleColumns.unit && (
                         <TableCell className="px-1.5 py-1 text-sm text-muted-foreground max-w-[120px] truncate">
                           {deal.unitId ? (unitMap.get(deal.unitId) || "—") : "—"}
+                        </TableCell>
+                      )}
+                      {visibleColumns.clientXero && (
+                        <TableCell className="px-1.5 py-1 max-w-[200px]">
+                          <ClientXeroCell
+                            deal={deal}
+                            companies={companies}
+                            onLandlordSave={(v) => handleInlineSave(deal.id, "landlordId", v)}
+                            onLandlordCreate={async (name) => {
+                              try {
+                                const r = await apiRequest("POST", "/api/crm/companies", {
+                                  name: name.trim(),
+                                  companyType: "Landlord / Client",
+                                });
+                                const created = await r.json();
+                                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+                                handleInlineSave(deal.id, "landlordId", String(created.id));
+                                toast({ title: "Client created", description: `${created.name || name} added.` });
+                              } catch (e: any) {
+                                toast({ title: "Create failed", description: e?.message || "Try again", variant: "destructive" });
+                              }
+                            }}
+                            onXeroChange={(c) => {
+                              // One Xero pick = four deal fields to keep
+                              // the cached billing snapshot in sync.
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroContactId", value: c?.ContactID || null });
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroContactName", value: c?.Name || null });
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroAccountNumber", value: c?.AccountNumber || null });
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroBillingAddress", value: c?.BillingAddress || null });
+                            }}
+                          />
                         </TableCell>
                       )}
                       {visibleColumns.landlord && (
@@ -6071,6 +6243,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               placeholder="Link agent"
                             />
                           </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.pricingCombined && (
+                        <TableCell className="px-1.5 py-1">
+                          <PricingCell
+                            deal={deal}
+                            onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                          />
                         </TableCell>
                       )}
                       {visibleColumns.pricing && (
