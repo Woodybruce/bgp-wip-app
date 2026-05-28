@@ -2862,15 +2862,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
-      // AML gate — mirrors the deal-stages.ts check. Any move to SOL+
-      // (Solicitors / Exchanged / Completed / Invoiced) requires every
-      // linked counterparty to have kyc_status = 'approved' and not
-      // expired. Bypass via amlOverride: true (logged to audit).
-      //
-      // Now entity-aware: if the deal has a trading entity linked for a
-      // role (landlordEntityId etc.), the gate reads the entity's KYC.
-      // Otherwise falls back to the parent brand's KYC. Lets us KYC the
-      // actual legal entity on the lease rather than the brand umbrella.
+      // AML gate — mirrors the deal-stages.ts check. EXC/COM/INV require
+      // every linked counterparty to have kyc_status = 'approved' and not
+      // expired. The senior-approved amlOverride bypass has been removed
+      // — the override path wasn't being audited consistently across all
+      // gate sites, and the team prefers to fix the KYC properly rather
+      // than work around it. KYC stays brand-level (entity columns hold
+      // Xero ContactIDs not crm_trading_entities IDs).
       if (req.body.status && oldDeal) {
         const newCode = legacyToCode(req.body.status);
         const oldCode = legacyToCode(oldDeal.status);
@@ -2879,7 +2877,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // exchange + completion + invoicing are firmer commitments where
         // AML must be in place before BGP is on the hook.
         const GATED = new Set(["EXC", "COM", "INV"]);
-        if (newCode && GATED.has(newCode) && newCode !== oldCode && req.body.amlOverride !== true) {
+        if (newCode && GATED.has(newCode) && newCode !== oldCode) {
           const { checkCounterpartyAml } = await import("./deal-gates");
           const result = await checkCounterpartyAml({
             landlordId: oldDeal.landlordId,
@@ -2892,7 +2890,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           }
           if (result.notReady.length > 0) {
             return res.status(403).json({
-              error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true with senior approval.`,
+              error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page before moving to ${newCode}.`,
             });
           }
         }

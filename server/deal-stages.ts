@@ -135,15 +135,13 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     // entity for a role, that entity's KYC is checked; otherwise we
     // fall back to the parent brand's KYC.
     //
-    // amlOverride: senior-approved override for edge cases where AML is
-    // demonstrably complete outside the system (legacy import, client's
-    // own AML team). Logged to deal_events so the audit captures it.
     // "sols" dropped — the team wants to engage solicitors without AML
     // having to complete first. agreed/completed/invoiced stay gated:
     // exchange + completion + invoicing are firmer commitments where
-    // AML must be in place before BGP is on the hook.
+    // AML must be in place before BGP is on the hook. The amlOverride
+    // bypass has been removed — fix the KYC properly instead.
     const GATED_STAGES = new Set(["agreed", "completed", "invoiced"]);
-    if (GATED_STAGES.has(toStage) && req.body?.amlOverride !== true) {
+    if (GATED_STAGES.has(toStage)) {
       const { checkCounterpartyAml } = await import("./deal-gates");
       const result = await checkCounterpartyAml({
         landlordId: c.landlord_id,
@@ -153,27 +151,14 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
       });
       if (!result.hasCounterparties) {
         return res.status(403).json({
-          error: "Deal needs at least one counterparty linked before moving to Solicitors+. AML can't run on nothing.",
+          error: "Deal needs at least one counterparty linked before moving past Solicitors. AML can't run on nothing.",
         });
       }
       if (result.notReady.length > 0) {
         return res.status(403).json({
-          error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page, or pass amlOverride: true if you have senior approval.`,
+          error: `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}. Run KYC on the deal page before this stage transition.`,
         });
       }
-    }
-    // Log override usage for the audit trail.
-    if (req.body?.amlOverride === true && GATED_STAGES.has(toStage)) {
-      await pool.query(
-        `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
-         VALUES ($1, 'aml_override_used', $2, $3, $4)`,
-        [
-          dealId,
-          JSON.stringify({ toStage, reason: req.body?.amlOverrideReason || null }),
-          req.user?.id || null,
-          req.user?.name || null,
-        ],
-      ).catch(() => {});
     }
 
     const updates: string[] = ["stage = $1", "stage_entered_at = now()", "updated_at = now()"];
