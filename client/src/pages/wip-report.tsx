@@ -29,6 +29,8 @@ import { apiRequest, getAuthHeaders, invalidateDealCaches } from "@/lib/queryCli
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SortableTableHead } from "@/components/sortable-table-head";
+import { useTableSort } from "@/hooks/use-table-sort";
 
 type SortDirection = "asc" | "desc";
 
@@ -330,6 +332,8 @@ interface AgentDrilldownRow {
 
 function AgentSummaryTab() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const summarySort = useTableSort<AgentSummaryRow>(null, "asc");
+  const drillSort = useTableSort<AgentDrilldownRow>(null, "asc");
 
   const { data: summaryData, isLoading } = useQuery<AgentSummaryRow[]>({
     queryKey: ["/api/wip/agent-summary"],
@@ -351,7 +355,15 @@ function AgentSummaryTab() {
     enabled: !!selectedAgent,
   });
 
-  const agents = summaryData || [];
+  const agentsRaw = summaryData || [];
+  const agents = summarySort.sortKey
+    ? summarySort.sorted(agentsRaw, {
+        agent: a => a.agent,
+        wip: a => a.wip,
+        invoiced: a => a.invoiced,
+        total: a => a.wip + a.invoiced,
+      })
+    : agentsRaw;
   const grandTotal = agents.reduce((s, a) => s + a.wip + a.invoiced, 0);
   const maxBarValue = agents.length > 0 ? Math.max(...agents.map(a => a.wip + a.invoiced)) : 1;
 
@@ -445,10 +457,10 @@ function AgentSummaryTab() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
               <tr>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Agent Name</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">WIP Amount</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">Invoiced Amount</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">Total</th>
+                <SortableTableHead sortKey="agent" sort={summarySort} raw className="px-4 py-2 text-left font-medium text-gray-600">Agent Name</SortableTableHead>
+                <SortableTableHead sortKey="wip" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">WIP Amount</SortableTableHead>
+                <SortableTableHead sortKey="invoiced" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">Invoiced Amount</SortableTableHead>
+                <SortableTableHead sortKey="total" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">Total</SortableTableHead>
                 <th className="px-4 py-2 text-right font-medium text-gray-600">% of Total</th>
               </tr>
             </thead>
@@ -524,17 +536,28 @@ function AgentSummaryTab() {
               <table className="w-full">
                 <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Deal Name</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Property</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Type</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-600">Total Fee</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-600">Allocated</th>
-                    <th className="px-3 py-2 text-center font-medium text-gray-600">Status</th>
-                    <th className="px-3 py-2 text-center font-medium text-gray-600">Stage</th>
+                    <SortableTableHead sortKey="name" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Deal Name</SortableTableHead>
+                    <SortableTableHead sortKey="property" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Property</SortableTableHead>
+                    <SortableTableHead sortKey="dealType" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Type</SortableTableHead>
+                    <SortableTableHead sortKey="totalFee" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-gray-600">Total Fee</SortableTableHead>
+                    <SortableTableHead sortKey="allocated" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-gray-600">Allocated</SortableTableHead>
+                    <SortableTableHead sortKey="status" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-gray-600">Status</SortableTableHead>
+                    <SortableTableHead sortKey="stage" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-gray-600">Stage</SortableTableHead>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs">
-                  {drilldownData.map((d) => (
+                  {(drillSort.sortKey
+                    ? drillSort.sorted(drilldownData, {
+                        name: d => d.name,
+                        property: d => d.property,
+                        dealType: d => d.dealType,
+                        totalFee: d => d.totalFee,
+                        allocated: d => d.allocatedAmount,
+                        status: d => d.status,
+                        stage: d => d.stage,
+                      })
+                    : drilldownData
+                  ).map((d) => (
                     <tr key={d.dealId} className="hover:bg-gray-50">
                       <td className="px-3 py-2 text-gray-700">
                         <Link href={`/deals/${d.dealId}`}>

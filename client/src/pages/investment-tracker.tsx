@@ -13,6 +13,8 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { SortableTableHead } from "@/components/sortable-table-head";
+import { useTableSort } from "@/hooks/use-table-sort";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -1178,8 +1180,29 @@ export default function InvestmentTrackerPage() {
     return list;
   }, [boardItems, search, statusFilter, assetClassFilter, tenureFilter, agentFilter, bgpUsers]);
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paginatedData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Click-to-sort on column headers. Status order is applied first
+  // (above) so within a status group, the column sort takes over.
+  // When no column is picked the status order wins.
+  const sort = useTableSort(null, "asc");
+  const sortedFiltered = sort.sortKey
+    ? sort.sorted(filtered, {
+        ref: (i: any) => i.ref,
+        property: (i: any) => i.assetName,
+        guidePrice: (i: any) => i.guidePrice,
+        niy: (i: any) => i.niy,
+        sqft: (i: any) => i.sqft,
+        rent: (i: any) => i.rentPa,
+        client: (i: any) => i.client,
+        vendor: (i: any) => i.vendor || i.vendorAgent,
+        buyer: (i: any) => i.buyer,
+        bidDeadline: (i: any) => i.bidDeadline ? new Date(i.bidDeadline) : null,
+        marketingDate: (i: any) => i.marketingDate ? new Date(i.marketingDate) : null,
+        completionDate: (i: any) => i.completionDate ? new Date(i.completionDate) : null,
+        fee: (i: any) => i.fee,
+      })
+    : filtered;
+  const totalPages = Math.ceil(sortedFiltered.length / PAGE_SIZE);
+  const paginatedData = sortedFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   useEffect(() => {
     setPage(1);
@@ -1680,28 +1703,28 @@ export default function InvestmentTrackerPage() {
                       data-testid="checkbox-select-all"
                     />
                   </TableHead>
-                  <TableHead className="w-[50px]">Ref</TableHead>
-                  <TableHead className="w-[180px]">Property</TableHead>
+                  <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
+                  <SortableTableHead sortKey="property" sort={sort} className="w-[180px]">Property</SortableTableHead>
                   <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} colorMap={ASSET_CLASS_COLORS} className="w-[90px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
-                  <TableHead className="w-[90px] text-right">Guide Price</TableHead>
-                  <TableHead className="w-[60px] text-right">NIY (%)</TableHead>
-                  <TableHead className="w-[70px] text-right">Sq Ft</TableHead>
-                  <TableHead className="w-[80px] text-right">Rent (pa)</TableHead>
-                  <TableHead className="w-[150px]">Client</TableHead>
+                  <SortableTableHead sortKey="guidePrice" sort={sort} className="w-[90px]" align="right">Guide Price</SortableTableHead>
+                  <SortableTableHead sortKey="niy" sort={sort} className="w-[60px]" align="right">NIY (%)</SortableTableHead>
+                  <SortableTableHead sortKey="sqft" sort={sort} className="w-[70px]" align="right">Sq Ft</SortableTableHead>
+                  <SortableTableHead sortKey="rent" sort={sort} className="w-[80px]" align="right">Rent (pa)</SortableTableHead>
+                  <SortableTableHead sortKey="client" sort={sort} className="w-[150px]">Client</SortableTableHead>
                   {boardType === "Purchases" ? (
                     <>
-                      <TableHead className="w-[150px]">Vendor / Agent</TableHead>
-                      <TableHead className="w-[80px]">Bid Deadline</TableHead>
+                      <SortableTableHead sortKey="vendor" sort={sort} className="w-[150px]">Vendor / Agent</SortableTableHead>
+                      <SortableTableHead sortKey="bidDeadline" sort={sort} className="w-[80px]">Bid Deadline</SortableTableHead>
                     </>
                   ) : (
                     <>
-                      <TableHead className="w-[120px]">Buyer</TableHead>
-                      <TableHead className="w-[80px]">Marketing Date</TableHead>
+                      <SortableTableHead sortKey="buyer" sort={sort} className="w-[120px]">Buyer</SortableTableHead>
+                      <SortableTableHead sortKey="marketingDate" sort={sort} className="w-[80px]">Marketing Date</SortableTableHead>
                     </>
                   )}
-                  <TableHead className="w-[100px]">Completion Date</TableHead>
-                  <TableHead className="w-[70px] text-right">Fee</TableHead>
+                  <SortableTableHead sortKey="completionDate" sort={sort} className="w-[100px]">Completion Date</SortableTableHead>
+                  <SortableTableHead sortKey="fee" sort={sort} className="w-[70px]" align="right">Fee</SortableTableHead>
                   <FilterHead label="Deal Status" value={statusFilter} options={STATUSES} onChange={setStatusFilter} colorMap={STATUS_LABEL_COLORS} className="w-[90px]" />
                   <FilterHead label="BGP Contact" value={agentFilter} options={bgpUsers.map(u => u.name)} onChange={setAgentFilter} className="w-[90px]" />
                   <TableHead className="w-[60px] text-center">Files</TableHead>
