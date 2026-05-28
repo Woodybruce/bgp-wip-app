@@ -1229,7 +1229,6 @@ export default function AvailableUnitsPage() {
                 <TableHead className="text-right">SC p.a.</TableHead>
                 <TableHead>Asset Class</TableHead>
                 <TableHead>Condition</TableHead>
-                <TableHead>EPC</TableHead>
                 <TableHead>Deal Status</TableHead>
                 <TableHead className="text-center">Viewings</TableHead>
                 <TableHead className="text-center">Offers</TableHead>
@@ -1457,13 +1456,6 @@ export default function AvailableUnitsPage() {
                           value={u.condition || ""}
                           options={CONDITIONS}
                           onSave={v => inlineUpdate(u.id, "condition", v)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineSelect
-                          value={u.epcRating || ""}
-                          options={EPC_RATINGS}
-                          onSave={v => inlineUpdate(u.id, "epcRating", v)}
                         />
                       </TableCell>
                       <TableCell>
