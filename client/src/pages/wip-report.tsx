@@ -61,32 +61,6 @@ interface WipDealEntry {
   source?: "crm" | "spreadsheet";
 }
 
-interface ReconciliationData {
-  dealsWithoutWip: Array<{
-    id: string;
-    name: string;
-    dealType: string | null;
-    status: string | null;
-    fee: number | null;
-    team: string[] | null;
-    internalAgent: string[] | null;
-    propertyName: string | null;
-  }>;
-  wipWithoutDeals: Array<{
-    id: string;
-    ref: string | null;
-    project: string | null;
-    agent: string | null;
-    team: string | null;
-    amtWip: number | null;
-    amtInvoice: number | null;
-    groupName: string | null;
-    dealStatus: string | null;
-  }>;
-  unmatchedGroups: string[];
-  unmatchedProjects: string[];
-}
-
 const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
   // Legacy — still exist in older deals
   "Acquisition": "bg-blue-100 text-blue-800",
@@ -327,186 +301,6 @@ function FilterSection({
           </label>
         ))}
       </ScrollArea>
-    </div>
-  );
-}
-
-function ReconciliationTab() {
-  const { data, isLoading } = useQuery<ReconciliationData>({
-    queryKey: ["/api/wip/reconciliation"],
-    queryFn: async () => {
-      const res = await fetch("/api/wip/reconciliation", { headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to fetch reconciliation data");
-      return res.json();
-    },
-  });
-
-  const dealsWithoutWip = data?.dealsWithoutWip || [];
-  const wipWithoutDeals = data?.wipWithoutDeals || [];
-
-  if (isLoading) {
-    return (
-      <div className="space-y-3 p-4">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-12 w-full rounded-lg" />
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
-      {/* Deals without WIP */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="recon-deals-without-wip">
-        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700">Deals not on WIP</span>
-            <Badge variant="secondary" className="text-xs">
-              {dealsWithoutWip.length}
-            </Badge>
-          </div>
-        </div>
-        {dealsWithoutWip.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-gray-500">
-            All active deals are matched to WIP entries
-          </div>
-        ) : (
-          <ScrollableTable minWidth={900}>
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-48">Deal Name</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-40">Property</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-32">Assigned To</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-24">Status</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">Expected Fee</th>
-                  <th className="px-3 py-2 text-center font-medium text-gray-600 w-28">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-xs">
-                {dealsWithoutWip.map((deal) => (
-                  <tr key={deal.id} className="hover:bg-gray-50" data-testid={`recon-deal-row-${deal.id}`}>
-                    <td className="px-3 py-2 text-gray-700">
-                      <Link href={`/deals/${deal.id}`}>
-                        <span className="text-blue-600 hover:underline cursor-pointer">{deal.name}</span>
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{deal.propertyName || "—"}</td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[130px]">
-                      {Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : deal.internalAgent || "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge variant="secondary" className="text-[10px]">
-                        {deal.status || "—"}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-900">
-                      {deal.fee ? `£${deal.fee.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1">
-                        <Link2 className="w-3 h-3" />
-                        Link to WIP
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollableTable>
-        )}
-      </div>
-
-      {/* WIP entries without deals */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="recon-wip-without-deals">
-        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700">WIP entries without a deal</span>
-            <Badge variant="secondary" className="text-xs">
-              {wipWithoutDeals.length}
-            </Badge>
-          </div>
-        </div>
-        {wipWithoutDeals.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-gray-500">
-            All WIP entries are matched to CRM deals
-          </div>
-        ) : (
-          <ScrollableTable minWidth={800}>
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-32">Ref</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-40">Project / Property</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-28">Fee Earner</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">WIP Amount</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">Invoice Amount</th>
-                  <th className="px-3 py-2 text-center font-medium text-gray-600 w-28">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-xs">
-                {wipWithoutDeals.map((wip) => (
-                  <tr key={wip.id} className="hover:bg-gray-50" data-testid={`recon-wip-row-${wip.id}`}>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[130px]">{wip.ref || "—"}</td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{wip.project || "—"}</td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[120px]">{wip.agent || "—"}</td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-900">
-                      {wip.amtWip ? `£${wip.amtWip.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-green-700">
-                      {wip.amtInvoice ? `£${wip.amtInvoice.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1">
-                        <Plus className="w-3 h-3" />
-                        Create Deal
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollableTable>
-        )}
-      </div>
-
-      {/* Unmatched client groups */}
-      {(data?.unmatchedGroups?.length ?? 0) > 0 && (
-        <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
-          <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center gap-2">
-            <span className="text-sm font-semibold text-amber-800">WIP clients not found in CRM</span>
-            <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">{data!.unmatchedGroups.length}</Badge>
-          </div>
-          <div className="px-4 py-3 text-xs text-gray-600 space-y-1">
-            <p className="text-[11px] text-muted-foreground mb-2">These Group names couldn't be matched to an existing CRM company. Add them to the CRM or rename them to match.</p>
-            {data!.unmatchedGroups.map(g => (
-              <div key={g} className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                <span className="font-medium">{g}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Unmatched properties */}
-      {(data?.unmatchedProjects?.length ?? 0) > 0 && (
-        <div className="bg-white border border-blue-200 rounded-lg overflow-hidden">
-          <div className="bg-blue-50 border-b border-blue-200 px-4 py-3 flex items-center gap-2">
-            <span className="text-sm font-semibold text-blue-800">WIP properties not found in CRM</span>
-            <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-xs">{data!.unmatchedProjects.length}</Badge>
-          </div>
-          <div className="px-4 py-3 text-xs text-gray-600 space-y-1">
-            <p className="text-[11px] text-muted-foreground mb-2">These Property names didn't match a CRM property — new bare records were created. Add addresses via the Properties section.</p>
-            {data!.unmatchedProjects.map(p => (
-              <div key={p} className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
-                <span className="font-medium">{p}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -802,22 +596,15 @@ export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
   const { brand, isLandsec } = useBrand();
-  const [activeTab, setActiveTab] = useState<"report" | "reconciliation" | "agent-summary">("report");
+  // Sage WIP reconciliation tab retired — Deals Board + Letting Tracker
+  // are now the canonical source. The page shows the live deals view
+  // and the per-agent summary only.
+  const [activeTab, setActiveTab] = useState<"report" | "agent-summary">("report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
   });
 
-  const { data: reconData } = useQuery<ReconciliationData>({
-    queryKey: ["/api/wip/reconciliation"],
-    queryFn: async () => {
-      const res = await fetch("/api/wip/reconciliation", { headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to fetch reconciliation data");
-      return res.json();
-    },
-  });
-
-  const reconCount = (reconData?.dealsWithoutWip?.length || 0) + (reconData?.wipWithoutDeals?.length || 0);
 
   const WIP_SENIOR_EMAILS = useMemo(() => new Set([
     "woody@brucegillinghampollard.com",
@@ -878,10 +665,7 @@ export default function WipReport() {
   const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(new Set());
   const [clickFilter, setClickFilter] = useState<ClickFilter>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [uploading, setUploading] = useState(false);
-  const [appendUploading, setAppendUploading] = useState(false);
   const [syncingXero, setSyncingXero] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -899,37 +683,8 @@ export default function WipReport() {
     }
   }, []);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, append = false) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const setter = append ? setAppendUploading : setUploading;
-    setter(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const token = localStorage.getItem("bgp_auth_token");
-      const url = append ? "/api/wip/import?append=true" : "/api/wip/import";
-      const res = await fetch(url, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Upload failed");
-      }
-      const data = await res.json();
-      toast({ title: append ? "Data Added" : "WIP Updated", description: `${append ? "Appended" : "Imported"} ${data.imported} entries from spreadsheet.` });
-      filtersInitialized.current = false;
-      invalidateDealCaches();
-    } catch (err: any) {
-      toast({ title: "Upload failed", description: err?.message || "Could not import file.", variant: "destructive" });
-    } finally {
-      setter(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
+  // Sage WIP import flow removed — the Deals Board + Letting Tracker
+  // are now the canonical fee source.
   const [detailSort, setDetailSort] = useState<{ column: string; direction: SortDirection }>({
     column: "amtWip",
     direction: "desc",

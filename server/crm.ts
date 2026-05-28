@@ -5649,7 +5649,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
       const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name }).from(crmCompanies);
       const invoices = await db.select().from(xeroInvoices);
-      const wipRows = await db.select().from(wipEntries);
       const allAllocations = await db.select().from(dealFeeAllocations);
       const allocsByDealId = new Map<string, typeof allAllocations>();
       for (const a of allAllocations) {
@@ -5703,23 +5702,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
       }
 
-      // WIP report shows only deals that are backed by a Sage import — i.e.
-      // have at least one wip_entries row with deal_id matching, or carry the
-      // legacy "WIP Ref: N" comment marker from pre-FK syncs. Stops
-      // leasing-schedule AVA units, manually-created deals, and orphaned
-      // historic rows from bloating the report.
-      const wipBackedDealIds = new Set<string>();
-      for (const w of wipRows) {
-        if (w.dealId) wipBackedDealIds.add(w.dealId);
-      }
+      // WIP report shows every crm_deal in a fee-bearing status. Sage WIP
+      // imports are no longer the source of truth — the Deals Board +
+      // Letting Tracker are. Anything in NEG/SOL/EXC/COM/INV with a fee
+      // shows up.
       let entries: any[] = [];
       const eligibleDeals = deals.filter(d => {
         const code = legacyToCode(d.status);
-        if (code === null || !WIP_STATUSES.includes(code)) return false;
-        // Must be backed by wip_entries (FK) or legacy WIP Ref comment marker
-        const hasFkBacking = wipBackedDealIds.has(d.id);
-        const hasLegacyMarker = !!(d.comments && /WIP Ref:\s*\d+/.test(d.comments));
-        return hasFkBacking || hasLegacyMarker;
+        return code !== null && WIP_STATUSES.includes(code);
       });
       for (const deal of eligibleDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
@@ -5956,22 +5946,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
-  app.post("/api/wip/import", requireAuth,
-    multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single("file"),
-    async (req: Request, res: Response) => {
-      try {
-        if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-        const result = await importWipFromBuffer(req.file.buffer, {
-          append: req.query.append === "true",
-          archiveOrphans: req.query.archiveOrphans === "true" || req.query.sourceOfTruth === "true",
-        });
-        res.json(result);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
+  // /api/wip/import route retired — Sage imports are no longer the source
+  // of truth. crm_deals + deal_fee_allocations (the Deals Board + Letting
+  // Tracker) are. wip_entries data preserved for historic audit only.
 
   app.get("/api/investment-comps", requireAuth, async (_req, res) => {
     try {
@@ -7323,119 +7300,10 @@ Rules:
     }
   });
 
-  // ── WIP Reconciliation endpoint ──────────────────────────────────────
-  app.get("/api/wip/reconciliation", requireAuth, async (req: any, res) => {
-    try {
-      const userId = req.session?.userId || req.tokenUserId;
-      const currentUser = userId ? await storage.getUser(userId) : null;
-      const isAdmin = !!currentUser?.isAdmin;
-      const userTeam = currentUser?.team || null;
-
-      // Query 1: Active deals with no matching WIP entry
-      // Match by deal name similarity to wip_entries.project or wip_entries.ref
-      const { rows: dealsWithoutWip } = await pool.query(`
-        SELECT d.id, d.name, d.deal_type, d.status, d.fee, d.team, d.internal_agent,
-               d.property_id,
-               p.name AS property_name
-        FROM crm_deals d
-        LEFT JOIN crm_properties p ON d.property_id = p.id
-        WHERE d.status NOT IN ('Dead', 'Draft', 'Leasing Comps', 'Investment Comps')
-          AND NOT EXISTS (
-            SELECT 1 FROM wip_entries w
-            WHERE LOWER(TRIM(w.project)) = LOWER(TRIM(p.name))
-               OR LOWER(TRIM(w.ref)) = LOWER(TRIM(d.name))
-               OR LOWER(TRIM(w.project)) = LOWER(TRIM(d.name))
-          )
-        ORDER BY d.fee DESC NULLS LAST
-      `);
-
-      // Query 2: WIP entries with no matching deal
-      const { rows: wipWithoutDeals } = await pool.query(`
-        SELECT w.id, w.ref, w.project, w.agent, w.team, w.amt_wip, w.amt_invoice,
-               w.group_name, w.deal_status
-        FROM wip_entries w
-        WHERE NOT EXISTS (
-            SELECT 1 FROM crm_deals d
-            LEFT JOIN crm_properties p ON d.property_id = p.id
-            WHERE LOWER(TRIM(w.project)) = LOWER(TRIM(p.name))
-               OR LOWER(TRIM(w.ref)) = LOWER(TRIM(d.name))
-               OR LOWER(TRIM(w.project)) = LOWER(TRIM(d.name))
-          )
-        ORDER BY COALESCE(w.amt_wip, 0) + COALESCE(w.amt_invoice, 0) DESC
-      `);
-
-      // Filter by team if not admin
-      let filteredDeals = dealsWithoutWip;
-      let filteredWip = wipWithoutDeals;
-
-      if (!isAdmin && userTeam) {
-        const ut = userTeam.toLowerCase();
-        filteredDeals = dealsWithoutWip.filter((d: any) => {
-          if (!d.team) return false;
-          const teams = (Array.isArray(d.team) ? d.team : [d.team]).map((t: string) => t.toLowerCase());
-          return teams.some((t: string) => t === ut);
-        });
-        filteredWip = wipWithoutDeals.filter((w: any) => {
-          if (!w.team) return false;
-          const teams = w.team.split(",").map((t: string) => t.trim().toLowerCase());
-          return teams.some((t: string) => t === ut);
-        });
-      }
-
-      // Query 3: WIP group names that have no matching CRM company (fuzzy)
-      const { rows: allWipGroups } = await pool.query(`
-        SELECT DISTINCT group_name FROM wip_entries
-        WHERE group_name IS NOT NULL AND group_name != ''
-        ORDER BY group_name
-      `);
-      const { rows: allCrmCompanies } = await pool.query(`SELECT LOWER(TRIM(name)) as name_lower FROM crm_companies`);
-      const crmCompSet = new Map<string, string>(allCrmCompanies.map((c: any) => [c.name_lower, c.name_lower]));
-      const unmatchedGroups = allWipGroups
-        .map((r: any) => r.group_name as string)
-        .filter((g: string) => !wipFuzzyMatch(g, crmCompSet));
-
-      // Query 4: WIP projects that have no matching CRM property (fuzzy)
-      const { rows: allWipProjects } = await pool.query(`
-        SELECT DISTINCT project FROM wip_entries
-        WHERE project IS NOT NULL AND project != ''
-        ORDER BY project
-      `);
-      const { rows: allCrmProps } = await pool.query(`SELECT LOWER(TRIM(name)) as name_lower, address FROM crm_properties`);
-      const crmPropSet = new Map<string, string>(allCrmProps.map((p: any) => [p.name_lower, p.name_lower]));
-      const unmatchedProjects = allWipProjects
-        .map((r: any) => r.project as string)
-        .filter((p: string) => !wipFuzzyMatch(p, crmPropSet));
-
-      res.json({
-        dealsWithoutWip: filteredDeals.map((d: any) => ({
-          id: d.id,
-          name: d.name,
-          dealType: d.deal_type,
-          status: d.status,
-          fee: d.fee,
-          team: d.team,
-          internalAgent: d.internal_agent,
-          propertyName: d.property_name,
-        })),
-        wipWithoutDeals: filteredWip.map((w: any) => ({
-          id: w.id,
-          ref: w.ref,
-          project: w.project,
-          agent: w.agent,
-          team: w.team,
-          amtWip: w.amt_wip,
-          amtInvoice: w.amt_invoice,
-          groupName: w.group_name,
-          dealStatus: w.deal_status,
-        })),
-        unmatchedGroups,
-        unmatchedProjects,
-      });
-    } catch (e: any) {
-      console.error("[wip-reconciliation] Error:", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // /api/wip/reconciliation removed — was comparing crm_deals against the
+  // Sage wip_entries table. With Sage imports retired the comparison has
+  // no left-hand side; everything in the Deals Board / Letting Tracker
+  // is now the canonical view.
 
   // ────────────────────────────────────────────────────────────
   // WIP Report — Excel Export
@@ -7454,7 +7322,6 @@ Rules:
       const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
       const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name }).from(crmCompanies);
       const invoices = await db.select().from(xeroInvoices);
-      const wipRows = await db.select().from(wipEntries);
       const allAllocations = await db.select().from(dealFeeAllocations);
       const allocsByDealId = new Map<string, typeof allAllocations>();
       for (const a of allAllocations) {
@@ -7535,16 +7402,10 @@ Rules:
         };
       });
 
-      const wipBackedDealIdsXl = new Set<string>();
-      for (const w of wipRows) { if (w.dealId) wipBackedDealIdsXl.add(w.dealId); }
       const unmatchedDeals = deals.filter(d => {
         if (usedDealIds.has(d.id)) return false;
         const code = legacyToCode(d.status);
-        if (code === null || !WIP_STATUSES.includes(code)) return false;
-        // Same backing requirement as the JSON report — only WIP-imported deals
-        const hasFkBacking = wipBackedDealIdsXl.has(d.id);
-        const hasLegacyMarker = !!(d.comments && /WIP Ref:\s*\d+/.test(d.comments));
-        return hasFkBacking || hasLegacyMarker;
+        return code !== null && WIP_STATUSES.includes(code);
       });
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);

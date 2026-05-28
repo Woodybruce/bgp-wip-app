@@ -752,38 +752,59 @@ export function setupHrRoutes(app: Express) {
         console.error("[hr] commission WIP query failed:", wErr.message);
       }
 
-      // ── Sage WIP cross-check ────────────────────────────────────────────
-      // Read wip_entries (the Sage WIP excel import) for this agent in the
-      // scheme year. Sage is the canonical fee book — Wendy bills against
-      // it. We surface the totals alongside the Xero / crm_deals figures
-      // so any drift between the three sources is visible.
-      let sageBilledPence = 0;
-      let sageWipPence = 0;
+      // ── Invoiced + Paid billed totals from crm_deals ─────────────────────
+      // Source of truth = crm_deals + deal_fee_allocations (mirrors Xero).
+      // We compute two figures:
+      //   - invoicedPence: the agent's share of fees on deals at status INV
+      //     in this scheme year. Drives the tier waterfall.
+      //   - paidPence: subset where Xero shows the underlying invoice as paid.
+      //     Used when the user toggles ?paidOnly=true on the dashboard.
+      // Date filter on the scheme year uses invoiced_at first, then a
+      // fallback chain so historic INV rows without invoiced_at still
+      // attribute correctly. Same agent_user_id OR name fallback we use
+      // on the active-deals + commission-summary readers.
+      const paidOnly = req.query?.paidOnly === "true" || req.query?.paidOnly === "1";
+      let invoicedPence = 0;
+      let paidPence = 0;
       try {
-        const fyStart = schemeYearStart.getFullYear() + 1; // BGP FY = May → Apr; Apr-26 → FY 2027
-        const { rows: wipRows } = await pool.query<{ billed: string; wip: string }>(
-          `SELECT COALESCE(SUM(amt_invoice), 0)::text AS billed,
-                  COALESCE(SUM(amt_wip), 0)::text     AS wip
-             FROM wip_entries
-            WHERE (agent_user_id = $1
-                   OR (agent_user_id IS NULL AND LOWER(agent) = LOWER($2)))
-              AND fiscal_year = $3`,
-          [userId, trackingName, fyStart]
+        const { rows: dealRows } = await pool.query(
+          `WITH my_invoiced AS (
+             SELECT d.id, d.fee,
+                    CASE
+                      WHEN dfa.percentage   IS NOT NULL THEN d.fee * dfa.percentage / 100.0
+                      WHEN dfa.fixed_amount IS NOT NULL THEN dfa.fixed_amount
+                      ELSE 0
+                    END AS my_portion
+               FROM crm_deals d
+               INNER JOIN deal_fee_allocations dfa
+                  ON dfa.deal_id = d.id
+                 AND (dfa.agent_user_id = $4
+                      OR (dfa.agent_user_id IS NULL AND LOWER(dfa.agent_name) = LOWER($1)))
+              WHERE d.status = 'INV'
+                AND COALESCE(d.invoiced_at, d.completed_at, d.exchanged_at) BETWEEN $2 AND $3
+           )
+           SELECT
+             COALESCE(SUM(mi.my_portion), 0)::text AS invoiced_pounds,
+             COALESCE(SUM(CASE
+               WHEN EXISTS (SELECT 1 FROM xero_invoices xi
+                             WHERE xi.deal_id = mi.id
+                               AND xi.status IN ('PAID','AUTHORISED'))
+               THEN mi.my_portion ELSE 0
+             END), 0)::text AS paid_pounds
+           FROM my_invoiced mi`,
+          [trackingName, schemeYearStart.toISOString(), schemeYearEnd.toISOString(), userId]
         );
-        sageBilledPence = Math.round(parseFloat(wipRows[0]?.billed || "0") * 100);
-        sageWipPence    = Math.round(parseFloat(wipRows[0]?.wip || "0") * 100);
-      } catch (sErr: any) {
-        console.warn("[hr] commission Sage WIP read failed (non-fatal):", sErr?.message);
+        invoicedPence = Math.round(parseFloat(dealRows[0]?.invoiced_pounds || "0") * 100);
+        paidPence     = Math.round(parseFloat(dealRows[0]?.paid_pounds || "0") * 100);
+      } catch (iErr: any) {
+        console.warn("[hr] commission invoiced read failed (non-fatal):", iErr?.message);
       }
 
-      // Primary "billed" for the commission calc: prefer Sage when present
-      // (it's what Wendy invoices against and is the canonical fee book).
-      // Fall back to the Xero match when Sage is empty (no recent import,
-      // or pre-Sage-onboarded agent).
-      const primaryBilledPence = sageBilledPence > 0 ? sageBilledPence : billedPence;
-      const primaryWipPence    = sageWipPence    > 0 ? sageWipPence    : (wipByStage.neg + wipByStage.exc + wipByStage.com);
-
-      const wipTotal = primaryWipPence;
+      // Primary billed for the tier waterfall — toggle between Invoiced (the
+      // default) and Paid-only. Commission rules: deal counts in the FY when
+      // invoiced; actual cash payout at month-end payroll when BGP gets paid.
+      const primaryBilledPence = paidOnly ? paidPence : invoicedPence;
+      const wipTotal = wipByStage.neg + wipByStage.exc + wipByStage.com;
       const forecastPence = primaryBilledPence + wipTotal;
       const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
@@ -855,18 +876,18 @@ export function setupHrRoutes(app: Express) {
         schemeYear: `${schemeYearStart.getFullYear()}/${String(schemeYearEnd.getFullYear()).slice(-2)}`,
         schemeYearStart: schemeYearStart.toISOString().split("T")[0],
         schemeYearEnd: schemeYearEnd.toISOString().split("T")[0],
-        // Headline billed/WIP — prefers Sage when populated, falls back to
-        // the Xero/crm_deals figures. UI uses these for the tier waterfall.
+        // Headline billed/WIP for the tier waterfall — sourced from
+        // crm_deals + allocations (Deals Board / Letting Tracker). UI
+        // toggles primary between Invoiced and Paid via ?paidOnly=true.
         billedPence: primaryBilledPence,
         wipTotal,
         forecastPence,
         wipByStage,
-        // Both source totals exposed so the UI can flag any drift between
-        // Sage (what Wendy invoices) and Xero (what's actually paid in).
+        paidOnly,
         sources: {
-          sage: { billedPence: sageBilledPence, wipPence: sageWipPence },
-          xero: { billedPence },
-          crmDealsWip: { neg: wipByStage.neg, exc: wipByStage.exc, com: wipByStage.com, total: wipByStage.neg + wipByStage.exc + wipByStage.com },
+          invoiced: { billedPence: invoicedPence },
+          paid:     { billedPence: paidPence },
+          wip:      { neg: wipByStage.neg, exc: wipByStage.exc, com: wipByStage.com, total: wipTotal },
         },
         t1, t2, t3,
         tierBreakdown,
@@ -1066,23 +1087,41 @@ export function setupHrRoutes(app: Express) {
   });
 
   // ── Firm-wide summary for the dashboard hero (ski target etc.) ──────────
-  // Aggregates wip_entries (the synced Sage view) into total billed + WIP for
-  // the calendar year, plus the ski-target progress (£4m default, settable
-  // via FIRM_SKI_TARGET_PENCE env). Days-remaining drives the urgency strip.
+  // Sources from crm_deals + deal_fee_allocations — the Deals Board + Letting
+  // Tracker are the source of truth (mirrors Xero). Billed = sum of fees on
+  // deals at status INV in the current calendar year. WIP = sum of fees on
+  // deals at any pre-INV letting status (REP/AVA/NEG/SOL/EXC/COM). Sage
+  // imports are no longer the source — wip_entries is preserved for history
+  // only.
   app.get("/api/dashboard/firm-summary", requireAuth, async (_req, res) => {
     try {
       const targetPence = parseInt(process.env.FIRM_SKI_TARGET_PENCE || "400000000", 10); // £4m default
       const now = new Date();
       const yearEnd = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
+      const yearStart = new Date(now.getFullYear(), 0, 1);
       const daysRemaining = Math.max(0, Math.ceil((yearEnd.getTime() - now.getTime()) / 86400000));
 
       const { rows } = await pool.query(`
+        WITH invoiced AS (
+          SELECT COALESCE(SUM(fee), 0)::numeric AS pounds,
+                 COUNT(*) AS n
+            FROM crm_deals
+           WHERE status = 'INV'
+             AND COALESCE(invoiced_at, completed_at, exchanged_at) BETWEEN $1 AND $2
+        ),
+        wip AS (
+          SELECT COALESCE(SUM(fee), 0)::numeric AS pounds,
+                 COUNT(*) AS n
+            FROM crm_deals
+           WHERE status IN ('REP','AVA','NEG','SOL','EXC','COM')
+             AND fee IS NOT NULL AND fee > 0
+        )
         SELECT
-          COALESCE(SUM(amt_invoice), 0)::numeric AS billed_pounds,
-          COALESCE(SUM(amt_wip), 0)::numeric AS wip_pounds,
-          COUNT(DISTINCT deal_id) FILTER (WHERE deal_id IS NOT NULL) AS deal_count
-        FROM wip_entries
-      `);
+          invoiced.pounds AS billed_pounds,
+          wip.pounds AS wip_pounds,
+          (invoiced.n + wip.n) AS deal_count
+        FROM invoiced, wip
+      `, [yearStart, yearEnd]);
 
       const billedPence = Math.round(parseFloat(rows[0].billed_pounds) * 100);
       const wipPence = Math.round(parseFloat(rows[0].wip_pounds) * 100);

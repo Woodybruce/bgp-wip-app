@@ -1547,20 +1547,10 @@ import { pool } from "./db";
       WHERE LOWER(u.name) = LOWER(dfa.agent_name)
         AND dfa.agent_user_id IS NULL
         AND dfa.is_bgp_house = false`,
-    // Same agent-rename hardening for wip_entries — Sage exports agent
-    // as a display name only. The commission tab now reads Sage as the
-    // primary source (Xero as cross-check) so we need the same stable
-    // user-id link here.
-    `ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS agent_user_id VARCHAR`,
-    `CREATE INDEX IF NOT EXISTS idx_wip_entries_agent_user_id ON wip_entries(agent_user_id) WHERE agent_user_id IS NOT NULL`,
-    `UPDATE wip_entries w
-        SET agent_user_id = u.id
-       FROM users u
-      WHERE LOWER(u.name) = LOWER(w.agent)
-        AND w.agent_user_id IS NULL
-        AND w.agent IS NOT NULL
-        AND LOWER(COALESCE(w.agent, '')) <> 'bgp'
-        AND LOWER(COALESCE(w.agent, '')) <> 'bgp house'`,
+    // (wip_entries.agent_user_id column-add + backfill removed — Sage
+    // imports are no longer the source of truth; nothing reads from
+    // wip_entries on the live path. The column may exist in the DB
+    // from a prior boot but it's harmless dead data now.)
 
     // ── Brand profile — ensure crm_companies has all columns the API selects ─
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS bgp_contact_crm TEXT`,
@@ -4058,34 +4048,21 @@ app.use("/api/branding/assets", express.static(
           console.error("[data-merge] Landsec merge error:", err?.message);
         }
 
+        // Status-string normalisation (legacy → canonical) — kept independently
+        // of the WIP cleanup that used to live alongside it.
         try {
           const { pool: dbPool } = await import("./db");
-          const junkDel = await dbPool.query(`DELETE FROM wip_entries WHERE (ref = 'Total' OR ref LIKE 'Applied filters%') OR (deal_status IS NULL AND group_name IS NULL AND project IS NULL)`);
-          if (junkDel.rowCount && junkDel.rowCount > 0) {
-            console.log(`[wip-cleanup] Removed ${junkDel.rowCount} junk WIP rows`);
-          }
           const statusFix1 = await dbPool.query(`UPDATE crm_deals SET status = 'SOLs' WHERE status = 'Solicitors'`);
           const statusFix2 = await dbPool.query(`UPDATE crm_deals SET status = 'Live' WHERE status = 'Active'`);
           if ((statusFix1.rowCount || 0) + (statusFix2.rowCount || 0) > 0) {
             console.log(`[status-fix] Updated ${(statusFix1.rowCount || 0) + (statusFix2.rowCount || 0)} deal statuses`);
           }
         } catch (err: any) {
-          console.error("WIP cleanup error:", err?.message);
+          console.error("status normalisation error:", err?.message);
         }
-
-        try {
-          const { pool: dbPool } = await import("./db");
-          const { rows: wipCount } = await dbPool.query(`SELECT COUNT(*) as c FROM wip_entries`);
-          const { rows: dealCount } = await dbPool.query(`SELECT COUNT(*) as c FROM crm_deals`);
-          if (parseInt(wipCount[0]?.c || "0") > 0 && parseInt(dealCount[0]?.c || "0") === 0) {
-            console.log(`[wip-sync] WIP entries found but no CRM deals — running auto-sync...`);
-            const { syncWipToCrmDeals } = await import("./crm");
-            await syncWipToCrmDeals(dbPool);
-            console.log(`[wip-sync] Auto-sync complete`);
-          }
-        } catch (err: any) {
-          console.error("[wip-sync] error:", err?.message);
-        }
+        // wip_entries auto-sync removed — Sage imports are retired. The
+        // table still holds historic rows for audit; nothing on the live
+        // path reads it.
       }, 1000);
     },
   );

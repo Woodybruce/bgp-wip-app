@@ -134,10 +134,11 @@ interface CommissionData {
   wipByStage: { neg: number; exc: number; com: number };
   wipTotal: number;
   forecastPence: number;
+  paidOnly?: boolean;
   sources?: {
-    sage: { billedPence: number; wipPence: number };
-    xero: { billedPence: number };
-    crmDealsWip: { neg: number; exc: number; com: number; total: number };
+    invoiced: { billedPence: number };
+    paid:     { billedPence: number };
+    wip:      { neg: number; exc: number; com: number; total: number };
   };
   t1: number; t2: number; t3: number;
   tierBreakdown?: Array<{ name: string; thresholdLow: number; thresholdHigh: number | null; rate: number; billedInBand: number; commission: number }>;
@@ -588,8 +589,14 @@ function StaffCard({ person, onClick }: { person: StaffMember; onClick: () => vo
 function CommissionTab({ userId }: { userId: string }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  // Invoiced = deals at status INV in this scheme year (counts toward the
+  // tier waterfall the moment Wendy raises the invoice).
+  // Paid = subset where Xero shows the underlying invoice as paid (this
+  // is when the commission actually pays out at month-end payroll).
+  const [paidOnly, setPaidOnly] = useState(false);
   const { data, isLoading, error } = useQuery<CommissionData>({
-    queryKey: [`/api/hr/staff/${userId}/commission`],
+    queryKey: [`/api/hr/staff/${userId}/commission`, paidOnly],
+    queryFn: () => apiRequest("GET", `/api/hr/staff/${userId}/commission${paidOnly ? "?paidOnly=true" : ""}`).then(r => r.json()),
   });
   const { data: payslips = [] } = useQuery<UploadedFile[]>({
     queryKey: [`/api/hr/files/${userId}`, "payslip"],
@@ -784,36 +791,60 @@ function CommissionTab({ userId }: { userId: string }) {
             </div>
           )}
 
-          {/* Source-of-truth panel — Sage is canonical; Xero is the cross-check.
-              When the two diverge by more than 1% Wendy probably needs to know. */}
+          {/* Invoiced vs Paid toggle — the tier waterfall above re-runs
+              against whichever filter is active. Invoiced is the default
+              because that's what locks the FY year-band attribution.
+              Paid is when the cash actually arrives + commission pays. */}
           {data.sources && (
-            <div className="rounded-md border bg-muted/20 p-2.5 text-[11px] space-y-1">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Source check</div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Sage WIP (billed)</span>
-                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.sage.billedPence)}</span>
+            <div className="rounded-md border bg-muted/20 p-3 text-xs space-y-2">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Showing commission against</div>
+                  <div className="font-medium text-sm">
+                    {paidOnly ? "Paid invoices only" : "Invoiced this year"}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Xero (paid invoices)</span>
-                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.xero.billedPence)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Sage WIP (pipeline)</span>
-                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.sage.wipPence)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">CRM deals (your share)</span>
-                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.crmDealsWip.total)}</span>
+                <div className="inline-flex rounded-md border bg-card overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setPaidOnly(false)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${!paidOnly ? "bg-primary text-primary-foreground" : "hover:bg-muted/60"}`}
+                    data-testid="commission-toggle-invoiced"
+                  >
+                    Invoiced
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaidOnly(true)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${paidOnly ? "bg-primary text-primary-foreground" : "hover:bg-muted/60"}`}
+                    data-testid="commission-toggle-paid"
+                  >
+                    Paid only
+                  </button>
                 </div>
               </div>
-              {Math.abs(data.sources.sage.billedPence - data.sources.xero.billedPence) > Math.max(data.sources.sage.billedPence, data.sources.xero.billedPence) * 0.01 && data.sources.sage.billedPence > 0 && data.sources.xero.billedPence > 0 && (
-                <div className="text-[10px] text-amber-700 dark:text-amber-400 pt-1 border-t mt-1">
-                  Sage and Xero disagree by {fmtSalary(Math.abs(data.sources.sage.billedPence - data.sources.xero.billedPence))} — either Sage hasn't been re-imported or the Xero "Person" tracking is off on an invoice. Wendy can reconcile.
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1.5 border-t">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Invoiced this year</span>
+                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.invoiced.billedPence)}</span>
                 </div>
-              )}
-              <div className="text-[10px] text-muted-foreground italic pt-1">
-                The headline figure above uses Sage when available (it's the canonical fee book) and falls back to Xero otherwise.
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Of which paid</span>
+                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.paid.billedPence)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">In WIP / pipeline</span>
+                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.wip.total)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Awaiting payment</span>
+                  <span className="tabular-nums font-medium">
+                    {fmtSalary(Math.max(data.sources.invoiced.billedPence - data.sources.paid.billedPence, 0))}
+                  </span>
+                </div>
+              </div>
+              <div className="text-[10px] text-muted-foreground italic pt-1.5 border-t">
+                Source: Deals Board + Letting Tracker (mirrors Xero). Deals count toward the FY when invoiced; commission pays at month-end payroll once BGP has been paid.
               </div>
             </div>
           )}
