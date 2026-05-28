@@ -4114,6 +4114,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         totalAreaSqft: body.totalAreaSqft ? parseFloat(body.totalAreaSqft) : (unit.sqft || undefined),
         leaseLength: body.leaseLength ? parseFloat(body.leaseLength) : undefined,
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
+        // targetDate is mandatory on the dialog now — persist so the
+        // WIP report can bucket the freshly-flipped deal by month.
+        targetDate: body.targetDate || undefined,
         comments: body.comments || undefined,
         amlCheckCompleted: body.amlChecked || undefined,
         tenantId: body.tenantId || undefined,

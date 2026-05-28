@@ -363,6 +363,7 @@ export default function AvailableUnitsPage() {
     totalAreaSqft: "",
     leaseLength: "",
     rentFree: "",
+    targetDate: "", // expected completion — mandatory so WIP report buckets correctly
     comments: "",
     amlChecked: "",      // YES | NO | N-A — soft-required at SOL
     overrideCompliance: false, // user-acknowledged shipping despite incomplete AML/fee agreement
@@ -831,6 +832,9 @@ export default function AvailableUnitsPage() {
       totalAreaSqft: (existingDeal?.totalAreaSqft ?? unit.sqft)?.toString() || "",
       leaseLength: existingDeal?.leaseLength?.toString() || "",
       rentFree: existingDeal?.rentFree?.toString() || "",
+      targetDate: existingDeal?.targetDate
+        ? new Date(existingDeal.targetDate).toISOString().slice(0, 10)
+        : "",
       comments: existingDeal?.comments || `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
       amlChecked: existingDeal?.amlCheckCompleted || "",
       overrideCompliance: false,
@@ -1982,6 +1986,23 @@ export default function AvailableUnitsPage() {
               </div>
             </div>
 
+            <div>
+              <Label className="text-xs mb-1">
+                Target Completion Date <span className="text-rose-600">*</span>
+              </Label>
+              <Input
+                type="date"
+                value={wipForm.targetDate}
+                onChange={e => setWipForm(f => ({ ...f, targetDate: e.target.value }))}
+                required
+                className={!wipForm.targetDate ? "border-rose-300" : ""}
+                data-testid="wip-target-date"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Drives the WIP report's month / fiscal-year bucket.
+              </p>
+            </div>
+
             {/* Net Effective = Headline × (term − rent_free) / term.
                 Derived live — no extra DB column. Hidden when the
                 inputs aren't enough to make the number meaningful. */}
@@ -2016,6 +2037,7 @@ export default function AvailableUnitsPage() {
             if (!wipForm.tenantId) hardMissing.push("Tenant brand");
             if (!wipForm.fee.trim()) hardMissing.push("Fee");
             if (!wipForm.agent.trim()) hardMissing.push("Agent");
+            if (!wipForm.targetDate) hardMissing.push("Target date");
             const softMissing: string[] = [];
             if (wipForm.feeAgreement !== "YES") softMissing.push("Fee agreement signed");
             if (wipForm.amlChecked !== "YES" && wipForm.amlChecked !== "N-A") softMissing.push("AML / KYC checked");

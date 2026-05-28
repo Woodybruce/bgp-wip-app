@@ -1770,9 +1770,20 @@ function SimplifiedCreateBody({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label htmlFor="deal-target-date" className="text-xs">Timing for completion</Label>
-            <Input id="deal-target-date" type="date" value={form.targetDate}
-              onChange={(e) => set("targetDate", e.target.value)} />
+            <Label htmlFor="deal-target-date" className="text-xs">
+              Timing for completion <span className="text-rose-600">*</span>
+            </Label>
+            <Input
+              id="deal-target-date"
+              type="date"
+              value={form.targetDate}
+              onChange={(e) => set("targetDate", e.target.value)}
+              required
+              className={!form.targetDate ? "border-rose-300" : ""}
+            />
+            {!form.targetDate && (
+              <p className="text-[10px] text-rose-600 mt-0.5">Required — drives the WIP report bucket.</p>
+            )}
           </div>
           <div>
             <Label htmlFor="deal-invoicing-email" className="text-xs">Invoicing email / contact</Label>
@@ -1980,6 +1991,16 @@ export function DealFormDialog({
     e.preventDefault();
     if (!form.name.trim() && !form.propertyId) {
       toast({ title: "Either a property or deal name is required", variant: "destructive" });
+      return;
+    }
+    // Target Date is mandatory — without it the deal floats around the
+    // WIP report on updatedAt fallback (drifts every time anything edits).
+    if (!form.targetDate) {
+      toast({
+        title: "Target Date required",
+        description: "Set the expected completion month — it's what places the deal on the WIP report.",
+        variant: "destructive",
+      });
       return;
     }
     // Same exclusion as the picker — Lease Acquisition + Sub-Letting are
@@ -2271,8 +2292,20 @@ export function DealFormDialog({
             </div>
 
             <div>
-              <Label>Target Date</Label>
-              <Input type="date" value={form.targetDate} onChange={(e) => set("targetDate", e.target.value)} data-testid="input-deal-target-date" />
+              <Label>
+                Target Date <span className="text-rose-600">*</span>
+              </Label>
+              <Input
+                type="date"
+                value={form.targetDate}
+                onChange={(e) => set("targetDate", e.target.value)}
+                required
+                className={!form.targetDate ? "border-rose-300" : ""}
+                data-testid="input-deal-target-date"
+              />
+              {!form.targetDate && (
+                <p className="text-[10px] text-rose-600 mt-0.5">Required — drives the WIP report bucket.</p>
+              )}
             </div>
 
             <div>
