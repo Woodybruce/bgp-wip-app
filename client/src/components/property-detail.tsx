@@ -592,11 +592,20 @@ export function PropertyDetail({ id }: { id: string }) {
                   // properties where most ownership slots are blank.
                   // A single "+ Add owner" affordance at the end keeps
                   // adding new entries one click away.
+                  // landlordId is the property-level "Client" — whoever BGP
+                  // is working for on this asset. The deals board surfaces
+                  // this implicitly via the deal-type → client-role logic
+                  // (landlord on a New Letting, vendor on a Sale, etc.).
+                  // At property level there's no deal type, so we expose
+                  // it directly as Client / Landlord. Same company can
+                  // sit in both the Freeholder + Client slots when the
+                  // legal owner is the operator too.
                   const allRows = [
-                    { label: "Freeholder",       field: "freeholderId",      id: (property as any).freeholderId },
-                    { label: "Long Leaseholder", field: "longLeaseholderId", id: (property as any).longLeaseholderId },
-                    { label: "Senior Lender",    field: "seniorLenderId",    id: (property as any).seniorLenderId },
-                    { label: "Junior Lender",    field: "juniorLenderId",    id: (property as any).juniorLenderId },
+                    { label: "Client / Landlord", field: "landlordId",        id: (property as any).landlordId },
+                    { label: "Freeholder",        field: "freeholderId",      id: (property as any).freeholderId },
+                    { label: "Long Leaseholder",  field: "longLeaseholderId", id: (property as any).longLeaseholderId },
+                    { label: "Senior Lender",     field: "seniorLenderId",    id: (property as any).seniorLenderId },
+                    { label: "Junior Lender",     field: "juniorLenderId",    id: (property as any).juniorLenderId },
                   ];
                   const filled = allRows.filter(r => !!r.id);
                   const empty = allRows.filter(r => !r.id);

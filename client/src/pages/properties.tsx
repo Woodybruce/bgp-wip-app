@@ -5262,6 +5262,13 @@ function PropertiesList({
                           <div className="flex flex-col gap-0.5">
                             <InlineOwnerLink
                               propertyId={item.id}
+                              companyId={(item as any).landlordId}
+                              fieldName="landlordId"
+                              label="Client / Landlord"
+                              allCompanies={allCompanies}
+                            />
+                            <InlineOwnerLink
+                              propertyId={item.id}
                               companyId={(item as any).freeholderId}
                               fieldName="freeholderId"
                               label="Freeholder"
