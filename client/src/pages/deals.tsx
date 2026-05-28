@@ -900,6 +900,73 @@ function PartiesCell({
   );
 }
 
+// Consolidated Lease Terms cell — replaces five SOL-stage columns
+// (Rent PA, Capital Contribution, Rent Free, Lease Length, Break
+// Option) with a single column. Same pattern as PartiesCell.
+type LeaseTermKey = "rentPa" | "capitalContribution" | "rentFree" | "leaseLength" | "breakOption";
+const LEASE_TERMS: Array<{ key: LeaseTermKey; label: string; prefix?: string; suffix?: string; short: string }> = [
+  { key: "rentPa",              label: "Rent PA",             prefix: "£",        short: "Rent" },
+  { key: "capitalContribution", label: "Capital Contribution", prefix: "£",       short: "Cap Contrib" },
+  { key: "rentFree",            label: "Rent Free",            suffix: " months", short: "RF" },
+  { key: "leaseLength",         label: "Lease Length",         suffix: " years",  short: "Term" },
+  { key: "breakOption",         label: "Break Option",         suffix: " years",  short: "Break" },
+];
+
+function formatLeaseTermValue(val: number | null | undefined, prefix?: string, suffix?: string): string {
+  if (val == null) return "—";
+  const num = prefix === "£" ? val.toLocaleString("en-GB") : String(val);
+  return `${prefix || ""}${num}${suffix || ""}`;
+}
+
+function LeaseTermsCell({
+  deal, onSave,
+}: {
+  deal: any;
+  onSave: (field: string, value: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const populated = LEASE_TERMS.filter(t => deal[t.key] != null && deal[t.key] !== "");
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[140px]"
+          data-testid={`lease-terms-cell-${deal.id}`}
+        >
+          {populated.length === 0 ? (
+            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add terms
+            </span>
+          ) : (
+            populated.map(t => (
+              <div key={t.key} className="flex items-center gap-1 truncate">
+                <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{t.short}</span>
+                <span className="truncate font-mono text-[11px]">{formatLeaseTermValue(deal[t.key], t.prefix, t.suffix)}</span>
+              </div>
+            ))
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[320px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Lease terms</p>
+        {LEASE_TERMS.map(t => (
+          <div key={t.key} className="grid grid-cols-[140px_1fr] items-center gap-2">
+            <Label className="text-xs text-muted-foreground">{t.label}</Label>
+            <InlineNumber
+              value={deal[t.key]}
+              onSave={(v) => onSave(t.key, v)}
+              prefix={t.prefix}
+              suffix={t.suffix}
+            />
+          </div>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Simplified create-deal body — shown by default when opening "New
 // Deal". Five fields, all the team needs to spin a deal up: property,
@@ -4761,11 +4828,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     floorAreas: true,
     pricePsf: true,
     priceItza: true,
-    rentPa: true,
-    capitalContribution: true,
-    rentFree: true,
-    leaseLength: true,
-    breakOption: true,
+    // Five lease-term columns now consolidated behind the Lease Terms
+    // column. Toggle them back on from the column-visibility menu for
+    // the per-column sortable view.
+    leaseTerms: true,
+    rentPa: false,
+    capitalContribution: false,
+    rentFree: false,
+    leaseLength: false,
+    breakOption: false,
     dateAdded: true,
     instructedAt: false,
     targetDate: true,
@@ -5662,6 +5733,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
                     {visibleColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
                     {visibleColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
+                    {visibleColumns.leaseTerms && <TableHead className="min-w-[160px]">Lease Terms</TableHead>}
                     {visibleColumns.rentPa && <SortableTableHead sortKey="rentPa" sort={dealsSort} align="right" className="min-w-[100px]">Rent PA</SortableTableHead>}
                     {visibleColumns.capitalContribution && <SortableTableHead sortKey="capitalContribution" sort={dealsSort} align="right" className="min-w-[100px]">Capital Contribution</SortableTableHead>}
                     {visibleColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
@@ -6009,6 +6081,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             value={deal.priceItza}
                             onSave={(v) => handleInlineSave(deal.id, "priceItza", v)}
                             prefix="£"
+                          />
+                        </TableCell>
+                      )}
+                      {visibleColumns.leaseTerms && (
+                        <TableCell className="px-1.5 py-1">
+                          <LeaseTermsCell
+                            deal={deal}
+                            onSave={(field, value) => handleInlineSave(deal.id, field, value)}
                           />
                         </TableCell>
                       )}
