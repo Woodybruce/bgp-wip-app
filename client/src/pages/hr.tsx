@@ -126,12 +126,21 @@ interface SalaryEntry {
 interface CommissionData {
   salary: number;
   effectiveSalary: number;
+  proRated?: boolean;
   schemeYear: string;
+  schemeYearStart?: string;
+  schemeYearEnd?: string;
   billedPence: number;
   wipByStage: { neg: number; exc: number; com: number };
   wipTotal: number;
   forecastPence: number;
+  sources?: {
+    sage: { billedPence: number; wipPence: number };
+    xero: { billedPence: number };
+    crmDealsWip: { neg: number; exc: number; com: number; total: number };
+  };
   t1: number; t2: number; t3: number;
+  tierBreakdown?: Array<{ name: string; thresholdLow: number; thresholdHigh: number | null; rate: number; billedInBand: number; commission: number }>;
   commissionEarned: number;
   commissionForecast: number;
   scenarios: Array<{ key: string; label: string; totalPence: number; commission: number; deltaCommission: number }>;
@@ -683,38 +692,131 @@ function CommissionTab({ userId }: { userId: string }) {
             </div>
           )}
 
-          {/* Tier breakdown — kept for context, secondary now */}
-          <details className="rounded-md border bg-muted/20">
-            <summary className="cursor-pointer text-xs font-medium text-muted-foreground p-2.5 select-none">Tier breakdown (2× / 3× / 4× salary)</summary>
-            <div className="px-2.5 pb-2.5 space-y-2">
-              {[
-                { label: "Tier 1 (2× salary)", target: data.t1, rate: "30%" },
-                { label: "Tier 2 (3× salary)", target: data.t2, rate: "40%" },
-                { label: "Tier 3 (4× salary)", target: data.t3, rate: "50%" },
-              ].map(({ label, target, rate }) => {
-                const pct = fmtProgress(data.billedPence, target);
-                return (
-                  <div key={label} className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>{label} · {rate}</span>
-                      <span>{fmtSalary(target)}</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div className={`h-full rounded-full ${pct >= 100 ? "bg-green-500" : "bg-primary"}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-              <div className="flex items-center justify-between text-xs pt-1.5 border-t">
-                <span className="text-muted-foreground">Commission earned YTD</span>
-                <span className="font-semibold">{fmtSalary(data.commissionEarned)}</span>
+        </CardContent>
+      </Card>
+
+      {/* ── How the commission works — explicit structure + line-by-line math ── */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-500" /> How your commission is calculated
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* Structure summary — the rules in plain English */}
+          <div className="text-xs space-y-1.5 p-3 rounded-md bg-muted/30 border">
+            <p>
+              You earn <strong>nothing</strong> on the first <strong>2× your salary</strong> ({fmtSalary(data.t1)}) —
+              that band covers what BGP pays you, plus the firm's overhead.
+            </p>
+            <p>
+              From there it's a <strong>tiered share of fees you bring in</strong>:
+            </p>
+            <ul className="ml-4 list-disc text-[11px] text-muted-foreground space-y-0.5">
+              <li><strong>30%</strong> on fees between {fmtSalary(data.t1)} ({fmtSalary(data.salary)} × 2) and {fmtSalary(data.t2)} ({fmtSalary(data.salary)} × 3)</li>
+              <li><strong>40%</strong> on fees between {fmtSalary(data.t2)} and {fmtSalary(data.t3)} ({fmtSalary(data.salary)} × 4)</li>
+              <li><strong>50%</strong> on fees above {fmtSalary(data.t3)}</li>
+            </ul>
+            {data.proRated && data.effectiveSalary !== data.salary && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 pt-1">
+                <strong>Mid-year start:</strong> your thresholds are pro-rated to {fmtSalary(data.effectiveSalary)} effective salary
+                ({Math.round((data.effectiveSalary / data.salary) * 100)}% of {fmtSalary(data.salary)}) based on days worked this scheme year.
+              </p>
+            )}
+            <p className="text-[10px] text-muted-foreground pt-1 italic">
+              Commission only pays when BGP gets paid (Xero invoice marked paid). Scheme year: 1 May → 30 Apr.
+            </p>
+          </div>
+
+          {/* Line-by-line math — uses the server's tierBreakdown if available,
+              otherwise falls back to computing client-side. */}
+          {data.tierBreakdown && data.tierBreakdown.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+                Your numbers this year · billed {fmtSalary(data.billedPence)}
               </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Forecast commission (billed + WIP)</span>
-                <span className="font-semibold text-primary">{fmtSalary(data.commissionForecast)}</span>
+              <div className="rounded-md border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Band</th>
+                      <th className="px-2 py-1.5 text-right">Range</th>
+                      <th className="px-2 py-1.5 text-right">Rate</th>
+                      <th className="px-2 py-1.5 text-right">You billed in band</th>
+                      <th className="px-2 py-1.5 text-right">Commission</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.tierBreakdown.map((b) => {
+                      const active = b.billedInBand > 0;
+                      return (
+                        <tr key={b.name} className={`border-t ${active ? "bg-emerald-50/40 dark:bg-emerald-950/20" : ""}`}>
+                          <td className="px-2 py-1.5 font-medium">{b.name}</td>
+                          <td className="px-2 py-1.5 text-right text-muted-foreground tabular-nums">
+                            {fmtSalary(b.thresholdLow)}
+                            {b.thresholdHigh != null ? ` – ${fmtSalary(b.thresholdHigh)}` : "+"}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono">{(b.rate * 100).toFixed(0)}%</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{fmtSalary(b.billedInBand)}</td>
+                          <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${active ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>
+                            {fmtSalary(b.commission)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="border-t bg-muted/30 font-semibold">
+                      <td className="px-2 py-2" colSpan={4}>Earned so far (paid invoices only)</td>
+                      <td className="px-2 py-2 text-right tabular-nums">{fmtSalary(data.commissionEarned)}</td>
+                    </tr>
+                    {data.commissionForecast > data.commissionEarned && (
+                      <tr className="border-t bg-primary/5">
+                        <td className="px-2 py-2 text-primary" colSpan={4}>
+                          + Forecast if your WIP ({fmtSalary(data.wipTotal)}) all collects
+                        </td>
+                        <td className="px-2 py-2 text-right tabular-nums text-primary font-semibold">
+                          {fmtSalary(data.commissionForecast - data.commissionEarned)}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
-          </details>
+          )}
+
+          {/* Source-of-truth panel — Sage is canonical; Xero is the cross-check.
+              When the two diverge by more than 1% Wendy probably needs to know. */}
+          {data.sources && (
+            <div className="rounded-md border bg-muted/20 p-2.5 text-[11px] space-y-1">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Source check</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Sage WIP (billed)</span>
+                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.sage.billedPence)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Xero (paid invoices)</span>
+                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.xero.billedPence)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Sage WIP (pipeline)</span>
+                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.sage.wipPence)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">CRM deals (your share)</span>
+                  <span className="tabular-nums font-medium">{fmtSalary(data.sources.crmDealsWip.total)}</span>
+                </div>
+              </div>
+              {Math.abs(data.sources.sage.billedPence - data.sources.xero.billedPence) > Math.max(data.sources.sage.billedPence, data.sources.xero.billedPence) * 0.01 && data.sources.sage.billedPence > 0 && data.sources.xero.billedPence > 0 && (
+                <div className="text-[10px] text-amber-700 dark:text-amber-400 pt-1 border-t mt-1">
+                  Sage and Xero disagree by {fmtSalary(Math.abs(data.sources.sage.billedPence - data.sources.xero.billedPence))} — either Sage hasn't been re-imported or the Xero "Person" tracking is off on an invoice. Wendy can reconcile.
+                </div>
+              )}
+              <div className="text-[10px] text-muted-foreground italic pt-1">
+                The headline figure above uses Sage when available (it's the canonical fee book) and falls back to Xero otherwise.
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
