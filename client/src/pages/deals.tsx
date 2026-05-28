@@ -4597,6 +4597,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
   }, [activeTeam]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
+    unit: true,
     landlord: true,
     status: true,
     type: true,
@@ -4992,6 +4993,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       if (search) {
         const s = search.toLowerCase();
         const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
+        const unitName = deal.unitId ? (propertyUnits.find(u => u.id === deal.unitId)?.unitName || "") : "";
         // Counterparty name lookups — search "Burberry" should find the
         // tenant on a New Letting, the vendor on a Sale, etc. Falls back
         // to the empty string when the FK is unset.
@@ -5004,6 +5006,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         const match =
           deal.name.toLowerCase().includes(s) ||
           propName.toLowerCase().includes(s) ||
+          unitName.toLowerCase().includes(s) ||
           tenantName.includes(s) ||
           landlordName.includes(s) ||
           vendorName.includes(s) ||
@@ -5019,7 +5022,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, properties, companies]);
+  }, [baseDeals, activeGroup, columnFilters, search, properties, companies, propertyUnits]);
 
   const teamFilteredDeals = useMemo(() => {
     if (!columnFilters["team"]?.length) return baseDeals;
@@ -5100,6 +5103,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const propertyMap = new Map(properties.map((p) => [p.id, p.name]));
   const companyMap = new Map(companies.map((c) => [c.id, c.name]));
+  const unitMap = new Map(propertyUnits.map((u) => [u.id, u.unitName]));
   // Click-to-sort applied after the existing filter chain. Looks up
   // names through propertyMap / companyMap so sorts on Property,
   // Client, Tenant etc. compare against the human label rather than
@@ -5108,6 +5112,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     ? dealsSort.sorted(filteredDeals as any[], {
         ref: (d: any) => d.dealRef,
         property: (d: any) => propertyMap.get(d.propertyId) || d.name,
+        unit: (d: any) => d.unitId ? unitMap.get(d.unitId) || "" : "",
         landlord: (d: any) => companyMap.get(d.landlordId),
         tenant: (d: any) => companyMap.get(d.tenantId),
         vendor: (d: any) => companyMap.get(d.vendorId),
@@ -5140,7 +5145,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // AML lookup for the badge — built from the same companies list so
   // we don't re-fetch. Kept narrow to id/name/kycStatus/expiry.
   const amlCompanyMap = useMemo(() => buildAmlCompanyMap(companies), [companies]);
-  const unitMap = new Map(propertyUnits.map((u) => [u.id, u.unitName]));
   const agentCompanies = companies.filter(c => c.companyType === "Agent");
 
   return (
@@ -5457,6 +5461,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     </TableHead>
                     <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[60px]">Ref</SortableTableHead>
                     <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property</SortableTableHead>
+                    {visibleColumns.unit && <SortableTableHead sortKey="unit" sort={dealsSort} className="min-w-[100px]">Unit</SortableTableHead>}
                     {visibleColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {visibleColumns.type && (
                       <TableHead className="min-w-[120px]">
@@ -5583,6 +5588,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           placeholder="Link property"
                         />
                       </TableCell>
+                      {visibleColumns.unit && (
+                        <TableCell className="px-1.5 py-1 text-sm text-muted-foreground max-w-[120px] truncate">
+                          {deal.unitId ? (unitMap.get(deal.unitId) || "—") : "—"}
+                        </TableCell>
+                      )}
                       {visibleColumns.landlord && (
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
                           <InlineLinkSelect
