@@ -4079,13 +4079,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // (crm_properties.landlord_id) since the landlord is implicit at
       // SOL on a letting deal. Xero billing entities (tenant + landlord)
       // are also captured for the invoicing chain.
+      // Promote merges into the existing deal — don't clobber multi-agent
+      // / multi-team rosters with whatever the dialog's single-picker
+      // shows. Layla picks a "lead agent" on the dialog; if the deal
+      // already had Charlotte on it too, Charlotte stays. Same for team.
+      const existingDeal = unit.dealId ? await storage.getCrmDeal(unit.dealId) : null;
+      const existingAgents: string[] = Array.isArray((existingDeal as any)?.internalAgent)
+        ? ((existingDeal as any).internalAgent as string[])
+        : ((existingDeal as any)?.internalAgent ? [(existingDeal as any).internalAgent as string] : []);
+      const mergedAgents = body.agent && !existingAgents.includes(body.agent)
+        ? [body.agent, ...existingAgents]
+        : (body.agent ? existingAgents : existingAgents);
+      const bodyTeams: string[] = Array.isArray(body.team) ? body.team : (body.team ? [body.team] : []);
+      const existingTeams: string[] = Array.isArray((existingDeal as any)?.team)
+        ? ((existingDeal as any).team as string[])
+        : ((existingDeal as any)?.team ? [(existingDeal as any).team as string] : []);
+      const mergedTeams = bodyTeams.length === 0
+        ? existingTeams
+        : Array.from(new Set([...bodyTeams, ...existingTeams]));
+
       const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
         status: "SOL",
         dealType: body.dealType || "New Letting",
-        team: body.team || [],
-        internalAgent: body.agent ? [body.agent] : [],
+        team: mergedTeams,
+        internalAgent: mergedAgents,
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
         feePercentage: body.feePercentage != null && body.feePercentage !== ""
           ? parseFloat(String(body.feePercentage))
