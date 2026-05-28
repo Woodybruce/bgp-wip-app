@@ -752,10 +752,66 @@ export function setupHrRoutes(app: Express) {
         console.error("[hr] commission WIP query failed:", wErr.message);
       }
 
-      const wipTotal = wipByStage.neg + wipByStage.exc + wipByStage.com;
-      const forecastPence = billedPence + wipTotal;
-      const commissionEarned = tierCommission(billedPence);
+      // ── Sage WIP cross-check ────────────────────────────────────────────
+      // Read wip_entries (the Sage WIP excel import) for this agent in the
+      // scheme year. Sage is the canonical fee book — Wendy bills against
+      // it. We surface the totals alongside the Xero / crm_deals figures
+      // so any drift between the three sources is visible.
+      let sageBilledPence = 0;
+      let sageWipPence = 0;
+      try {
+        const fyStart = schemeYearStart.getFullYear() + 1; // BGP FY = May → Apr; Apr-26 → FY 2027
+        const { rows: wipRows } = await pool.query<{ billed: string; wip: string }>(
+          `SELECT COALESCE(SUM(amt_invoice), 0)::text AS billed,
+                  COALESCE(SUM(amt_wip), 0)::text     AS wip
+             FROM wip_entries
+            WHERE (agent_user_id = $1
+                   OR (agent_user_id IS NULL AND LOWER(agent) = LOWER($2)))
+              AND fiscal_year = $3`,
+          [userId, trackingName, fyStart]
+        );
+        sageBilledPence = Math.round(parseFloat(wipRows[0]?.billed || "0") * 100);
+        sageWipPence    = Math.round(parseFloat(wipRows[0]?.wip || "0") * 100);
+      } catch (sErr: any) {
+        console.warn("[hr] commission Sage WIP read failed (non-fatal):", sErr?.message);
+      }
+
+      // Primary "billed" for the commission calc: prefer Sage when present
+      // (it's what Wendy invoices against and is the canonical fee book).
+      // Fall back to the Xero match when Sage is empty (no recent import,
+      // or pre-Sage-onboarded agent).
+      const primaryBilledPence = sageBilledPence > 0 ? sageBilledPence : billedPence;
+      const primaryWipPence    = sageWipPence    > 0 ? sageWipPence    : (wipByStage.neg + wipByStage.exc + wipByStage.com);
+
+      const wipTotal = primaryWipPence;
+      const forecastPence = primaryBilledPence + wipTotal;
+      const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
+
+      // Tier-by-tier breakdown so the UI can show the math. Each band:
+      // - threshold start / end (in pence)
+      // - your billed amount that falls within the band
+      // - the band's rate
+      // - the commission earned from this band
+      const tierBreakdown = (() => {
+        const bands = [
+          { name: "Below Tier 1", low: 0,   high: t1, rate: 0 },
+          { name: "Tier 1",       low: t1,  high: t2, rate: 0.30 },
+          { name: "Tier 2",       low: t2,  high: t3, rate: 0.40 },
+          { name: "Tier 3",       low: t3,  high: Infinity, rate: 0.50 },
+        ];
+        return bands.map(b => {
+          const inBand = Math.max(0, Math.min(primaryBilledPence, b.high === Infinity ? primaryBilledPence : b.high) - b.low);
+          return {
+            name: b.name,
+            thresholdLow: b.low,
+            thresholdHigh: b.high === Infinity ? null : b.high,
+            rate: b.rate,
+            billedInBand: inBand,
+            commission: Math.round(inBand * b.rate),
+          };
+        });
+      })();
 
       // "If you collect…" scenarios. Commission only paid when BGP gets paid,
       // so we layer the WIP stages cumulatively and recompute the tier waterfall
@@ -795,14 +851,25 @@ export function setupHrRoutes(app: Express) {
       res.json({
         salary,
         effectiveSalary,
+        proRated: effectiveSalary !== salary,
         schemeYear: `${schemeYearStart.getFullYear()}/${String(schemeYearEnd.getFullYear()).slice(-2)}`,
         schemeYearStart: schemeYearStart.toISOString().split("T")[0],
         schemeYearEnd: schemeYearEnd.toISOString().split("T")[0],
-        billedPence,
-        wipByStage,
+        // Headline billed/WIP — prefers Sage when populated, falls back to
+        // the Xero/crm_deals figures. UI uses these for the tier waterfall.
+        billedPence: primaryBilledPence,
         wipTotal,
         forecastPence,
+        wipByStage,
+        // Both source totals exposed so the UI can flag any drift between
+        // Sage (what Wendy invoices) and Xero (what's actually paid in).
+        sources: {
+          sage: { billedPence: sageBilledPence, wipPence: sageWipPence },
+          xero: { billedPence },
+          crmDealsWip: { neg: wipByStage.neg, exc: wipByStage.exc, com: wipByStage.com, total: wipByStage.neg + wipByStage.exc + wipByStage.com },
+        },
         t1, t2, t3,
+        tierBreakdown,
         commissionEarned,
         commissionForecast,
         scenarios,

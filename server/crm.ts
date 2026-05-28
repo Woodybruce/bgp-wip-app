@@ -507,12 +507,34 @@ export async function importWipFromBuffer(
     );
   }
 
+  // Resolve agent_user_id from the Sage agent name (case-insensitive).
+  // Commission reads prefer this over the name string so renames don't
+  // drift the per-person totals. "BGP" / "BGP House" rows have no user
+  // link — they stay null.
+  const agentNames = Array.from(new Set(
+    rows.map(r => (r as any).agent).filter(Boolean)
+      .map(n => String(n).trim().toLowerCase())
+      .filter(n => n && n !== "bgp" && n !== "bgp house")
+  ));
+  const nameToUserId = new Map<string, string>();
+  if (agentNames.length > 0) {
+    const { rows: userRows } = await pool.query<{ id: string; name: string }>(
+      "SELECT id, name FROM users WHERE LOWER(name) = ANY($1::text[])",
+      [agentNames]
+    );
+    for (const u of userRows) nameToUserId.set(u.name.toLowerCase(), u.id);
+  }
+  const rowsWithIds = rows.map(r => ({
+    ...r,
+    agentUserId: (r as any).agent ? (nameToUserId.get(String((r as any).agent).trim().toLowerCase()) ?? null) : null,
+  }));
+
   await db.transaction(async (tx) => {
     if (!opts.append) {
       await tx.delete(wipEntries);
     }
-    for (let i = 0; i < rows.length; i += 100) {
-      await tx.insert(wipEntries).values(rows.slice(i, i + 100));
+    for (let i = 0; i < rowsWithIds.length; i += 100) {
+      await tx.insert(wipEntries).values(rowsWithIds.slice(i, i + 100));
     }
   });
 

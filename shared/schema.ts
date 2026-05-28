@@ -1573,6 +1573,11 @@ export const wipEntries = pgTable("wip_entries", {
   billingEntity: text("billing_entity"),
   team: text("team"),
   agent: text("agent"),
+  // Rename-safe link to users.id. Populated by the Sage import path
+  // via users.name lookup, plus a boot backfill for historic rows.
+  // Commission reads prefer this over the agent name so renames /
+  // first-name collisions don't drift the per-person numbers.
+  agentUserId: varchar("agent_user_id"),
   amtWip: real("amt_wip"),
   amtInvoice: real("amt_invoice"),
   month: text("month"),

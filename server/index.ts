@@ -1547,6 +1547,20 @@ import { pool } from "./db";
       WHERE LOWER(u.name) = LOWER(dfa.agent_name)
         AND dfa.agent_user_id IS NULL
         AND dfa.is_bgp_house = false`,
+    // Same agent-rename hardening for wip_entries — Sage exports agent
+    // as a display name only. The commission tab now reads Sage as the
+    // primary source (Xero as cross-check) so we need the same stable
+    // user-id link here.
+    `ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS agent_user_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_wip_entries_agent_user_id ON wip_entries(agent_user_id) WHERE agent_user_id IS NOT NULL`,
+    `UPDATE wip_entries w
+        SET agent_user_id = u.id
+       FROM users u
+      WHERE LOWER(u.name) = LOWER(w.agent)
+        AND w.agent_user_id IS NULL
+        AND w.agent IS NOT NULL
+        AND LOWER(COALESCE(w.agent, '')) <> 'bgp'
+        AND LOWER(COALESCE(w.agent, '')) <> 'bgp house'`,
 
     // ── Brand profile — ensure crm_companies has all columns the API selects ─
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS bgp_contact_crm TEXT`,
