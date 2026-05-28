@@ -4076,7 +4076,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
         status: "SOL",
-        dealType: body.dealType || "Letting",
+        dealType: body.dealType || "New Letting",
         team: body.team || [],
         internalAgent: body.agent ? [body.agent] : [],
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),

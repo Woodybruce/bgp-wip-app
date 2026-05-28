@@ -342,7 +342,7 @@ export default function AvailableUnitsPage() {
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
   const [wipForm, setWipForm] = useState({
-    dealType: "Letting",
+    dealType: "New Letting",
     team: [] as string[],
     agent: "",
     // Tenant brand (crm_companies.id) + cached display name. Replaces the
@@ -814,7 +814,9 @@ export default function AvailableUnitsPage() {
     // fields that matter at the SOL handover.
     const existingDeal = unit.dealId ? dealMap[unit.dealId] : null;
     setWipForm({
-      dealType: existingDeal?.dealType || "Letting",
+      // Map legacy "Letting" (pre-fix) → canonical "New Letting" so the
+      // dropdown shows a real value for older flipped deals.
+      dealType: (existingDeal?.dealType === "Letting" ? "New Letting" : existingDeal?.dealType) || "New Letting",
       team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
       agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "",
       tenantId: existingDeal?.tenantId || "",
@@ -1736,7 +1738,7 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.dealType} onValueChange={v => setWipForm(f => ({ ...f, dealType: v }))}>
                   <SelectTrigger data-testid="wip-deal-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {["Letting", "Temp Lease", "Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
+                    {["New Letting", "Temp Lease", "Lease Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
