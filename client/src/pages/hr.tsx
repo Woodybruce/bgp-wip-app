@@ -1134,9 +1134,16 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
     onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
+  // Filter to the current calendar year by the holiday's *start* date —
+  // a January request submitted in December must count against the new
+  // year, not the year it was created. Same logic the server uses for
+  // holiday_used / holiday_pending on /api/hr/staff.
+  const currentYear = new Date().getFullYear();
+  const inCurrentYear = (r: HolidayRequest) =>
+    r.start_date && new Date(r.start_date).getFullYear() === currentYear;
   const entitlement = person.holiday_entitlement ?? 25;
-  const used = requests.filter(r => r.status === "approved").reduce((sum, r) => sum + r.days_count, 0);
-  const pending = requests.filter(r => r.status === "pending").reduce((sum, r) => sum + r.days_count, 0);
+  const used = requests.filter(r => r.status === "approved" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
+  const pending = requests.filter(r => r.status === "pending" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
   const remaining = entitlement - used;
 
   const statusIcon = (s: string) => ({
@@ -2304,19 +2311,26 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             </TabsContent>
           )}
 
-          <TabsContent value="reviews" className="mt-4">
-            <ReviewsTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} person={person} />
-          </TabsContent>
+          {/* Gate the content components alongside the triggers — without
+              this, hidden tabs still mount and fire their gated endpoints,
+              flashing 403 toasts for non-admin viewers. */}
+          {(isAdmin || isOwn) && (
+            <TabsContent value="reviews" className="mt-4">
+              <ReviewsTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} person={person} />
+            </TabsContent>
+          )}
 
-          {!isSecretary(person.title) && (
+          {(isAdmin || isOwn) && !isSecretary(person.title) && (
             <TabsContent value="career" className="mt-4">
               <CareerRoadmapTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} currentTitle={person.title} />
             </TabsContent>
           )}
 
-          <TabsContent value="expenses" className="mt-4 space-y-4">
-            <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
-          </TabsContent>
+          {(isAdmin || isOwn) && (
+            <TabsContent value="expenses" className="mt-4 space-y-4">
+              <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
+            </TabsContent>
+          )}
 
           <TabsContent value="cv" className="mt-4">
             <CvTab userId={person.id} canEdit={isAdmin || isOwn} />
@@ -5466,41 +5480,6 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin, matchedIds, hasFilter 
 }
 
 // ── Birthdays widget ──────────────────────────────────────────────────────────
-
-function BirthdaysWidget() {
-  const { data: birthdays = [] } = useQuery<Birthday[]>({ queryKey: ["/api/hr/birthdays"] });
-  if (birthdays.length === 0) return null;
-  return (
-    <Card className="mb-3">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Cake className="w-4 h-4 text-pink-500" /> Upcoming birthdays
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          {birthdays.slice(0, 6).map(b => {
-            const initials = b.name.split(/\s+/).map(p => p[0]).join("").slice(0, 2).toUpperCase();
-            return (
-              <div key={b.id} className="flex items-center gap-2 p-2 rounded-md border text-xs" data-testid={`birthday-${b.id}`}>
-                <div className="w-7 h-7 rounded-full bg-muted overflow-hidden border flex items-center justify-center shrink-0">
-                  {b.profilePicUrl ? <img src={b.profilePicUrl} alt={b.name} className="w-full h-full object-cover" /> : <span className="text-[10px]">{initials}</span>}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium truncate">{b.name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{b.title || b.team}</p>
-                </div>
-                <Badge variant={b.daysUntil === 0 ? "default" : "outline"} className="text-[10px] shrink-0">
-                  {b.daysUntil === 0 ? "Today!" : b.daysUntil === 1 ? "Tomorrow" : `${b.daysUntil}d`}
-                </Badge>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 // ── Import salaries from a SharePoint spreadsheet (admin) ────────────────────
 

@@ -239,9 +239,17 @@ export function setupHrRoutes(app: Express) {
           CASE WHEN $2::boolean OR u.id = $1 THEN sp.dob ELSE NULL END AS dob,
           CASE WHEN $2::boolean OR u.id = $1 THEN sp.address ELSE NULL END AS address,
           m.name AS manager_name,
+          -- Used = approved days that *fall within* the current calendar
+          -- year (filter on start_date, not created_at). A January holiday
+          -- submitted in December must count against the new year. Pending
+          -- requests surfaced separately so the UI can show used / pending
+          -- / remaining without double-subtracting.
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'approved'
-           AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM now())) AS holiday_used
+             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_used,
+          (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
+           WHERE user_id = u.id AND status = 'pending'
+             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users m ON m.id = sp.manager_id
@@ -282,7 +290,13 @@ export function setupHrRoutes(app: Express) {
           sp.linkedin_url, sp.xero_tracking_name,
           sp.dob, sp.address, sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
           sp.board_member, sp.management_team,
-          m.name AS manager_name
+          m.name AS manager_name,
+          (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
+           WHERE user_id = u.id AND status = 'approved'
+             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_used,
+          (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
+           WHERE user_id = u.id AND status = 'pending'
+             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users m ON m.id = sp.manager_id
@@ -301,6 +315,33 @@ export function setupHrRoutes(app: Express) {
     const isAdmin = actor.isAdmin;
     const isSelf = actor.userId === userId;
     if (!isAdmin && !isSelf) return res.status(403).json({ error: "Admin or self only" });
+
+    // Validate managerId before we let it land. Reject self-references
+    // and chains (A → B → A). Inactive users can't be appointed as
+    // managers — they wouldn't see the inbox. NULL clears the link.
+    if (req.body?.managerId) {
+      const proposed = String(req.body.managerId);
+      if (proposed === userId) return res.status(400).json({ error: "A user can't be their own manager." });
+      const { rows: mgr } = await pool.query<{ is_active: boolean }>(
+        "SELECT is_active FROM users WHERE id = $1",
+        [proposed]
+      );
+      if (!mgr[0]) return res.status(400).json({ error: "Manager user not found." });
+      if (!mgr[0].is_active) return res.status(400).json({ error: "Manager is inactive — pick someone else." });
+      // Walk up to detect cycles. Cap at a depth that comfortably exceeds
+      // any sane org chart (BGP has ~4 levels).
+      let cursor: string | null = proposed;
+      for (let depth = 0; depth < 20 && cursor; depth++) {
+        if (cursor === userId) {
+          return res.status(400).json({ error: "That would create a reporting cycle." });
+        }
+        const { rows } = await pool.query<{ manager_id: string | null }>(
+          "SELECT manager_id FROM staff_profiles WHERE user_id = $1",
+          [cursor]
+        );
+        cursor = rows[0]?.manager_id || null;
+      }
+    }
 
     const {
       title, startDate, endDate, status, salaryCurrent, managerId,
@@ -1572,7 +1613,16 @@ export function setupHrRoutes(app: Express) {
     try {
       await pool.query("UPDATE users SET is_active = false WHERE id = $1", [req.params.userId]);
       await pool.query("UPDATE staff_profiles SET status = 'leaver', end_date = COALESCE(end_date, to_char(now(), 'YYYY-MM-DD')), updated_at = now() WHERE user_id = $1", [req.params.userId]);
-      res.json({ ok: true });
+      // Reassign direct reports back to NULL so downstream routing
+      // (expense approval, holiday approval) falls through to the
+      // shared fallback inbox rather than pointing at the leaver.
+      // Mirrored across both manager_id stores.
+      const { rowCount: orphanCount } = await pool.query(
+        "UPDATE staff_profiles SET manager_id = NULL, updated_at = now() WHERE manager_id = $1",
+        [req.params.userId]
+      );
+      await pool.query("UPDATE users SET manager_id = NULL WHERE manager_id = $1", [req.params.userId]);
+      res.json({ ok: true, orphanedReports: orphanCount || 0 });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -4607,8 +4657,15 @@ Use the language and tone of BGP's review docs.`,
       const points = leader.rows[0]?.points || 0;
       if (points <= 0) return res.status(400).json({ error: "User has 0 points this period" });
 
+      // ORDER BY must match the GET /brucey-prizes ordering exactly —
+      // otherwise the client renders one slice arrangement while the
+      // server picks an index against a different one and the wheel
+      // lands on the wrong-looking prize. The list endpoint uses
+      // (tier, sort_order, label); mirror it here.
       const prizes = await pool.query(
-        `SELECT id, label, emoji FROM brucey_prizes WHERE tier = $1 AND is_active = true ORDER BY sort_order`,
+        `SELECT id, label, emoji FROM brucey_prizes
+          WHERE tier = $1 AND is_active = true
+          ORDER BY sort_order, label`,
         [tier]
       );
       if (prizes.rows.length === 0) return res.status(400).json({ error: "No prizes seeded for this tier" });
