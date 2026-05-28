@@ -967,6 +967,77 @@ function LeaseTermsCell({
   );
 }
 
+// Consolidated Property + Unit cell. Stacks the property name (linked
+// to the property page) over the unit name underneath; clicking opens
+// a popover with the property picker + the unit picker (which supports
+// inline-create of new tenancy rows on that property).
+function PropertyUnitCell({
+  deal, properties, propertyUnits, onPropertySave, onUnitSave, onUnitCreated,
+}: {
+  deal: any;
+  properties: CrmProperty[];
+  propertyUnits: PropertyUnit[];
+  onPropertySave: (v: string | null) => void;
+  onUnitSave: (v: string | null) => void;
+  onUnitCreated?: (tenancyRow: any) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const propertyName = deal.propertyId
+    ? (properties.find(p => p.id === deal.propertyId)?.name || "Linked property")
+    : null;
+  const unitName = deal.unitId
+    ? (propertyUnits.find(u => u.id === deal.unitId)?.unitName || null)
+    : null;
+  const unitOptions = propertyUnits.filter(pu => !deal.propertyId || pu.propertyId === deal.propertyId);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-[180px]"
+          data-testid={`property-unit-cell-${deal.id}`}
+        >
+          {propertyName ? (
+            <span className="text-sm font-medium truncate">{propertyName}</span>
+          ) : (
+            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add property
+            </span>
+          )}
+          {unitName && (
+            <span className="text-[11px] text-muted-foreground truncate">{unitName}</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[360px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Property &amp; unit</p>
+        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Property</Label>
+          <InlineLinkSelect
+            value={deal.propertyId}
+            options={properties.map(p => ({ id: p.id, name: p.name }))}
+            href={deal.propertyId ? `/properties/${deal.propertyId}` : undefined}
+            onSave={onPropertySave}
+            placeholder="Link property"
+          />
+        </div>
+        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Unit</Label>
+          <DealUnitPicker
+            propertyId={deal.propertyId || ""}
+            unitOptions={unitOptions}
+            value={deal.unitId || ""}
+            onChange={(v) => onUnitSave(v || null)}
+            dealStatus={deal.status}
+            onUnitCreated={onUnitCreated}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Simplified create-deal body — shown by default when opening "New
 // Deal". Five fields, all the team needs to spin a deal up: property,
@@ -4800,7 +4871,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
   }, [activeTeam]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
-    unit: true,
+    unit: false,
     landlord: true,
     status: true,
     type: true,
@@ -5671,7 +5742,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       />
                     </TableHead>
                     <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[60px]">Ref</SortableTableHead>
-                    <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property</SortableTableHead>
+                    <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property / Unit</SortableTableHead>
                     {visibleColumns.unit && <SortableTableHead sortKey="unit" sort={dealsSort} className="min-w-[100px]">Unit</SortableTableHead>}
                     {visibleColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {visibleColumns.type && (
@@ -5792,13 +5863,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           ) : "—"}
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 font-medium text-sm max-w-[200px]">
-                        <InlineLinkSelect
-                          value={deal.propertyId}
-                          options={properties.map(p => ({ id: p.id, name: p.name }))}
-                          href={deal.propertyId ? `/properties/${deal.propertyId}` : undefined}
-                          onSave={(v) => handleInlineSave(deal.id, "propertyId", v || null)}
-                          placeholder="Link property"
+                      <TableCell className="px-1.5 py-1 max-w-[220px]">
+                        <PropertyUnitCell
+                          deal={deal}
+                          properties={properties}
+                          propertyUnits={propertyUnits}
+                          onPropertySave={(v) => handleInlineSave(deal.id, "propertyId", v)}
+                          onUnitSave={(v) => handleInlineSave(deal.id, "unitId", v)}
+                          onUnitCreated={() => invalidateDealCaches()}
                         />
                       </TableCell>
                       {visibleColumns.unit && (
