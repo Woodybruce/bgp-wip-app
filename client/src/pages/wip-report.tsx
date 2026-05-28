@@ -830,19 +830,28 @@ export default function WipReport() {
 
   const filteredEntries = useMemo(() => {
     if (!clickFilter) return sidebarFilteredEntries;
+    // "Unknown" is the bucket label used by every summary card when the
+    // underlying field is null/empty. Clicking that bucket has to filter
+    // to entries where the field is missing — not literally match the
+    // string "Unknown", which never appears in the data.
+    const isUnknownTarget = clickFilter.value === "Unknown";
     return sidebarFilteredEntries.filter((e) => {
       if (clickFilter.field === "agent") {
-        const agentField = (e.agent || "unknown").trim();
+        const agentField = (e.agent || "").trim();
         const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
+        if (isUnknownTarget) return agents.length === 0;
         const target = clickFilter.value.toLowerCase();
         return agents.some(a => a.toLowerCase() === target);
       }
       if (clickFilter.field === "team") {
-        if (!e.team) return false;
-        const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
+        const entryTeams = e.team
+          ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
+          : [];
+        if (isUnknownTarget) return entryTeams.length === 0;
         return entryTeams.some(t => t === clickFilter.value);
       }
       const val = e[clickFilter.field];
+      if (isUnknownTarget) return !val;
       return val === clickFilter.value;
     });
   }, [sidebarFilteredEntries, clickFilter]);
