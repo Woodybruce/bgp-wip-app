@@ -5476,6 +5476,15 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     "rupert@brucegillinghampollard.com",
     "jack@brucegillinghampollard.com",
   ]);
+  // Viewer-only firm-wide WIP access. Non-admin staff who need to see the
+  // whole firm's WIP for finance/operations reasons (Wendy reconciles
+  // billing; Layla cross-checks deals) without being granted admin or
+  // senior-write powers. Without this, the team filter below blanks
+  // their report because Office / Corporate isn't a deal-bearing team.
+  const WIP_FULL_VIEW_EMAILS = new Set([
+    "wendy@brucegillinghampollard.com",
+    "layla@brucegillinghampollard.com",
+  ]);
   const WIP_RESTRICTED_AGENTS = new Set([
     "woody bruce", "charlotte roberts", "rupert bentley-smith", "jack barratt",
   ]);
@@ -5485,13 +5494,22 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     const user = await storage.getUser(userId);
     return !!user?.email && WIP_SENIOR_EMAILS.has(user.email.toLowerCase());
   }
+  async function hasWipFullView(req: Request): Promise<boolean> {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return false;
+    const user = await storage.getUser(userId);
+    if (!user?.email) return false;
+    const email = user.email.toLowerCase();
+    return WIP_SENIOR_EMAILS.has(email) || WIP_FULL_VIEW_EMAILS.has(email);
+  }
 
   app.get("/api/wip/agent-summary", requireAuth, async (req, res) => {
     try {
       const senior = await isWipSenior(req);
+      const fullView = await hasWipFullView(req);
       const userId = req.session?.userId || (req as any).tokenUserId;
       const currentUser = userId ? await storage.getUser(userId) : null;
-      const isAdmin = !!currentUser?.isAdmin;
+      const isAdmin = !!currentUser?.isAdmin || fullView;
       const userTeam = currentUser?.team || null;
 
       const deals = await db.select().from(crmDeals);
@@ -5512,7 +5530,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (!deal.status || deal.fee == null) continue;
         const dealTeamArr = Array.isArray(deal.team) ? deal.team : (deal.team ? [deal.team] : []);
         const dealTeamsLower = dealTeamArr.map(t => (t || "").toLowerCase());
-        if (!senior && dealTeamsLower.includes("bgp")) continue;
+        // Wendy/Layla (fullView) see BGP-team rows too. fullView is folded
+        // into isAdmin above for the per-team scoping check below.
+        if (!senior && !fullView && dealTeamsLower.includes("bgp")) continue;
         if (!isAdmin) {
           if (!userTeam) continue;
           if (!dealTeamsLower.some(t => t === userTeam.toLowerCase())) continue;
@@ -5841,7 +5861,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      if (!senior) {
+      // Wendy/Layla need the full firm view for finance/operations,
+      // including BGP-restricted rows. Senior partners already bypass.
+      const fullView = await hasWipFullView(req);
+      if (!senior && !fullView) {
         entries = entries.filter(e => {
           if (e.team) {
             const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
@@ -5855,7 +5878,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         });
       }
 
-      if (!isAdmin) {
+      // Per-team scoping for regular agents; same fullView bypass.
+      if (!isAdmin && !fullView) {
         if (!userTeam) {
           entries = [];
         } else {
