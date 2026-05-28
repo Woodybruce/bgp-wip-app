@@ -80,6 +80,7 @@ const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
   "Regear": "bg-teal-100 text-teal-800",
   "New Letting": "bg-lime-100 text-lime-800",
   "Sub-Letting": "bg-sky-100 text-sky-800",
+  "Temp Lease": "bg-cyan-100 text-cyan-800",
   "Assignment": "bg-slate-100 text-slate-800",
 };
 

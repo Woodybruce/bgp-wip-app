@@ -1701,7 +1701,7 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.dealType} onValueChange={v => setWipForm(f => ({ ...f, dealType: v }))}>
                   <SelectTrigger data-testid="wip-deal-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {["Letting", "Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
+                    {["Letting", "Temp Lease", "Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
