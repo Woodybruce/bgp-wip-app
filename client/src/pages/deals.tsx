@@ -764,6 +764,142 @@ function DealUnitPicker({
   );
 }
 
+// Consolidated Parties cell — replaces the seven role-specific columns
+// (Client Contact, Vendor, Purchaser, Vendor/Acquisition/Purchaser/Leasing
+// Agent) with one. Cell shows a compact stack of the populated roles;
+// clicking opens a popover containing the existing InlineLinkSelect
+// editors wired with inline-create so an unknown counterparty / agent
+// can be added without leaving the deals board.
+type PartyRole = {
+  key: "clientContactId" | "vendorId" | "purchaserId" | "vendorAgentId" | "acquisitionAgentId" | "purchaserAgentId" | "leasingAgentId";
+  label: string;
+  type: "contact" | "company-vendor" | "company-purchaser" | "agent";
+};
+
+const PARTY_ROLES: PartyRole[] = [
+  { key: "clientContactId",    label: "Client Contact",    type: "contact" },
+  { key: "vendorId",            label: "Vendor",            type: "company-vendor" },
+  { key: "purchaserId",         label: "Purchaser",         type: "company-purchaser" },
+  { key: "vendorAgentId",       label: "Vendor Agent",      type: "agent" },
+  { key: "acquisitionAgentId",  label: "Acquisition Agent", type: "agent" },
+  { key: "purchaserAgentId",    label: "Purchaser Agent",   type: "agent" },
+  { key: "leasingAgentId",      label: "Leasing Agent",     type: "agent" },
+];
+
+function PartiesCell({
+  deal, companies, contacts, agentCompanies, onSave, onCreated,
+}: {
+  deal: any;
+  companies: CrmCompany[];
+  contacts: CrmContact[];
+  agentCompanies: CrmCompany[];
+  onSave: (field: string, value: string | null) => void;
+  onCreated: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { toast } = useToast();
+
+  const optionsFor = (role: PartyRole) => {
+    if (role.type === "contact") {
+      return contacts.map(c => ({ id: c.id, name: c.name || (c as any).email || "Unknown" }));
+    }
+    if (role.type === "agent") {
+      return agentCompanies.map(c => ({ id: c.id, name: c.name }));
+    }
+    // company-vendor / company-purchaser — keep the existing filter so
+    // the dropdown stays scoped to the right counterparty pool.
+    if (role.type === "company-vendor") {
+      return companies
+        .filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal[role.key])
+        .map(c => ({ id: c.id, name: c.name }));
+    }
+    return companies
+      .filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal[role.key])
+      .map(c => ({ id: c.id, name: c.name }));
+  };
+
+  const hrefFor = (role: PartyRole, id: string) =>
+    role.type === "contact" ? `/contacts/${id}` : `/companies/${id}`;
+
+  const displayNameFor = (role: PartyRole) => {
+    const id = deal[role.key];
+    if (!id) return null;
+    if (role.type === "contact") {
+      const c = contacts.find(x => x.id === id);
+      return c?.name || (c as any)?.email || "Linked contact";
+    }
+    const co = companies.find(x => x.id === id);
+    return co?.name || "Linked company";
+  };
+
+  const createForRole = async (role: PartyRole, name: string) => {
+    try {
+      if (role.type === "contact") {
+        const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim() });
+        const created = await r.json();
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+        onSave(role.key, String(created.id));
+        toast({ title: "Contact created", description: `${created.name || name} added.` });
+      } else {
+        const companyType = role.type === "company-vendor" ? "Vendor"
+          : role.type === "company-purchaser" ? "Purchaser"
+          : "Agent";
+        const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType });
+        const created = await r.json();
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+        onSave(role.key, String(created.id));
+        toast({ title: `${companyType} created`, description: `${created.name || name} added.` });
+      }
+      onCreated();
+    } catch (e: any) {
+      toast({ title: "Create failed", description: e?.message || "Try from the CRM page", variant: "destructive" });
+    }
+  };
+
+  const populated = PARTY_ROLES.filter(r => !!deal[r.key]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[160px]"
+          data-testid={`parties-cell-${deal.id}`}
+        >
+          {populated.length === 0 ? (
+            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add party
+            </span>
+          ) : (
+            populated.map(r => (
+              <div key={r.key} className="flex items-center gap-1 truncate">
+                <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{r.label}</span>
+                <span className="truncate">{displayNameFor(r)}</span>
+              </div>
+            ))
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[380px] p-3 space-y-2.5" align="start">
+        <p className="text-xs font-semibold">Parties on this deal</p>
+        {PARTY_ROLES.map(role => (
+          <div key={role.key} className="grid grid-cols-[120px_1fr] items-center gap-2">
+            <Label className="text-xs text-muted-foreground">{role.label}</Label>
+            <InlineLinkSelect
+              value={deal[role.key]}
+              options={optionsFor(role)}
+              href={deal[role.key] ? hrefFor(role, deal[role.key]) : undefined}
+              onSave={(v) => onSave(role.key, v || null)}
+              onCreate={(name) => createForRole(role, name)}
+              placeholder={`Link ${role.label.toLowerCase()}`}
+            />
+          </div>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Simplified create-deal body — shown by default when opening "New
 // Deal". Five fields, all the team needs to spin a deal up: property,
@@ -4604,14 +4740,18 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     team: true,
     agent: true,
     assetClass: true,
-    clientContact: true,
+    // The seven role-specific columns now live behind one Parties column
+    // by default. Toggle them back on from the column-visibility menu if
+    // you want the spread-out view.
+    parties: true,
+    clientContact: false,
     tenant: true,
-    vendor: true,
-    purchaser: true,
-    vendorAgent: true,
-    acquisitionAgent: true,
-    purchaserAgent: true,
-    leasingAgent: true,
+    vendor: false,
+    purchaser: false,
+    vendorAgent: false,
+    acquisitionAgent: false,
+    purchaserAgent: false,
+    leasingAgent: false,
     pricing: true,
     yield: true,
     fee: true,
@@ -5494,6 +5634,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       </TableHead>
                     )}
                     {visibleColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
+                    {visibleColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {visibleColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
                     {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
                     {visibleColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
@@ -5650,6 +5791,18 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               placeholder="Link tenant"
                             />
                           </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.parties && (
+                        <TableCell className="px-1.5 py-1">
+                          <PartiesCell
+                            deal={deal}
+                            companies={companies}
+                            contacts={contacts}
+                            agentCompanies={agentCompanies}
+                            onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                            onCreated={() => invalidateDealCaches()}
+                          />
                         </TableCell>
                       )}
                       {visibleColumns.fee && (
