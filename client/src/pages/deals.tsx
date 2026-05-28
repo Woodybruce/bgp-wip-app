@@ -4992,9 +4992,22 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       if (search) {
         const s = search.toLowerCase();
         const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
+        // Counterparty name lookups — search "Burberry" should find the
+        // tenant on a New Letting, the vendor on a Sale, etc. Falls back
+        // to the empty string when the FK is unset.
+        const counterpartyName = (id: string | null | undefined) =>
+          id ? (companies.find(c => c.id === id)?.name || "").toLowerCase() : "";
+        const tenantName    = counterpartyName(deal.tenantId);
+        const landlordName  = counterpartyName(deal.landlordId);
+        const vendorName    = counterpartyName((deal as any).vendorId);
+        const purchaserName = counterpartyName((deal as any).purchaserId);
         const match =
           deal.name.toLowerCase().includes(s) ||
           propName.toLowerCase().includes(s) ||
+          tenantName.includes(s) ||
+          landlordName.includes(s) ||
+          vendorName.includes(s) ||
+          purchaserName.includes(s) ||
           (Array.isArray(deal.internalAgent) ? deal.internalAgent.some((a: string) => a.toLowerCase().includes(s)) : (deal.internalAgent as any)?.toLowerCase?.()?.includes(s)) ||
           deal.status?.toLowerCase().includes(s) ||
           (Array.isArray(deal.team) ? deal.team.some((t: string) => t.toLowerCase().includes(s)) : (deal.team as any)?.toLowerCase?.()?.includes(s)) ||
@@ -5006,7 +5019,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, properties]);
+  }, [baseDeals, activeGroup, columnFilters, search, properties, companies]);
 
   const teamFilteredDeals = useMemo(() => {
     if (!columnFilters["team"]?.length) return baseDeals;
