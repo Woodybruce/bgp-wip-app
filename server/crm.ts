@@ -46,7 +46,7 @@ import type { Pool } from "pg";
 async function maybeCopyDealToComps(deal: any): Promise<void> {
   if (!deal?.id) return;
   const dealType = String(deal.dealType || "").toLowerCase();
-  const isInvestment = dealType.includes("investment") || dealType.includes("acquisition") || dealType === "sale";
+  const isInvestment = dealType.includes("investment") || dealType.includes("acquisition") || dealType === "sale" || dealType === "purchase";
 
   if (isInvestment) {
     const existing = await pool.query(`SELECT 1 FROM investment_comps WHERE rca_deal_id = $1 LIMIT 1`, [deal.id]);

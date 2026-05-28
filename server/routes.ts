@@ -3537,7 +3537,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const unlinkedInv = await db.select().from(invTracker).where(sql`deal_id IS NULL`);
       for (const row of unlinkedInv) {
         try {
-          const dealType = row.boardType === "Sales" ? "Investment Sale" : "Investment Acquisition";
+          const dealType = row.boardType === "Sales" ? "Sale" : "Purchase";
           const deal = await storage.createCrmDeal({
             name: row.assetName,
             propertyId: row.propertyId,
@@ -4409,6 +4409,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         board_type AS "boardType", status, client, client_contact AS "clientContact",
         vendor, vendor_agent AS "vendorAgent", buyer, address, notes,
         deal_id AS "dealId", agent_user_ids AS "agentUserIds",
+        client_id AS "clientId", client_contact_id AS "clientContactId",
+        vendor_id AS "vendorId", vendor_agent_id AS "vendorAgentId",
+        completion_date AS "completionDate",
         fee, fee_type AS "feeType", marketing_date AS "marketingDate", bid_deadline AS "bidDeadline",
         created_at AS "createdAt", updated_at AS "updatedAt"
         FROM investment_tracker`;
@@ -4567,7 +4570,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Auto-create a backing CRM deal
       if (!row.dealId) {
         try {
-          const dealType = row.boardType === "Sales" ? "Investment Sale" : "Investment Acquisition";
+          const dealType = row.boardType === "Sales" ? "Sale" : "Purchase";
           const deal = await storage.createCrmDeal({
             name: row.assetName,
             propertyId: row.propertyId,
@@ -4597,6 +4600,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         "waultBreak", "waultExpiry", "currentRent", "ervPa", "occupancy", "capexRequired",
         "boardType", "status", "client", "clientContact", "vendor", "vendorAgent", "buyer",
         "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline", "completionDate",
+        // Link FKs — without these the inline Client/Vendor/Agent pickers
+        // silently dropped every selection (PATCH ignored unknown keys).
+        "clientId", "clientContactId", "vendorId", "vendorAgentId",
       ]);
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const [key, value] of Object.entries(req.body)) {
@@ -4675,7 +4681,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
         status: item.status && ["REP","SPEC","LIVE","AVA","NEG","SOL","EXC","COM","WIT","INV"].includes(item.status) ? item.status : "REP",
-        dealType: (item.boardType === "Sales") ? "Sale" : "Acquisition",
+        dealType: (item.boardType === "Sales") ? "Sale" : "Purchase",
         groupName: "Investment - Active",
         team: ["Investment"],
         landlordId: landlordCompanyId || undefined,
