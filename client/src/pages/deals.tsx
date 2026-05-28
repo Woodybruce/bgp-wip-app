@@ -118,6 +118,7 @@ import { EntityCombobox } from "@/components/entity-combobox";
 import { PropertyCombobox } from "@/components/property-combobox";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
+import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacked-cell";
 import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
@@ -923,58 +924,23 @@ const LEASE_TERMS: Array<{ key: LeaseTermKey; label: string; prefix?: string; su
   { key: "rentAnalysis",        label: "Rent Analysis",        prefix: "£",       short: "Analysis" },
 ];
 
-function formatLeaseTermValue(val: number | null | undefined, prefix?: string, suffix?: string): string {
-  if (val == null) return "—";
-  const num = prefix === "£" ? val.toLocaleString("en-GB") : String(val);
-  return `${prefix || ""}${num}${suffix || ""}`;
-}
-
 function LeaseTermsCell({
   deal, onSave,
 }: {
   deal: any;
   onSave: (field: string, value: number | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const populated = LEASE_TERMS.filter(t => deal[t.key] != null && deal[t.key] !== "");
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[140px]"
-          data-testid={`lease-terms-cell-${deal.id}`}
-        >
-          {populated.length === 0 ? (
-            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Add terms
-            </span>
-          ) : (
-            populated.map(t => (
-              <div key={t.key} className="flex items-center gap-1 truncate">
-                <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{t.short}</span>
-                <span className="truncate font-mono text-[11px]">{formatLeaseTermValue(deal[t.key], t.prefix, t.suffix)}</span>
-              </div>
-            ))
-          )}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[320px] p-3 space-y-2.5" align="start">
-        <p className="text-xs font-semibold">Lease terms</p>
-        {LEASE_TERMS.map(t => (
-          <div key={t.key} className="grid grid-cols-[140px_1fr] items-center gap-2">
-            <Label className="text-xs text-muted-foreground">{t.label}</Label>
-            <InlineNumber
-              value={deal[t.key]}
-              onSave={(v) => onSave(t.key, v)}
-              prefix={t.prefix}
-              suffix={t.suffix}
-            />
-          </div>
-        ))}
-      </PopoverContent>
-    </Popover>
+    <NumericStackedCell
+      row={deal}
+      rows={LEASE_TERMS}
+      title="Lease terms"
+      emptyLabel="Add terms"
+      onSave={onSave}
+      testId={`lease-terms-cell-${deal.id}`}
+      popoverWidth="w-[320px]"
+      labelWidth="140px"
+    />
   );
 }
 
@@ -1253,62 +1219,28 @@ function DatesCell({
 // Consolidated Pricing cell — folds Pricing (£ headline), Price PSF
 // and Price ITZA into one column. Same stacked-summary + popover
 // pattern as LeaseTermsCell.
+const PRICING_ROWS: NumericRow[] = [
+  { key: "pricing",      label: "Pricing",    short: "Price", prefix: "£" },
+  { key: "pricePsf",     label: "Price PSF",  short: "PSF",   prefix: "£" },
+  { key: "priceItza",    label: "Price ITZA", short: "ITZA",  prefix: "£" },
+  { key: "yieldPercent", label: "Yield",      short: "Yield", suffix: "%" },
+];
+
 function PricingCell({
   deal, onSave,
 }: {
   deal: any;
   onSave: (field: string, value: number | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const rows: Array<{ key: string; label: string; short: string; prefix?: string; suffix?: string }> = [
-    { key: "pricing",      label: "Pricing",      short: "Price", prefix: "£" },
-    { key: "pricePsf",     label: "Price PSF",    short: "PSF",   prefix: "£" },
-    { key: "priceItza",    label: "Price ITZA",   short: "ITZA",  prefix: "£" },
-    { key: "yieldPercent", label: "Yield",        short: "Yield", suffix: "%" },
-  ];
-  const populated = rows.filter(r => deal[r.key] != null && deal[r.key] !== "");
-  const fmt = (val: number, prefix?: string, suffix?: string) => {
-    const num = prefix === "£" ? Number(val).toLocaleString("en-GB") : String(val);
-    return `${prefix || ""}${num}${suffix || ""}`;
-  };
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[120px]"
-          data-testid={`pricing-cell-${deal.id}`}
-        >
-          {populated.length === 0 ? (
-            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Add pricing
-            </span>
-          ) : (
-            populated.map(r => (
-              <div key={r.key} className="flex items-center gap-1 truncate">
-                <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{r.short}</span>
-                <span className="font-mono text-[11px]">{fmt(deal[r.key], r.prefix, r.suffix)}</span>
-              </div>
-            ))
-          )}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[300px] p-3 space-y-2.5" align="start">
-        <p className="text-xs font-semibold">Pricing &amp; yield</p>
-        {rows.map(r => (
-          <div key={r.key} className="grid grid-cols-[100px_1fr] items-center gap-2">
-            <Label className="text-xs text-muted-foreground">{r.label}</Label>
-            <InlineNumber
-              value={deal[r.key]}
-              onSave={(v) => onSave(r.key, v)}
-              prefix={r.prefix}
-              suffix={r.suffix}
-            />
-          </div>
-        ))}
-      </PopoverContent>
-    </Popover>
+    <NumericStackedCell
+      row={deal}
+      rows={PRICING_ROWS}
+      title="Pricing & yield"
+      emptyLabel="Add pricing"
+      onSave={onSave}
+      testId={`pricing-cell-${deal.id}`}
+    />
   );
 }
 
