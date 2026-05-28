@@ -120,7 +120,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
   const awarded: Array<{ userId: string; points: number; reason: string; eventKind: string; eventRef: string }> = [];
 
   const { rows: deals } = await pool.query(
-    `SELECT id, name, status, internal_agent,
+    `SELECT id, name, status, internal_agent, internal_agent_ids,
             COALESCE(completed_at, exchanged_at, target_date, instructed_at) AS dt
      FROM crm_deals
      WHERE COALESCE(completed_at, exchanged_at, target_date, instructed_at) BETWEEN $1 AND $2
@@ -129,15 +129,26 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     [weekAgo, now]
   );
   for (const d of deals) {
-    const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
-    if (agents.length === 0) continue;
+    // Prefer internal_agent_ids (rename-safe). Fall back to internal_agent
+    // names for historic rows whose IDs column hasn't been backfilled.
+    // De-dup the resolved set so a deal with both populated columns
+    // doesn't double-award the same agent.
+    const resolvedIds = new Set<string>();
+    const ids: string[] = Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : [];
+    for (const id of ids) if (id) resolvedIds.add(id);
+    if (resolvedIds.size === 0) {
+      const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
+      for (const ag of agents) {
+        const uid = nameToId.get(ag.toLowerCase());
+        if (uid) resolvedIds.add(uid);
+      }
+    }
+    if (resolvedIds.size === 0) continue;
     let pts = POINTS.dealAdvanced;
     let label = "advanced";
     if (d.status === "COM" || d.status === "INV") { pts = POINTS.dealCompleted; label = "closed"; }
     else if (d.status === "EXC") { pts = POINTS.dealExchanged; label = "exchanged"; }
-    for (const ag of agents) {
-      const uid = nameToId.get(ag.toLowerCase());
-      if (!uid) continue;
+    for (const uid of resolvedIds) {
       awarded.push({
         userId: uid, points: pts, reason: `Deal ${label}: ${d.name}`,
         eventKind: `deal-${label}`, eventRef: `${d.id}|${uid}`,
@@ -857,8 +868,24 @@ export function setupHrRoutes(app: Express) {
       if (status === "cancelled" && req_.user_id !== req.user?.id && !req.user?.isAdmin) {
         return res.status(403).json({ error: "Forbidden" });
       }
-      if ((status === "approved" || status === "rejected") && !req.user?.isAdmin) {
-        return res.status(403).json({ error: "Admin only" });
+      // Approve / reject is allowed for: admins, OR the manager of the
+      // person requesting. Falls back to users.manager_id then
+      // staff_profiles.manager_id — same shape as the expense approval
+      // resolver so both flows stay in sync as the columns converge.
+      if (status === "approved" || status === "rejected") {
+        const actorId = req.user?.id;
+        let canApprove = !!req.user?.isAdmin;
+        if (!canApprove && actorId) {
+          const { rows: mgr } = await pool.query(
+            `SELECT COALESCE(u.manager_id, sp.manager_id) AS manager_id
+               FROM users u
+          LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+              WHERE u.id = $1`,
+            [req_.user_id]
+          );
+          if (mgr[0]?.manager_id && mgr[0].manager_id === actorId) canApprove = true;
+        }
+        if (!canApprove) return res.status(403).json({ error: "Only admins or the requester's manager can approve / reject" });
       }
 
       const { rows } = await pool.query(
@@ -4749,10 +4776,15 @@ Use the language and tone of BGP's review docs.`,
           if (!r.ok) continue;
           const data = await r.json();
           for (const e of (data.value || [])) {
-            // Only surface OOO/Working elsewhere/external — internal meetings are noise.
-            const ooKinds = ["oof", "workingElsewhere", "tentative"];
-            const looksOoo = ooKinds.includes(e.showAs) || /\b(holiday|annual leave|on leave|out of office|ooo|wfh)\b/i.test(e.subject || "");
-            if (!looksOoo && !e.isAllDay) continue;
+            // Only surface OOO / Working-elsewhere. Tentative was here for a
+            // while but it's the default state for declined invites and
+            // birthday reminders — too noisy. All-day events alone aren't
+            // enough either ("Daisy's birthday" is all-day); require the
+            // subject regex OR an explicit oof / workingElsewhere showAs.
+            const ooKinds = ["oof", "workingElsewhere"];
+            const subjectMatch = /\b(holiday|annual leave|on leave|out of office|ooo|wfh|working from home)\b/i.test(e.subject || "");
+            const looksOoo = ooKinds.includes(e.showAs) || subjectMatch;
+            if (!looksOoo) continue;
             events.push({
               userId: u.id,
               userName: u.name,

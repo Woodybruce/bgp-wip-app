@@ -98,6 +98,27 @@ interface StaffMember {
   profile_pic_url: string | null;
   email: string | null;
   phone: string | null;
+  wfh_days?: string[] | null;
+}
+
+// Returns the short weekday name (Mon, Tue, ...) for today. Used to
+// match against the user's wfh_days array on the team cards.
+function todayShortDay(): string {
+  return new Date().toLocaleDateString("en-GB", { weekday: "short" });
+}
+
+// True if today is one of this user's WFH days. The wfh_days column is a
+// loose text[] — admins type "Mon, Wed, Fri", "Monday" or whatever — so
+// we accept any prefix-or-equal match against the short day name.
+function isWfhToday(m: { wfh_days?: string[] | null } | null | undefined): boolean {
+  if (!m?.wfh_days || m.wfh_days.length === 0) return false;
+  const today = todayShortDay().toLowerCase();
+  const todayLong = new Date().toLocaleDateString("en-GB", { weekday: "long" }).toLowerCase();
+  return m.wfh_days.some(d => {
+    const norm = (d || "").trim().toLowerCase();
+    if (!norm) return false;
+    return norm === today || norm === todayLong || norm.startsWith(today);
+  });
 }
 
 interface Birthday {
@@ -367,11 +388,14 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
     if (!m) return null;
     const profilePic = (m as any).profile_pic_url ?? (m as any).profilePicUrl ?? null;
     const ooo = oooByUser?.get(m.id);
+    // Only show the WFH chip when the person isn't already flagged OOO —
+    // OOO trumps WFH visually (you're out of office, period).
+    const wfh = !ooo && isWfhToday(m as any);
     return (
       <button
         onClick={() => onSelectPerson ? onSelectPerson(m.id) : navigate(`/hr?person=${m.id}`)}
         className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/70 dark:hover:bg-white/5 ${isHead ? "bg-white/60 dark:bg-white/10" : ""} ${ooo ? "opacity-70" : ""}`}
-        title={ooo ? `OOO: ${ooo.subject}` : undefined}
+        title={ooo ? `OOO: ${ooo.subject}` : wfh ? "Working from home today" : undefined}
       >
         <div className="relative shrink-0">
           {profilePic ? (
@@ -384,13 +408,17 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
           {ooo && (
             <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-orange-500 border-2 border-white dark:border-black/20" title={ooo.subject} />
           )}
+          {wfh && (
+            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-sky-500 border-2 border-white dark:border-black/20" title="WFH today" />
+          )}
         </div>
         <div className="flex-1 min-w-0">
           <div className={`truncate ${isHead ? "text-sm font-semibold" : "text-xs font-medium"}`}>{m.name}</div>
           {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
         </div>
         {ooo && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border-orange-300 shrink-0">OOO</Badge>}
-        {isHead && !ooo && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-white/70 dark:bg-white/10 border-white/40 shrink-0">Head</Badge>}
+        {wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 shrink-0">WFH</Badge>}
+        {isHead && !ooo && !wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-white/70 dark:bg-white/10 border-white/40 shrink-0">Head</Badge>}
       </button>
     );
   };
