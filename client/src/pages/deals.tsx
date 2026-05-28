@@ -5374,6 +5374,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     queryKey: ["/api/users"],
   });
   const userColorMap2 = useMemo(() => buildUserColorMap(users as any), [users]);
+  // AML lookup for the badge — built from the same companies list so we don't
+  // re-fetch. Hoisted above the early returns below so the hook order stays
+  // stable (was previously declared after `if (params?.id) return …`, a
+  // Rules-of-Hooks violation that could crash on navigation into a deal).
+  const amlCompanyMap = useMemo(() => buildAmlCompanyMap(companies), [companies]);
+  const agentCompanies = useMemo(() => companies.filter(c => c.companyType === "Agent"), [companies]);
 
   const { data: allFeeAllocations = {} } = useQuery<Record<string, DealFeeAllocation[]>>({
     queryKey: ["/api/crm/fee-allocations"],
@@ -5823,10 +5829,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         lastInteraction: (d: any) => d.lastInteraction ? new Date(d.lastInteraction) : null,
       })
     : filteredDeals;
-  // AML lookup for the badge — built from the same companies list so
-  // we don't re-fetch. Kept narrow to id/name/kycStatus/expiry.
-  const amlCompanyMap = useMemo(() => buildAmlCompanyMap(companies), [companies]);
-  const agentCompanies = companies.filter(c => c.companyType === "Agent");
 
   return (
     <PageLayout
