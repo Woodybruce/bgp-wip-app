@@ -1114,13 +1114,13 @@ async function getUserPersonalisationContext(userId: string): Promise<string> {
   if (cached && cached.expires > Date.now()) return cached.ctx;
   try {
     const r = await pool.query(
-      `SELECT name, email, role, department, group_name FROM users WHERE id = $1`,
+      `SELECT name, email, role, department, team FROM users WHERE id = $1`,
       [userId],
     );
     if (r.rows.length === 0) return "";
     const u = r.rows[0];
     const firstName = (u.name || "").split(" ")[0] || u.name || "there";
-    const dept = u.department || u.group_name || "";
+    const dept = u.department || u.team || "";
     const focus = DEPARTMENT_FOCUS[dept] || "";
     let ctx = `\n\n## You're chatting with ${u.name}${u.role ? ` (${u.role})` : ""}${dept ? ` — ${dept}` : ""}.\n`;
     ctx += `Open with "${firstName}" not "user". `;
