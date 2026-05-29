@@ -235,16 +235,21 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     // the row back into alignment with the canonical spine.
     const body = req.body || {};
     if ("unit_name" in body || "tenant_name" in body) {
+      // Re-knit tenancy_unit_id only if the new unit_name matches a real
+      // tenancy row. COALESCE preserves the existing link if the rename
+      // doesn't resolve — otherwise a typo correction with a different
+      // normalisation would silently wipe the canonical FK and drop the
+      // row off the 4-way mirror forever.
       await pool.query(
         `UPDATE leasing_schedule_units u
-            SET tenancy_unit_id = (
+            SET tenancy_unit_id = COALESCE((
                   SELECT ts.id FROM tenancy_schedule_units ts
                    WHERE ts.property_id = u.property_id
                      AND lower(trim(ts.unit_number)) = lower(trim(coalesce(u.unit_name, '')))
                      AND coalesce(trim(ts.unit_number), '') <> ''
                    LIMIT 1
-                ),
-                tenant_company_id = ${resolveBrandIdSubquery("coalesce(u.tenant_name, '')")}
+                ), u.tenancy_unit_id),
+                tenant_company_id = COALESCE(${resolveBrandIdSubquery("coalesce(u.tenant_name, '')")}, u.tenant_company_id)
           WHERE u.id = $1`,
         [req.params.id]
       ).catch((e: any) => console.warn("[leasing] re-knit on rename failed:", e?.message));
@@ -390,6 +395,16 @@ router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req,
       oldValue: unit.status,
       newValue: newStatus,
     });
+
+    // Archive / unarchive is a status change — fan out through the
+    // 4-way mirror so the Letting Tracker, Deals board, and Tenancy
+    // spine all reflect the move. Best-effort; never fails the primary.
+    try {
+      const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
+      await mirrorFromLeasingSchedule(req.params.id, newStatus, { pool, reason: "leasing.archive" });
+    } catch (e: any) {
+      console.warn(`[leasing] archive mirror failed for ${req.params.id}:`, e?.message);
+    }
 
     res.json({ success: true, status: newStatus });
   } catch (e: any) {

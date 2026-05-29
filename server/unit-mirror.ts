@@ -37,7 +37,11 @@ function mapTenancyToLeasingStatus(s: string | null | undefined): string | null 
     case "Vacant":      return "Vacant";
     case "Marketing":   return "Marketing";
     case "Under Offer": return "Under Offer";
-    case "Occupied":    return "Archived";  // off the client board once let
+    // Occupied stays "Occupied" on the leasing schedule — it's the
+    // Landsec rent roll, not a marketing board. The previous mapping
+    // ("Archived") was clobbering the 4-way mirror on every COM
+    // transition, making just-completed deals vanish off the schedule.
+    case "Occupied":    return "Occupied";
     case "Archived":    return "Archived";
     default:            return null;
   }

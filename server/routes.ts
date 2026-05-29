@@ -3250,18 +3250,21 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
-      // Re-stamp tenancy_unit_id when the unit name changes — keeps
-      // the canonical unit FK aligned with the new label.
+      // Re-stamp tenancy_unit_id when the unit name changes — only when
+      // the new name resolves to a real tenancy row. COALESCE preserves
+      // the existing link otherwise; without the guard, a rename to a
+      // value that no longer matches would silently wipe the FK and
+      // drop the row off the 4-way mirror.
       if ("unitName" in partial) {
         await pool.query(
           `UPDATE available_units au
-              SET tenancy_unit_id = (
+              SET tenancy_unit_id = COALESCE((
                 SELECT ts.id FROM tenancy_schedule_units ts
                  WHERE ts.property_id = au.property_id
                    AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
                    AND coalesce(trim(ts.unit_number), '') <> ''
                  LIMIT 1
-              )
+              ), au.tenancy_unit_id)
             WHERE au.id = $1`,
           [req.params.id]
         ).catch((e: any) => console.warn("[available-units] tenancy_unit_id re-stamp failed:", e?.message));
@@ -4688,6 +4691,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             await storage.updateCrmDeal(row.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[investment-tracker PATCH] deal sync failed for ${row.dealId}:`, e?.message);
+          }
+        }
+        // We bypass /api/crm/deals/:id (calling storage directly), so the
+        // route's mirrorFromDeal fan-out never fires. Trigger it manually
+        // when status changed so available_units + leasing_schedule +
+        // tenancy stay in lockstep with investment-tracker edits.
+        if ("status" in updates) {
+          try {
+            const { mirrorFromDeal } = await import("./lease-status-mirror");
+            await mirrorFromDeal(row.dealId, updates.status as string, { pool, reason: "investment-tracker.PATCH" });
+          } catch (e: any) {
+            console.warn(`[investment-tracker PATCH] mirror fan-out failed for ${row.dealId}:`, e?.message);
           }
         }
       }
