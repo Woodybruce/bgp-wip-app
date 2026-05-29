@@ -17,6 +17,19 @@ needed to bring it back.
   PropertyDecksPanel …>` block. No other code changes needed; the
   import at the top of the file is still in place.
 
+### Deal detail — Pathway Intel + Planning + Local Market Tone
+- **Where:** `client/src/components/deal-detail.tsx` — three panels
+  hidden behind comment blocks. Search for the comment landmarks:
+  - `Pathway Intel + Planning hidden on deal-detail` (around line 897)
+  - `Local Market Tone hidden` (in the sidebar, around line 1182)
+- **Why:** All three are property-level data identical to what the
+  Property page already shows. They made the deal page feel like a
+  copy of the property page. The deal is for *this transaction*, not
+  the property's whole research dossier.
+- **To bring back:** Uncomment the JSX blocks; imports
+  (`PathwayIntelStrip`, `PropertyPlanningCard`, market-tone state)
+  are still in place so it's a one-line uncomment each.
+
 ## To add when hiding more
 
 When something else gets disabled for the demo, append it here with the

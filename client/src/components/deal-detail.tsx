@@ -894,6 +894,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
+      {/* Pathway Intel + Planning hidden on deal-detail — they're
+          property-level data and identical to the panels on the Property
+          page. Keeps the deal page focused on deal-specific info; jump
+          to the linked property (sidebar) for the property research.
+          See PRESENTATION_BACKLOG.md to restore.
       <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-deal-pathway">
         <PathwayIntelStrip
           propertyId={(deal as any).propertyId || undefined}
@@ -907,6 +912,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           <PropertyPlanningCard propertyId={(deal as any).propertyId} className="border-0 shadow-none" />
         </CollapsibleCard>
       )}
+      */}
 
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
@@ -1173,6 +1179,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               </SidebarSection>
             )}
 
+            {/* Local Market Tone hidden — property-level data, same source
+                as the Property News + market context on the Property page.
+                See PRESENTATION_BACKLOG.md to restore.
             {marketTone && (
               <SidebarSection open={sidebarSections.market ?? true} onToggle={() => toggleSidebar("market")} icon={TrendingUp} title="Local Market Tone" testId="toggle-sidebar-market">
                 <div className="space-y-1.5 text-xs">
@@ -1202,6 +1211,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 </div>
               </SidebarSection>
             )}
+            */}
 
             {linkedContacts.length > 0 && (
               <SidebarSection open={sidebarSections.contacts} onToggle={() => toggleSidebar("contacts")} icon={Users} title={`Linked Contacts (${linkedContacts.length})`} testId="toggle-sidebar-contacts">
