@@ -780,11 +780,15 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     filingsTotal = filingResult.value.total_count || 0;
   }
 
+  // Canonical KYC vocabulary — what deal-gates.ts expects:
+  //   pending | in_review | approved | rejected | expired
+  // Insolvency → rejected. Active + accounts current → approved. Anything
+  // else (overdue accounts, dormant, etc.) parks at in_review for MLRO.
   const kycStatus = profile.hasInsolvencyHistory
-    ? "fail"
+    ? "rejected"
     : profile.companyStatus === "active" && !profile.accountsOverdue
-      ? "pass"
-      : "warning";
+      ? "approved"
+      : "in_review";
 
   // Experian commercial credit — non-fatal. Pulls a covenant view (credit
   // score, recommended limit, CCJs, turnover) so leasing can sanity-check
@@ -1076,7 +1080,7 @@ export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: 
       kyc_checked_at IS NULL
       OR kyc_checked_at < ${thirtyDaysAgo.toISOString()}
       OR kyc_status IS NULL
-      OR kyc_status != 'pass'
+      OR kyc_status != 'approved'
       OR (companies_house_data IS NOT NULL
           AND companies_house_data->'profile'->>'companyStatus' IS NOT NULL
           AND companies_house_data->'profile'->>'companyStatus' != 'active')
@@ -1173,7 +1177,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
     }
 
     let kycData: any = { checkedAt: new Date().toISOString(), proprietorName, proprietorType };
-    let kycStatus = "not_found";
+    let kycStatus = "in_review";
 
     if (proprietorType === "company") {
       let chNumber = proprietorCompanyNumber;
@@ -1183,7 +1187,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
         const items = searchData.items || [];
         if (items.length === 0) {
           await db.update(crmProperties).set({
-            proprietorKycStatus: "not_found",
+            proprietorKycStatus: "in_review",
             proprietorKycData: { ...kycData, message: `No Companies House match found for "${proprietorName}".` },
           }).where(eq(crmProperties.id, property.id));
 
@@ -1255,10 +1259,10 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       }
 
       kycStatus = profile.hasInsolvencyHistory
-        ? "fail"
+        ? "rejected"
         : profile.companyStatus === "active" && !profile.accountsOverdue
-          ? "pass"
-          : "warning";
+          ? "approved"
+          : "in_review";
 
       const fetchStatus = {
         officers: officerResult.status === "fulfilled" ? "ok" : "failed",
@@ -1288,7 +1292,9 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       });
     } else {
       kycData = { ...kycData, message: "Individual proprietor — sanctions screening only" };
-      kycStatus = "individual";
+      // Individuals can't fail Companies House — out of CH scope entirely.
+      // Sanctions/PEP screening (Comply + Perplexity) runs separately.
+      kycStatus = "approved";
 
       await db.update(crmProperties).set({
         proprietorKycStatus: kycStatus,

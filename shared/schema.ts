@@ -770,7 +770,7 @@ export const crmProperties = pgTable("crm_properties", {
   proprietorAddress: text("proprietor_address"),
   proprietorCompanyNumber: text("proprietor_company_number"),
   titleSearchDate: timestamp("title_search_date"),
-  proprietorKycStatus: text("proprietor_kyc_status"),
+  proprietorKycStatus: text("proprietor_kyc_status"), // pending | in_review | approved | rejected | expired
   proprietorKycData: jsonb("proprietor_kyc_data"),
   bgpContactCrm: text("bgp_contact_crm"),
   bgpContactUserIds: text("bgp_contact_user_ids").array(),
@@ -1408,11 +1408,13 @@ export const crmTradingEntities = pgTable("crm_trading_entities", {
   // logic, not a constraint, so the data layer can heal mid-edit).
   isDefault: boolean("is_default").notNull().default(false),
   notes: text("notes"),
-  // Entity-level KYC fields. Mirror the same shape as crm_companies so
-  // the orchestrator can store results against the right entity rather
-  // than smearing them across the whole brand. Deal-stage AML gate reads
-  // these when an entity is linked on the deal, falling back to the
-  // parent's fields when no entity is set (legacy deals).
+  // DEPRECATED: entity-level KYC fields. The "*EntityId" cols on crm_deals
+  // are Xero ContactID GUIDs (see deal-gates.ts:6-12), not FKs into this
+  // table — so the gate has never read them. KYC happens at the brand
+  // (crm_companies) level. Keep these columns through this release so we
+  // don't break any pre-existing rows; drop in a future migration.
+  // Canonical vocab if anything ever does write here: pending | in_review |
+  // approved | rejected | expired.
   kycStatus: text("kyc_status"),
   kycExpiresAt: timestamp("kyc_expires_at"),
   kycApprovedAt: timestamp("kyc_approved_at"),

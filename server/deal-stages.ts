@@ -121,7 +121,8 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     const current = await pool.query(
       `SELECT id, stage, exchanged_at, completed_at, invoiced_at, solicitor_instructed_at,
               landlord_id, tenant_id, vendor_id, purchaser_id,
-              landlord_entity_id, tenant_entity_id, vendor_entity_id, purchaser_entity_id
+              landlord_entity_id, tenant_entity_id, vendor_entity_id, purchaser_entity_id,
+              aml_check_completed
          FROM crm_deals WHERE id = $1`,
       [dealId]
     );
@@ -129,16 +130,29 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     const fromStage = current.rows[0].stage;
     const c = current.rows[0];
 
-    // AML gate. Any move to sols / agreed / completed / invoiced requires
-    // every linked counterparty to have kyc_status = 'approved' and not
-    // expired. Entity-aware: when the deal links a specific trading
-    // entity for a role, that entity's KYC is checked; otherwise we
-    // fall back to the parent brand's KYC.
-    //
-    // AML gate fully retired for the time being. Mirrored by the
-    // matching no-op in server/crm.ts PUT and the bulk-update path.
-    // Reinstate by uncommenting the block — checkCounterpartyAml +
-    // its helpers are still in deal-gates.ts.
+    // AML gate. Any move into sols / agreed / completed / invoiced requires
+    // every linked counterparty's parent brand to have kyc_status = 'approved'
+    // and not expired. MLRO override: deals with aml_check_completed = 'YES'
+    // bypass the gate (manual sign-off on the deal record).
+    const GATED_STAGES = new Set(["sols", "agreed", "completed", "invoiced"]);
+    if (GATED_STAGES.has(toStage) && c.aml_check_completed !== "YES") {
+      const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
+      const amlResult = await checkCounterpartyAml({
+        landlordId:  c.landlord_id,
+        tenantId:    c.tenant_id,
+        vendorId:    c.vendor_id,
+        purchaserId: c.purchaser_id,
+      });
+      const warning = formatAmlWarning(amlResult);
+      if (warning) {
+        return res.status(409).json({
+          error: warning,
+          code: "AML_GATE_FAILED",
+          notReady: amlResult.notReady,
+          hint: "MLRO override: set aml_check_completed = 'YES' on the deal to bypass.",
+        });
+      }
+    }
 
     const updates: string[] = ["stage = $1", "stage_entered_at = now()", "updated_at = now()"];
     const values: any[] = [toStage];

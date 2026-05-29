@@ -2123,12 +2123,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           "jack@brucegillinghampollard.com",
         ]);
         const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
-        // AML gate fully retired — any deal can move to any status
-        // regardless of counterparty KYC state. Senior-approval check on
-        // INV / COM / Billed stays as a firm-policy guard separate from
-        // AML. checkCounterpartyAml still ships in deal-gates.ts and is
-        // used by the promote-unit warn-but-allow path; it's just no
-        // longer called as a blocking check from any status-change path.
+        // AML gate (mirrors single-deal PUT). Any bulk move into SOL+ must
+        // satisfy counterparty KYC unless aml_check_completed = 'YES' on
+        // the deal (MLRO override).
+        const { legacyToCode } = await import("../shared/deal-status");
+        const { checkCounterpartyAml } = await import("./deal-gates");
+        const targetCode = legacyToCode(value);
+        const GATED_CODES = new Set(["SOL", "EXC", "COM", "INV"]);
+        const targetIsGated = !!targetCode && GATED_CODES.has(targetCode);
 
         for (const id of ids) {
           const oldDeal = await storage.getCrmDeal(id);
@@ -2138,6 +2140,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           if (APPROVAL_STATUSES.has(value) && !isSenior) {
             failures.push({ id, reason: `senior approval required for ${value}` });
             continue;
+          }
+          if (targetIsGated && (oldDeal as any).amlCheckCompleted !== "YES") {
+            const amlResult = await checkCounterpartyAml({
+              landlordId:  (oldDeal as any).landlordId,
+              tenantId:    (oldDeal as any).tenantId,
+              vendorId:    (oldDeal as any).vendorId,
+              purchaserId: (oldDeal as any).purchaserId,
+            });
+            if (amlResult.notReady.length > 0 || !amlResult.hasCounterparties) {
+              const blockers = amlResult.notReady.length > 0
+                ? amlResult.notReady.map(c => `${c.name} (${c.reason})`).join(", ")
+                : "no counterparties linked";
+              failures.push({ id, reason: `AML gate failed: ${blockers}` });
+              continue;
+            }
           }
           passing.push(id);
         }
@@ -2841,13 +2858,34 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
-      // AML gate fully retired for the time being. checkCounterpartyAml
-      // stays in deal-gates.ts and is still used by the promote-unit
-      // warn-but-allow flow; it's just not called as a blocking check
-      // from any status-change path. Reinstating is a one-liner here +
-      // in deal-stages.ts (search for "AML gate" in this file's history
-      // — the gated-set lookup pattern is preserved in the audit log
-      // for the day it goes back in).
+      // AML gate. SOL onwards (SOL/EXC/COM/INV) requires every linked
+      // counterparty's parent brand to have kyc_status = 'approved' and not
+      // expired. MLRO override: set aml_check_completed = 'YES' on the deal
+      // to bypass — used for legacy deals or where AML happened off-system.
+      if (req.body.status && oldDeal && oldDeal.status !== req.body.status) {
+        const { legacyToCode } = await import("../shared/deal-status");
+        const targetCode = legacyToCode(req.body.status);
+        const GATED_CODES = new Set(["SOL", "EXC", "COM", "INV"]);
+        const mlroOverride = (req.body.amlCheckCompleted ?? oldDeal?.amlCheckCompleted) === "YES";
+        if (targetCode && GATED_CODES.has(targetCode) && !mlroOverride) {
+          const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
+          const amlResult = await checkCounterpartyAml({
+            landlordId:  (oldDeal as any)?.landlordId,
+            tenantId:    (oldDeal as any)?.tenantId,
+            vendorId:    (oldDeal as any)?.vendorId,
+            purchaserId: (oldDeal as any)?.purchaserId,
+          });
+          const warning = formatAmlWarning(amlResult);
+          if (warning) {
+            return res.status(409).json({
+              error: warning,
+              code: "AML_GATE_FAILED",
+              notReady: amlResult.notReady,
+              hint: "MLRO override: set Deal → AML check completed = YES to bypass.",
+            });
+          }
+        }
+      }
 
       if (req.body.kycApproved === true && !oldDeal?.kycApproved) {
         req.body.kycApprovedAt = new Date();
@@ -2942,6 +2980,31 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if ("learning" in req.body) delete req.body.learning;
 
       const deal = await storage.updateCrmDeal(req.params.id, req.body);
+
+      // Derive crm_deals.kyc_approved from the counterparty gate so the
+      // deal-level flag stays in sync with the brand-level KYC state.
+      // Auto-flips false → true when all counterparties clear; never auto-
+      // flips true → false (revocation is a deliberate MLRO action).
+      try {
+        if (!deal.kycApproved) {
+          const { checkCounterpartyAml } = await import("./deal-gates");
+          const amlResult = await checkCounterpartyAml({
+            landlordId:  (deal as any).landlordId,
+            tenantId:    (deal as any).tenantId,
+            vendorId:    (deal as any).vendorId,
+            purchaserId: (deal as any).purchaserId,
+          });
+          if (amlResult.hasCounterparties && amlResult.notReady.length === 0) {
+            await storage.updateCrmDeal(deal.id, {
+              kycApproved: true,
+              kycApprovedAt: new Date(),
+              kycApprovedBy: changedByName || "auto:counterparty-gate",
+            } as any);
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[deals] kyc_approved derivation failed for ${deal.id}:`, e?.message);
+      }
 
       // Re-resolve tenancy_unit_id whenever property_id or unit_id
       // changes — the canonical unit FK must stay aligned with the
