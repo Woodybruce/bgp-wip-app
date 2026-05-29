@@ -1653,57 +1653,65 @@ export function setupNewsFeedRoutes(app: Express) {
         .limit(200);
 
       const nameLower = propertyName.toLowerCase();
-      const nameWords = nameLower.split(/\s+/).filter((w: string) => w.length > 3);
+      // Drop generic property words so "Shopping Centre" / "Retail Park"
+      // don't match any old shopping-centre article — keep only the
+      // distinctive tokens (e.g. "bluewater", "trafford").
+      const GENERIC_PROP_WORDS = new Set(["shopping", "centre", "center", "retail", "park", "house",
+        "estate", "street", "road", "square", "place", "court", "mall", "plaza", "tower", "building",
+        "the", "and", "london", "quarter", "gardens", "wharf"]);
+      const distinctiveWords = nameLower.split(/\s+/).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w));
       const matchedArticles = dbArticles.filter(a => {
         const text = `${a.title} ${a.summary || ""} ${a.aiSummary || ""}`.toLowerCase();
-        return text.includes(nameLower) || nameWords.filter((w: string) => text.includes(w)).length >= 2;
+        if (text.includes(nameLower)) return true;
+        // Require at least one *distinctive* property word (not just two
+        // generic ones like shopping + centre).
+        return distinctiveWords.length > 0 && distinctiveWords.some((w: string) => text.includes(w));
       }).slice(0, 10);
 
-      const searchQuery = addressStr
-        ? `"${propertyName}" ${addressStr.split(",")[0]} property news`
-        : `"${propertyName}" London property news`;
+      const searchQuery = `"${propertyName}"`;
 
+      // Live search via Google News RSS — a stable XML feed, unlike the old
+      // DuckDuckGo HTML scrape which silently returned 0 when DDG changed
+      // markup or rate-limited (that's why the panel showed a single story).
+      // Each result is unwrapped to the real publisher URL and given a real
+      // og:image (falling back to twitter:image, then publisher favicon) so
+      // the cards aren't blank.
       let webResults: Array<{ title: string; url: string; snippet: string; sourceName: string; publishedAt: string | null; imageUrl: string | null }> = [];
       try {
-        const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
-        const searchRes = await fetch(searchUrl, {
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-          signal: AbortSignal.timeout(10000),
-        });
-        const html = await searchRes.text();
-        const resultBlocks = html.split(/class="result\s/);
-        for (let i = 1; i < resultBlocks.length && webResults.length < 10; i++) {
-          const block = resultBlocks[i];
-          const titleMatch = block.match(/class="result__a"[^>]*>([^<]+)</);
-          const urlMatch = block.match(/class="result__url"[^>]*href="([^"]*)"/) || block.match(/href="\/\/duckduckgo\.com\/l\/\?uddg=([^&"]+)/);
-          const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\//);
-          if (titleMatch && urlMatch) {
-            let resultUrl = urlMatch[1];
-            if (resultUrl.startsWith("//duckduckgo.com/l/?uddg=")) {
-              resultUrl = decodeURIComponent(resultUrl.replace("//duckduckgo.com/l/?uddg=", ""));
-            } else if (!resultUrl.startsWith("http")) {
-              resultUrl = decodeURIComponent(resultUrl.trim());
-              if (!resultUrl.startsWith("http")) resultUrl = "https://" + resultUrl;
-            }
-            try {
-              const domain = new URL(resultUrl).hostname.replace("www.", "");
-              webResults.push({
-                title: titleMatch[1].trim(),
-                url: resultUrl,
-                snippet: (snippetMatch?.[1] || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim(),
-                sourceName: domain,
-                publishedAt: null,
-                imageUrl: null,
-              });
-            } catch {}
+        const Parser = (await import("rss-parser")).default;
+        const parser = new Parser({ timeout: 10000, headers: { "User-Agent": "BGP-Dashboard/1.0" } });
+        const gnUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(searchQuery)}&hl=en-GB&gl=GB&ceid=GB:en`;
+        const feed = await parser.parseURL(gnUrl);
+        const items = (feed.items || []).slice(0, 8);
+        webResults = await Promise.all(items.map(async (item: any) => {
+          let articleUrl = item.link || "";
+          if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+            const real = await resolveGoogleNewsUrl(articleUrl);
+            if (real) articleUrl = real;
           }
-        }
+          // Google News titles are "Headline - Publisher" — split the
+          // publisher off for the source label.
+          let title = (item.title || "").trim();
+          let sourceName = "";
+          const dash = title.lastIndexOf(" - ");
+          if (dash > 0) { sourceName = title.slice(dash + 3).trim(); title = title.slice(0, dash).trim(); }
+          if (!sourceName) { try { sourceName = new URL(articleUrl).hostname.replace(/^www\./, ""); } catch {} }
+          const imageUrl = extractImageUrl(item) || await fetchOgImage(articleUrl) || faviconForUrl(articleUrl);
+          return {
+            title,
+            url: articleUrl,
+            snippet: (item.contentSnippet || item.content || "").replace(/<[^>]+>/g, "").slice(0, 300).trim(),
+            sourceName,
+            publishedAt: item.pubDate || item.isoDate || null,
+            imageUrl,
+          };
+        }));
       } catch (err: any) {
-        console.error("[Property News] Web search error:", err?.message);
+        console.error("[Property News] Google News RSS error:", err?.message);
       }
 
       const existingUrls = new Set(matchedArticles.map(a => a.url));
-      const dedupedWeb = webResults.filter(r => !existingUrls.has(r.url));
+      const dedupedWeb = webResults.filter(r => r.url && !existingUrls.has(r.url));
 
       const combined = [
         ...matchedArticles.map(a => ({
