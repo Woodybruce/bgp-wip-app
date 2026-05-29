@@ -95,10 +95,8 @@ import {
   ClientBoardPanel,
   LinkedContactsPanel,
   PropertyIntelligencePanel,
-  PropertyKycPanel,
   PropertyNewsPanel,
   LinkedLandRegistryPanel,
-  StreetViewCard,
   type DealLink,
 } from "@/pages/properties";
 
@@ -759,10 +757,14 @@ export function PropertyDetail({ id }: { id: string }) {
                 working board (header / focus / pipeline / deals /
                 activity / risks / performance). Notes still exists
                 as a free-form 'Asset Lead commentary' bucket inside
-                the brief but isn't rendered here as its own card. */}
+                the brief but isn't rendered here as its own card.
+                The PropertyAssetBriefPanel shell was the original
+                container; after the break-out it renders nothing
+                visible, so it's no longer mounted.
             <ErrorBoundary compact name="Property asset brief">
               <PropertyAssetBriefPanel propertyId={property.id} />
             </ErrorBoundary>
+            */}
 
             {/* BGP Commentary — purple AI card. Pulls commentary
                 + last-generated timestamp from the asset-brief

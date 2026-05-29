@@ -2799,6 +2799,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.restrictions,
           au.fee,
           au.deal_id AS "dealId",
+          d.deal_ref AS "dealRef",
           au.agent_user_ids AS "agentUserIds",
           au.viewings_count AS "viewingsCount",
           au.last_viewing_date AS "lastViewingDate",
@@ -2810,6 +2811,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         FROM available_units au
         LEFT JOIN crm_properties p ON p.id = au.property_id
         LEFT JOIN property_units pu ON pu.id = au.unit_id
+        LEFT JOIN crm_deals d ON d.id = au.deal_id
         ${whereClause}
         ORDER BY au.created_at DESC
       `, params);

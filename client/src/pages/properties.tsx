@@ -2295,7 +2295,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <Users className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Related Contacts</h3>
+          <h3 className="text-sm font-semibold">Linked Contacts</h3>
           {linkedContacts.length > 0 && (
             <Badge variant="secondary" className="text-[10px]">{linkedContacts.length}</Badge>
           )}
