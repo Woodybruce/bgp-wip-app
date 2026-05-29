@@ -544,7 +544,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
                   )}
                   {deal.status && (
-                    <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
+                    <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[legacyToCode(deal.status) || ""] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
@@ -1100,7 +1100,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{linkedProperty?.name || deal.name}</h3>
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {deal.status && (
-                  <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`}>
+                  <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[legacyToCode(deal.status) || ""] || "bg-zinc-500"}`}>
                     {(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}
                   </Badge>
                 )}

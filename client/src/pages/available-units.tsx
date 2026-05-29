@@ -653,6 +653,10 @@ export default function AvailableUnitsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Bulk delete cascades to crm_deals + leasing schedule via the
+      // server-side cleanup. Refresh sibling boards so they don't show
+      // ghost rows.
+      invalidateDealCaches();
       const count = selectedIds.size;
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
@@ -667,6 +671,9 @@ export default function AvailableUnitsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Status PATCH triggers the 4-way mirror server-side — refresh the
+      // sibling boards so Deals + Leasing Schedule + Tenancy reflect.
+      invalidateDealCaches();
       setSelectedIds(new Set());
       toast({ title: "Status updated" });
     },

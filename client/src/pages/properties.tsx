@@ -3488,7 +3488,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
               })}
             </div>
 
-            <Link href={`/deals?tab=letting&propertyId=${propertyId}`}>
+            <Link href={`/deals/letting?propertyId=${propertyId}`}>
               <Button variant="outline" size="sm" className="w-full h-7 text-[11px] gap-1" data-testid="button-view-leasing-tracker">
                 <ExternalLink className="w-3 h-3" />
                 Open in Leasing Tracker

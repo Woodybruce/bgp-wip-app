@@ -1105,8 +1105,13 @@ export default function InvestmentTrackerPage() {
     mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/investment-tracker/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
-      setEditItem(null);
+      // Status / fee / parties / agent edits server-side mirror to the
+      // backing deal and the 4-way mirror — refresh the sibling boards'
+      // caches so the Deals / Letting / Leasing tabs pick up the change
+      // without a manual reload.
+      invalidateDealCaches();
       toast({ title: "Updated" });
+      setEditItem(null);
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
