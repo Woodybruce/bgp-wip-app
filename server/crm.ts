@@ -2986,6 +2986,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         } catch (e: any) {
           console.warn(`[deals] status mirror failed for ${deal.id}:`, e?.message);
         }
+        // Mirror to investment_tracker if a row is linked back to this deal.
+        // Investment Tracker shares the canonical 10-code enum with Deals, so
+        // this is a straight status copy — no bucket translation needed.
+        try {
+          const newCode = legacyToCode(deal.status);
+          if (newCode) {
+            await pool.query(
+              `UPDATE investment_tracker SET status = $1, updated_at = NOW()
+                WHERE deal_id = $2 AND COALESCE(status, '') <> $1`,
+              [newCode, deal.id],
+            );
+          }
+        } catch (e: any) {
+          console.warn(`[deals] investment-tracker status mirror failed for ${deal.id}:`, e?.message);
+        }
       }
 
       // Flip the tenancy spine to Occupied + fan out projections on COM
