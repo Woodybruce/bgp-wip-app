@@ -311,7 +311,9 @@ export function PropertyDetail({ id }: { id: string }) {
   const [streetViewExpanded, setStreetViewExpanded] = useState(false);
   // Sidebar + main sections all open by default so nothing is hidden from
   // a first visit; users still collapse via the per-card toggle when they
-  // want a tighter view.
+  // want a tighter view. A few panels start collapsed because they're
+  // typically empty until the property has had specific work done
+  // (land-reg searches, image studio uploads, Pathway run).
   const [sidebarSections, setSidebarSections] = useState<Record<string, boolean>>({
     details: true,
     files: true,
@@ -320,8 +322,8 @@ export function PropertyDetail({ id }: { id: string }) {
     contacts: true,
     deals: true,
     availableUnits: true,
-    landRegistry: true,
-    images: true,
+    landRegistry: false,
+    images: false,
     compliance: true,
     activity: true,
     linkage: true,
@@ -332,7 +334,7 @@ export function PropertyDetail({ id }: { id: string }) {
     plans: true,
     leasingSchedule: true,
     tenancy: true,
-    pathway: true,
+    pathway: false,
     kyc: true,
     intel: true,
     pitch: true,
