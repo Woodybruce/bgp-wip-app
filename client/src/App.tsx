@@ -104,6 +104,7 @@ const PlaMatters = lazy(() => import("@/pages/pla-matters"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const HRPage = lazy(() => import("@/pages/hr"));
+const TeamPage = lazy(() => import("@/pages/team"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 
 function PublicKycUploadRoute() {
@@ -255,6 +256,7 @@ function Router() {
       <Route path="/my-expenses" component={MyExpenses} />
       <Route path="/hr" component={HRPage} />
       <Route path="/hr/:userId">{(params) => <HRPage />}</Route>
+      <Route path="/team" component={TeamPage} />
       <Route component={NotFound} />
     </Switch>
     </Suspense>
