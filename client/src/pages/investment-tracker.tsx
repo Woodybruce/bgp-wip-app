@@ -32,6 +32,7 @@ import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { Button } from "@/components/ui/button";
 
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
+import { useTeam } from "@/lib/team-context";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
@@ -958,6 +959,7 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
 }
 
 export default function InvestmentTrackerPage() {
+  const { activeTeam } = useTeam();
   const [boardType, setBoardType] = useState<BoardType>("Purchases");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
@@ -1175,10 +1177,25 @@ export default function InvestmentTrackerPage() {
       const agentUser = bgpUsers.find(u => u.name === agentFilter);
       if (agentUser) list = list.filter(u => (u.agentUserIds || []).includes(agentUser.id));
     }
+    // Honour the global team switcher: when a specific team is selected,
+    // narrow to rows whose agentUserIds include at least one user on that
+    // team. Unassigned rows (no agentUserIds) stay visible so the tracker
+    // never silently hides un-allocated work. "Investment" team and "all"
+    // are no-ops since the whole board is investment by definition.
+    if (activeTeam && activeTeam !== "all" && activeTeam !== "Investment") {
+      const teamUserIds = new Set(bgpUsers.filter(u => (u.team || "").toLowerCase() === activeTeam.toLowerCase()).map(u => u.id));
+      if (teamUserIds.size > 0) {
+        list = list.filter(u => {
+          const ids = u.agentUserIds || [];
+          if (ids.length === 0) return true; // unassigned — keep visible
+          return ids.some((id: string) => teamUserIds.has(id));
+        });
+      }
+    }
     const statusOrder = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
     list = [...list].sort((a, b) => (statusOrder[legacyToCode(a.status) || "REP"] ?? 99) - (statusOrder[legacyToCode(b.status) || "REP"] ?? 99));
     return list;
-  }, [boardItems, search, statusFilter, assetClassFilter, tenureFilter, agentFilter, bgpUsers]);
+  }, [boardItems, search, statusFilter, assetClassFilter, tenureFilter, agentFilter, bgpUsers, activeTeam]);
 
   // Click-to-sort on column headers. Status order is applied first
   // (above) so within a status group, the column sort takes over.
