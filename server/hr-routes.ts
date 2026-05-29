@@ -1309,7 +1309,8 @@ export function setupHrRoutes(app: Express) {
 
       const { rows: staff } = await pool.query(`
         SELECT u.id, u.name, u.email, u.team, u.profile_pic_url,
-               sp.title, sp.board_member, sp.management_team, sp.manager_id
+               sp.title, sp.board_member, sp.management_team, sp.manager_id,
+               sp.wfh_days
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         WHERE u.is_active = true AND sp.id IS NOT NULL
@@ -1397,6 +1398,16 @@ export function setupHrRoutes(app: Express) {
           headcount: members.length,
           head: head ? { id: head.id, name: head.name, title: head.title, profilePicUrl: head.profile_pic_url } : null,
           memberIds: members.map((m: any) => m.id),
+          // Full member rows so the TeamCard can render reports directly,
+          // without needing /api/hr/staff (which sometimes returns empty for
+          // non-admins and left every card showing only the head).
+          members: members.map((m: any) => ({
+            id: m.id,
+            name: m.name,
+            title: m.title,
+            profilePicUrl: m.profile_pic_url,
+            wfh_days: m.wfh_days,
+          })),
           pipelinePence: teamWip[team] || 0,
           topDeals,
         };

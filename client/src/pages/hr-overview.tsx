@@ -62,6 +62,9 @@ interface TeamSummary {
   headcount: number;
   head: { id: string; name: string; title: string | null; profilePicUrl: string | null } | null;
   memberIds: string[];
+  // Full rows for the team card so reports render even when /api/hr/staff
+  // (the firm-wide roster) hasn't populated allStaff for the current user.
+  members?: Array<{ id: string; name: string; title: string | null; profilePicUrl: string | null; wfh_days: string[] | null }>;
   pipelinePence: number;
   topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }>;
 }
@@ -380,7 +383,13 @@ interface TeamAiSummary { team: string; summary: string; generated_at: string }
 function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { team: TeamSummary; allStaff: StaffMember[]; aiSummary?: string; oooByUser?: Map<string, { subject: string; isAllDay: boolean }>; onSelectPerson?: (id: string) => void }) {
   const [, navigate] = useLocation();
   const style = teamStyle(team.team);
-  const members = useMemo(() => allStaff.filter(s => team.memberIds.includes(s.id)), [allStaff, team.memberIds]);
+  // Prefer the team-summary's own `members` payload (always populated) and
+  // fall back to allStaff for older API versions. Without this fallback,
+  // the card silently rendered only the head whenever allStaff was empty.
+  const members = useMemo(() => {
+    if (team.members && team.members.length > 0) return team.members as any[];
+    return allStaff.filter(s => team.memberIds.includes(s.id));
+  }, [allStaff, team.memberIds, team.members]);
   const head = team.head;
   const others = members.filter(m => m.id !== head?.id);
 
