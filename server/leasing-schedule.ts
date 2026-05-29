@@ -250,6 +250,19 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
       ).catch((e: any) => console.warn("[leasing] re-knit on rename failed:", e?.message));
     }
 
+    // Three-way status mirror: when status changes on the Leasing Schedule,
+    // propagate to the matching available_units row (via tenancy_unit_id)
+    // and onwards to crm_deals — bucket-aware so a schedule edit to
+    // "Under Offer" won't downgrade an EXC deal back to SOL.
+    if ("status" in body) {
+      try {
+        const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
+        await mirrorFromLeasingSchedule(req.params.id, body.status, { pool, reason: "leasing_schedule.PUT" });
+      } catch (e: any) {
+        console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
+      }
+    }
+
     res.json(result.rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });

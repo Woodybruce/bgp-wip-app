@@ -3236,6 +3236,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
+      // Three-way status mirror: when the marketing status changes on the
+      // Letting Tracker, propagate to the linked crm_deal and to the
+      // leasing-schedule row that shares this unit's tenancy_unit_id.
+      if ("marketingStatus" in partial) {
+        try {
+          const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
+          await mirrorFromAvailableUnit(req.params.id, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
+        } catch (e: any) {
+          console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
+        }
+      }
+
       // Re-stamp tenancy_unit_id when the unit name changes — keeps
       // the canonical unit FK aligned with the new label.
       if ("unitName" in partial) {

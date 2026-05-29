@@ -895,7 +895,19 @@ export default function AvailableUnitsPage() {
 
   const filtered = useMemo(() => {
     let result = teamUnits;
-    if (statusFilter !== "all") result = result.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
+    // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
+    // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
+    // the default view here so the tracker stays focused. Users can still
+    // click an SOL/EXC/COM pill to drill back in.
+    const PRE_SOL_CODES = new Set(["REP", "SPEC", "LIVE", "AVA", "NEG"]);
+    if (statusFilter !== "all") {
+      result = result.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
+    } else {
+      result = result.filter(u => {
+        const code = legacyToCode(u.marketingStatus) || "AVA";
+        return PRE_SOL_CODES.has(code);
+      });
+    }
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);

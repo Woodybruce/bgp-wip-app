@@ -2975,6 +2975,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         console.warn(`[deal->comps] auto-copy failed for ${deal.id}:`, compErr?.message);
       }
 
+      // Three-way status mirror — propagate the deal's new status to the
+      // linked available_units row and the matching leasing-schedule row
+      // so the Letting Tracker + Leasing Schedule stay in lockstep when
+      // the deal moves NEG → SOL → EXC → COM → INV from the Deals board.
+      if ("status" in req.body && legacyToCode(oldDeal?.status) !== legacyToCode(deal.status)) {
+        try {
+          const { mirrorFromDeal } = await import("./lease-status-mirror");
+          await mirrorFromDeal(deal.id, deal.status as string, { pool, reason: "crm_deals.PUT" });
+        } catch (e: any) {
+          console.warn(`[deals] status mirror failed for ${deal.id}:`, e?.message);
+        }
+      }
+
       // Flip the tenancy spine to Occupied + fan out projections on COM
       // transition. Tenancy is the god of truth — the leasing-schedule
       // and Letting Tracker rows reflect this automatically (the
