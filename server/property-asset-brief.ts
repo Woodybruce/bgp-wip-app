@@ -94,11 +94,13 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //    the unit's name + tenant company for logos + the BGP owner.
     const dealsQ = await pool.query<any>(
       // Agents live on crm_deals.internal_agent_ids (a varchar[]); fee is
-      // the deal-level `fee` column in pounds. The old query joined a
-      // non-existent crm_deal_agents table and read a non-existent
-      // deal_fee_allocations.amount_pence column — both threw, the error
+      // the deal-level `fee` column in pounds. The old query read a
+      // non-existent deal_fee_allocations.amount_pence column (the real
+      // columns are percentage / fixed_amount) — that threw, the error
       // was swallowed by the .catch, and the panel showed 0 active deals
-      // even though deals were correctly linked to the property.
+      // even though deals were correctly linked to the property. (It also
+      // array_agg'd from crm_deal_agents, which exists but is empty in
+      // practice — internal_agent_ids is the populated source.)
       `SELECT d.id, d.name, d.status, d.deal_type, d.updated_at,
               d.unit_id, d.tenant_id, d.tenancy_unit_id,
               COALESCE(ts.unit_number, pu.unit_name) AS unit_name,
