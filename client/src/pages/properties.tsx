@@ -2434,7 +2434,17 @@ function CreatePropertyDialog({
             <AddressAutocomplete
               value={formData.address ? addressToResult(formData.address) : null}
               onChange={(result) => {
-                setFormData((p) => ({ ...p, address: resultToAddress(result) }));
+                // Mirror Google's structured fields into the top-level
+                // postcode/lat/lng columns too — not just the address jsonb —
+                // so downstream readers (Brand Gap, exports, healthcheck) see
+                // the postcode.
+                setFormData((p) => ({
+                  ...p,
+                  address: resultToAddress(result),
+                  postcode: result?.postcode || null,
+                  latitude: result?.lat != null ? String(result.lat) : null,
+                  longitude: result?.lng != null ? String(result.lng) : null,
+                }));
                 // If the user clears the address, drop the resolver link too
                 if (!result) setResolvedExistingId(null);
               }}
@@ -4671,6 +4681,14 @@ function PropertiesList({
   const inlineUpdateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: any }) => {
       const updates: Record<string, any> = { [field]: value };
+      // When the inline address picker saves, also mirror the structured
+      // postcode/lat/lng into their top-level columns (the value carries
+      // them inside the address jsonb).
+      if (field === "address" && value) {
+        if (value.postcode !== undefined) updates.postcode = value.postcode || null;
+        if (value.lat != null) updates.latitude = String(value.lat);
+        if (value.lng != null) updates.longitude = String(value.lng);
+      }
       if (field === "status") {
         const property = filteredItems.find(p => p.id === id);
         const currentTeams = Array.isArray(property?.bgpEngagement) ? [...property.bgpEngagement] : property?.bgpEngagement ? [property.bgpEngagement] : [];

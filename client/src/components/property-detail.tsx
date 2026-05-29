@@ -446,6 +446,15 @@ export function PropertyDetail({ id }: { id: string }) {
                       onChange={(result) => {
                         const newAddress = resultToAddress(result);
                         const updates: any = { address: newAddress };
+                        // Mirror the structured fields Google gives us into the
+                        // top-level columns too. The picker was only writing the
+                        // `address` jsonb, so crm_properties.postcode/lat/lng
+                        // stayed blank — which left the healthcheck, Brand Gap
+                        // geocoder and exports thinking there was no postcode
+                        // even though it was visible in the address string.
+                        if (result?.postcode !== undefined) updates.postcode = result.postcode || null;
+                        if (result?.lat !== undefined && result.lat !== null) updates.latitude = String(result.lat);
+                        if (result?.lng !== undefined && result.lng !== null) updates.longitude = String(result.lng);
                         // Prefer the establishment name (e.g. "Grand
                         // Central") as the property's display name when
                         // Google identifies one. Otherwise fall back to
