@@ -23,9 +23,11 @@
 //   - CH profile has no last_accounts.made_up_to → company hasn't filed yet
 //   - Matching filing has no document_metadata (rare — usually means paper-only)
 //   - PDF endpoint 404s for a known doc — log + continue rather than abort.
+import Anthropic from "@anthropic-ai/sdk";
 import { pool } from "./db";
 import { chFetch } from "./companies-house";
-import { saveFile } from "./file-storage";
+import { saveFile, getFile } from "./file-storage";
+import { rasterisePdfPage } from "./pdf-image-extract";
 
 const CH_API_KEY = process.env.COMPANIES_HOUSE_API_KEY;
 const DOC_API_BASE = "https://document-api.company-information.service.gov.uk";
@@ -189,5 +191,132 @@ export async function runBulkAccountsFetch(opts: { limit?: number } = {}): Promi
     result.processed++;
     await new Promise(r => setTimeout(r, DELAY_MS));
   }
+  return result;
+}
+
+// ── Vision-based accounts extraction ───────────────────────────────────────
+// Rasterises the stored accounts PDF and asks Claude to read off the key P&L /
+// balance-sheet figures. Results are cached on
+// crm_companies.companies_house_data under "latestAccountsExtracted" so we only
+// run vision once per filed period.
+
+export interface AccountsExtracted {
+  period: string | null;           // e.g. "2024-12-31"
+  turnover: string | null;         // e.g. "£84.2m"
+  grossProfit: string | null;
+  operatingProfit: string | null;
+  profitBeforeTax: string | null;
+  netAssets: string | null;
+  cash: string | null;
+  employees: string | null;
+  rawText: string;
+}
+
+function getAnthropic(): Anthropic {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("No Anthropic API key configured");
+  const opts: any = { apiKey };
+  if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+    opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  }
+  return new Anthropic(opts);
+}
+
+export async function extractAccountsFigures(companyId: string): Promise<AccountsExtracted | null> {
+  // 1. Get the stored PDF's storage key + period.
+  const { rows } = await pool.query<{
+    last_accounts_storage_key: string | null;
+    last_accounts_made_up_to: string | null;
+    companies_house_data: any;
+  }>(
+    `SELECT last_accounts_storage_key, last_accounts_made_up_to, companies_house_data
+       FROM crm_companies WHERE id = $1`,
+    [companyId]
+  );
+  const row = rows[0];
+  if (!row?.last_accounts_storage_key) return null;
+
+  const period = row.last_accounts_made_up_to
+    ? String(row.last_accounts_made_up_to).substring(0, 10)
+    : null;
+
+  // 2. Cache hit — don't re-run vision for a period we've already read.
+  const cached = row.companies_house_data?.latestAccountsExtracted as AccountsExtracted | undefined;
+  if (cached && cached.period === period) return cached;
+
+  // 3. Load the PDF bytes from file_storage.
+  const file = await getFile(row.last_accounts_storage_key);
+  if (!file) return null;
+
+  // 4. Rasterise pages 1..12 (cover + P&L + balance sheet for most CH filings).
+  //    rasterisePdfPage returns null past the last page, so we stop at the
+  //    first null.
+  const pageImages: { media_type: "image/jpeg"; data: string }[] = [];
+  for (let p = 1; p <= 12; p++) {
+    const jpeg = await rasterisePdfPage({ pdfBuffer: file.data, page: p });
+    if (!jpeg) break;
+    pageImages.push({ media_type: "image/jpeg", data: jpeg.toString("base64") });
+  }
+  if (!pageImages.length) return null;
+
+  // 5. Ask Claude to read off the figures.
+  const anthropic = getAnthropic();
+  const content: Anthropic.ContentBlockParam[] = [
+    {
+      type: "text",
+      text: `These are pages from a UK Companies House annual accounts PDF for a company.
+Extract the following figures (use "not found" if absent):
+- Accounting period end date
+- Turnover / Revenue (£)
+- Gross profit (£)
+- Operating profit (£)
+- Profit before tax (£)
+- Net assets / shareholders' funds (£)
+- Cash & cash equivalents (£)
+- Average number of employees
+
+Return ONLY a JSON object with keys: period, turnover, grossProfit, operatingProfit, profitBeforeTax, netAssets, cash, employees.
+Use human-readable strings like "£84.2m" or "£1,234,567". No markdown fences.`,
+    },
+    ...pageImages.map(img => ({
+      type: "image" as const,
+      source: { type: "base64" as const, media_type: img.media_type, data: img.data },
+    })),
+  ];
+
+  const resp = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 512,
+    messages: [{ role: "user", content }],
+  });
+
+  const textBlock = resp.content.find(b => b.type === "text") as { type: "text"; text: string } | undefined;
+  const rawText = textBlock?.text?.trim() || "";
+  let parsed: Record<string, string> = {};
+  try {
+    parsed = JSON.parse(rawText.replace(/^```json\s*/i, "").replace(/```$/, "").trim());
+  } catch {
+    // best-effort — leave figures null, keep rawText for debugging
+  }
+
+  const result: AccountsExtracted = {
+    period: parsed.period || period,
+    turnover: parsed.turnover || null,
+    grossProfit: parsed.grossProfit || null,
+    operatingProfit: parsed.operatingProfit || null,
+    profitBeforeTax: parsed.profitBeforeTax || null,
+    netAssets: parsed.netAssets || null,
+    cash: parsed.cash || null,
+    employees: parsed.employees || null,
+    rawText,
+  };
+
+  // 6. Cache on the CRM company record.
+  const existingData = row.companies_house_data || {};
+  await pool.query(
+    `UPDATE crm_companies SET companies_house_data = $1 WHERE id = $2`,
+    [JSON.stringify({ ...existingData, latestAccountsExtracted: result }), companyId]
+  );
+
   return result;
 }

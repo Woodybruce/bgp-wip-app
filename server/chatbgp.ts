@@ -452,6 +452,7 @@ function getToolProgressLabel(toolName: string): string {
     update_contact: "Updating contact...",
     create_company: "Creating company...",
     update_company: "Updating company...",
+    get_company_accounts: "Reading filed accounts...",
     create_property: "Creating property...",
     create_requirement: "Logging requirement...",
     create_available_unit: "Creating unit...",
@@ -1984,6 +1985,21 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           groupName: { type: "string" },
         },
         required: ["id"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_company_accounts",
+      description: "Download and read the latest filed Companies House annual accounts for a company — returns turnover, gross profit, operating profit, profit before tax, net assets, cash and employee numbers. Works for any company with a Companies House number in the CRM. Triggers the PDF download if it isn't already cached, then reads the figures off the filing with vision.",
+      parameters: {
+        type: "object",
+        properties: {
+          companyName: { type: "string", description: "Company name, e.g. 'Goyard Limited'. Used to look up the CRM company if companyId isn't known." },
+          companyId: { type: "string", description: "CRM company UUID, if already known." },
+        },
       },
     },
   });
@@ -5091,6 +5107,41 @@ async function executeCrmToolRaw(
     }
     await db.update(crmCompanies).set(cleanUpdates).where(eq(crmCompanies.id, id));
     return { data: { success: true, action: "updated", entity: "company", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "company", id } };
+  }
+
+  if (fnName === "get_company_accounts") {
+    const companyName = fnArgs.companyName as string | undefined;
+    let cid = fnArgs.companyId as string | undefined;
+
+    // Resolve the CRM company id by name if not supplied.
+    if (!cid && companyName) {
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM crm_companies
+          WHERE LOWER(name) LIKE LOWER($1)
+            AND companies_house_number IS NOT NULL
+          LIMIT 1`,
+        [`%${companyName}%`]
+      );
+      cid = rows[0]?.id;
+    }
+    if (!cid) return { data: { error: "Company not found in CRM, or it has no Companies House number." } };
+
+    const { fetchLatestAccountsForCompany, extractAccountsFigures } = await import("./ch-accounts");
+    let fetchStatus: string;
+    try {
+      const fetchResult = await fetchLatestAccountsForCompany(cid);
+      fetchStatus = fetchResult.status;
+    } catch (err: any) {
+      fetchStatus = `fetch_error: ${err?.message || err}`;
+    }
+
+    const figures = await extractAccountsFigures(cid);
+    if (!figures) {
+      return { data: { error: "Could not read the accounts — no PDF on file, or extraction failed.", fetchStatus } };
+    }
+
+    const { rawText, ...summary } = figures;
+    return { data: { companyId: cid, fetchStatus, ...summary } };
   }
 
   if (fnName === "create_deal") {
