@@ -316,6 +316,7 @@ export function PropertyDetail({ id }: { id: string }) {
     files: true,
     team: true,
     clients: false,
+    contacts: false,
     deals: false,
     availableUnits: true,
     landRegistry: false,
@@ -727,9 +728,12 @@ export function PropertyDetail({ id }: { id: string }) {
               <ErrorBoundary compact name="Property brochures">
                 <PropertyBrochuresPanel propertyId={property.id} />
               </ErrorBoundary>
+              {/* Property Decks panel hidden for the Monday demo —
+                  feature not yet ready for the firm. See PRESENTATION_BACKLOG.md.
               <ErrorBoundary compact name="Property decks">
                 <PropertyDecksPanel propertyId={property.id} />
               </ErrorBoundary>
+              */}
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                   <BrandGapPanel propertyId={property.id} />
@@ -859,11 +863,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 slot (see above). Lower full-width card removed to
                 avoid rendering the feed twice on the same page. */}
 
-            <ErrorBoundary compact name="Linked contacts">
-              <CollapsibleCard open={mainSections.contacts} onToggle={() => toggleMain("contacts")} icon={UserCheck} title="Linked Contacts" testId="toggle-contacts">
-                <LinkedContactsPanel propertyId={property.id} />
-              </CollapsibleCard>
-            </ErrorBoundary>
+            {/* Linked Contacts moved into the right sidebar under
+                Client Board so the main column reads property → deals
+                → marketing rather than "client people" twice. */}
           </div>
 
           {/* Right column = reference stack. Single-column on the right
@@ -939,6 +941,16 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-clients-section"
               >
                 <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
+              </ReferenceSection>
+
+              <ReferenceSection
+                title="Linked Contacts"
+                icon={UserCheck}
+                open={sidebarSections.contacts}
+                onToggle={() => toggleSection("contacts")}
+                testId="toggle-contacts-section"
+              >
+                <LinkedContactsPanel propertyId={property.id} />
               </ReferenceSection>
 
               <ReferenceSection
