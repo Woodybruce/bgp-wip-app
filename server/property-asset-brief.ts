@@ -93,25 +93,23 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     // 2. Active deals — anything not in a terminal state, joined to
     //    the unit's name + tenant company for logos + the BGP owner.
     const dealsQ = await pool.query<any>(
+      // Agents live on crm_deals.internal_agent_ids (a varchar[]); fee is
+      // the deal-level `fee` column in pounds. The old query joined a
+      // non-existent crm_deal_agents table and read a non-existent
+      // deal_fee_allocations.amount_pence column — both threw, the error
+      // was swallowed by the .catch, and the panel showed 0 active deals
+      // even though deals were correctly linked to the property.
       `SELECT d.id, d.name, d.status, d.deal_type, d.updated_at,
               d.unit_id, d.tenant_id, d.tenancy_unit_id,
               COALESCE(ts.unit_number, pu.unit_name) AS unit_name,
               tc.name AS tenant_name, tc.domain AS tenant_domain,
-              da.user_ids AS bgp_user_ids,
-              df.amount_pence AS fee_pence
+              d.internal_agent_ids AS bgp_user_ids,
+              ROUND(COALESCE(d.fee, 0) * 100)::bigint AS fee_pence
          FROM crm_deals d
          LEFT JOIN crm_properties p ON p.id = d.property_id
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
          LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
-         LEFT JOIN LATERAL (
-           SELECT array_agg(da2.user_id) AS user_ids
-             FROM crm_deal_agents da2 WHERE da2.deal_id = d.id
-         ) da ON true
-         LEFT JOIN LATERAL (
-           SELECT SUM(amount_pence)::bigint AS amount_pence
-             FROM deal_fee_allocations fa WHERE fa.deal_id = d.id
-         ) df ON true
         WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
           AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')
         ORDER BY d.updated_at DESC NULLS LAST
@@ -359,6 +357,7 @@ router.patch("/api/properties/:id/weekly-focus", requireAuth, async (req: Reques
 function stageBucket(status: string | null | undefined): string {
   const s = String(status || "").toUpperCase();
   if (s === "EXC") return "legals";
+  if (s === "SOL") return "legals";
   if (s === "AGT") return "hots";
   if (s === "NEG") return "hots";
   if (s === "PIT") return "pitch_out";
@@ -377,6 +376,7 @@ function stageLabel(status: string | null | undefined): string {
     PIT: "Pitch out",
     NEG: "Negotiating",
     AGT: "HoTs agreed",
+    SOL: "In legals",
     EXC: "In legals",
     SIG: "Signed",
   };
