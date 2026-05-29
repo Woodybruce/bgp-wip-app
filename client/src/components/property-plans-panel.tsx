@@ -291,22 +291,25 @@ function PlanCanvas({
     }
     setViewScale(next);
   }
-  function handleWheel(e: React.WheelEvent) {
-    if (e.deltaY === 0) return;
-    e.preventDefault();
-    zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY);
+  // Wheel-zoom + click-and-drag pan were too easy to trigger while
+  // scrolling the property page — the plan kept hijacking the wheel.
+  // Zoom is now button-only (see the +/-/Reset row below the canvas);
+  // pointer events stay live only in draw mode so polygon drawing
+  // still works.
+  function handleWheel(_e: React.WheelEvent) {
+    // No-op — let the page scroll past the plan.
   }
   function handlePointerDown(e: React.PointerEvent) {
-    if (drawMode) return;
-    // Don't initiate a pan on a polygon click — let the path's
-    // onClick handle the drawer pop. We only start drag on the
+    if (!drawMode) return;
+    // Drawing mode: don't initiate a pan on a polygon click — let the
+    // path's onClick handle the drawer pop. Only start drag on the
     // image background.
     if ((e.target as HTMLElement).tagName?.toLowerCase() === "path") return;
     dragRef.current = { startX: e.clientX, startY: e.clientY, tx0: viewTx, ty0: viewTy };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
   function handlePointerMove(e: React.PointerEvent) {
-    if (!dragRef.current) return;
+    if (!drawMode || !dragRef.current) return;
     setViewTx(dragRef.current.tx0 + (e.clientX - dragRef.current.startX));
     setViewTy(dragRef.current.ty0 + (e.clientY - dragRef.current.startY));
   }
@@ -370,9 +373,8 @@ function PlanCanvas({
   return (
     <div
       className="relative w-full overflow-hidden rounded border bg-muted/30"
-      style={{ aspectRatio: naturalSize ? `${naturalSize.w} / ${naturalSize.h}` : "16 / 9", touchAction: "none" }}
+      style={{ aspectRatio: naturalSize ? `${naturalSize.w} / ${naturalSize.h}` : "16 / 9" }}
       data-testid="plan-canvas"
-      onWheel={handleWheel}
     >
       {/* Zoom + pan transform wrapper. Click + drag + wheel all bind
           here so getBoundingClientRect reflects the transformed bounds —
@@ -383,7 +385,7 @@ function PlanCanvas({
         style={{
           transform: `translate(${viewTx}px, ${viewTy}px) scale(${viewScale})`,
           transformOrigin: "center center",
-          cursor: drawMode ? "crosshair" : (dragRef.current ? "grabbing" : "grab"),
+          cursor: drawMode ? (dragRef.current ? "grabbing" : "crosshair") : "default",
         }}
         onClick={handleClickOverlay}
         onDoubleClick={handleDoubleClickOverlay}

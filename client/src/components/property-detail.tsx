@@ -309,34 +309,36 @@ export function PropertyDetail({ id }: { id: string }) {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
   const [streetViewExpanded, setStreetViewExpanded] = useState(false);
+  // Sidebar + main sections all open by default so nothing is hidden from
+  // a first visit; users still collapse via the per-card toggle when they
+  // want a tighter view.
   const [sidebarSections, setSidebarSections] = useState<Record<string, boolean>>({
     details: true,
     files: true,
     team: true,
-    clients: false,
-    contacts: false,
-    deals: false,
+    clients: true,
+    contacts: true,
+    deals: true,
     availableUnits: true,
-    landRegistry: false,
+    landRegistry: true,
     images: true,
-    compliance: false,
-    activity: false,
-    linkage: false,
+    compliance: true,
+    activity: true,
+    linkage: true,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
-  // Heavy panels in the main column — collapsed by default to keep the page short.
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     plans: true,
     leasingSchedule: true,
     tenancy: true,
-    pathway: false,
-    kyc: false,
-    intel: false,
-    pitch: false,
-    brands: true,  // Open by default — Brand Gap is in the top-strip row, not buried lower
-    news: false,
-    contacts: false,
+    pathway: true,
+    kyc: true,
+    intel: true,
+    pitch: true,
+    brands: true,
+    news: true,
+    contacts: true,
   });
   const toggleMain = (key: string) => setMainSections(prev => ({ ...prev, [key]: !prev[key] }));
   const { toast } = useToast();
