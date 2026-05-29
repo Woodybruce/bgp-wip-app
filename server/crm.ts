@@ -3003,6 +3003,23 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
+      // Rent half-loop close: deal.rentPa now also writes back to the
+      // linked available_units.asking_rent. The reverse (AU askingRent ->
+      // deal.rentPa) is already done in routes.ts:3231 — this completes
+      // the round-trip so editing rent on the Deals board no longer
+      // leaves the Letting Tracker's Costs cell stale.
+      if ("rentPa" in req.body && req.body.rentPa !== undefined) {
+        try {
+          await pool.query(
+            `UPDATE available_units SET asking_rent = $1, updated_at = NOW()
+              WHERE deal_id = $2 AND COALESCE(asking_rent, -1) <> COALESCE($1, -1)`,
+            [req.body.rentPa, deal.id],
+          );
+        } catch (e: any) {
+          console.warn(`[deals] rent mirror to available_units failed for ${deal.id}:`, e?.message);
+        }
+      }
+
       // Flip the tenancy spine to Occupied + fan out projections on COM
       // transition. Tenancy is the god of truth — the leasing-schedule
       // and Letting Tracker rows reflect this automatically (the
