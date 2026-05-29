@@ -687,9 +687,17 @@ function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: stri
 }
 
 function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: string; onSave: (id: string, field: string, value: string) => void }) {
-  const statuses = ["Occupied", "Vacant", "Under Offer", "In Negotiation", "Archived"];
+  // Includes Landsec's operational states (Trading / Lease Event) that
+  // arrive via the spine import, alongside the canonical letting states.
+  // Only Vacant / Under Offer / In Negotiation mirror onto the Letting
+  // Tracker (they're the actively-let units); Occupied / Trading /
+  // Lease Event / Archived are existing-tenant states and don't push a
+  // unit onto the marketing tracker.
+  const statuses = ["Occupied", "Trading", "Lease Event", "Vacant", "Under Offer", "In Negotiation", "Archived"];
   const colors: Record<string, string> = {
     "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
+    "Trading": "border-emerald-300 text-emerald-700 bg-emerald-50",
+    "Lease Event": "border-orange-300 text-orange-700 bg-orange-50",
     "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
     "Under Offer": "border-blue-300 text-blue-700 bg-blue-50",
     "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",

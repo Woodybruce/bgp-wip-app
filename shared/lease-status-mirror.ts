@@ -25,7 +25,7 @@
 import type { DealStatusCode } from "./deal-status";
 import { legacyToCode } from "./deal-status";
 
-export const LEASING_STATUSES = ["Vacant", "In Negotiation", "Under Offer", "Occupied", "Archived"] as const;
+export const LEASING_STATUSES = ["Vacant", "In Negotiation", "Under Offer", "Occupied", "Trading", "Lease Event", "Archived"] as const;
 export type LeasingStatus = typeof LEASING_STATUSES[number];
 
 const CODE_TO_LEASING: Record<DealStatusCode, LeasingStatus> = {
@@ -49,6 +49,11 @@ const LEASING_TO_CODE: Record<LeasingStatus, DealStatusCode> = {
   "In Negotiation": "NEG",
   "Under Offer":    "SOL",
   "Occupied":       "COM",
+  // Landsec operational states — both mean the unit is let/occupied, so
+  // they map to COM (a completed letting) and, like Occupied, don't push
+  // the unit onto the marketing Letting Tracker.
+  "Trading":        "COM",
+  "Lease Event":    "COM",
   "Archived":       "WIT",
 };
 
