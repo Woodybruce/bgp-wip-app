@@ -1014,73 +1014,39 @@ export default function AvailableUnitsPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="h-4 w-4 text-blue-500" />
-                <span className="text-sm font-semibold">Viewings</span>
-              </div>
-              <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
-            </div>
-            <div className="flex items-end gap-1 h-16">
-              {viewingsMonthly.map((count, i) => {
-                const max = Math.max(...viewingsMonthly, 1);
-                const h = Math.max((count / max) * 100, 4);
-                const now = new Date();
-                const currentMonthIdx = FY_MONTH_NUMS.indexOf(now.getMonth() + 1);
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5" title={`${FY_MONTHS[i]}: ${count} viewing${count !== 1 ? "s" : ""}`}>
+      {/* Single thin FY activity strip — was two full cards stacked
+          (~240px) with bar charts that were 16px tall and rarely
+          scanned beyond the headline number. Now one row carrying the
+          two totals + tiny sparkline of monthly counts. */}
+      <Card>
+        <CardContent className="px-4 py-2.5 flex items-center gap-6 flex-wrap">
+          <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
+          {([
+            { label: "Viewings", icon: CalendarDays, data: viewingsMonthly, colour: "bg-blue-500", dim: "bg-blue-200 dark:bg-blue-800" },
+            { label: "Offers",   icon: HandCoins,    data: offersMonthly,   colour: "bg-amber-500", dim: "bg-amber-200 dark:bg-amber-800" },
+          ] as const).map(({ label, icon: Icon, data, colour, dim }) => {
+            const total = data.reduce((a, b) => a + b, 0);
+            const max = Math.max(...data, 1);
+            const currentMonthIdx = FY_MONTH_NUMS.indexOf(new Date().getMonth() + 1);
+            return (
+              <div key={label} className="flex items-center gap-2.5">
+                <Icon className={`h-3.5 w-3.5 ${label === "Viewings" ? "text-blue-500" : "text-amber-500"}`} />
+                <span className="text-xs font-semibold">{label}</span>
+                <span className="text-sm font-bold tabular-nums">{total}</span>
+                <div className="flex items-end gap-[2px] h-5" title={data.map((c, i) => `${FY_MONTHS[i]}: ${c}`).join(" · ")}>
+                  {data.map((count, i) => (
                     <div
-                      className={`w-full rounded-t transition-all ${i === currentMonthIdx ? "bg-blue-500" : count > 0 ? "bg-blue-300 dark:bg-blue-700" : "bg-muted"}`}
-                      style={{ height: `${h}%` }}
+                      key={i}
+                      className={`w-[6px] rounded-sm ${count > 0 ? (i === currentMonthIdx ? colour : dim) : "bg-muted"}`}
+                      style={{ height: `${Math.max((count / max) * 100, 8)}%` }}
                     />
-                    <span className="text-[9px] text-muted-foreground leading-none">{FY_MONTHS[i]}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between mt-2 pt-2 border-t">
-              <span className="text-xs text-muted-foreground">Total this FY</span>
-              <span className="text-sm font-bold">{viewingsMonthly.reduce((a, b) => a + b, 0)}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <HandCoins className="h-4 w-4 text-amber-500" />
-                <span className="text-sm font-semibold">Offers</span>
+                  ))}
+                </div>
               </div>
-              <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
-            </div>
-            <div className="flex items-end gap-1 h-16">
-              {offersMonthly.map((count, i) => {
-                const max = Math.max(...offersMonthly, 1);
-                const h = Math.max((count / max) * 100, 4);
-                const now = new Date();
-                const currentMonthIdx = FY_MONTH_NUMS.indexOf(now.getMonth() + 1);
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5" title={`${FY_MONTHS[i]}: ${count} offer${count !== 1 ? "s" : ""}`}>
-                    <div
-                      className={`w-full rounded-t transition-all ${i === currentMonthIdx ? "bg-amber-500" : count > 0 ? "bg-amber-300 dark:bg-amber-700" : "bg-muted"}`}
-                      style={{ height: `${h}%` }}
-                    />
-                    <span className="text-[9px] text-muted-foreground leading-none">{FY_MONTHS[i]}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between mt-2 pt-2 border-t">
-              <span className="text-xs text-muted-foreground">Total this FY</span>
-              <span className="text-sm font-bold">{offersMonthly.reduce((a, b) => a + b, 0)}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            );
+          })}
+        </CardContent>
+      </Card>
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -1120,21 +1086,10 @@ export default function AvailableUnitsPage() {
             ))}
           </SelectContent>
         </Select>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {MARKETING_STATUSES.map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              className={`${STATUS_LABEL_COLORS[s]} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
-                statusFilter === s ? "ring-2 ring-primary ring-offset-1 scale-105" : statusFilter !== "all" ? "opacity-40" : "hover:opacity-90"
-              }`}
-              data-testid={`filter-status-${s.toLowerCase()}`}
-            >
-              {DEAL_STATUS_LABELS[s]}
-              {statusFilter === s && <X className="inline h-3 w-3 ml-1 -mr-0.5" />}
-            </button>
-          ))}
-        </div>
+        {/* Pill row removed — the status cards directly underneath
+            already act as filter buttons (same setStatusFilter call)
+            and carry counts too, so this row was duplicated UI. The
+            cards now own status filtering on this page. */}
         {activeAssetClasses.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
