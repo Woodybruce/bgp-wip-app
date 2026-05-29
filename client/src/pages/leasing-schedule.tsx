@@ -695,14 +695,22 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
     "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",
     "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
   };
+  // Real <button> trigger — was previously a <Badge> (<div>) under
+  // DropdownMenuTrigger asChild, which Radix doesn't reliably forward
+  // click events to, so the dropdown never opened on Bluewater.
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Badge variant="outline" className={`text-[10px] cursor-pointer ${colors[value] || "border-gray-300"}`} data-testid={`inline-status-${unitId}`}>
-          {value}
-        </Badge>
+        <button
+          type="button"
+          className={`inline-flex items-center text-[10px] px-2 py-0.5 rounded-full border font-medium cursor-pointer hover:brightness-95 transition-all ${colors[value] || "border-gray-300 text-gray-700 bg-gray-50"}`}
+          data-testid={`inline-status-${unitId}`}
+          aria-label={`Change status (currently ${value || "not set"})`}
+        >
+          {value || "Set status"}
+        </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[140px]" data-testid={`status-menu-${unitId}`}>
+      <DropdownMenuContent align="start" className="min-w-[160px]" data-testid={`status-menu-${unitId}`}>
         {statuses.map(s => (
           <DropdownMenuItem
             key={s}
