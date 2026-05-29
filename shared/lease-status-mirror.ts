@@ -80,3 +80,45 @@ export function codeMatchesLeasingStatus(
   const target = codeToLeasingStatus(code as string);
   return target === schedule;
 }
+
+// Tenancy Schedule taxonomy is the coarsest: it's the rent roll, so it only
+// asks "is the unit physically let?" — Occupied vs Vacant. Anything pre-EXC
+// is still vacant from a rent-roll perspective; EXC and beyond count as
+// occupied (legal commitment to pay).
+export const TENANCY_STATES = ["Occupied", "Vacant"] as const;
+export type TenancyStatus = typeof TENANCY_STATES[number];
+
+const CODE_TO_TENANCY: Record<DealStatusCode, TenancyStatus> = {
+  REP:  "Vacant",
+  SPEC: "Vacant",
+  LIVE: "Vacant",
+  AVA:  "Vacant",
+  NEG:  "Vacant",
+  SOL:  "Vacant",
+  EXC:  "Occupied",
+  COM:  "Occupied",
+  INV:  "Occupied",
+  WIT:  "Vacant",
+};
+
+const LEASING_TO_TENANCY: Record<LeasingStatus, TenancyStatus> = {
+  "Vacant":         "Vacant",
+  "In Negotiation": "Vacant",
+  "Under Offer":    "Vacant",  // pre-completion — rent hasn't started
+  "Occupied":       "Occupied",
+  "Trading":        "Occupied",
+  "Lease Event":    "Occupied",
+  "Archived":       "Vacant",
+};
+
+export function codeToTenancyStatus(raw: string | null | undefined): TenancyStatus | null {
+  const code = legacyToCode(raw);
+  if (!code) return null;
+  return CODE_TO_TENANCY[code] || null;
+}
+
+export function leasingStatusToTenancyStatus(s: string | null | undefined): TenancyStatus | null {
+  if (!s) return null;
+  const trimmed = String(s).trim() as LeasingStatus;
+  return LEASING_TO_TENANCY[trimmed] || null;
+}
