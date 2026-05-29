@@ -5773,10 +5773,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         //   purchase → purchaser
         // Falls through in that order so legacy rows missing the
         // primary counterparty still resolve to something useful.
+        // Final fallback: if the deal's own counterparty FKs are missing
+        // or orphaned (point at a deleted/merged company that no longer
+        // resolves in compMap), fall back to the linked property's
+        // landlord. Stops a stale landlord_id showing the deal as
+        // "Unknown" client on the WIP roll-up.
+        const propLandlordId = deal.propertyId
+          ? (properties.find(p => p.id === deal.propertyId) as any)?.landlordId
+          : null;
         const clientName =
           (deal.landlordId  ? compMap.get(deal.landlordId)  : null) ||
           ((deal as any).vendorId    ? compMap.get((deal as any).vendorId)    : null) ||
           ((deal as any).purchaserId ? compMap.get((deal as any).purchaserId) : null) ||
+          (propLandlordId ? compMap.get(propLandlordId) : null) ||
           null;
         const billingEntityName = deal.xeroContactName || null;
         const invoice = invoicesByDeal.get(deal.id);

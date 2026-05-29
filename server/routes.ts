@@ -4132,6 +4132,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ? existingTeams
         : Array.from(new Set([...bodyTeams, ...existingTeams]));
 
+      // Resolve the landlord defensively: prefer an explicit body value
+      // ONLY if it points at a real company; otherwise fall back to the
+      // property's current landlord. Stops a stale/orphaned landlord_id
+      // (a deleted or merged company) being stamped onto the deal, which
+      // would make it show as "Unknown" client on the WIP roll-up.
+      let resolvedLandlordId: string | undefined = (property as any)?.landlordId || undefined;
+      if (body.landlordId) {
+        const lc = await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 LIMIT 1`, [body.landlordId]);
+        if ((lc.rowCount ?? 0) > 0) resolvedLandlordId = body.landlordId;
+      }
+
       const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
@@ -4156,10 +4167,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         tenantId: body.tenantId || undefined,
         tenantEntityId: body.tenantEntityId || undefined,
         tenantEntityName: body.tenantEntityName || undefined,
-        // Landlord auto-resolved from property.landlord_id — explicit body
-        // override wins (rare; only if the property's landlord changed
-        // between AVA and SOL).
-        landlordId: body.landlordId || (property as any)?.landlordId || undefined,
+        // Landlord auto-resolved + validated above (resolvedLandlordId):
+        // explicit body value wins only if it resolves to a real company,
+        // else the property's current landlord.
+        landlordId: resolvedLandlordId,
         landlordEntityId: body.landlordEntityId || undefined,
         landlordEntityName: body.landlordEntityName || undefined,
       };
