@@ -94,6 +94,11 @@ export function invalidateDealCaches(dealId?: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
   queryClient.invalidateQueries({ queryKey: ["/api/portfolio"] });
   queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+  // Status writes on a deal mirror to available_units + leasing_schedule_units
+  // server-side. Refresh those caches too so the Letting Tracker + Leasing
+  // Schedule reflect deal status changes without a manual reload.
+  queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property"] });
   if (dealId) {
     queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
     queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "timeline"] });

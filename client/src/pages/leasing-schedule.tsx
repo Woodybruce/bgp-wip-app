@@ -1430,9 +1430,15 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
     mutationFn: (data: any) => apiRequest("PUT", `/api/leasing-schedule/unit/${data.id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+      // Status changes mirror server-side to available_units + crm_deals,
+      // so refresh the Letting Tracker + Deals caches too — otherwise the
+      // user changes status here and doesn't see the other boards update.
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       setEditUnit(null);
       toast({ title: "Unit updated" });
     },
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message || "Try again", variant: "destructive" }),
   });
 
   const addMutation = useMutation({
@@ -2231,6 +2237,11 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
     mutationFn: (data: any) => apiRequest("PUT", `/api/leasing-schedule/unit/${data.id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+      // Three-way status mirror: refresh the other two boards' caches so
+      // a status change here shows up on the Letting Tracker + Deals board
+      // without a manual reload.
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
     },
     onError: (err: any) => { toast({ title: "Update failed", description: err.message, variant: "destructive" }); },
   });

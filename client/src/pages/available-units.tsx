@@ -626,6 +626,11 @@ export default function AvailableUnitsPage() {
       // Master fields (floor/sqft/useClass/condition/epcRating/unitName) flow to
       // property_units server-side, so refresh that cache too.
       queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+      // Three-way status mirror: marketing-status edits propagate to the
+      // linked crm_deal + leasing_schedule_unit server-side. Invalidate
+      // those caches too so the other boards reflect the change live.
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property"] });
       setEditItem(null);
       toast({ title: "Unit updated" });
     },
