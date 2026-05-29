@@ -394,7 +394,22 @@ function AuthenticatedApp() {
             </button>
           )}
           <span className="text-sm font-semibold flex-1">
-            {location === "/" ? "Dashboard" : location.replace(/^\//, "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+            {(() => {
+              // Slug-from-URL fallback for normal routes. Detail pages
+              // (/deals/:id, /properties/:id, /companies/:id…) used to
+              // render their UUID as the title — show a friendly section
+              // label instead and let the inner page own the real heading.
+              if (location === "/") return "Dashboard";
+              const seg = location.replace(/^\//, "").split("/");
+              const root = seg[0];
+              const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties"].includes(seg[1]);
+              const DETAIL_LABELS: Record<string, string> = {
+                deals: "Deal", properties: "Property", companies: "Company",
+                contacts: "Contact", hr: "Profile", comps: "Comp",
+              };
+              if (hasId && DETAIL_LABELS[root]) return DETAIL_LABELS[root];
+              return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+            })()}
           </span>
         </div>
         <div className="flex-1 overflow-y-auto min-h-0 pb-14 md:pb-0">
