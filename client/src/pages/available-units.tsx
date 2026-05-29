@@ -1005,11 +1005,10 @@ export default function AvailableUnitsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="available-units-page">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
-          <p className="text-sm text-muted-foreground">Shops and spaces to let across leasing instructions</p>
-        </div>
+      {/* Page title removed — the DealsHub tab bar carries the label
+          ("Letting Tracker"), so an inner h1 just stacked a third title
+          on top of the browser tab + hub tab. */}
+      <div className="flex items-center justify-end">
         <Button onClick={() => { setForm(emptyForm); setCreateOpen(true); }} data-testid="button-add-unit">
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>

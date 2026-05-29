@@ -5195,11 +5195,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     teamAgent: true,
     team: false,
     agent: false,
-    assetClass: true,
-    // The seven role-specific columns now live behind one Parties column
-    // by default. Toggle them back on from the column-visibility menu if
-    // you want the spread-out view.
-    parties: true,
+    // Asset Class is property-level — the parent Property tab carries it.
+    // Off here to keep the row tight; toggle on for investment views.
+    assetClass: false,
+    // Parties duplicated Client/Billing (landlord) + Tenant — off by default.
+    // Toggle on when working an investment deal that needs vendor / purchaser
+    // / acquisition / leasing agents visible at a glance.
+    parties: false,
     clientContact: false,
     tenant: true,
     vendor: false,
@@ -5209,13 +5211,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     purchaserAgent: false,
     leasingAgent: false,
     yield: false,
-    // Fee + Fee Agreement collapse into one cell. Toggle granular
-    // columns back on from column visibility if needed.
     feeCombined: true,
     fee: false,
     feeAgreement: false,
-    feeAlloc: true,
-    floorAreas: true,
+    // Fee Split is a popover-on-click on the Fee cell — separate column was
+    // duplicative. Off by default; toggle on for agent commission reviews.
+    feeAlloc: false,
+    // Floor Areas is per-unit physical detail — useful but heavy. Off by
+    // default; the deal-detail page carries the full areas card.
+    floorAreas: false,
     // Client (landlord) + Xero billing contact now live behind one
     // 'Client / Billing' cell. Toggle the granular columns back on
     // from the column-visibility menu if you ever need them.
@@ -5246,7 +5250,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     completedAt: false,
     invoicedAt: false,
     rentAnalysis: false,
-    sharepoint: true,
+    // SharePoint files belong on the deal detail page; the column on the
+    // list view was just an icon-and-link that didn't add scannable value.
+    sharepoint: false,
     lastInteraction: true,
   });
 
@@ -5706,7 +5712,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   if (error) {
     return (
       <PageLayout
-        title={isCompsMode ? "Leasing Comps" : "Deals"}
+        title={isCompsMode ? "Leasing Comps" : "Deals & Units"}
         icon={Handshake}
         subtitle={isCompsMode ? "Comparable transactions" : "Deal CRM"}
       >
@@ -5714,7 +5720,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <CardContent className="py-12 text-center">
             <EmptyState
               icon={AlertCircle}
-              title={`Could not load ${isCompsMode ? "Leasing Comps" : "Deals"}`}
+              title={`Could not load ${isCompsMode ? "Leasing Comps" : "Deals & Units"}`}
               description={(error as Error).message || "An error occurred while loading deals."}
             />
           </CardContent>
@@ -5767,7 +5773,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   return (
     <PageLayout
-      title={isCompsMode ? "Leasing Comps" : "Deals"}
+      title={isCompsMode ? "Leasing Comps" : "Deals & Units"}
       icon={Handshake}
       subtitle={isCompsMode
         ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
@@ -6054,7 +6060,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               ))}
             </div>
           ) : (
-            <ScrollableTable minWidth={2200}>
+            <ScrollableTable minWidth={1700}>
               <Table>
                 <TableHeader>
                   <TableRow>

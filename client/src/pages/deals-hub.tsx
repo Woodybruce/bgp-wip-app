@@ -19,7 +19,10 @@ function PageLoader() {
   );
 }
 
-type TabKey = "wip" | "letting" | "investment" | "wip-report" | "properties";
+// Tab keys mirror the segment under /deals/* except 'deals' itself is
+// the default root tab (/deals). The 'wip' historical key was renamed
+// to 'deals' so the TabKey, label and URL all carry the same word.
+type TabKey = "deals" | "letting" | "investment" | "wip-report" | "properties";
 
 const TAB_PATHS = new Set(["letting", "investment", "report", "properties"]);
 
@@ -28,7 +31,7 @@ function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/investment") || loc.startsWith("/investment-tracker")) return "investment";
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
   if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
-  if (loc === "/deals") return "wip";
+  if (loc === "/deals") return "deals";
   return null;
 }
 
@@ -41,7 +44,7 @@ function isDealProfile(loc: string): boolean {
 export default function DealsHub() {
   const [location, setLocation] = useLocation();
   const { activeTeam } = useTeam();
-  const [tab, setTab] = useState<TabKey>(() => getTabFromLocation(location) || "wip");
+  const [tab, setTab] = useState<TabKey>(() => getTabFromLocation(location) || "deals");
   const isProfile = isDealProfile(location);
 
   useEffect(() => {
@@ -50,11 +53,14 @@ export default function DealsHub() {
     if (t) setTab(t);
   }, [location, isProfile]);
 
+  // Order is: what we own → what's transacting → what's billing.
+  // Properties leads because every row on the other tabs derives from
+  // a property; WIP Report trails because it's the financial roll-up.
   const allTabs = useMemo(() => [
-    { key: "wip" as const, label: "Deals", icon: BarChart3 },
+    { key: "properties" as const, label: "Properties", icon: Building2 },
+    { key: "deals" as const, label: "Deals & Units", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
-    { key: "properties" as const, label: "Properties", icon: Building2 },
     { key: "wip-report" as const, label: "WIP Report", icon: FileText },
   ], []);
 
@@ -75,7 +81,7 @@ export default function DealsHub() {
   const switchTab = (t: TabKey) => {
     setTab(t);
     const routes: Record<TabKey, string> = {
-      wip: "/deals",
+      deals: "/deals",
       letting: "/deals/letting",
       investment: "/deals/investment",
       "wip-report": "/deals/report",
@@ -107,7 +113,7 @@ export default function DealsHub() {
         </div>
       </div>
       <Suspense fallback={<PageLoader />}>
-        {tab === "wip" && <Deals />}
+        {tab === "deals" && <Deals />}
         {tab === "letting" && <AvailableUnits />}
         {tab === "investment" && <InvestmentTracker />}
         {tab === "wip-report" && <WipReport />}
