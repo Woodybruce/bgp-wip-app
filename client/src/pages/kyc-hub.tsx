@@ -1,17 +1,19 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Loader2, LayoutGrid, GraduationCap, Settings } from "lucide-react";
+import { Loader2, LayoutGrid, GraduationCap, Settings, UserSearch } from "lucide-react";
 
 // Lazy so we only parse each tab's bundle when the user actually opens it.
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
+const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 
-type TabId = "board" | "training" | "settings";
+type TabId = "board" | "investigator" | "training" | "settings";
 
 const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "board", label: "Compliance Board", icon: LayoutGrid },
+  { id: "investigator", label: "Investigator", icon: UserSearch },
   { id: "training", label: "Training", icon: GraduationCap },
   { id: "settings", label: "Firm Settings", icon: Settings },
 ];
@@ -76,6 +78,9 @@ export default function KycHub() {
           <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
             <TabsContent value="board" className="m-0">
               <ComplianceBoard />
+            </TabsContent>
+            <TabsContent value="investigator" className="m-0">
+              <KycClouseau />
             </TabsContent>
             <TabsContent value="training" className="m-0">
               <AmlTraining />

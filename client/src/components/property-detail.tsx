@@ -41,7 +41,7 @@ import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
-import { ComplianceBoard } from "@/components/brand-profile-panel";
+import { BrandComplianceCard } from "@/components/brand-profile-panel";
 import {
   PropertyAssetBriefPanel,
   PropertyCoveringStrip,
@@ -176,7 +176,7 @@ function PropertyComplianceBoardWrapper({
   }
 
   return (
-    <ComplianceBoard
+    <BrandComplianceCard
       companyId={ownerId}
       company={data.company}
       embedded={embedded}

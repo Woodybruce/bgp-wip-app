@@ -88,7 +88,6 @@ const BrandsHub = lazy(() => import("@/pages/brands-hub"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const LeaseEvents = lazy(() => import("@/pages/lease-events"));
-const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));

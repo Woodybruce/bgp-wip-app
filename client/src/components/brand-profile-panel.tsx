@@ -3783,7 +3783,7 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
 // the user can overwrite the value at any time. The "Find on Companies
 // House" link opens a CH search prefilled with whatever's currently in
 // the input so the user can hand-pick the right registered name.
-export function ComplianceBoard({
+export function BrandComplianceCard({
   companyId,
   company,
   embedded = false,
@@ -4586,7 +4586,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           first load (from the parent useEffect); the user can overwrite
           via the input below. Until uk_entity_name is set, all downstream
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
-      <ComplianceBoard companyId={companyId} company={c} />
+      <BrandComplianceCard companyId={companyId} company={c} />
 
       {/* Covenant snapshot — hidden May 2026 until Red Flag / Experian is
           wired. The Compliance board above covers the same ground (CH
