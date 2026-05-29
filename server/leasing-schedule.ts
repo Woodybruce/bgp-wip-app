@@ -250,16 +250,41 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
       ).catch((e: any) => console.warn("[leasing] re-knit on rename failed:", e?.message));
     }
 
-    // Three-way status mirror: when status changes on the Leasing Schedule,
-    // propagate to the matching available_units row (via tenancy_unit_id)
-    // and onwards to crm_deals — bucket-aware so a schedule edit to
-    // "Under Offer" won't downgrade an EXC deal back to SOL.
+    // Four-way status mirror: status changes propagate to available_units,
+    // crm_deals (bucket-aware so EXC isn't dragged back to SOL) and the
+    // tenancy spine (Occupied/Vacant).
     if ("status" in body) {
       try {
         const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
         await mirrorFromLeasingSchedule(req.params.id, body.status, { pool, reason: "leasing_schedule.PUT" });
       } catch (e: any) {
         console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
+      }
+    }
+
+    // Push lease-date edits back to the canonical tenancy row. Reads on
+    // the Leasing Schedule pull dates via the live_lease_* overlay from
+    // tenancy, so without this round-trip the user could edit a date
+    // here and find it masked by the (stale) tenancy date on next load.
+    // Best-effort; the join requires a tenancy_unit_id link.
+    const dateFieldMap: Record<string, string> = {
+      lease_expiry: "lease_expiry",
+      lease_break:  "break_date",
+      rent_review:  "next_review_date",
+    };
+    const dateUpdates: Array<{ col: string; val: any }> = [];
+    for (const [src, tgt] of Object.entries(dateFieldMap)) {
+      if (src in body) dateUpdates.push({ col: tgt, val: body[src] === "" ? null : body[src] });
+    }
+    if (dateUpdates.length > 0 && existingUnit.tenancy_unit_id) {
+      try {
+        const sets = dateUpdates.map((u, i) => `${u.col} = $${i + 2}`).join(", ");
+        await pool.query(
+          `UPDATE tenancy_schedule_units SET ${sets}, updated_at = NOW() WHERE id = $1`,
+          [existingUnit.tenancy_unit_id, ...dateUpdates.map(u => u.val)],
+        );
+      } catch (e: any) {
+        console.warn(`[leasing] date mirror to tenancy failed for ${req.params.id}:`, e?.message);
       }
     }
 
