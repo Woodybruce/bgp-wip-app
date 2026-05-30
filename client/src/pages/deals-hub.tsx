@@ -58,7 +58,7 @@ export default function DealsHub() {
   // a property; WIP Report trails because it's the financial roll-up.
   const allTabs = useMemo(() => [
     { key: "properties" as const, label: "Properties", icon: Building2 },
-    { key: "deals" as const, label: "Deals & Units", icon: BarChart3 },
+    { key: "deals" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
     { key: "wip-report" as const, label: "WIP Report", icon: FileText },

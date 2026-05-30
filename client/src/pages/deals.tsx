@@ -5281,7 +5281,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   if (error) {
     return (
       <PageLayout
-        title={isCompsMode ? "Leasing Comps" : "Deals & Units"}
+        title={isCompsMode ? "Leasing Comps" : "Deals"}
         icon={Handshake}
         subtitle={isCompsMode ? "Comparable transactions" : "Deal CRM"}
       >
@@ -5289,7 +5289,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <CardContent className="py-12 text-center">
             <EmptyState
               icon={AlertCircle}
-              title={`Could not load ${isCompsMode ? "Leasing Comps" : "Deals & Units"}`}
+              title={`Could not load ${isCompsMode ? "Leasing Comps" : "Deals"}`}
               description={(error as Error).message || "An error occurred while loading deals."}
             />
           </CardContent>
@@ -5342,7 +5342,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   return (
     <PageLayout
-      title={isCompsMode ? "Leasing Comps" : "Deals & Units"}
+      title={isCompsMode ? "Leasing Comps" : "Deals"}
       icon={Handshake}
       subtitle={isCompsMode
         ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
