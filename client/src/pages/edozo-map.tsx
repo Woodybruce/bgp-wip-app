@@ -4382,19 +4382,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
             // the depth, perpendicular to the street). Goad keeps names along
             // the frontage, so for steep angles prefer a horizontal label —
             // smaller / truncated if need be — over rotating it upright.
-            const steep = Math.abs(deg) > 45;
-            let fontPx: number;
-            if (horizontalFont >= 7 && (steep || horizontalFont + 2 >= rotatedFont || Math.abs(deg) < 12)) {
-              deg = 0;
-              fontPx = horizontalFont;
-            } else if (!steep && rotatedFont >= 7) {
-              fontPx = rotatedFont;
-            } else if (steep && horizontalFont >= 6) {
-              deg = 0;
-              fontPx = horizontalFont;
-            } else {
-              fontPx = 0; // too small to read — hide
-            }
+            // ALWAYS horizontal. Rotating to the polygon's principal axis kept
+            // producing wrong-angle / near-vertical labels on narrow + angled
+            // units (the "names in the wrong direction" complaint, 7 attempts
+            // deep). Horizontal-with-truncation is predictable and readable —
+            // long fascias ellipsis-clip via the wrapper below. We accept the
+            // odd truncated name over ever rendering one sideways.
+            void rotatedFont; void longPx; void shortPx; // rotation deliberately unused now
+            deg = 0;
+            let fontPx: number = horizontalFont >= 5 ? horizontalFont : 0; // hide only if unreadably small
 
             const textBudget = deg === 0 ? widthPx : longPx;
             const shortBudget = deg === 0 ? heightPx : shortPx;
@@ -5406,8 +5402,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               </button>
             </div>
 
-            <ScrollArea className="flex-1">
-              <div className="px-4 py-3 space-y-3">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
+              <div className="px-4 py-3 space-y-3 min-w-0 [overflow-wrap:anywhere]">
                 {/* Address + Goad attributes */}
                 <section>
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
@@ -5809,7 +5805,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                   </p>
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </div>
         )}
 
