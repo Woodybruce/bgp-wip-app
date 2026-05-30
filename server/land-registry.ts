@@ -5,7 +5,8 @@ import { db, pool } from "./db";
 import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
-import { findProprietorsByAddress, isHmlrProprietorsAvailable, type HmlrProprietor } from "./hmlr-direct";
+import { findProprietorsByAddress, isHmlrProprietorsAvailable, lastIngestRun, type HmlrProprietor } from "./hmlr-direct";
+import { isOsConfigured } from "./os-data";
 
 /**
  * Shared persistence helper for land_registry_searches — used by:
@@ -646,6 +647,36 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
 }
 
 export function registerLandRegistryRoutes(app: Express) {
+  // Property-data health — one call to see what's actually live, so we
+  // stop guessing which ownership source is in play. Read-only.
+  app.get("/api/property-data/health", requireAuth, async (_req, res) => {
+    const propertyDataKey = !!process.env.PROPERTYDATA_API_KEY;
+    const osConfigured = isOsConfigured();
+    let hmlrSeeded = false;
+    let hmlrRows = 0;
+    let hmlrLastIngest: any = null;
+    try {
+      hmlrSeeded = await isHmlrProprietorsAvailable();
+      if (hmlrSeeded) {
+        const c = await pool.query("SELECT count(*)::int AS n FROM hmlr_proprietors");
+        hmlrRows = c.rows[0]?.n || 0;
+      }
+      hmlrLastIngest = (await lastIngestRun("ccod").catch(() => null)) || (await lastIngestRun("ocod").catch(() => null));
+    } catch { /* table may not exist yet */ }
+    const ownerSource = hmlrSeeded
+      ? "HMLR direct (free, authoritative)"
+      : (propertyDataKey ? "PropertyData (paid fallback — HMLR not seeded)" : "none");
+    res.json({
+      osPlaces: { configured: osConfigured },
+      propertyData: { keyPresent: propertyDataKey },
+      landRegistryDirect: { seeded: hmlrSeeded, rows: hmlrRows, lastIngest: hmlrLastIngest },
+      summary: {
+        ownerSource,
+        ready: osConfigured && (hmlrSeeded || propertyDataKey),
+      },
+    });
+  });
+
   // Bootstrap: ensure columns exist
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS crm_property_id varchar`).catch(() => {});
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS notes text`).catch(() => {});
