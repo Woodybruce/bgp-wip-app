@@ -1765,6 +1765,16 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
   const promptNewFolder = () => { const n = window.prompt("New folder name"); if (n && n.trim()) newFolderMutation.mutate(n.trim()); };
   const promptRename = (item: { id: string; name: string }) => { const n = window.prompt("Rename to", item.name); if (n && n.trim() && n.trim() !== item.name) renameMutation.mutate({ id: item.id, name: n.trim() }); };
   const confirmDelete = (item: { id: string; name: string }) => { if (window.confirm(`Delete "${item.name}"? It will go to the SharePoint recycle bin.`)) deleteMutation.mutate(item.id); };
+  // Delete the whole active team's folder tree (e.g. when "Set Up Folders"
+  // created the wrong one). Sends the team's root folder + everything in it
+  // to the SharePoint recycle bin — recoverable.
+  const confirmDeleteTree = () => {
+    if (!folderData?.currentItemId) return;
+    if (window.confirm(`Delete the entire "${activeTeam}" folder tree for ${propertyName}? Everything inside it goes to the SharePoint recycle bin (recoverable). Use this if the wrong folder tree was set up.`)) {
+      deleteMutation.mutate(folderData.currentItemId);
+      setSubPath("");
+    }
+  };
 
   const rowMenu = (item: { id: string; name: string }) => (
     <DropdownMenu>
@@ -1851,6 +1861,11 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                   <ExternalLink className="w-3 h-3 mr-1" />SharePoint
                 </Button>
               </a>
+            )}
+            {!subPath && folderData?.exists && folderData?.currentItemId && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={confirmDeleteTree} disabled={deleteMutation.isPending} data-testid="btn-delete-folder-tree" title={`Delete the whole ${activeTeam} folder tree`}>
+                <Trash2 className="w-3 h-3 mr-1" />Delete tree
+              </Button>
             )}
             <input
               ref={fileInputRef}
