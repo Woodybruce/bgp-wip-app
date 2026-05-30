@@ -856,23 +856,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           sources are tucked into the "History & activity" group below. */}
       <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
 
-      <CollapsibleCard open={mainSections.history} onToggle={() => toggleMain("history")} icon={History} title="History & activity" testId="toggle-deal-history">
-        <div className="space-y-2">
-          <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
-            <DealTimeline dealId={id} />
-          </CollapsibleCard>
-          <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
-            <DealAuditLog dealId={id} />
-          </CollapsibleCard>
-          <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related emails (raw)" testId="toggle-deal-emails">
-            <DealRelatedEmails dealId={id} />
-          </CollapsibleCard>
-          <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related meetings (raw)" testId="toggle-deal-meetings">
-            <DealRelatedMeetings dealId={id} />
-          </CollapsibleCard>
-        </div>
-      </CollapsibleCard>
-
       {deal.updatedAt && (
         <p className="text-xs text-muted-foreground flex items-center gap-1">
           <Clock className="w-3 h-3" />
@@ -1011,53 +994,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
                   />
                 )}
-                {deal.sharepointLink ? (
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={deal.sharepointLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-                      data-testid="link-deal-sharepoint-folder"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      Open in SharePoint
-                    </a>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-[10px] text-muted-foreground"
-                      onClick={() => {
-                        setSharepointUrlInput(deal.sharepointLink || "");
-                        setSharepointDialogOpen(true);
-                      }}
-                      data-testid="button-edit-sharepoint-link"
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs h-7 w-full justify-start"
-                    onClick={() => {
-                      setSharepointUrlInput("");
-                      setSharepointDialogOpen(true);
-                    }}
-                    data-testid="button-link-sharepoint-folder"
-                  >
-                    <Link2 className="w-3 h-3 mr-1.5" />
-                    Link SharePoint Folder
-                  </Button>
-                )}
-                {deal.propertyId && (
-                  <Link href={`/properties/${deal.propertyId}`}>
-                    <span className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 cursor-pointer" data-testid="link-deal-sharepoint">
-                      <Building2 className="w-3 h-3" />
-                      Property folder
-                    </span>
-                  </Link>
+                {!linkedProperty && (
+                  <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>
                 )}
               </div>
             </SidebarSection>
@@ -1108,6 +1046,23 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   invalidateDealCaches(id);
                 }}
               />
+            </SidebarSection>
+
+            <SidebarSection open={sidebarSections.history} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
+              <div className="space-y-2">
+                <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
+                  <DealTimeline dealId={id} />
+                </CollapsibleCard>
+                <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
+                  <DealAuditLog dealId={id} />
+                </CollapsibleCard>
+                <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related emails (raw)" testId="toggle-deal-emails">
+                  <DealRelatedEmails dealId={id} />
+                </CollapsibleCard>
+                <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related meetings (raw)" testId="toggle-deal-meetings">
+                  <DealRelatedMeetings dealId={id} />
+                </CollapsibleCard>
+              </div>
             </SidebarSection>
           </ScrollArea>
         </div>
