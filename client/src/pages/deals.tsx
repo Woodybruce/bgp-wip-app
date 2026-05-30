@@ -3822,9 +3822,9 @@ function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany
     <div className="rounded-md border bg-muted/10 p-3 space-y-2" data-testid={`kyc-party-${company.id}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
-          {kycStatus === "pass" ? <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" /> :
-           kycStatus === "warning" ? <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" /> :
-           kycStatus === "fail" ? <XCircle className="w-4 h-4 text-red-500 shrink-0" /> :
+          {kycStatus === "approved" ? <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" /> :
+           kycStatus === "in_review" ? <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" /> :
+           kycStatus === "rejected" ? <XCircle className="w-4 h-4 text-red-500 shrink-0" /> :
            <div className="w-4 h-4 rounded-full border-2 border-dashed border-muted-foreground/40 shrink-0" />}
           <div className="min-w-0">
             <p className="text-sm font-medium truncate">{company.name}</p>
@@ -3832,9 +3832,9 @@ function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {kycStatus && (
-            <Badge className={`text-[9px] ${kycStatus === "pass" ? "bg-green-600" : kycStatus === "warning" ? "bg-amber-500" : "bg-red-500"} text-white`}>
-              {kycStatus === "pass" ? "Verified" : kycStatus === "warning" ? "Review" : "Failed"}
+          {kycStatus && kycStatus !== "pending" && (
+            <Badge className={`text-[9px] text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "in_review" ? "bg-amber-500" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
+              {kycStatus === "approved" ? "Approved" : kycStatus === "in_review" ? "In review" : kycStatus === "rejected" ? "Rejected" : kycStatus}
             </Badge>
           )}
           {!hasKyc && !kycStatus && <Badge variant="outline" className="text-[9px] text-muted-foreground">Not Checked</Badge>}
@@ -3995,13 +3995,18 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
 
   const parties = useMemo(() => getRequiredKycParties(deal, companies), [deal, companies]);
 
+  // Canonical KYC vocab (migration 0028 + the MLRO approve/reject endpoints):
+  // approved | in_review | rejected | pending. This is the HMRC-facing MLRO
+  // *decision*, not the raw auto-screen result.
   const totalRequired = parties.filter(p => p.required).length;
-  const totalPassed = parties.filter(p => p.required && p.company.kycStatus === "pass").length;
-  const totalWarning = parties.filter(p => p.required && p.company.kycStatus === "warning").length;
-  const totalFailed = parties.filter(p => p.required && p.company.kycStatus === "fail").length;
-  const totalUnchecked = totalRequired - totalPassed - totalWarning - totalFailed;
+  const totalApproved = parties.filter(p => p.required && p.company.kycStatus === "approved").length;
+  const totalInReview = parties.filter(p => p.required && p.company.kycStatus === "in_review").length;
+  const totalRejected = parties.filter(p => p.required && p.company.kycStatus === "rejected").length;
+  const totalUnchecked = totalRequired - totalApproved - totalInReview - totalRejected;
 
-  const allComplete = totalUnchecked === 0 && totalFailed === 0;
+  // "Complete" = every required counterparty has a documented MLRO approval —
+  // the decision that clears the deal for invoicing (and protects against HMRC fines).
+  const allComplete = totalRequired > 0 && totalApproved === totalRequired;
 
   const runKyc = async (companyId: string) => {
     setLoadingIds(prev => new Set(prev).add(companyId));
@@ -4063,11 +4068,13 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
             {deal.kycApproved ? (
               <Badge className="text-[9px] bg-green-600 text-white">KYC Approved</Badge>
             ) : allComplete ? (
-              <Badge className="text-[9px] bg-amber-500 text-white">Ready to Approve</Badge>
+              <Badge className="text-[9px] bg-amber-500 text-white">Ready to approve</Badge>
+            ) : totalRejected > 0 ? (
+              <Badge className="text-[9px] bg-red-500 text-white">{totalRejected} rejected</Badge>
+            ) : totalInReview > 0 ? (
+              <Badge className="text-[9px] bg-amber-500 text-white">{totalInReview} in review</Badge>
             ) : totalUnchecked > 0 ? (
-              <Badge variant="outline" className="text-[9px] text-muted-foreground">{totalUnchecked} unchecked</Badge>
-            ) : totalFailed > 0 ? (
-              <Badge className="text-[9px] bg-red-500 text-white">{totalFailed} failed</Badge>
+              <Badge variant="outline" className="text-[9px] text-muted-foreground">{totalUnchecked} to check</Badge>
             ) : null}
           </div>
           <div className="flex items-center gap-1">
@@ -4097,9 +4104,9 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
             return (
               <div key={company.id} className="flex items-center justify-between py-1.5 px-2 rounded border bg-muted/20" data-testid={`kyc-party-${company.id}`}>
                 <div className="flex items-center gap-2 min-w-0">
-                  {kycStatus === "pass" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" /> :
-                   kycStatus === "warning" ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" /> :
-                   kycStatus === "fail" ? <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" /> :
+                  {kycStatus === "approved" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" /> :
+                   kycStatus === "in_review" ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" /> :
+                   kycStatus === "rejected" ? <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" /> :
                    <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40 shrink-0" />}
                   <div className="min-w-0">
                     <Link href={`/companies/${company.id}`}>
@@ -4109,9 +4116,9 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {kycStatus && (
-                    <Badge className={`text-[8px] h-4 ${kycStatus === "pass" ? "bg-green-600" : kycStatus === "warning" ? "bg-amber-500" : "bg-red-500"} text-white`}>
-                      {kycStatus === "pass" ? "Verified" : kycStatus === "warning" ? "Review" : "Failed"}
+                  {kycStatus && kycStatus !== "pending" && (
+                    <Badge className={`text-[8px] h-4 text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "in_review" ? "bg-amber-500" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
+                      {kycStatus === "approved" ? "Approved" : kycStatus === "in_review" ? "In review" : kycStatus === "rejected" ? "Rejected" : kycStatus}
                     </Badge>
                   )}
                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => runKyc(company.id)} disabled={loadingIds.has(company.id)} data-testid={`button-run-kyc-${company.id}`}>
