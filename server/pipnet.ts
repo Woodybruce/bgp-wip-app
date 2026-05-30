@@ -33,13 +33,21 @@ let sessionCookie: string | null = null;
 // every fetch would rotate to a new IP and PIPnet would invalidate the
 // session. Reset between full scrapes via `resetSession()` below.
 let scraperSession: ScraperSession | null = null;
+// Transport for the WHOLE session must be consistent. PIPnet binds JSESSIONID
+// to the IP it was issued on, so login and every follow-up call (reqfetch,
+// reqdetails, brochure images) MUST egress from the same IP. Logging in over
+// one transport (e.g. direct) and then fetching over another (the proxy) hands
+// PIPnet a session from an unknown IP and it bounces every follow-up request
+// back to the login/search form — which is exactly why the per-row detail
+// fetch was silently returning the search form and no brochure was ever found.
+// `login()` decides the transport once and pins it here for the rest of the run.
+let sessionTransport: "proxy" | "direct" | null = null;
 const PIPNET_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
+function withPipHeaders(init: RequestInit = {}): RequestInit {
   // ScraperAPI requires a User-Agent whenever keep_headers=true, otherwise
   // it rejects the request with HTTP 400 "Error, malformed request". PIPnet
-  // also responds more reliably with a real-browser UA, so we always set
-  // one here even on the direct-fetch dev path.
-  const mergedInit: RequestInit = {
+  // also responds more reliably with a real-browser UA, so we always set one.
+  return {
     ...init,
     headers: {
       "User-Agent": PIPNET_UA,
@@ -48,21 +56,47 @@ function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
       ...(init.headers as Record<string, string> | undefined),
     },
   };
-  // Fall back to direct fetch if ScraperAPI isn't configured (dev mode,
-  // tests, etc). PIPnet works fine direct from a dev laptop — this proxy
-  // detour is purely for Railway egress where pip's WAF blocks the IP.
+}
+function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const mergedInit = withPipHeaders(init);
+  // Honour the transport login() pinned for this session. If login hasn't run
+  // yet, default to proxy when available (matching the historical behaviour).
+  if (sessionTransport === "direct") return fetch(url, mergedInit);
+  if (sessionTransport === "proxy") {
+    if (!scraperSession) scraperSession = new ScraperSession();
+    return scraperSession.fetch(url, mergedInit);
+  }
   if (!isScraperApiAvailable()) return fetch(url, mergedInit);
   if (!scraperSession) scraperSession = new ScraperSession();
   return scraperSession.fetch(url, mergedInit);
+}
+
+// PIPnet serves its login/search form with HTTP 200, so a bare status check
+// can't tell an authenticated page from a bounced one. These markers only
+// appear on the unauthenticated login/search form (never on a result list or
+// a requirement detail page), so their presence means the session is dead.
+function looksUnauthenticated(html: string): boolean {
+  if (!html) return true;
+  if (/checkLogin\.jsp|name=["']password["']|Invalid logon/i.test(html)) return true;
+  // The retail search form — bounced detail/result fetches land here.
+  const isSearchForm = /reqsearchretailtabbed|locationListBox|minSalesArea/i.test(html);
+  const hasResults = /class=["']results?Table["']|reqdetails\.jsp/i.test(html);
+  return isSearchForm && !hasResults;
 }
 
 async function login(): Promise<string> {
   if (sessionCookie) {
     const testRes = await pipFetch(`${PIPNET_URL}/reqSearch.jsp`, {
       headers: { Cookie: sessionCookie },
-      redirect: "manual",
     });
-    if (testRes.status === 200) return sessionCookie;
+    // A 200 isn't enough — PIPnet returns the login/search form with 200 when
+    // the session has lapsed. Read the body and confirm it's actually an
+    // authenticated page before reusing the cookie, otherwise re-login.
+    if (testRes.status === 200) {
+      const testBody = await testRes.text().catch(() => "");
+      if (!looksUnauthenticated(testBody)) return sessionCookie;
+      console.warn("[pipnet login] cached session no longer authenticated — re-logging in");
+    }
     sessionCookie = null;
   }
 
@@ -77,11 +111,13 @@ async function login(): Promise<string> {
     Submit: "Login",
   });
 
-  // ScraperAPI's standard API has been returning HTTP 400 "malformed request"
-  // for our PIPnet POST (probably because we combine premium + session_number
-  // + keep_headers in a way it doesn't like). Try direct fetch first — if
-  // PIPnet's WAF blocks Railway's egress IP we'll see a 403 or similar and
-  // fall back to the proxy. The fallback path keeps the original behaviour.
+  // CRITICAL: whichever transport logs in must also carry every follow-up
+  // request, because PIPnet pins JSESSIONID to the egress IP. We previously
+  // logged in via direct fetch but fetched data via the proxy — PIPnet saw the
+  // session arrive from a different IP and bounced every reqdetails/brochure
+  // request back to the search form, so no brochure PDF was ever downloaded.
+  // Now we pick the transport here and pin it in `sessionTransport` so the
+  // whole scrape (login → search → detail → brochure) shares one IP.
   const loginUrl = `${PIPNET_URL}/checkLogin.jsp`;
   const loginInit: RequestInit = {
     method: "POST",
@@ -95,21 +131,32 @@ async function login(): Promise<string> {
     redirect: "manual",
   };
   let res: Response;
-  let via = "direct fetch";
-  try {
-    res = await fetch(loginUrl, loginInit);
+  let via: string;
+  if (isScraperApiAvailable()) {
+    // Proxy is the production path (Railway's direct egress is WAF-blocked).
+    // Use a fresh sticky session for this login so the JSESSIONID and all
+    // subsequent calls ride the same pinned upstream IP.
+    if (!scraperSession) scraperSession = new ScraperSession();
+    sessionTransport = "proxy";
+    res = await scraperSession.fetch(loginUrl, withPipHeaders(loginInit));
+    via = "ScraperAPI proxy (sticky session)";
+    // If the proxy login is blocked/broken, fall back to direct AND pin direct
+    // so follow-up calls match.
     if (res.status === 403 || res.status === 406 || res.status === 429 || res.status >= 500) {
-      console.warn(`[pipnet login] direct fetch returned HTTP ${res.status}, falling back to ScraperAPI`);
-      if (isScraperApiAvailable()) {
-        res = await pipFetch(loginUrl, loginInit);
-        via = "ScraperAPI proxy (after direct fetch was blocked)";
+      console.warn(`[pipnet login] proxy login returned HTTP ${res.status}, falling back to direct fetch`);
+      try {
+        res = await fetch(loginUrl, loginInit);
+        sessionTransport = "direct";
+        via = "direct fetch (after proxy was blocked)";
+      } catch (err: any) {
+        console.warn(`[pipnet login] direct fallback threw (${err?.message}); keeping proxy result`);
+        sessionTransport = "proxy";
       }
     }
-  } catch (err: any) {
-    console.warn(`[pipnet login] direct fetch threw (${err?.message}), falling back to ScraperAPI`);
-    if (!isScraperApiAvailable()) throw err;
-    res = await pipFetch(loginUrl, loginInit);
-    via = "ScraperAPI proxy (after direct fetch threw)";
+  } else {
+    res = await fetch(loginUrl, loginInit);
+    sessionTransport = "direct";
+    via = "direct fetch";
   }
   console.log(`[pipnet login] used ${via}, status ${res.status}`);
 
@@ -333,8 +380,19 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
 }> {
   const url = href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
   const res = await pipFetch(url, { headers: { Cookie: cookie } });
-  if (!res.ok) return {};
+  if (!res.ok) {
+    console.error(`[pipnet detail] ${url}: HTTP ${res.status}`);
+    return {};
+  }
   const html = await res.text();
+  // If the detail request bounced to the login/search form the session was
+  // lost mid-scrape (transport/IP mismatch). Surface it loudly instead of
+  // silently returning an empty record — an empty detail is why Use class,
+  // tenure, email and the brochure link all come back blank.
+  if (looksUnauthenticated(html)) {
+    console.error(`[pipnet detail] ${url}: bounced to login/search form — session lost, no brochure link available`);
+    return {};
+  }
 
   const fields: Record<string, string> = {};
   const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -569,6 +627,13 @@ export async function importPipnetRequirements(params: {
   const autoPromote = params.autoPromote ?? true;
   const cutoff = new Date();
   cutoff.setUTCMonth(cutoff.getUTCMonth() - monthsBack);
+
+  // Start each import on a fresh sticky session. ScraperAPI only holds a
+  // pinned IP for ~10 min, so reusing a session_number from a previous run can
+  // land follow-up calls on a rotated IP — which silently breaks the per-row
+  // detail/brochure fetch. A clean login here pins login + search + all detail
+  // fetches to one IP for the whole run.
+  resetSession();
 
   const results = await searchPipnetRequirements({
     ...params,
@@ -953,6 +1018,7 @@ async function promoteToCrmRequirement(
 export function resetSession() {
   sessionCookie = null;
   scraperSession = null;
+  sessionTransport = null;
 }
 
 // One-shot inspector: run a small search, find the first per-row link inside
@@ -962,6 +1028,7 @@ export function resetSession() {
 export async function inspectPipnetDetail(): Promise<{
   candidateLinks: string[];
   detailUrl: string | null;
+  bounced?: boolean;
   fields: Record<string, string>;
   htmlPreview: string;
   htmlLength: number;
@@ -974,45 +1041,25 @@ export async function inspectPipnetDetail(): Promise<{
     imageUrls?: string[];
   } | null;
 }> {
+  // Use the real search path so we get a row's actual `_detailHref`
+  // (reqdetails.jsp?index=N&folderid=X) instead of scanning the page for a
+  // link — the old approach picked up the search-form link and never reached a
+  // requirement. Keep the same sticky session for the follow-up detail fetch.
+  resetSession();
+  const rows = await searchPipnetRequirements({ status: "Latest", allPages: false, maxPages: 1 });
   const cookie = await login();
-  const body = new URLSearchParams({
-    requirementType: "ReqRetail",
-    locationSearchEdit: "",
-    locationListBox: "",
-    status: "Latest",
-    documentDate: "",
-    extrapolated: "True",
-    clientSearchEdit: "",
-    clientListBox: "",
-    minSalesArea: "",
-    maxSalesArea: "",
-    Search: "Search",
-  });
-  const listRes = await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
-    body: body.toString(),
-  });
-  if (!listRes.ok) throw new Error(`PIPnet list fetch failed: ${listRes.status}`);
-  const listHtml = await listRes.text();
-
-  // Pull every href on the page; filter to ones that look like a per-row
-  // detail link (not pagination, not nav, not search).
-  const allHrefs = Array.from(new Set(
-    [...listHtml.matchAll(/href="([^"]+)"/gi)].map(m => m[1])
-  ));
-  const skip = /^(#|javascript:|mailto:|\/?logout|\/?login|reqresults\.jsp\?action=next|.*\.css|.*\.js)/i;
-  const detailCandidates = allHrefs.filter(h => !skip.test(h));
-  const detailHref = detailCandidates.find(h => /req|detail|show|view/i.test(h)) || detailCandidates[0] || null;
+  const detailHref = rows.map(r => r._detailHref).find(Boolean) || null;
+  const candidateLinks = rows.map(r => r._detailHref).filter(Boolean).slice(0, 20) as string[];
 
   if (!detailHref) {
-    return { candidateLinks: detailCandidates.slice(0, 20), detailUrl: null, fields: {}, htmlPreview: listHtml.slice(0, 800), htmlLength: listHtml.length };
+    return { candidateLinks, detailUrl: null, fields: {}, htmlPreview: "(no result rows with a detail link)", htmlLength: 0 };
   }
 
   const detailUrl = detailHref.startsWith("http") ? detailHref : `${PIPNET_URL}/${detailHref.replace(/^\//, "")}`;
   const detailRes = await pipFetch(detailUrl, { headers: { Cookie: cookie } });
   if (!detailRes.ok) throw new Error(`PIPnet detail fetch failed: ${detailRes.status}`);
   const detailHtml = await detailRes.text();
+  const bounced = looksUnauthenticated(detailHtml);
 
   const fields: Record<string, string> = {};
   const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -1070,8 +1117,9 @@ export async function inspectPipnetDetail(): Promise<{
   }
 
   return {
-    candidateLinks: detailCandidates.slice(0, 20),
+    candidateLinks,
     detailUrl,
+    bounced,
     fields,
     htmlPreview: detailHtml.slice(0, 1200),
     htmlLength: detailHtml.length,
