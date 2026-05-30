@@ -452,9 +452,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const linkedPurchaserName = deal.purchaserId ? companies.find(c => c.id === deal.purchaserId)?.name : null;
   const linkedBillingName = (deal as any).xeroContactName || null;
 
+  // Deal Type + Status deliberately omitted here — they're already in the
+  // header (the orange "Deal · {type}" eyebrow + the status badge), so
+  // repeating them in this card was pure duplication.
   const textFields: { label: string; value: string | null | undefined; colorMap?: Record<string, string>; href?: string }[] = [
-    { label: "Deal Type", value: deal.dealType, colorMap: DEAL_TYPE_COLORS },
-    { label: "Status", value: deal.status, colorMap: DEAL_STATUS_COLORS },
     { label: "Team", value: Array.isArray(deal.team) ? deal.team.join(", ") : deal.team, colorMap: DEAL_TEAM_COLORS },
     { label: "Asset Class", value: deal.assetClass, colorMap: DEAL_ASSET_CLASS_COLORS },
     { label: "Tenure", value: deal.tenureText },
@@ -516,8 +517,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             const counterparty = counterpartyId ? companies.find((c) => c.id === counterpartyId) : null;
             return (
               <>
-                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400 mb-0.5" data-testid="deal-eyebrow">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
+                <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-orange-600 dark:text-orange-400 mb-1" data-testid="deal-eyebrow">
+                  <span className="w-2 h-2 rounded-full bg-orange-500" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {headingIsUnit ? (
@@ -751,6 +752,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CardContent>
       </Card>
 
+      {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
       <Card>
         <CardContent className="p-3">
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-x-4 gap-y-1.5">
@@ -792,39 +794,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </div>
         </CardContent>
       </Card>
+      )}
 
-      <Card>
-        <CardContent className="p-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] text-muted-foreground">Total Fee</p>
-            {feeEditing ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">£</span>
-                <Input
-                  autoFocus
-                  type="number"
-                  min="0"
-                  className="h-7 w-32 text-xs font-mono"
-                  value={feeInput}
-                  onChange={(e) => setFeeInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleFeeSave(); if (e.key === "Escape") setFeeEditing(false); }}
-                />
-                <Button size="sm" className="h-7 px-2 text-xs" onClick={handleFeeSave}>Save</Button>
-                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setFeeEditing(false)}>Cancel</Button>
-              </div>
-            ) : (
-              <button
-                className="text-sm font-mono font-semibold hover:underline cursor-pointer"
-                onClick={() => { setFeeInput(deal.fee != null ? String(deal.fee) : ""); setFeeEditing(true); }}
-                data-testid="button-edit-fee"
-              >
-                {deal.fee != null ? formatCurrency(deal.fee) : <span className="text-muted-foreground text-xs">Set fee…</span>}
-              </button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
+      {/* Total Fee folded into the Fee Allocation card below (its header
+          shows "£X of £Y allocated"), so the standalone Total Fee card was
+          removed — one less board, no duplication. */}
       <FeeAllocationCard
         dealId={deal.id}
         dealFee={deal.fee}

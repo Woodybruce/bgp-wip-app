@@ -476,6 +476,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               ) : (
                 <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400" data-testid="property-eyebrow">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" /> Property
+                  </span>
                   <h1
                     className="text-lg font-bold cursor-pointer hover:text-muted-foreground transition-colors"
                     onClick={() => setEditingAddress(true)}
