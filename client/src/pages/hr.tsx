@@ -4472,6 +4472,16 @@ function BenefitsTab() {
 
   return (
     <div className="space-y-6 pb-6">
+      <div className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 p-4 flex items-start gap-3">
+        <Megaphone className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+        <div>
+          <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">Coming soon!!</div>
+          <p className="text-xs text-amber-800/90 dark:text-amber-300/90">
+            Benefits aren't live yet — everything below is a preview and <strong>not yet confirmed</strong>. Don't rely on it or enrol just yet; we'll let you know when it's ready.
+          </p>
+        </div>
+      </div>
+
       <div className="rounded-lg border bg-gradient-to-br from-emerald-50 to-sky-50 dark:from-emerald-950/30 dark:to-sky-950/30 p-4">
         <div className="text-sm font-semibold mb-1">Your benefits at BGP</div>
         <p className="text-xs text-muted-foreground">
