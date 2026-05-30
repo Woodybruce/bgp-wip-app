@@ -1415,7 +1415,14 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
         })),
       }));
       const allNames = Array.from(new Set([...html.matchAll(/<(?:input|select|textarea)[^>]*?name="([^"]+)"/gi)].map(x => x[1])));
-      out.formPages.push({ page, status: 200, htmlLength: html.length, forms, allNames });
+      // Tabs/nav links — these point to the sibling search pages (e.g. property
+      // / available-space search). Capture href + text, and any onclick targets.
+      const links = [...html.matchAll(/<a[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+        .map(m => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
+        .filter(l => !/^(#|javascript:void|mailto:)/i.test(l.href));
+      const onclicks = [...html.matchAll(/(?:onclick|location(?:\.href)?\s*=)\s*["']?([^"'<>]*\.(?:jsp|htm)[^"'<>]*)/gi)].map(m => m[1]);
+      const jspRefs = Array.from(new Set([...html.matchAll(/\b([a-zA-Z][\w]*\.jsp)\b/g)].map(m => m[1])));
+      out.formPages.push({ page, status: 200, htmlLength: html.length, forms, allNames, links: links.slice(0, 60), onclicks: Array.from(new Set(onclicks)).slice(0, 40), jspRefs });
     } catch (e: any) { out.formPages.push({ page, error: e?.message }); }
   }
 
