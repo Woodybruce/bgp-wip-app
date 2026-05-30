@@ -52,7 +52,8 @@ import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
 import { fetchPlanitPlanning } from "./planit-planning";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
-import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements, importPipnetProperties } from "./pipnet";
+import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements, importPipnetProperties, inspectPipnetPropertySearch } from "./pipnet";
+import { startJob, getJobStatus } from "./brand-jobs";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
@@ -2316,6 +2317,41 @@ export async function registerRoutes(
     } catch (err: any) {
       console.error("[import-pipnet-properties] failed:", err?.message);
       if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet property import failed" });
+    }
+  });
+
+  // ─── Background-job versions ────────────────────────────────────────────
+  // A full import does a detail fetch + brochure download + Claude vision per
+  // row, which blows past Railway's ~60s/300s request limits. These kick the
+  // work off, return 202 immediately, and the client polls *-status until done.
+  app.post("/api/external-requirements/import-pipnet-async", requireAuth, async (req, res) => {
+    const { location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote } = req.body || {};
+    const { alreadyRunning } = startJob("pipnet-req-import", () =>
+      importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages: allPages ?? true, monthsBack, autoPromote }));
+    res.status(202).json({ started: !alreadyRunning, alreadyRunning, statusUrl: "/api/external-requirements/import-pipnet-status" });
+  });
+  app.get("/api/external-requirements/import-pipnet-status", requireAuth, (_req, res) => {
+    res.json(getJobStatus("pipnet-req-import") || { state: "idle" });
+  });
+  app.post("/api/external-requirements/import-pipnet-properties-async", requireAuth, async (req, res) => {
+    const { location, minSize, maxSize, type, allPages } = req.body || {};
+    const { alreadyRunning } = startJob("pipnet-prop-import", () =>
+      importPipnetProperties({ location, minSize, maxSize, type, allPages: allPages ?? true }));
+    res.status(202).json({ started: !alreadyRunning, alreadyRunning, statusUrl: "/api/external-requirements/import-pipnet-properties-status" });
+  });
+  app.get("/api/external-requirements/import-pipnet-properties-status", requireAuth, (_req, res) => {
+    res.json(getJobStatus("pipnet-prop-import") || { state: "idle" });
+  });
+
+  // Diagnostic: dump PIPnet's property search form inputs + current detailsfetch
+  // result, so we can fix the property scrape's params (they differ from reqs).
+  app.get("/api/external-requirements/pipnet-inspect-property-search", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const result = await inspectPipnetPropertySearch();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[pipnet-inspect-property-search] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet property search inspect failed" });
     }
   });
 

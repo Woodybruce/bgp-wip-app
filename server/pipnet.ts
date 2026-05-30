@@ -1364,3 +1364,65 @@ export async function testPipnetLogin(): Promise<{ ok: boolean; message: string;
     return { ok: false, message: err?.message || String(err), via };
   }
 }
+
+// Diagnostic: dump PIPnet's PROPERTY search form so we can see the real input
+// names + endpoint (they differ from the requirements form, which is why the
+// property search returns 0 rows). Also fires the current detailsfetch.jsp
+// params and reports whether they yield a result table, an error, or the form.
+export async function inspectPipnetPropertySearch(): Promise<any> {
+  resetSession();
+  const cookie = await login();
+  const out: any = { formPages: [], detailsfetch: null };
+
+  // Candidate property search pages (parallel to reqsearchretailtabbed.htm).
+  const candidates = [
+    "detailsearchretailtabbed.htm",
+    "propsearchretailtabbed.htm",
+    "propertysearchretailtabbed.htm",
+    "reqsearchretailtabbed.htm", // tabbed page may host BOTH req + property forms
+  ];
+  for (const page of candidates) {
+    try {
+      const r = await pipFetch(`${PIPNET_URL}/${page}`, { headers: { Cookie: cookie } });
+      if (!r.ok) { out.formPages.push({ page, status: r.status }); continue; }
+      const html = await r.text();
+      const forms = [...html.matchAll(/<form[^>]*?action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/gi)].map(m => ({
+        action: m[1],
+        inputs: Array.from(new Set([...m[2].matchAll(/<(?:input|select|textarea)[^>]*?name="([^"]+)"/gi)].map(x => x[1]))),
+        selectOptions: [...m[2].matchAll(/<select[^>]*?name="([^"]+)"[\s\S]*?<\/select>/gi)].slice(0, 6).map(s => ({
+          name: s[0].match(/name="([^"]+)"/)?.[1],
+          options: [...s[0].matchAll(/<option[^>]*?value="([^"]*)"[^>]*>([^<]*)</gi)].slice(0, 12).map(o => `${o[1]}=${o[2].trim()}`),
+        })),
+      }));
+      const allNames = Array.from(new Set([...html.matchAll(/<(?:input|select|textarea)[^>]*?name="([^"]+)"/gi)].map(x => x[1])));
+      out.formPages.push({ page, status: 200, htmlLength: html.length, forms, allNames });
+    } catch (e: any) { out.formPages.push({ page, error: e?.message }); }
+  }
+
+  // What does the CURRENT property search params return?
+  const body = new URLSearchParams({
+    propertyType: "PropRetail", locationSearchEdit: "", locationListBox: "London",
+    status: "Available", documentDate: "", extrapolated: "True", addressSearchEdit: "",
+    minSalesArea: "", maxSalesArea: "", Search: "Search",
+  });
+  try {
+    const dr = await pipFetch(`${PIPNET_URL}/detailsfetch.jsp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+      body: body.toString(),
+    });
+    const dhtml = await dr.text();
+    const firstRow = dhtml.match(/<table class="results?Table"[\s\S]*?<tr[^>]*>([\s\S]*?)<\/tr>/i);
+    out.detailsfetch = {
+      status: dr.status,
+      htmlLength: dhtml.length,
+      hasResultTable: /class="results?Table"/i.test(dhtml),
+      isError: /unexpected error/i.test(dhtml),
+      looksLikeForm: /detailsearchretailtabbed|propertyType|addressSearchEdit/i.test(dhtml) && !/class="results?Table"/i.test(dhtml),
+      firstRowCells: firstRow ? firstRow[1].replace(/<[^>]+>/g, "|").replace(/\s+/g, " ").slice(0, 300) : null,
+      preview: dhtml.slice(0, 600),
+    };
+  } catch (e: any) { out.detailsfetch = { error: e?.message }; }
+
+  return out;
+}

@@ -208,9 +208,23 @@ export default function PropertyMap() {
 
   const { toast } = useToast();
   const importPipnet = useMutation({
+    // Background job — geocoding + brochure download per listing exceeds the
+    // request timeout, so kick it off and poll for completion.
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/external-requirements/import-pipnet-properties", { allPages: true });
-      return res.json();
+      const res = await apiRequest("POST", "/api/external-requirements/import-pipnet-properties-async", { allPages: true });
+      await res.json();
+      toast({ title: "PIPnet import started", description: "Scraping listings in the background — this can take a few minutes." });
+      const started = Date.now();
+      while (Date.now() - started < 15 * 60_000) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const sres = await fetch("/api/external-requirements/import-pipnet-properties-status", {
+          credentials: "include", headers: { ...getAuthHeaders() },
+        });
+        const s = await sres.json();
+        if (s.state === "done") return s.result || {};
+        if (s.state === "error") throw new Error(s.error || "Import failed");
+      }
+      throw new Error("Import still running — check back shortly");
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
