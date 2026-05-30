@@ -2741,7 +2741,7 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
   );
 }
 
-export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId: string; dealFee: number | null | undefined; users: { id: string; name: string }[]; colorMap?: Record<string, string> }) {
+export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorMap }: { dealId: string; dealFee: number | null | undefined; headlineRent?: number | null; users: { id: string; name: string }[]; colorMap?: Record<string, string> }) {
   const { toast } = useToast();
   const { data: allocations = [], isLoading } = useQuery<DealFeeAllocation[]>({
     queryKey: ["/api/crm/deals", dealId, "fee-allocations"],
@@ -2837,6 +2837,11 @@ export function FeeAllocationCard({ dealId, dealFee, users, colorMap }: { dealId
             {totalFee > 0 && !editing && allocations && allocations.length > 0 && (
               <Badge variant="secondary" className="text-[10px]">
                 {formatCurrency(totalAllocated)} of {formatCurrency(totalFee)} allocated
+              </Badge>
+            )}
+            {totalFee > 0 && headlineRent && headlineRent > 0 && (
+              <Badge variant="outline" className="text-[10px]" title="Total fee as a percentage of the headline rent">
+                {((totalFee / headlineRent) * 100).toFixed(1)}% of {formatCurrency(headlineRent)} rent
               </Badge>
             )}
           </div>

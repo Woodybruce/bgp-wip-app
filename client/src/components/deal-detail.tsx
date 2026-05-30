@@ -176,7 +176,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     pathway: false,
     planning: false,
-    kyc: false,
+    kyc: true,
     brands: false,
     history: false,
     timeline: false,
@@ -717,6 +717,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       <FeeAllocationCard
         dealId={deal.id}
         dealFee={deal.fee}
+        headlineRent={deal.rentPa}
         users={users.map(u => ({ id: String(u.id), name: u.name }))}
         colorMap={userColorMap}
       />
@@ -817,6 +818,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
+      {/* AI-curated activity — primary comms feed (emails + meetings), shown
+          above KYC. Raw sources live in "History & activity" in the rail. */}
+      <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
+
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
           <DealKYCPanel deal={deal} companies={companies} />
@@ -853,11 +858,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CollapsibleCard>
       )}
 
-      {/* AI-curated activity — the primary feed: combines emails + calendar
-          invites across the deal, tenant, landlord, property and contacts,
-          grouped by topic. The raw timeline / audit / email / meeting
-          sources are tucked into the "History & activity" group below. */}
-      <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
 
       {deal.updatedAt && (
         <p className="text-xs text-muted-foreground flex items-center gap-1">
