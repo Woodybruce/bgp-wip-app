@@ -2787,6 +2787,34 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
     },
   });
 
+  // Inline edit of the fee basis — headline rent + fee % (fee = rent × pct).
+  const [feeBasisEditing, setFeeBasisEditing] = useState(false);
+  const [rentInput, setRentInput] = useState("");
+  const [pctInput, setPctInput] = useState("");
+  const feeBasisMutation = useMutation({
+    mutationFn: async ({ rentPa, fee }: { rentPa: number; fee: number }) => {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { rentPa, fee });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      setFeeBasisEditing(false);
+      toast({ title: "Rent & fee updated" });
+    },
+    onError: () => toast({ title: "Failed to update rent/fee", variant: "destructive" }),
+  });
+  const openFeeBasis = () => {
+    setRentInput(headlineRent != null ? String(headlineRent) : "");
+    setPctInput(headlineRent && (dealFee || 0) ? (((dealFee || 0) / headlineRent) * 100).toFixed(2) : "");
+    setFeeBasisEditing(true);
+  };
+  const saveFeeBasis = () => {
+    const rent = Math.round(Number(rentInput) || 0);
+    const pct = Number(pctInput) || 0;
+    if (rent <= 0 || pct <= 0) { toast({ title: "Enter a rent and a fee %", variant: "destructive" }); return; }
+    feeBasisMutation.mutate({ rentPa: rent, fee: Math.round(rent * pct / 100) });
+  };
+
   const startEditing = () => {
     if (!allocations || allocations.length === 0) {
       setRows([{ agentName: "", allocationType: "percentage", percentage: 0, fixedAmount: 0, isBgpHouse: false }]);
@@ -2830,21 +2858,24 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
   return (
     <Card data-testid="card-fee-allocation">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4" />
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <Users className="w-4 h-4 shrink-0" />
             <h3 className="text-sm font-semibold">Fee Allocation</h3>
             {totalFee > 0 && !editing && allocations && allocations.length > 0 && (
               <Badge variant="secondary" className="text-[10px]">
                 {formatCurrency(totalAllocated)} of {formatCurrency(totalFee)} allocated
               </Badge>
             )}
-            {totalFee > 0 && headlineRent && headlineRent > 0 && (
-              <Badge variant="outline" className="text-[10px]" title="Total fee as a percentage of the headline rent">
-                {((totalFee / headlineRent) * 100).toFixed(1)}% of {formatCurrency(headlineRent)} rent
-              </Badge>
+            {headlineRent != null && !editing && !feeBasisEditing && (
+              <button type="button" onClick={openFeeBasis} title="Click to edit headline rent & fee %" data-testid="button-edit-fee-basis">
+                <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted">
+                  {headlineRent > 0 && totalFee > 0 ? `${((totalFee / headlineRent) * 100).toFixed(1)}% of ${formatCurrency(headlineRent)} rent` : "Set rent & fee %"}
+                </Badge>
+              </button>
             )}
           </div>
+          <div className="shrink-0">
           {!editing ? (
             <Button variant="outline" size="sm" onClick={startEditing} data-testid="button-edit-fee-allocation">
               <Pencil className="w-3.5 h-3.5 mr-1" />
@@ -2861,7 +2892,22 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
               </Button>
             </div>
           )}
+          </div>
         </div>
+
+        {feeBasisEditing && (
+          <div className="flex items-center gap-2 mb-3 flex-wrap bg-muted/30 rounded-md p-2">
+            <span className="text-[10px] text-muted-foreground">Rent £/pa</span>
+            <Input type="number" value={rentInput} onChange={(e) => setRentInput(e.target.value)} className="h-7 w-28 text-xs" data-testid="input-fee-rent" />
+            <span className="text-[10px] text-muted-foreground">Fee %</span>
+            <Input type="number" value={pctInput} onChange={(e) => setPctInput(e.target.value)} className="h-7 w-20 text-xs" data-testid="input-fee-pct" />
+            <span className="text-[10px] text-muted-foreground">= {formatCurrency(Math.round((Number(rentInput) || 0) * (Number(pctInput) || 0) / 100))}</span>
+            <Button size="sm" className="h-7 text-xs" onClick={saveFeeBasis} disabled={feeBasisMutation.isPending} data-testid="button-save-fee-basis">
+              {feeBasisMutation.isPending && <Loader2 className="w-3 h-3 animate-spin mr-1" />}Save
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setFeeBasisEditing(false)}>Cancel</Button>
+          </div>
+        )}
 
         {editing ? (
           // Shared editor — same UI as the New Deal create form so the
@@ -2895,9 +2941,9 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
                         {alloc.agentName.split(" ").map(n => n[0]).join("").slice(0, 2)}
                       </span>
                     </div>
-                    <span className="text-sm font-medium">{alloc.agentName}</span>
+                    <span className="text-xs font-medium">{alloc.agentName}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm">
+                  <div className="flex items-center gap-2 text-xs">
                     {alloc.allocationType === "percentage" && (
                       <span className="text-muted-foreground">{alloc.percentage}%</span>
                     )}
