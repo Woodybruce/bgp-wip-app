@@ -5,8 +5,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import PathwayIntelStrip from "@/components/pathway-intel-strip";
-import { PropertyPlanningCard } from "@/components/property-planning-card";
 import {
   Dialog,
   DialogContent,
@@ -50,8 +48,6 @@ import {
   History,
   Mail,
   Calendar as CalendarIcon,
-  TrendingUp,
-  Landmark,
   FileText,
   MessageSquare,
 } from "lucide-react";
@@ -181,6 +177,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     planning: false,
     kyc: false,
     brands: false,
+    history: false,
     timeline: false,
     audit: false,
     emails: false,
@@ -250,18 +247,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   }, [deal?.id]);
 
   const linkedProperty = deal?.propertyId ? properties.find((p) => p.id === deal.propertyId) : null;
-  const propertyPostcode = linkedProperty?.postcode || (linkedProperty?.address as any)?.postcode || null;
-
-  const { data: marketTone } = useQuery<any>({
-    queryKey: ["/api/market-tone", propertyPostcode],
-    queryFn: async () => {
-      const res = await fetch(`/api/market-tone?postcode=${encodeURIComponent(propertyPostcode!)}`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) return null;
-      return res.json();
-    },
-    enabled: !!propertyPostcode,
-    staleTime: 30 * 60 * 1000,
-  });
 
   const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
   const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;
@@ -494,7 +479,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 overflow-y-auto">
-          <div className="p-4 sm:p-6 space-y-3">
+          <div className="p-4 sm:p-5 space-y-2.5">
       <div className="flex items-center gap-2 flex-wrap">
         <Button
           variant="ghost"
@@ -530,6 +515,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             const counterparty = counterpartyId ? companies.find((c) => c.id === counterpartyId) : null;
             return (
               <>
+                <div className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400 mb-0.5" data-testid="deal-eyebrow">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
+                </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {headingIsUnit ? (
                     <button
@@ -894,26 +882,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
-      {/* Pathway Intel + Planning hidden on deal-detail — they're
-          property-level data and identical to the panels on the Property
-          page. Keeps the deal page focused on deal-specific info; jump
-          to the linked property (sidebar) for the property research.
-          See PRESENTATION_BACKLOG.md to restore.
-      <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-deal-pathway">
-        <PathwayIntelStrip
-          propertyId={(deal as any).propertyId || undefined}
-          address={(deal as any).propertyAddress || (deal as any).address || deal.name}
-          postcode={(deal as any).postcode}
-        />
-      </CollapsibleCard>
-
-      {(deal as any).propertyId && (
-        <CollapsibleCard open={mainSections.planning} onToggle={() => toggleMain("planning")} icon={Landmark} title="Planning" testId="toggle-deal-planning">
-          <PropertyPlanningCard propertyId={(deal as any).propertyId} className="border-0 shadow-none" />
-        </CollapsibleCard>
-      )}
-      */}
-
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
           <DealKYCPanel deal={deal} companies={companies} />
@@ -950,28 +918,27 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CollapsibleCard>
       )}
 
-      {/* AI-curated activity — single panel that combines emails + calendar
-          invites across the deal, tenant, landlord, property and contacts.
-          ChatBGP filters aggressively and groups by topic, so this replaces
-          the noise of dumping every related email/meeting in raw form.
-          Old Related Emails / Related Meetings panels are kept below for
-          parity while we compare output in production. */}
+      {/* AI-curated activity — the primary feed: combines emails + calendar
+          invites across the deal, tenant, landlord, property and contacts,
+          grouped by topic. The raw timeline / audit / email / meeting
+          sources are tucked into the "History & activity" group below. */}
       <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
 
-      <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
-        <DealTimeline dealId={id} />
-      </CollapsibleCard>
-
-      <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit Log" testId="toggle-deal-audit">
-        <DealAuditLog dealId={id} />
-      </CollapsibleCard>
-
-      <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related Emails (raw)" testId="toggle-deal-emails">
-        <DealRelatedEmails dealId={id} />
-      </CollapsibleCard>
-
-      <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related Meetings (raw)" testId="toggle-deal-meetings">
-        <DealRelatedMeetings dealId={id} />
+      <CollapsibleCard open={mainSections.history} onToggle={() => toggleMain("history")} icon={History} title="History & activity" testId="toggle-deal-history">
+        <div className="space-y-2">
+          <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
+            <DealTimeline dealId={id} />
+          </CollapsibleCard>
+          <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
+            <DealAuditLog dealId={id} />
+          </CollapsibleCard>
+          <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related emails (raw)" testId="toggle-deal-emails">
+            <DealRelatedEmails dealId={id} />
+          </CollapsibleCard>
+          <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related meetings (raw)" testId="toggle-deal-meetings">
+            <DealRelatedMeetings dealId={id} />
+          </CollapsibleCard>
+        </div>
       </CollapsibleCard>
 
       {deal.updatedAt && (
@@ -1094,23 +1061,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </div>
 
         {/* Right sidebar — linked records, files, comments */}
-        <div className="w-[500px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+        <div className="w-[340px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
               <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{linkedProperty?.name || deal.name}</h3>
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {deal.status && (
-                  <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[legacyToCode(deal.status) || ""] || "bg-zinc-500"}`}>
-                    {(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}
-                  </Badge>
-                )}
-                {deal.dealType && (
-                  <Badge variant="outline" className="text-[10px]">{deal.dealType}</Badge>
-                )}
-                {deal.fee != null && (
-                  <Badge variant="outline" className="text-[10px] font-mono">{formatCurrency(deal.fee)}</Badge>
-                )}
-              </div>
             </div>
 
             <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
@@ -1178,40 +1132,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 </Link>
               </SidebarSection>
             )}
-
-            {/* Local Market Tone hidden — property-level data, same source
-                as the Property News + market context on the Property page.
-                See PRESENTATION_BACKLOG.md to restore.
-            {marketTone && (
-              <SidebarSection open={sidebarSections.market ?? true} onToggle={() => toggleSidebar("market")} icon={TrendingUp} title="Local Market Tone" testId="toggle-sidebar-market">
-                <div className="space-y-1.5 text-xs">
-                  {[
-                    { key: "retail", label: "Retail" },
-                    { key: "offices", label: "Offices" },
-                    { key: "restaurants", label: "F&B" },
-                  ].map(({ key, label }) => {
-                    const rents = marketTone.commercial?.[key];
-                    const val = key === "offices" ? marketTone.commercial?.officesValuation : marketTone.commercial?.retailValuation;
-                    if (!rents && !val) return null;
-                    return (
-                      <div key={key} className="flex items-start justify-between gap-2 py-0.5">
-                        <span className="text-muted-foreground shrink-0">{label}</span>
-                        <div className="text-right">
-                          {rents?.avgQuotingRentPerSqft != null && (
-                            <span className="font-medium">£{rents.avgQuotingRentPerSqft.toFixed(2)}<span className="text-muted-foreground font-normal">/sq ft</span></span>
-                          )}
-                          {val?.rentEstimate?.low != null && val?.rentEstimate?.high != null && (
-                            <span className="text-muted-foreground"> (£{val.rentEstimate.low.toFixed(2)}–{val.rentEstimate.high.toFixed(2)})</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <p className="text-[10px] text-muted-foreground pt-0.5">{propertyPostcode} · PropertyData</p>
-                </div>
-              </SidebarSection>
-            )}
-            */}
 
             {linkedContacts.length > 0 && (
               <SidebarSection open={sidebarSections.contacts} onToggle={() => toggleSidebar("contacts")} icon={Users} title={`Linked Contacts (${linkedContacts.length})`} testId="toggle-sidebar-contacts">
