@@ -4376,6 +4376,19 @@ function LandlordSidebarBlock({
   sharepointFolderUrl: string | null | undefined;
 }) {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [, navigate] = useLocation();
+  // Open (or reuse — the backend dedupes one AI thread per entity) a chat
+  // scoped to this landlord, so ChatBGP actually knows who we're talking
+  // about instead of landing on an empty generic chat.
+  const openLandlordChat = async () => {
+    try {
+      const res = await apiRequest("POST", "/api/chat/threads", { isAiChat: true, linkedType: "company", linkedId: companyId, linkedName: companyName });
+      const thread = await res.json();
+      navigate(`/chatbgp?thread=${thread.id}`);
+    } catch {
+      navigate("/chatbgp");
+    }
+  };
   return (
     <>
       <SetUpFoldersDialog
@@ -4387,14 +4400,15 @@ function LandlordSidebarBlock({
         entityType="landlord"
       />
 
-      <Link
-        href="/chatbgp"
-        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity justify-center"
+      <button
+        type="button"
+        onClick={openLandlordChat}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity justify-center w-full"
         data-testid="button-open-landlord-chat"
       >
         <MessageSquare className="w-3.5 h-3.5" />
         Chat about this Landlord
-      </Link>
+      </button>
 
       <Card>
         <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">

@@ -2502,7 +2502,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
           webUrl: item.webUrl,
           lastModified: item.lastModifiedDateTime,
         }));
-        return res.json({ exists: true, folders: items, path: driveItem.name, webUrl: driveItem.webUrl, source: "url" });
+        return res.json({ exists: true, folders: items, path: driveItem.name, webUrl: driveItem.webUrl, source: "url", driveId, currentItemId: itemId });
       }
 
       const spInfo = await getSharePointDriveId(token);
@@ -2537,7 +2537,16 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         lastModified: item.lastModifiedDateTime,
       }));
 
-      res.json({ exists: true, folders: items, path: folderPath, source: "path" });
+      // Resolve the current folder's own item id so the UI can create
+      // subfolders / act on this folder by id (the children call above
+      // doesn't return the parent's id).
+      let currentItemId: string | null = null;
+      try {
+        const selfRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (selfRes.ok) currentItemId = (await selfRes.json())?.id || null;
+      } catch {}
+
+      res.json({ exists: true, folders: items, path: folderPath, source: "path", driveId: spInfo.driveId, currentItemId });
     } catch (err: any) {
       console.error("Property folders list error:", err);
       res.status(500).json({ message: "Failed to list property folders" });

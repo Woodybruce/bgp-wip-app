@@ -60,6 +60,9 @@ import {
   Plus,
   Pencil,
   Trash2,
+  MoreVertical,
+  Share2,
+  FolderPlus,
   Save,
   MapPin,
   SlidersHorizontal,
@@ -100,7 +103,7 @@ import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useRoute, Link } from "wouter";
+import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect, InlineNumber, InlineMultiSelect } from "@/components/inline-edit";
@@ -1629,7 +1632,12 @@ interface PropertyFolderItem {
   lastModified: string;
 }
 
-export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null }) {
+export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl, entityType, entityId, entityName }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string }) {
+  const [, navigate] = useLocation();
+  const [shareFor, setShareFor] = useState<{ id: string; name: string } | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareScopeNote, setShareScopeNote] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const userTeam = currentUser?.team || "Investment";
   const teamsToCheck = folderTeams && folderTeams.length > 0 ? folderTeams : [userTeam];
@@ -1648,7 +1656,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
   // and SharePoint. The team-based path synthesis is only used as a fallback.
   const folderUrl = (sharepointFolderUrl || "").trim();
 
-  const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string }>({
+  const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string; driveId?: string; currentItemId?: string | null }>({
     queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -1686,6 +1694,92 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
     },
     onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
   });
+
+  const driveId = folderData?.driveId;
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath] });
+
+  const newFolderMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await fetch("/api/microsoft/folders", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, parentId: folderData?.currentItemId, driveId }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Could not create folder"); }
+      return res.json();
+    },
+    onSuccess: () => { refresh(); toast({ title: "Folder created" }); },
+    onError: (e: any) => toast({ title: "Create folder failed", description: e.message, variant: "destructive" }),
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const res = await fetch("/api/microsoft/files/item", { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: id, name }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || e.error || "Rename failed"); }
+      return res.json();
+    },
+    onSuccess: () => { refresh(); toast({ title: "Renamed" }); },
+    onError: (e: any) => toast({ title: "Rename failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch("/api/microsoft/files/item", { method: "DELETE", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: id }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || e.error || "Delete failed"); }
+      return res.json();
+    },
+    onSuccess: () => { refresh(); toast({ title: "Deleted", description: "Moved to the SharePoint recycle bin." }); },
+    onError: (e: any) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
+  });
+
+  const openShare = async (item: { id: string; name: string }) => {
+    setShareFor(item); setShareUrl(null); setShareScopeNote(null); setInviteEmail("");
+    try {
+      const res = await fetch("/api/microsoft/files/share-link", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: item.id, type: "view", scope: "anonymous" }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not create link");
+      setShareUrl(data.webUrl || null);
+      if (data.fellBackToOrg) setShareScopeNote("Your tenant blocks anonymous links — this one only works for people inside the organisation.");
+    } catch (e: any) {
+      toast({ title: "Share failed", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const inviteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/microsoft/files/invite", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: shareFor?.id, emails: inviteEmail.split(/[,\s]+/).filter(Boolean), role: "read" }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Invite failed"); }
+      return res.json();
+    },
+    onSuccess: () => { toast({ title: "Invitation sent" }); setInviteEmail(""); },
+    onError: (e: any) => toast({ title: "Invite failed", description: e.message, variant: "destructive" }),
+  });
+
+  const startChat = async () => {
+    if (!entityType || !entityId) return;
+    try {
+      const res = await apiRequest("POST", "/api/chat/threads", { isAiChat: true, linkedType: entityType === "landlord" ? "company" : entityType, linkedId: entityId, linkedName: entityName || propertyName });
+      const thread = await res.json();
+      navigate(`/chatbgp?thread=${thread.id}`);
+    } catch (e: any) {
+      toast({ title: "Could not open chat", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const promptNewFolder = () => { const n = window.prompt("New folder name"); if (n && n.trim()) newFolderMutation.mutate(n.trim()); };
+  const promptRename = (item: { id: string; name: string }) => { const n = window.prompt("Rename to", item.name); if (n && n.trim() && n.trim() !== item.name) renameMutation.mutate({ id: item.id, name: n.trim() }); };
+  const confirmDelete = (item: { id: string; name: string }) => { if (window.confirm(`Delete "${item.name}"? It will go to the SharePoint recycle bin.`)) deleteMutation.mutate(item.id); };
+
+  const rowMenu = (item: { id: string; name: string }) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted flex-shrink-0" data-testid={`row-menu-${item.id}`}>
+          <MoreVertical className="w-3.5 h-3.5 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); promptRename(item); }}><Pencil className="w-3.5 h-3.5 mr-2" />Rename</DropdownMenuItem>
+        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openShare(item); }}><Share2 className="w-3.5 h-3.5 mr-2" />Share</DropdownMenuItem>
+        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); confirmDelete(item); }} className="text-destructive focus:text-destructive"><Trash2 className="w-3.5 h-3.5 mr-2" />Delete</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation();
@@ -1738,6 +1832,16 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
             ))}
           </div>
           <div className="flex items-center gap-1">
+            {entityType && entityId && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={startChat} data-testid="btn-folder-chat">
+                <MessageSquare className="w-3 h-3 mr-1" />Chat
+              </Button>
+            )}
+            {folderData?.currentItemId && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={promptNewFolder} disabled={newFolderMutation.isPending} data-testid="btn-new-folder">
+                {newFolderMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <FolderPlus className="w-3 h-3 mr-1" />}New folder
+              </Button>
+            )}
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={uploadMutation.isPending} data-testid="btn-upload-property-file">
               {uploadMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Upload
             </Button>
@@ -1806,6 +1910,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 {folder.childCount > 0 && (
                   <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>
                 )}
+                {driveId && rowMenu(folder)}
                 <ChevronRight className="w-3 h-3 text-muted-foreground" />
               </div>
             ))}
@@ -1822,6 +1927,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 <FileText className="w-3.5 h-3.5 text-blue-500/70 flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{file.name}</span>
                 {file.size > 0 && <span className="text-[10px] text-muted-foreground">{file.size < 1024 * 1024 ? `${Math.round(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}</span>}
+                {driveId && rowMenu(file)}
                 <ExternalLink className="w-3 h-3 text-muted-foreground invisible group-hover:visible flex-shrink-0" />
               </a>
             ))}
@@ -1831,6 +1937,35 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
           </div>
         )}
       </CardContent>
+
+      <Dialog open={!!shareFor} onOpenChange={(o) => { if (!o) setShareFor(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-sm">Share "{shareFor?.name}"</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Anyone with the link</Label>
+              {shareUrl ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <Input readOnly value={shareUrl} className="text-xs h-8" data-testid="share-link-url" />
+                  <Button size="sm" className="h-8" onClick={() => { navigator.clipboard.writeText(shareUrl); toast({ title: "Link copied" }); }} data-testid="btn-copy-share-link"><Copy className="w-3 h-3" /></Button>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Generating link…</p>
+              )}
+              {shareScopeNote && <p className="text-[10px] text-amber-600 mt-1">{shareScopeNote}</p>}
+            </div>
+            <div className="border-t pt-3">
+              <Label className="text-xs">Or invite specific people by email</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="name@example.com" className="text-xs h-8" data-testid="share-invite-email" />
+                <Button size="sm" className="h-8 text-xs" disabled={!inviteEmail.trim() || inviteMutation.isPending} onClick={() => inviteMutation.mutate()} data-testid="btn-send-invite">
+                  {inviteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Invite"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
