@@ -461,7 +461,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Tenure", value: deal.tenureText },
     { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
     { label: "Instructed", value: deal.instructedAt ? formatDate(deal.instructedAt) : null },
-    { label: "Target Date", value: deal.targetDate ? formatDate(deal.targetDate) : null },
     { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
     { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
     { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
@@ -555,6 +554,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   {!counterparty && (
                     <span className="text-xs italic">{counterpartyLabel} not set</span>
                   )}
+                  {deal.targetDate && (
+                    <span className="inline-flex items-center gap-1 text-xs" title="Target date" data-testid="deal-target-date">
+                      <CalendarIcon className="w-3.5 h-3.5" /> Target: {formatDate(deal.targetDate)}
+                    </span>
+                  )}
                   {headingIsUnit && (
                     <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`}>
                       <a className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">← Back to Letting Tracker</a>
@@ -608,6 +612,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </div>
       </div>
 
+      {textFields.some((f) => f.value) && (
       <Card>
         <CardContent className="p-3">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-1.5">
@@ -634,7 +639,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </div>
         </CardContent>
       </Card>
+      )}
 
+      {/* Parties + Fee Allocation side by side to use the horizontal space. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 items-start">
       <Card>
         <CardContent className="p-3 space-y-2">
           <p className="text-[10px] text-muted-foreground font-medium">Parties</p>
@@ -700,57 +708,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="p-3 space-y-1.5">
-          <p className="text-[10px] text-muted-foreground font-medium">BGP Contacts</p>
-          {(() => {
-            // Resolve via internalAgentIds when present (survives renames),
-            // fall back to internalAgent names for historic rows whose
-            // IDs column hasn't been backfilled.
-            const resolved = resolveDealAgents(deal as any, users as any);
-            const resolvedNames = new Set(resolved.map(r => r.name));
-            return (
-              <div className="flex items-center gap-1 flex-wrap">
-                {resolved.map(({ userId, name, color }) => (
-                  <span key={userId} className="inline-flex items-center gap-0.5">
-                    <Badge className={`text-[10px] px-1.5 py-0 text-white ${color}`} data-testid={`badge-deal-agent-${name}`}>
-                      {name}
-                    </Badge>
-                    <button
-                      onClick={() => updateAgentsMutation.mutate(
-                        (deal.internalAgent || []).filter((a: string) => a !== name)
-                      )}
-                      className="text-muted-foreground hover:text-red-500 transition-colors"
-                      data-testid={`button-remove-agent-${name}`}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full" data-testid="button-add-deal-agent">
-                      <Plus className="w-3.5 h-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-                    {users.filter(u => !resolvedNames.has(u.name)).map(u => (
-                      <DropdownMenuItem
-                        key={u.id}
-                        onClick={() => updateAgentsMutation.mutate([...(deal.internalAgent || []), u.name])}
-                        data-testid={`option-add-agent-${u.name}`}
-                      >
-                        <div className={`w-2 h-2 rounded-full ${userColorMap[u.name] || "bg-zinc-500"} mr-2`} />
-                        {u.name}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            );
-          })()}
-        </CardContent>
-      </Card>
+      {/* Fee Allocation sits next to Parties. The allocated agents ARE the
+          BGP contacts, so the separate BGP Contacts card was removed —
+          edit the agents via the Fee Allocation "Edit" button. */}
+      <FeeAllocationCard
+        dealId={deal.id}
+        dealFee={deal.fee}
+        users={users.map(u => ({ id: String(u.id), name: u.name }))}
+        colorMap={userColorMap}
+      />
+      </div>
 
       {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
       <Card>
@@ -795,16 +762,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CardContent>
       </Card>
       )}
-
-      {/* Total Fee folded into the Fee Allocation card below (its header
-          shows "£X of £Y allocated"), so the standalone Total Fee card was
-          removed — one less board, no duplication. */}
-      <FeeAllocationCard
-        dealId={deal.id}
-        dealFee={deal.fee}
-        users={users.map(u => ({ id: String(u.id), name: u.name }))}
-        colorMap={userColorMap}
-      />
 
       <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />
 
