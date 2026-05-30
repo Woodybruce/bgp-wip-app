@@ -979,7 +979,12 @@ export async function importPipnetRequirements(params: {
     }
     imported++;
 
-    if (autoPromote && (existing.length === 0 || existing[0].status !== "converted")) {
+    // Always run promote — for new rows it creates the CRM requirement, for
+    // already-converted rows it RE-ENRICHES (fills empty columns from the
+    // vision parse and refreshes the landlord pack). Without this, rows
+    // converted by an earlier sync never pick up newly-extracted Use / Type /
+    // locations or the freshly-downloaded clean brochure.
+    if (autoPromote) {
       const created = await promoteToCrmRequirement(externalId, record);
       if (created) promoted++;
     }
@@ -1154,7 +1159,11 @@ async function promoteToCrmRequirement(
       if ((!existingReq.requirementLocations || existingReq.requirementLocations.length === 0) && item.locations && item.locations.length > 0) {
         updates.requirementLocations = item.locations;
       }
-      if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
+      // Refresh the landlord pack: a freshly-downloaded clean brochure this run
+      // (brochurePack) replaces any stale/mangled pack from an earlier sync;
+      // otherwise just fill it if empty.
+      if (brochurePack && landlordPackJson) updates.landlordPack = landlordPackJson;
+      else if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
       if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
       if ((!existingReq.comments || !existingReq.comments.trim()) && aiSummary) updates.comments = aiSummary;
       // Append "PIPnet" to the sources array if not already there.
