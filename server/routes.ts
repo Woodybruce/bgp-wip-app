@@ -586,6 +586,26 @@ export async function registerRoutes(
       }
     }
 
+    // Correct the postcode via OS Places before any lookup. Goad's postcode
+    // is sometimes wrong (e.g. "W1K 2AP" where the building is really
+    // "W1K 2TJ"), and HMLR-direct keys ownership on postcode + street number,
+    // so a wrong postcode misses the titles entirely and we fall to noise.
+    // Resolve the canonical OS DPA for this unit and adopt ITS postcode + UPRN
+    // — the OS Places product is live (confirmed via /api/property-data/health).
+    let osUprn: string | null = null;
+    if (street) {
+      try {
+        const { osPlacesFind } = await import("./os-data");
+        const q = [streetNum, street, postcode].filter(Boolean).join(" ");
+        const dpa = await osPlacesFind(q, 5);
+        const head = streetNum.replace(/\s+/g, "").split(/[-–—,]/)[0];
+        const pick = (head ? dpa.find((d: any) => (d.address || "").toLowerCase().replace(/\s+/g, " ").includes(`${head} `)) : null) || dpa[0];
+        if (pick?.postcode) postcode = String(pick.postcode).toUpperCase();
+        if (pick?.uprn) osUprn = String(pick.uprn);
+        if (pick) console.log(`[polygon-context] OS Places corrected postcode → ${postcode}${osUprn ? ` (UPRN ${osUprn})` : ""}`);
+      } catch { /* OS not configured / no match — keep Goad's postcode */ }
+    }
+
     const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
     // Reconstruct the address line for the Land Registry resolver.
     const lrAddress = [streetNum, street, postcode].filter(Boolean).join(" ");
@@ -642,7 +662,7 @@ export async function registerRoutes(
               postcode: postcode || undefined,
               lat,
               lng,
-              uprn: null,
+              uprn: osUprn,
               source: "goad-polygon",
               userId,
               skipPersist: true,
