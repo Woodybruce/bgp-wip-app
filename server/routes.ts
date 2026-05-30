@@ -593,18 +593,33 @@ export async function registerRoutes(
     // Resolve the canonical OS DPA for this unit and adopt ITS postcode + UPRN
     // — the OS Places product is live (confirmed via /api/property-data/health).
     let osUprn: string | null = null;
-    if (street) {
-      try {
-        const { osPlacesFind } = await import("./os-data");
-        const q = [streetNum, street, postcode].filter(Boolean).join(" ");
-        const dpa = await osPlacesFind(q, 5);
-        const head = streetNum.replace(/\s+/g, "").split(/[-–—,]/)[0];
-        const pick = (head ? dpa.find((d: any) => (d.address || "").toLowerCase().replace(/\s+/g, " ").includes(`${head} `)) : null) || dpa[0];
-        if (pick?.postcode) postcode = String(pick.postcode).toUpperCase();
-        if (pick?.uprn) osUprn = String(pick.uprn);
-        if (pick) console.log(`[polygon-context] OS Places corrected postcode → ${postcode}${osUprn ? ` (UPRN ${osUprn})` : ""}`);
-      } catch { /* OS not configured / no match — keep Goad's postcode */ }
-    }
+    let osResolved: any = null;
+    const numHead = String(streetNum).replace(/\s+/g, "").split(/[-–—,]/)[0];
+    try {
+      const { osPlacesNearest, osPlacesFind } = await import("./os-data");
+      let candidates: any[] = [];
+      // Prefer the Goad CENTROID via OS Places nearest — this doesn't rely on
+      // Goad's postcode (which can be wrong, e.g. 2AP vs the real 2TJ).
+      if (typeof lat === "number" && typeof lng === "number") {
+        for (const radius of [25, 50, 90]) {
+          candidates = await osPlacesNearest(lat, lng, radius);
+          if (candidates.length) break;
+        }
+      }
+      // Fall back to a number + street search WITHOUT Goad's (possibly wrong)
+      // postcode, if coords gave us nothing.
+      if (!candidates.length && street) {
+        candidates = await osPlacesFind([numHead, street, "London"].filter(Boolean).join(" "), 5);
+      }
+      // Prefer a candidate whose address carries the Goad street number.
+      const pick = (numHead
+        ? candidates.find((d: any) => new RegExp(`(^|[^0-9])${numHead}([^0-9]|$)`).test((d.address || "").toLowerCase()))
+        : null) || candidates[0];
+      if (pick?.postcode) postcode = String(pick.postcode).toUpperCase();
+      if (pick?.uprn) osUprn = String(pick.uprn);
+      osResolved = pick ? { uprn: pick.uprn || null, postcode: pick.postcode || null, address: pick.address || null } : null;
+      if (pick) console.log(`[polygon-context] OS resolved → ${postcode}${osUprn ? ` UPRN ${osUprn}` : ""} (${pick.address || ""})`);
+    } catch (e: any) { console.warn("[polygon-context] OS resolve failed:", e?.message); }
 
     const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
     // Reconstruct the address line for the Land Registry resolver.
@@ -824,6 +839,8 @@ export async function registerRoutes(
           landRegistryError: (lrResult as any)?.ok === false ? (lrResult as any).error : null,
           postcodeUsed: postcode || null,
           postcodeRecoveredFromGeocode,
+          osResolved,
+          osUprnUsed: osUprn,
         },
       });
     } catch (e: any) {

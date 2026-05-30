@@ -4377,14 +4377,23 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
             // angle is only used when rotating actually buys us a much bigger,
             // readable font — typically the case for very long fascias on
             // very narrow strips ('CHARLES TYRWHITT, BAR DES PRES' etc.).
+            // Never run a fascia near-vertical — that's the "names in the
+            // wrong direction" bug (deep narrow units whose PCA long-axis is
+            // the depth, perpendicular to the street). Goad keeps names along
+            // the frontage, so for steep angles prefer a horizontal label —
+            // smaller / truncated if need be — over rotating it upright.
+            const steep = Math.abs(deg) > 45;
             let fontPx: number;
-            if (horizontalFont >= 7 && (horizontalFont + 2 >= rotatedFont || Math.abs(deg) < 12)) {
+            if (horizontalFont >= 7 && (steep || horizontalFont + 2 >= rotatedFont || Math.abs(deg) < 12)) {
               deg = 0;
               fontPx = horizontalFont;
-            } else if (rotatedFont >= 7) {
+            } else if (!steep && rotatedFont >= 7) {
               fontPx = rotatedFont;
+            } else if (steep && horizontalFont >= 6) {
+              deg = 0;
+              fontPx = horizontalFont;
             } else {
-              fontPx = 0; // hide
+              fontPx = 0; // too small to read — hide
             }
 
             const textBudget = deg === 0 ? widthPx : longPx;
