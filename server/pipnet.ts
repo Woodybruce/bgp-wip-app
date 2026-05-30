@@ -34,15 +34,6 @@ let sessionCookie: string | null = null;
 // every fetch would rotate to a new IP and PIPnet would invalidate the
 // session. Reset between full scrapes via `resetSession()` below.
 let scraperSession: ScraperSession | null = null;
-// Transport for the WHOLE session must be consistent. PIPnet binds JSESSIONID
-// to the IP it was issued on, so login and every follow-up call (reqfetch,
-// reqdetails, brochure images) MUST egress from the same IP. Logging in over
-// one transport (e.g. direct) and then fetching over another (the proxy) hands
-// PIPnet a session from an unknown IP and it bounces every follow-up request
-// back to the login/search form — which is exactly why the per-row detail
-// fetch was silently returning the search form and no brochure was ever found.
-// `login()` decides the transport once and pins it here for the rest of the run.
-let sessionTransport: "proxy" | "direct" | null = null;
 const PIPNET_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 function withPipHeaders(init: RequestInit = {}): RequestInit {
   // ScraperAPI requires a User-Agent whenever keep_headers=true, otherwise
@@ -60,13 +51,11 @@ function withPipHeaders(init: RequestInit = {}): RequestInit {
 }
 function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const mergedInit = withPipHeaders(init);
-  // Honour the transport login() pinned for this session. If login hasn't run
-  // yet, default to proxy when available (matching the historical behaviour).
-  if (sessionTransport === "direct") return fetch(url, mergedInit);
-  if (sessionTransport === "proxy") {
-    if (!scraperSession) scraperSession = new ScraperSession();
-    return scraperSession.fetch(url, mergedInit);
-  }
+  // Fall back to direct fetch if ScraperAPI isn't configured (dev mode, tests).
+  // Otherwise route through the sticky proxy session. NOTE: login() logs in via
+  // a DIRECT fetch first (PIPnet's WAF lets the login POST through, and the
+  // JSESSIONID it returns works fine even when the follow-up reqfetch/detail
+  // calls come via the proxy — PIPnet does not pin the session to the IP).
   if (!isScraperApiAvailable()) return fetch(url, mergedInit);
   if (!scraperSession) scraperSession = new ScraperSession();
   return scraperSession.fetch(url, mergedInit);
@@ -89,15 +78,9 @@ async function login(): Promise<string> {
   if (sessionCookie) {
     const testRes = await pipFetch(`${PIPNET_URL}/reqSearch.jsp`, {
       headers: { Cookie: sessionCookie },
+      redirect: "manual",
     });
-    // A 200 isn't enough — PIPnet returns the login/search form with 200 when
-    // the session has lapsed. Read the body and confirm it's actually an
-    // authenticated page before reusing the cookie, otherwise re-login.
-    if (testRes.status === 200) {
-      const testBody = await testRes.text().catch(() => "");
-      if (!looksUnauthenticated(testBody)) return sessionCookie;
-      console.warn("[pipnet login] cached session no longer authenticated — re-logging in");
-    }
+    if (testRes.status === 200) return sessionCookie;
     sessionCookie = null;
   }
 
@@ -112,13 +95,12 @@ async function login(): Promise<string> {
     Submit: "Login",
   });
 
-  // CRITICAL: whichever transport logs in must also carry every follow-up
-  // request, because PIPnet pins JSESSIONID to the egress IP. We previously
-  // logged in via direct fetch but fetched data via the proxy — PIPnet saw the
-  // session arrive from a different IP and bounced every reqdetails/brochure
-  // request back to the search form, so no brochure PDF was ever downloaded.
-  // Now we pick the transport here and pin it in `sessionTransport` so the
-  // whole scrape (login → search → detail → brochure) shares one IP.
+  // Log in via DIRECT fetch first — PIPnet's WAF lets the login POST through
+  // from Railway, and the JSESSIONID it returns works fine even though the
+  // follow-up reqfetch/reqdetails calls come via the ScraperAPI proxy (PIPnet
+  // does not pin the session to the egress IP). Only fall back to the proxy if
+  // the direct login is actually blocked. (Routing the login POST through
+  // ScraperAPI produces a broken session and the search comes back empty.)
   const loginUrl = `${PIPNET_URL}/checkLogin.jsp`;
   const loginInit: RequestInit = {
     method: "POST",
@@ -132,32 +114,21 @@ async function login(): Promise<string> {
     redirect: "manual",
   };
   let res: Response;
-  let via: string;
-  if (isScraperApiAvailable()) {
-    // Proxy is the production path (Railway's direct egress is WAF-blocked).
-    // Use a fresh sticky session for this login so the JSESSIONID and all
-    // subsequent calls ride the same pinned upstream IP.
-    if (!scraperSession) scraperSession = new ScraperSession();
-    sessionTransport = "proxy";
-    res = await scraperSession.fetch(loginUrl, withPipHeaders(loginInit));
-    via = "ScraperAPI proxy (sticky session)";
-    // If the proxy login is blocked/broken, fall back to direct AND pin direct
-    // so follow-up calls match.
+  let via = "direct fetch";
+  try {
+    res = await fetch(loginUrl, loginInit);
     if (res.status === 403 || res.status === 406 || res.status === 429 || res.status >= 500) {
-      console.warn(`[pipnet login] proxy login returned HTTP ${res.status}, falling back to direct fetch`);
-      try {
-        res = await fetch(loginUrl, loginInit);
-        sessionTransport = "direct";
-        via = "direct fetch (after proxy was blocked)";
-      } catch (err: any) {
-        console.warn(`[pipnet login] direct fallback threw (${err?.message}); keeping proxy result`);
-        sessionTransport = "proxy";
+      console.warn(`[pipnet login] direct fetch returned HTTP ${res.status}, falling back to ScraperAPI`);
+      if (isScraperApiAvailable()) {
+        res = await pipFetch(loginUrl, loginInit);
+        via = "ScraperAPI proxy (after direct fetch was blocked)";
       }
     }
-  } else {
-    res = await fetch(loginUrl, loginInit);
-    sessionTransport = "direct";
-    via = "direct fetch";
+  } catch (err: any) {
+    console.warn(`[pipnet login] direct fetch threw (${err?.message}), falling back to ScraperAPI`);
+    if (!isScraperApiAvailable()) throw err;
+    res = await pipFetch(loginUrl, loginInit);
+    via = "ScraperAPI proxy (after direct fetch threw)";
   }
   console.log(`[pipnet login] used ${via}, status ${res.status}`);
 
@@ -377,7 +348,6 @@ export async function importPipnetProperties(params: {
   type?: string;
   allPages?: boolean;
 }): Promise<{ imported: number; geocoded: number; withBrochure: number; total: number }> {
-  resetSession();
   const results = await searchPipnetProperties({
     location: params.location,
     minSize: params.minSize,
@@ -766,13 +736,6 @@ export async function importPipnetRequirements(params: {
   const cutoff = new Date();
   cutoff.setUTCMonth(cutoff.getUTCMonth() - monthsBack);
 
-  // Start each import on a fresh sticky session. ScraperAPI only holds a
-  // pinned IP for ~10 min, so reusing a session_number from a previous run can
-  // land follow-up calls on a rotated IP — which silently breaks the per-row
-  // detail/brochure fetch. A clean login here pins login + search + all detail
-  // fetches to one IP for the whole run.
-  resetSession();
-
   const results = await searchPipnetRequirements({
     ...params,
     allPages: params.allPages ?? true,
@@ -1156,7 +1119,6 @@ async function promoteToCrmRequirement(
 export function resetSession() {
   sessionCookie = null;
   scraperSession = null;
-  sessionTransport = null;
 }
 
 // One-shot inspector: run a small search, find the first per-row link inside
