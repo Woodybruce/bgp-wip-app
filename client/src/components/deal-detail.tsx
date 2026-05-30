@@ -113,8 +113,8 @@ function CollapsibleCard({
         data-testid={testId}
       >
         <div className="flex items-center gap-2">
-          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-semibold">{title}</span>
+          <Icon className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">{title}</span>
         </div>
         {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
       </button>
@@ -644,8 +644,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       {/* Parties + Fee Allocation side by side to use the horizontal space. */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 items-start">
       <Card>
-        <CardContent className="p-3 space-y-2">
-          <p className="text-[10px] text-muted-foreground font-medium">Parties</p>
+        <CardContent className="p-4 space-y-2">
+          <div className="flex items-center gap-2 mb-1">
+            <Users className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold">Parties</h3>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
