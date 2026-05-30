@@ -1051,19 +1051,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               />
             </SidebarSection>
 
-            <SidebarSection open={sidebarSections.history} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
+            <SidebarSection open={sidebarSections.history ?? true} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
               <div className="space-y-2">
                 <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
                   <DealTimeline dealId={id} />
                 </CollapsibleCard>
                 <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
                   <DealAuditLog dealId={id} />
-                </CollapsibleCard>
-                <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related emails (raw)" testId="toggle-deal-emails">
-                  <DealRelatedEmails dealId={id} />
-                </CollapsibleCard>
-                <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related meetings (raw)" testId="toggle-deal-meetings">
-                  <DealRelatedMeetings dealId={id} />
                 </CollapsibleCard>
               </div>
             </SidebarSection>

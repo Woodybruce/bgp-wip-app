@@ -1841,7 +1841,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
               </Badge>
             ))}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap justify-end shrink min-w-0">
             {entityType && entityId && (
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={startChat} data-testid="btn-folder-chat">
                 <MessageSquare className="w-3 h-3 mr-1" />Chat
