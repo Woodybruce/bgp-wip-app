@@ -1,11 +1,12 @@
 import { db } from "./db";
-import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts, crmProperties } from "@shared/schema";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
 import { saveFile } from "./file-storage";
 import { randomBytes } from "crypto";
 import { parseRequirementBrochure, mergeVisionIntoRecord } from "./requirement-vision-parser";
+import { geocodeOne } from "./geocode";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -354,6 +355,143 @@ export async function searchPipnetProperties(params: {
   if (!res.ok) throw new Error(`PIPnet prop search failed: ${res.status}`);
   const html = await res.text();
   return parseHtmlTable(html);
+}
+
+// Import PIPnet's AVAILABLE (retail) properties — the mirror of
+// importPipnetRequirements but for space on the market rather than occupier
+// requirements. Each listing is upserted into crm_properties (which is what
+// the Property Map plots), geocoded for lat/lng, and its "View All Images"
+// brochure is downloaded and stored under landlord-packs (same mechanism the
+// requirements side uses). Listings are tagged status "Market Listing" /
+// group "PIPnet" so they're distinguishable from BGP's own instructed stock.
+//
+// NOTE: PIPnet's property result columns aren't visible from this sandbox
+// (the search returns rows only once the session/transport fix is deployed),
+// so the row→field mapping below is defensive — it tries every plausible
+// header — and should be tuned against real headers after the first live run
+// (the [pipnet props] column log prints them).
+export async function importPipnetProperties(params: {
+  location?: string;
+  minSize?: string;
+  maxSize?: string;
+  type?: string;
+  allPages?: boolean;
+}): Promise<{ imported: number; geocoded: number; withBrochure: number; total: number }> {
+  resetSession();
+  const results = await searchPipnetProperties({
+    location: params.location,
+    minSize: params.minSize,
+    maxSize: params.maxSize,
+    type: params.type,
+  });
+  const cookie = await login();
+  let imported = 0;
+  let geocoded = 0;
+  let withBrochure = 0;
+  let loggedHeaders = false;
+
+  for (const row of results) {
+    if (!loggedHeaders) {
+      console.log(`[pipnet props] PIPnet property columns: ${JSON.stringify(Object.keys(row))}`);
+      loggedHeaders = true;
+    }
+
+    // Per-row detail page — full address, brochure ("View All Images") URL,
+    // tenure etc. Reuses the requirements detail parser (PIPnet detail pages
+    // share the same label/value layout).
+    let detail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
+    if (row._detailHref) {
+      try {
+        detail = await fetchPipnetDetail(row._detailHref, cookie);
+        await new Promise(r => setTimeout(r, 150));
+      } catch (e: any) {
+        console.error(`[pipnet props] detail ${row._detailHref}: ${e?.message}`);
+      }
+    }
+
+    // Address — prefer the structured detail-page fields, fall back to the
+    // list row's various address/location columns.
+    const detailAddress = [detail.address1, detail.address2, detail.town, detail.county, detail.postCode]
+      .filter(Boolean).join(", ");
+    const listAddress = (row["Address"] || row["Property"] || row["Property Address"] || row["Location"] || row["Town"] || "").trim();
+    const fullAddress = detailAddress || listAddress;
+    if (!fullAddress) continue; // can't place a property without an address
+
+    const postcode = detail.postCode || (fullAddress.match(/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/i)?.[0] ?? null);
+    const sizeRange = (row["Size"] || row["Sales Area"] || row["Sq Ft"] || row["Square Footage"] || row["Floor Area"] || row["Area"] || "").trim();
+    const sqftNum = (() => {
+      const m = sizeRange.replace(/,/g, "").match(/\d{2,}/);
+      return m ? parseFloat(m[0]) : null;
+    })();
+    const agent = (row["Agent"] || row["Agency"] || row["Acting Agent"] || detail.contactName || "").trim();
+
+    // Stable id from the PIPnet folder id (in the detail href) or the address.
+    const folderId = row._detailHref?.match(/folderid=(\d+)/i)?.[1] || detail.requirementId || null;
+    const sourceId = folderId ? `pipnet-prop-${folderId}` : `pipnet-prop-${fullAddress}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
+
+    // Brochure → landlord pack (same storage path as requirements).
+    let brochurePack: { url: string; name: string; pages: number } | null = null;
+    if (detail.landlordPackUrl) {
+      try {
+        const pack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, folderId || sourceId);
+        if (pack) { brochurePack = { url: pack.url, name: pack.name, pages: pack.pages }; withBrochure++; }
+      } catch (e: any) {
+        console.error(`[pipnet props] brochure ${fullAddress}: ${e?.message}`);
+      }
+    }
+
+    // Geocode for the map. geocodeOne is cached, so re-syncs are cheap.
+    const geo = await geocodeOne(fullAddress);
+    if (geo.lat != null && geo.lng != null) geocoded++;
+
+    const addressJson = {
+      address: geo.formattedAddress || fullAddress,
+      lat: geo.lat != null ? String(geo.lat) : null,
+      lng: geo.lng != null ? String(geo.lng) : null,
+      postcode,
+      source: "PIPnet",
+    };
+    const notesParts = [
+      agent ? `Agent: ${agent}` : null,
+      sizeRange ? `Size: ${sizeRange}` : null,
+      detail.tenure ? `Tenure: ${detail.tenure}` : null,
+      brochurePack ? `Landlord pack: ${brochurePack.url}` : (detail.landlordPackUrl ? `Brochure: ${detail.landlordPackUrl}` : null),
+      detail.comments || null,
+      `Source: PIPnet (${sourceId})`,
+    ].filter(Boolean).join("\n");
+
+    // Upsert by the PIPnet source id stashed in notes (avoids duplicate pins
+    // on re-sync). Match on the sourceId marker we always write into notes.
+    const existing = await db
+      .select({ id: crmProperties.id })
+      .from(crmProperties)
+      .where(sql`${crmProperties.notes} LIKE ${"%" + sourceId + "%"}`)
+      .limit(1);
+
+    const values = {
+      name: geo.formattedAddress || fullAddress,
+      groupName: "PIPnet",
+      status: "Market Listing",
+      address: addressJson as any,
+      postcode,
+      latitude: geo.lat != null ? String(geo.lat) : null,
+      longitude: geo.lng != null ? String(geo.lng) : null,
+      tenure: detail.tenure || null,
+      sqft: sqftNum,
+      agent: agent || null,
+      notes: notesParts,
+      updatedAt: new Date(),
+    };
+
+    if (existing.length > 0) {
+      await db.update(crmProperties).set(values).where(eq(crmProperties.id, existing[0].id));
+    } else {
+      await db.insert(crmProperties).values(values);
+    }
+    imported++;
+  }
+
+  return { imported, geocoded, withBrochure, total: results.length };
 }
 
 // Pulls every additional field that lives on a requirement's detail page —

@@ -52,7 +52,7 @@ import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
 import { fetchPlanitPlanning } from "./planit-planning";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
-import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
+import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements, importPipnetProperties } from "./pipnet";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
@@ -2301,6 +2301,21 @@ export async function registerRoutes(
     } catch (err: any) {
       console.error("[import-pipnet] failed:", err?.message);
       if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet import failed" });
+    }
+  });
+
+  // Import PIPnet AVAILABLE retail properties — the mirror of import-pipnet but
+  // for space on the market. Each listing is geocoded and upserted into
+  // crm_properties (status "Market Listing", group "PIPnet") so it appears on
+  // the Property Map; its brochure is stored under landlord-packs.
+  app.post("/api/external-requirements/import-pipnet-properties", requireAuth, async (req, res) => {
+    try {
+      const { location, minSize, maxSize, type, allPages } = req.body;
+      const result = await importPipnetProperties({ location, minSize, maxSize, type, allPages });
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[import-pipnet-properties] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet property import failed" });
     }
   });
 

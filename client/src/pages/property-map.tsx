@@ -39,6 +39,7 @@ const STATUS_COLORS: Record<string, string> = {
   "Leasing Instruction": "bg-blue-500",
   "Lease Advisory Instruction": "bg-violet-500",
   "Sales Instruction": "bg-emerald-600",
+  "Market Listing": "bg-cyan-500",
   "Archive": "bg-zinc-400",
 };
 
@@ -48,6 +49,7 @@ const MARKER_COLORS: Record<string, string> = {
   "Leasing Instruction": "#3b82f6",
   "Lease Advisory Instruction": "#8b5cf6",
   "Sales Instruction": "#059669",
+  "Market Listing": "#06b6d4",
   "Archive": "#a1a1aa",
 };
 
