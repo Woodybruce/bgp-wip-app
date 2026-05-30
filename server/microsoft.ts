@@ -573,6 +573,98 @@ export function setupMicrosoftRoutes(app: Express) {
     }
   });
 
+  // ── File/folder sharing ───────────────────────────────────────────────
+  // Create a shareable link to a drive item. Defaults to an anonymous
+  // "anyone with the link" view link (share-with-anyone). If the tenant's
+  // external-sharing policy blocks anonymous links, Graph returns 403 — we
+  // fall back to an organization-scoped link and flag it, so callers can
+  // tell the user "anyone" wasn't permitted rather than just failing.
+  app.post("/api/microsoft/files/share-link", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, type, scope, expirationDateTime, password } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const linkType = type === "edit" ? "edit" : "view";
+
+      const createLink = async (linkScope: "anonymous" | "organization") => {
+        const body: Record<string, any> = { type: linkType, scope: linkScope };
+        if (linkScope === "anonymous" && expirationDateTime) body.expirationDateTime = expirationDateTime;
+        if (linkScope === "anonymous" && password) body.password = password;
+        const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/createLink`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return r;
+      };
+
+      const requestedScope: "anonymous" | "organization" = scope === "organization" ? "organization" : "anonymous";
+      let r = await createLink(requestedScope);
+      let fellBackToOrg = false;
+
+      // Anonymous blocked by tenant policy → retry org-scoped.
+      if (!r.ok && requestedScope === "anonymous" && (r.status === 403 || r.status === 400)) {
+        r = await createLink("organization");
+        fellBackToOrg = r.ok;
+      }
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph createLink failed (${r.status})`, detail });
+      }
+      const data = await r.json();
+      res.json({
+        webUrl: data?.link?.webUrl || null,
+        scope: data?.link?.scope || (fellBackToOrg ? "organization" : requestedScope),
+        type: data?.link?.type || linkType,
+        fellBackToOrg,
+      });
+    } catch (err: any) {
+      console.error("Share link error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Invite named people (internal or external) to a drive item by email.
+  // Used when anonymous links are disallowed, or for granting edit access
+  // to a specific external person rather than anyone-with-the-link.
+  app.post("/api/microsoft/files/invite", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, emails, role, message, requireSignIn } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const recipients = (Array.isArray(emails) ? emails : [emails])
+        .filter((e: any) => typeof e === "string" && e.includes("@"))
+        .map((email: string) => ({ email }));
+      if (!recipients.length) return res.status(400).json({ message: "At least one valid email is required" });
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/invite`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipients,
+          roles: [role === "write" ? "write" : "read"],
+          requireSignIn: requireSignIn !== false,
+          sendInvitation: true,
+          message: message || "Sharing a document with you from Bruce Gillingham Pollard.",
+        }),
+      });
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph invite failed (${r.status})`, detail });
+      }
+      const data = await r.json();
+      res.json({ invited: recipients.map(x => x.email), value: data?.value || [] });
+    } catch (err: any) {
+      console.error("Share invite error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/microsoft/sharepoint/debug", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -1843,6 +1935,63 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     } catch (err: any) {
       console.error("Create folder error:", err);
       res.status(500).json({ message: err.message || "Failed to create folder" });
+    }
+  });
+
+  // Rename and/or move a file or folder. Graph does both in one PATCH:
+  // a `name` renames, a `parentReference.id` moves. Pass either or both.
+  app.patch("/api/microsoft/files/item", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, name, parentId } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      if (!name && !parentId) return res.status(400).json({ message: "Provide a new name and/or a parentId to move to" });
+      const body: Record<string, any> = {};
+      if (name) body.name = name;
+      if (parentId) body.parentReference = { id: parentId };
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        if (r.status === 409) return res.status(409).json({ message: `An item named "${name}" already exists here` });
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph update failed (${r.status})`, detail });
+      }
+      res.json(await r.json());
+    } catch (err: any) {
+      console.error("Rename/move error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete a file or folder. Graph sends it to the SharePoint recycle bin
+  // (recoverable), so this is a soft delete from the user's perspective.
+  app.delete("/api/microsoft/files/item", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const driveId = (req.body?.driveId || req.query.driveId) as string;
+      const itemId = (req.body?.itemId || req.query.itemId) as string;
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok && r.status !== 204) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph delete failed (${r.status})`, detail });
+      }
+      res.json({ deleted: true, itemId });
+    } catch (err: any) {
+      console.error("Delete item error:", err.message);
+      res.status(500).json({ error: err.message });
     }
   });
 
