@@ -4407,7 +4407,7 @@ function LandlordSidebarBlock({
         data-testid="button-open-landlord-chat"
       >
         <MessageSquare className="w-3.5 h-3.5" />
-        Chat about this Landlord
+        Chat about {companyName}
       </button>
 
       <Card>
@@ -4940,14 +4940,15 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           (with Set Up Folders dialog), reusing the property page's
           components. Order mirrors the property sidebar in the
           Bluewater screenshot. */}
-      {isLandlord && (
-        <LandlordSidebarBlock
-          companyId={companyId}
-          companyName={c.name}
-          folderTeams={c.folder_teams}
-          sharepointFolderUrl={c.sharepoint_folder_url}
-        />
-      )}
+      {/* Files / Folders + scoped chat — now shown for EVERY company
+          (brands + landlords), so the folder toolkit is identical on
+          every company profile, not landlords-only. */}
+      <LandlordSidebarBlock
+        companyId={companyId}
+        companyName={c.name}
+        folderTeams={c.folder_teams}
+        sharepointFolderUrl={c.sharepoint_folder_url}
+      />
 
       {/* Documents & Gallery (brand) / Gallery (landlord, photos only —
           docs live in the SharePoint Folders panel above). */}
