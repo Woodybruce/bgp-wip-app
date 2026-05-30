@@ -5660,7 +5660,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                       const lr = goadPanelContext.landRegistry;
                       const fhs = (lr.matched?.freeholds || []).length > 0 ? lr.matched.freeholds : lr.fallback?.freeholds || [];
                       const lhs = (lr.matched?.leaseholds || []).length > 0 ? lr.matched.leaseholds : lr.fallback?.leaseholds || [];
-                      if (fhs.length === 0 && lhs.length === 0) {
+                      // Postcode-level (estate) freeholds — surfaced when the unit
+                      // match found no freehold of its own (typical in Mayfair etc.
+                      // where the freehold is a blanket Grosvenor estate title).
+                      const ctxFhs = (lr.context?.freeholds || []);
+                      if (fhs.length === 0 && lhs.length === 0 && ctxFhs.length === 0) {
                         return <p className="text-[11px] text-gray-500 italic">No titles matched this building. Resolver source: {lr.source || "n/a"}.</p>;
                       }
                       return (
@@ -5694,6 +5698,26 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                               ))}
                               {lhs.length > 3 && (
                                 <p className="text-[10px] text-gray-500 italic">+{lhs.length - 3} more leaseholds</p>
+                              )}
+                            </div>
+                          )}
+                          {ctxFhs.length > 0 && fhs.length === 0 && (
+                            <div className="mt-2">
+                              <div className="text-[10px] text-gray-600 mb-0.5">Freeholds in this postcode ({ctxFhs.length})</div>
+                              <p className="text-[10px] text-gray-500 italic mb-1">Estate-level titles — not matched to this exact unit. The superior freeholder is likely here.</p>
+                              {ctxFhs.slice(0, 5).map((f: any, i: number) => (
+                                <div key={`cfh-${i}`} className="bg-stone-50 border border-stone-200 rounded p-2 mb-1 text-[11px]">
+                                  <div className="font-medium text-gray-900">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</div>
+                                  {(f.title_number || f.titleNumber) && (
+                                    <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
+                                  )}
+                                  {Array.isArray(f.property) && f.property[0] && (
+                                    <div className="text-gray-500 text-[10px] mt-0.5 truncate">{f.property[0]}</div>
+                                  )}
+                                </div>
+                              ))}
+                              {ctxFhs.length > 5 && (
+                                <p className="text-[10px] text-gray-500 italic">+{ctxFhs.length - 5} more freeholds in postcode</p>
                               )}
                             </div>
                           )}

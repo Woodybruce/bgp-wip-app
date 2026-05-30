@@ -741,6 +741,9 @@ export async function registerRoutes(
             leaseholds: (r.fallback?.leaseholds || []).slice(0, 8),
             usedStreetNumberMatch: r.fallback?.usedStreetNumberMatch || false,
           },
+          context: {
+            freeholds: (r.context?.freeholds || []).slice(0, 8),
+          },
         };
       }
 

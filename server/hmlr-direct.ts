@@ -306,6 +306,74 @@ export async function findProprietorsByAddress(
 }
 
 /**
+ * Postcode-wide FREEHOLD titles from CCOD/OCOD — free, local, context-only.
+ *
+ * The street-number address match (findProprietorsByAddress) reliably finds a
+ * unit's LEASEHOLDS because each long lease is registered to the specific unit
+ * address ("103 Mount Street"). It MISSES the superior FREEHOLD when that
+ * freehold is an estate-level title registered to a blanket description (e.g.
+ * Grosvenor's Mayfair freehold), because its property_address doesn't start
+ * with the unit number. This returns every freehold title in the postcode so
+ * the caller can surface the likely estate freeholder as context.
+ *
+ * NEVER assert unit ownership from these — a postcode can span many buildings.
+ * excludeTitleNumbers drops titles already matched to the exact unit.
+ */
+export async function findFreeholdsByPostcode(
+  postcode: string,
+  excludeTitleNumbers: string[] = [],
+): Promise<Array<{ titleNumber: string; tenure: string | null; propertyAddress: string | null; pricePaid: string | null; dateProprietorAdded: string | null; proprietors: HmlrProprietor[] }>> {
+  if (!postcode) return [];
+  const pcNormalised = postcode.toUpperCase().replace(/\s+/g, "").trim();
+  if (!pcNormalised) return [];
+  const r = await pool.query<any>(
+    `SELECT title_number, dataset, proprietor_position,
+            proprietor_name, proprietor_category,
+            company_registration_no, country_incorporated,
+            proprietor_address_1, proprietor_address_2, proprietor_address_3,
+            to_char(date_proprietor_added, 'YYYY-MM-DD') AS date_proprietor_added,
+            price_paid, property_address, tenure
+       FROM hmlr_proprietors
+      WHERE postcode_normalised = $1
+        AND lower(tenure) = 'freehold'
+      ORDER BY title_number, dataset, proprietor_position
+      LIMIT 100`,
+    [pcNormalised],
+  );
+  const exclude = new Set(excludeTitleNumbers);
+  const byTitle = new Map<string, { titleNumber: string; tenure: string | null; propertyAddress: string | null; pricePaid: string | null; dateProprietorAdded: string | null; proprietors: HmlrProprietor[] }>();
+  for (const row of r.rows) {
+    const tn = row.title_number;
+    if (exclude.has(tn)) continue;
+    if (!byTitle.has(tn)) {
+      byTitle.set(tn, {
+        titleNumber: tn,
+        tenure: row.tenure || null,
+        propertyAddress: row.property_address || null,
+        pricePaid: row.price_paid || null,
+        dateProprietorAdded: row.date_proprietor_added || null,
+        proprietors: [],
+      });
+    }
+    byTitle.get(tn)!.proprietors.push({
+      titleNumber: tn,
+      dataset: row.dataset,
+      position: row.proprietor_position,
+      proprietorName: row.proprietor_name,
+      proprietorCategory: row.proprietor_category,
+      companyRegistrationNo: row.company_registration_no,
+      countryIncorporated: row.country_incorporated,
+      proprietorAddress: [row.proprietor_address_1, row.proprietor_address_2, row.proprietor_address_3].filter(Boolean).join(", ") || null,
+      dateProprietorAdded: row.date_proprietor_added,
+      pricePaid: row.price_paid,
+      propertyAddress: row.property_address,
+      tenure: row.tenure,
+    });
+  }
+  return Array.from(byTitle.values());
+}
+
+/**
  * Last-completed ingest run for a dataset — used by the admin UI / health
  * check to show "CCOD last refreshed: 3 days ago".
  */

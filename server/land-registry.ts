@@ -5,7 +5,7 @@ import { db, pool } from "./db";
 import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
-import { findProprietorsByAddress, isHmlrProprietorsAvailable, lastIngestRun, type HmlrProprietor } from "./hmlr-direct";
+import { findProprietorsByAddress, findFreeholdsByPostcode, isHmlrProprietorsAvailable, lastIngestRun, type HmlrProprietor } from "./hmlr-direct";
 import { isOsConfigured } from "./os-data";
 
 /**
@@ -251,6 +251,29 @@ export type ResolveBuildingTitlesResult =
       source: "uprn" | "street_number" | "postcode_only";
     }
   | { ok: false; status: number; error: string };
+
+// Shape an HMLR-direct title row (from findProprietorsByAddress /
+// findFreeholdsByPostcode) into the PropertyData-style freehold/leasehold
+// object the rest of the app + the UI expect.
+function formatHmlrTitle(t: { titleNumber: string; tenure: string | null; propertyAddress: string | null; pricePaid: string | null; dateProprietorAdded: string | null; proprietors: HmlrProprietor[] }): Record<string, any> {
+  const fh: Record<string, any> = {
+    title_number: t.titleNumber,
+    tenure: (t.tenure || "").toLowerCase(),
+    property: t.propertyAddress ? [t.propertyAddress] : undefined,
+    price_paid: t.pricePaid,
+    date_proprietor_added: t.dateProprietorAdded,
+    _source: "hmlr_direct",
+  };
+  t.proprietors.forEach((p: HmlrProprietor, i: number) => {
+    fh[`proprietor_name_${i + 1}`] = p.proprietorName;
+    fh[`proprietor_category_${i + 1}`] = p.proprietorCategory;
+    fh[`company_registration_no_${i + 1}`] = p.companyRegistrationNo;
+    fh[`country_incorporated_${i + 1}`] = p.countryIncorporated;
+  });
+  fh.proprietor_name_1 = t.proprietors[0]?.proprietorName ?? null;
+  fh.proprietor_category = t.proprietors[0]?.proprietorCategory ?? null;
+  return fh;
+}
 
 export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): Promise<ResolveBuildingTitlesResult> {
   const { address: inputAddress, postcode: inputPostcode, lat, lng, source: callerSource, pathwayRunId: callerRunId, userId, skipPersist } = input;
@@ -503,31 +526,12 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
       const hmlrTitles = await findProprietorsByAddress(resolvedPostcode, streetNumberRaw);
       if (hmlrTitles.length > 0) {
         hmlrUsed = true;
-        const formatHmlr = (t: typeof hmlrTitles[number]) => {
-          const fh: Record<string, any> = {
-            title_number: t.titleNumber,
-            tenure: (t.tenure || "").toLowerCase(),
-            property: t.propertyAddress ? [t.propertyAddress] : undefined,
-            price_paid: t.pricePaid,
-            date_proprietor_added: t.dateProprietorAdded,
-            _source: "hmlr_direct",
-          };
-          t.proprietors.forEach((p: HmlrProprietor, i: number) => {
-            fh[`proprietor_name_${i + 1}`] = p.proprietorName;
-            fh[`proprietor_category_${i + 1}`] = p.proprietorCategory;
-            fh[`company_registration_no_${i + 1}`] = p.companyRegistrationNo;
-            fh[`country_incorporated_${i + 1}`] = p.countryIncorporated;
-          });
-          fh.proprietor_name_1 = t.proprietors[0]?.proprietorName ?? null;
-          fh.proprietor_category = t.proprietors[0]?.proprietorCategory ?? null;
-          return fh;
-        };
         const fhData = hmlrTitles
           .filter((t) => (t.tenure || "").toLowerCase() !== "leasehold")
-          .map(formatHmlr);
+          .map(formatHmlrTitle);
         const lhData = hmlrTitles
           .filter((t) => (t.tenure || "").toLowerCase() === "leasehold")
-          .map(formatHmlr);
+          .map(formatHmlrTitle);
         uprnTitleResults.push({ data: { freeholds: fhData, leaseholds: lhData } });
         console.log(`[land-registry/resolve] HMLR-direct hit for ${resolvedPostcode} ${streetNumberRaw} — ${hmlrTitles.length} titles`);
       }
@@ -573,7 +577,23 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
     ...matchedLeaseholds.map(l => l.title_number).filter(Boolean),
   ]);
 
-  const contextFreeholds = ((postcodeFreeholds as any)?.data || []).filter((f: any) => !matchedTitleNumbers.has(f.title_number));
+  let contextFreeholds = ((postcodeFreeholds as any)?.data || []).filter((f: any) => !matchedTitleNumbers.has(f.title_number));
+  // On the HMLR-direct path the paid postcode-wide PropertyData pull is
+  // skipped (skipPostcodeWide), so contextFreeholds would be empty. Surface
+  // postcode-wide freeholds from our own free local HMLR data instead — this
+  // is what catches estate-level freeholds (e.g. Grosvenor's Mayfair title)
+  // that the unit street-number match structurally misses.
+  if (hmlrUsed && resolvedPostcode) {
+    try {
+      const pcFreeholds = await findFreeholdsByPostcode(resolvedPostcode, Array.from(matchedTitleNumbers));
+      if (pcFreeholds.length > 0) {
+        contextFreeholds = pcFreeholds.map(formatHmlrTitle);
+        console.log(`[land-registry/resolve] HMLR postcode freeholds for ${resolvedPostcode} — ${pcFreeholds.length} estate-level titles`);
+      }
+    } catch (err: any) {
+      console.warn("[land-registry/resolve] HMLR postcode-freehold lookup failed:", err?.message);
+    }
+  }
   // PropertyData has no postcode-level leaseholds endpoint, so context
   // leaseholds are limited to whatever uprn-title surfaced.
   const contextLeaseholds: any[] = [];
