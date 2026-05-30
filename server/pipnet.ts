@@ -406,7 +406,7 @@ export async function importPipnetProperties(params: {
     let brochurePack: { url: string; name: string; pages: number } | null = null;
     if (detail.landlordPackUrl) {
       try {
-        const pack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, folderId || sourceId);
+        const pack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, folderId || sourceId, fullAddress);
         if (pack) { brochurePack = { url: pack.url, name: pack.name, pages: pack.pages }; withBrochure++; }
       } catch (e: any) {
         console.error(`[pipnet props] brochure ${fullAddress}: ${e?.message}`);
@@ -583,39 +583,98 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
   };
 }
 
+// Turn a tenant/company name into a safe, readable file slug for the landlord
+// pack — "City Slots" → "City-Slots". Keeps the saved file named after the
+// tenant (what the team wants) rather than the opaque PIPnet folder id.
+function packSlug(name: string): string {
+  return (name || "landlord-pack")
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "landlord-pack";
+}
+
+// Count UTF-8 replacement-char sequences (EF BF BD). ScraperAPI re-encodes
+// binary responses as UTF-8, turning every high byte (incl. JPEG 0xFF markers)
+// into U+FFFD — which destroys the embedded images and yields a blank PDF. A
+// clean binary has essentially none; a mangled one has thousands.
+function isMangledBinary(buf: Buffer): boolean {
+  let hits = 0;
+  for (let i = 0; i + 2 < buf.length && hits <= 25; i++) {
+    if (buf[i] === 0xef && buf[i + 1] === 0xbf && buf[i + 2] === 0xbd) hits++;
+  }
+  return hits > 25;
+}
+
+// Fetch a PIPnet binary (the brochure PDF / its images) WITHOUT corrupting it.
+// The brochure URL carries its own ?sessionid= auth, so a direct fetch works
+// and — unlike the ScraperAPI proxy — preserves the raw bytes. We only fall
+// back to the proxy if the direct fetch is blocked, and reject a proxied body
+// that came back UTF-8-mangled rather than save a blank PDF.
+async function fetchPipnetBinary(url: string, cookie: string): Promise<{ buf: Buffer; ct: string } | null> {
+  const headers = { "User-Agent": PIPNET_UA, Accept: "*/*", Cookie: cookie };
+  try {
+    const r = await fetch(url, { headers });
+    if (r.ok) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!isMangledBinary(buf)) return { buf, ct: (r.headers.get("content-type") || "").toLowerCase() };
+      console.warn(`[pipnet brochure] direct fetch returned mangled bytes for ${url} — trying proxy`);
+    } else if (isScraperApiAvailable()) {
+      console.warn(`[pipnet brochure] direct fetch HTTP ${r.status} — trying proxy`);
+    } else {
+      return null;
+    }
+  } catch (e: any) {
+    console.warn(`[pipnet brochure] direct fetch threw (${e?.message}) — trying proxy`);
+  }
+  if (!isScraperApiAvailable()) return null;
+  const r = await pipFetch(url, { headers: { Cookie: cookie } });
+  if (!r.ok) return null;
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (isMangledBinary(buf)) {
+    console.error(`[pipnet brochure] proxy also returned mangled binary for ${url} — cannot recover image`);
+    return null;
+  }
+  return { buf, ct: (r.headers.get("content-type") || "").toLowerCase() };
+}
+
 // Download a requirement's "View All Images" brochure, stitch every page into
 // a single PDF, save via the existing file-storage helper and return the
 // BGP-hosted URL ready for the landlord_pack JSON. Returns null if the
-// brochure couldn't be fetched or contained no usable pages.
-async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId: string): Promise<{ url: string; name: string; pages: number; buffer: Buffer } | null> {
+// brochure couldn't be fetched or contained no usable pages. `displayName`
+// (the tenant/company) names the saved file.
+async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId: string, displayName?: string): Promise<{ url: string; name: string; pages: number; buffer: Buffer } | null> {
   try {
-    const res = await pipFetch(brochureUrl, { headers: { Cookie: cookie } });
-    if (!res.ok) {
-      console.error(`[pipnet brochure] ${reqId}: fetch failed ${res.status}`);
+    const slug = packSlug(displayName || `pipnet-${reqId}`);
+    const packName = displayName ? `${displayName} — Landlord Pack` : "PIPnet brochure";
+    const fileName = `${displayName || `requirement-${reqId}`}.pdf`;
+    const fetched = await fetchPipnetBinary(brochureUrl, cookie);
+    if (!fetched) {
+      console.error(`[pipnet brochure] ${reqId}: could not fetch a clean brochure binary`);
       return null;
     }
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const ct = fetched.ct;
 
     // Direct PDF — save as-is.
-    if (ct.includes("pdf")) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
-      await saveFile(key, buf, "application/pdf", `pipnet-${reqId}.pdf`);
-      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1, buffer: buf };
+    if (ct.includes("pdf") || fetched.buf.slice(0, 5).toString("latin1") === "%PDF-") {
+      const buf = fetched.buf;
+      const key = `landlord-packs/${slug}-${randomBytes(4).toString("hex")}.pdf`;
+      await saveFile(key, buf, "application/pdf", fileName);
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: packName, pages: 1, buffer: buf };
     }
 
     // Direct image — wrap in single-page PDF.
     if (ct.startsWith("image/")) {
-      const buf = Buffer.from(await res.arrayBuffer());
+      const buf = fetched.buf;
       const pdf = await imagesToPdf([{ bytes: buf, contentType: ct }]);
       if (!pdf) return null;
-      const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
-      await saveFile(key, pdf, "application/pdf", `pipnet-${reqId}.pdf`);
-      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1, buffer: pdf };
+      const key = `landlord-packs/${slug}-${randomBytes(4).toString("hex")}.pdf`;
+      await saveFile(key, pdf, "application/pdf", fileName);
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: packName, pages: 1, buffer: pdf };
     }
 
     // HTML index — find every <img>, download each, stitch.
-    const html = await res.text();
+    const html = fetched.buf.toString("utf8");
     const imgSrcs = Array.from(new Set(
       [...html.matchAll(/<img[^>]+src="([^"]+)"/gi)].map(m => m[1])
     ));
@@ -640,16 +699,13 @@ async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId:
 
     const pages: { bytes: Buffer; contentType: string }[] = [];
     for (const u of pageImageUrls.slice(0, 50)) { // cap at 50 pages just in case
-      try {
-        const r = await pipFetch(u, { headers: { Cookie: cookie } });
-        if (!r.ok) continue;
-        const ict = (r.headers.get("content-type") || "image/jpeg").toLowerCase();
-        if (!ict.startsWith("image/")) continue;
-        pages.push({ bytes: Buffer.from(await r.arrayBuffer()), contentType: ict });
-        await new Promise(rs => setTimeout(rs, 80));
-      } catch (e: any) {
-        console.error(`[pipnet brochure] ${reqId}: image fetch failed for ${u}: ${e?.message}`);
-      }
+      // Use the binary-safe fetch — these page images are JPEGs and would be
+      // UTF-8-mangled (blank) if pulled through the proxy.
+      const got = await fetchPipnetBinary(u, cookie);
+      if (!got) continue;
+      const ict = got.ct.startsWith("image/") ? got.ct : "image/jpeg";
+      pages.push({ bytes: got.buf, contentType: ict });
+      await new Promise(rs => setTimeout(rs, 80));
     }
 
     if (pages.length === 0) {
@@ -659,9 +715,9 @@ async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId:
 
     const pdfBytes = await imagesToPdf(pages);
     if (!pdfBytes) return null;
-    const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
-    await saveFile(key, pdfBytes, "application/pdf", `pipnet-${reqId}.pdf`);
-    return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure (${pages.length} pages)`, pages: pages.length, buffer: pdfBytes };
+    const key = `landlord-packs/${slug}-${randomBytes(4).toString("hex")}.pdf`;
+    await saveFile(key, pdfBytes, "application/pdf", fileName);
+    return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `${packName} (${pages.length} pages)`, pages: pages.length, buffer: pdfBytes };
   } catch (e: any) {
     console.error(`[pipnet brochure] ${reqId}: ${e?.message}`);
     return null;
@@ -811,7 +867,7 @@ export async function importPipnetRequirements(params: {
     // raw PIPnet URL on failure so the link still works (with PIPnet login).
     let brochurePack: { url: string; name: string; pages: number; buffer?: Buffer } | null = null;
     if (detail.landlordPackUrl && detail.requirementId) {
-      brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId);
+      brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId, companyName);
       if (!brochurePack) {
         console.warn(`[pipnet import] brochure download returned null for ${companyName} (${detail.requirementId}): ${detail.landlordPackUrl}`);
       }
