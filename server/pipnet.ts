@@ -1132,6 +1132,7 @@ export async function inspectPipnetDetail(): Promise<{
   fields: Record<string, string>;
   htmlPreview: string;
   htmlLength: number;
+  variants?: any;
   brochure?: {
     url: string;
     contentType: string;
@@ -1141,24 +1142,60 @@ export async function inspectPipnetDetail(): Promise<{
     imageUrls?: string[];
   } | null;
 }> {
-  // Use the real search path so we get a row's actual `_detailHref`
-  // (reqdetails.jsp?index=N&folderid=X) instead of scanning the page for a
-  // link — the old approach picked up the search-form link and never reached a
-  // requirement. Keep the same sticky session for the follow-up detail fetch.
+  // Diagnostic: log in ONCE, run the search inline (so the result set is held
+  // in this session), then fetch the detail page in the SAME session with NO
+  // intervening login()/reqSearch.jsp call — the production importer re-logs-in
+  // between search and detail, and that reqSearch.jsp hit appears to reset the
+  // server-side result context that reqdetails.jsp?index=N depends on, making
+  // every detail return PIPnet's "unexpected error" page. We test two fetch
+  // strategies so we know which one to use in the importer.
   resetSession();
-  const rows = await searchPipnetRequirements({ status: "Latest", allPages: false, maxPages: 1 });
   const cookie = await login();
+  const searchBody = new URLSearchParams({
+    requirementType: "ReqRetail", locationSearchEdit: "", locationListBox: "",
+    status: "Latest", documentDate: "", extrapolated: "True",
+    clientSearchEdit: "", clientListBox: "", minSalesArea: "", maxSalesArea: "", Search: "Search",
+  });
+  const listRes = await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+    body: searchBody.toString(),
+  });
+  const listHtml = await listRes.text();
+  const rows = parseHtmlTable(listHtml);
   const detailHref = rows.map(r => r._detailHref).find(Boolean) || null;
   const candidateLinks = rows.map(r => r._detailHref).filter(Boolean).slice(0, 20) as string[];
 
   if (!detailHref) {
-    return { candidateLinks, detailUrl: null, fields: {}, htmlPreview: "(no result rows with a detail link)", htmlLength: 0 };
+    return { candidateLinks, detailUrl: null, fields: {}, htmlPreview: listHtml.slice(0, 900), htmlLength: listHtml.length };
   }
 
+  const folderId = detailHref.match(/folderid=(\d+)/i)?.[1] || null;
   const detailUrl = detailHref.startsWith("http") ? detailHref : `${PIPNET_URL}/${detailHref.replace(/^\//, "")}`;
-  const detailRes = await pipFetch(detailUrl, { headers: { Cookie: cookie } });
-  if (!detailRes.ok) throw new Error(`PIPnet detail fetch failed: ${detailRes.status}`);
-  const detailHtml = await detailRes.text();
+  const isErr = (h: string) => /unexpected error has occ/i.test(h);
+
+  // Strategy A: the row's link as-is (index=N&folderid=X), fetched immediately.
+  const resA = await pipFetch(detailUrl, { headers: { Cookie: cookie } });
+  const htmlA = await resA.text();
+  // Strategy B: folderid only (no session-positional index). Re-run the search
+  // first so the session context is fresh for this attempt.
+  await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+    body: searchBody.toString(),
+  });
+  const urlB = folderId ? `${PIPNET_URL}/reqdetails.jsp?folderid=${folderId}` : detailUrl;
+  const resB = await pipFetch(urlB, { headers: { Cookie: cookie } });
+  const htmlB = await resB.text();
+
+  const countFields = (h: string) => [...h.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)].length;
+  const variants = {
+    A_indexAndFolder: { url: detailUrl, status: resA.status, htmlLength: htmlA.length, isError: isErr(htmlA), thtdPairs: countFields(htmlA) },
+    B_folderOnly: { url: urlB, status: resB.status, htmlLength: htmlB.length, isError: isErr(htmlB), thtdPairs: countFields(htmlB) },
+  };
+
+  // Use whichever strategy produced a real page for the field/brochure dump.
+  const detailHtml = !isErr(htmlA) && htmlA.length > 1500 ? htmlA : (!isErr(htmlB) ? htmlB : htmlA);
   const bounced = looksUnauthenticated(detailHtml);
 
   const fields: Record<string, string> = {};
@@ -1220,6 +1257,7 @@ export async function inspectPipnetDetail(): Promise<{
     candidateLinks,
     detailUrl,
     bounced,
+    variants,
     fields,
     htmlPreview: detailHtml.slice(0, 1200),
     htmlLength: detailHtml.length,
