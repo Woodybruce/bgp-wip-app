@@ -84,13 +84,10 @@ import { History } from "lucide-react";
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
-  // Properties used to be its own sidebar entry; now lives as a tab
-  // inside Deals (along with WIP / Letting Tracker / Investment / WIP
-  // Report). Sidebar link kept and pointed at the new tab so muscle
-  // memory still works.
-  { title: "Properties", url: "/deals/properties", icon: Building2 },
+  // Properties is reachable as a tab inside Deals (alongside Letting
+  // Tracker / Investment / WIP Report), so the standalone sidebar entry
+  // was dropped — it duplicated the Deals view.
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "Expense Approvals", url: "/expenses/approvals", icon: Receipt },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Requirements", url: "/requirements", icon: FileText },
   // Items below are still being polished — admin-only until ready for the firm
@@ -112,10 +109,8 @@ const coreNavBase = [
 
 const aiNav = [
   { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
-  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI" },
-  { title: "Decks", url: "/decks", icon: Layers, badge: "New" },
+  // Model Studio / Document Studio / Document Briefs / Decks parked in
+  // the Admin section pending fixes — see adminNavBase.
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
@@ -129,8 +124,15 @@ const microsoftNav = [
 
 const adminNavBase = [
   { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "Expense Approvals", url: "/expenses/approvals", icon: Receipt },
   { title: "Revolut", url: "/expenses/revolut", icon: CreditCard },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  // Studio tools parked here pending fixes — hidden from the main demo
+  // nav, kept reachable for admins until they're ready for the firm.
+  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
+  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
+  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI" },
+  { title: "Decks", url: "/decks", icon: Layers, badge: "New" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
@@ -479,7 +481,6 @@ export function AppSidebar() {
  */
 const mobileOverlayItems = [
   { title: "Today", url: "/today", icon: Sun },
-  { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
@@ -494,9 +495,10 @@ const mobileOverlayItems = [
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
-  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI" },
+  // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
+  { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
+  { title: "Document Studio", url: "/templates", icon: FileTextIcon, adminOnly: true },
+  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI", adminOnly: true },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
