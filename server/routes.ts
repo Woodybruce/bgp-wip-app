@@ -50,6 +50,7 @@ import { setupDocumentPreferencesRoutes } from "./document-preferences";
 import { setupDeckRoutes } from "./decks";
 import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
+import { fetchPlanitPlanning } from "./planit-planning";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
@@ -683,14 +684,25 @@ export async function registerRoutes(
               skipPersist: true,
             }).catch((err: any) => ({ ok: false, status: 500, error: err?.message || "lr lookup failed" }))
           : Promise.resolve({ ok: false, status: 0, error: "no address" }),
-        // Planning applications via PropertyData (last 7300 days = ~20 yrs;
-        // we'll cap at 10 yrs client-side). Note the postcode goes in
-        // WITHOUT a space — PD silently returns zero results for the
-        // spaced form, which was the 'no planning apps' bug.
-        PD_KEY && postcodeNoSpace
-          ? fetch(`https://api.propertydata.co.uk/planning-applications?${new URLSearchParams({ key: PD_KEY, postcode: postcodeNoSpace, max_age: "3650" }).toString()}`, { signal: AbortSignal.timeout(8000) })
-              .then((r) => (r.ok ? r.json() : null))
-              .then((j: any) => (Array.isArray(j?.data) ? j.data : []))
+        // Planning applications via PlanIt (planit.org.uk) — the same source
+        // the Pathway planning card uses. It scrapes every UK LPA portal
+        // (incl. Westminster, which TCP-blocks our egress IP) and needs no
+        // API key, so it gives better coverage than the PropertyData postcode
+        // endpoint. ~200m radius, last 10 yrs. Mapped to the snake_case shape
+        // the panel already renders.
+        postcode
+          ? fetchPlanitPlanning(postcode, lrAddress || street || "", { maxAgeYears: 10, radiusKm: 0.2 })
+              .then((apps) => apps.map((a) => ({
+                description: a.description,
+                decision: a.decision,
+                status: a.status,
+                decided_date: a.decidedAt || null,
+                received_date: a.receivedAt || null,
+                reference: a.reference,
+                address: a.address,
+                documentUrl: a.documentUrl,
+                lpa: a.lpa,
+              })))
               .catch(() => [] as any[])
           : Promise.resolve([] as any[]),
         // Latest Pathway run for this address/postcode — so the panel can

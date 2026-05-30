@@ -752,6 +752,70 @@ async function generatePropertyPDF(data: PropertyData, postcode: string) {
   doc.save(`Property-Report-${postcode.replace(/\s/g, "-")}.pdf`);
 }
 
+// Leasehold → superior freehold. PropertyData has no structured
+// leasehold→freehold link, so the reliable path is to order the leasehold's
+// official register (£3–4, cached server-side) — its property section names
+// the lessor / superior freehold title. One click, reuses the existing
+// purchase-title endpoint.
+function LeaseholdFreeholdFinder({ titleNumber }: { titleNumber?: string | null }) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  if (!titleNumber) return null;
+  const run = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/land-registry/purchase-title", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ title: titleNumber, documents: "register", extract_proprietor_data: true }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) {
+        setErr(j?.error || `HTTP ${r.status}`);
+        return;
+      }
+      setResult(j?.data || j);
+    } catch (e: any) {
+      setErr(e?.message || "request failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+  if (err) {
+    return <p className="mt-1 text-[10px] text-red-600">Freehold lookup failed: {err}</p>;
+  }
+  if (result) {
+    const reg = result.document_url || result.register_url || result.register?.url || null;
+    const prop = result.proprietor || result.extracted || null;
+    return (
+      <div className="mt-1 text-[10px] text-gray-600 space-y-0.5">
+        {reg && (
+          <a href={reg} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline block">
+            Open title register →
+          </a>
+        )}
+        {prop && (
+          <div className="[overflow-wrap:anywhere]">{typeof prop === "string" ? prop : JSON.stringify(prop)}</div>
+        )}
+        <p className="italic text-gray-400">Read the register's property section for the superior freehold title.</p>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={loading}
+      className="mt-1 text-[10px] text-blue-700 hover:underline disabled:opacity-50"
+    >
+      {loading ? "Ordering register…" : "Find freehold (order register £3–4)"}
+    </button>
+  );
+}
+
 function RawDataToggle({ data }: { data: any }) {
   const [showRaw, setShowRaw] = useState(false);
   const HIDDEN_KEYS = new Set(["_tenure"]);
@@ -5667,6 +5731,19 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                       if (fhs.length === 0 && lhs.length === 0 && ctxFhs.length === 0) {
                         return <p className="text-[11px] text-gray-500 italic">No titles matched this building. Resolver source: {lr.source || "n/a"}.</p>;
                       }
+                      // Click a proprietor → jump to the Investigator (KYC Clouseau)
+                      // tab pre-loaded with that company name. We push the URL and
+                      // fire popstate so the Property Intelligence hub re-reads its
+                      // tab from the query string (it listens for popstate).
+                      const openInvestigator = (n?: string | null) => {
+                        if (!n) return;
+                        const url = new URL(window.location.href);
+                        url.pathname = "/property-intelligence";
+                        url.searchParams.set("tab", "investigator");
+                        url.searchParams.set("name", n);
+                        window.history.pushState({}, "", url.toString());
+                        window.dispatchEvent(new PopStateEvent("popstate"));
+                      };
                       return (
                         <>
                           {fhs.length > 0 && (
@@ -5674,7 +5751,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                               <div className="text-[10px] text-gray-600 mb-0.5">Freehold ({fhs.length})</div>
                               {fhs.slice(0, 5).map((f: any, i: number) => (
                                 <div key={`fh-${i}`} className="bg-amber-50 border border-amber-200 rounded p-2 mb-1 text-[11px]">
-                                  <div className="font-medium text-gray-900">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</div>
+                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
                                   {(f.title_number || f.titleNumber) && (
                                     <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
                                   )}
@@ -5690,10 +5767,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                               <div className="text-[10px] text-gray-600 mb-0.5">Leasehold ({lhs.length})</div>
                               {lhs.slice(0, 3).map((l: any, i: number) => (
                                 <div key={`lh-${i}`} className="bg-sky-50 border border-sky-200 rounded p-2 mb-1 text-[11px]">
-                                  <div className="font-medium text-gray-900 truncate">{l.proprietor_name || l.proprietorName || l.proprietor_name_1 || "Unknown leaseholder"}</div>
+                                  <button type="button" onClick={() => openInvestigator(l.proprietor_name || l.proprietorName || l.proprietor_name_1)} className="font-medium text-gray-900 truncate text-left hover:text-blue-700 hover:underline block w-full">{l.proprietor_name || l.proprietorName || l.proprietor_name_1 || "Unknown leaseholder"}</button>
                                   {(l.title_number || l.titleNumber) && (
                                     <div className="text-gray-600 font-mono text-[10px] mt-0.5">{l.title_number || l.titleNumber}</div>
                                   )}
+                                  <LeaseholdFreeholdFinder titleNumber={l.title_number || l.titleNumber} />
                                 </div>
                               ))}
                               {lhs.length > 3 && (
@@ -5707,7 +5785,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                               <p className="text-[10px] text-gray-500 italic mb-1">Estate-level titles — not matched to this exact unit. The superior freeholder is likely here.</p>
                               {ctxFhs.slice(0, 5).map((f: any, i: number) => (
                                 <div key={`cfh-${i}`} className="bg-stone-50 border border-stone-200 rounded p-2 mb-1 text-[11px]">
-                                  <div className="font-medium text-gray-900">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</div>
+                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
                                   {(f.title_number || f.titleNumber) && (
                                     <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
                                   )}
@@ -5727,20 +5805,17 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                   </section>
                 )}
 
-                {/* Planning applications — last 10 years from PropertyData. */}
+                {/* Planning applications — last 10 years via PlanIt (planit.org.uk),
+                    the same source the Pathway planning card uses. */}
                 {goadPanelContext && (
                   <section className="border-t pt-3">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
                       <span>Planning apps — last 10 yrs {goadPanelContext.planningApplications.length > 0 ? `(${goadPanelContext.planningApplications.length})` : ""}</span>
-                      {!goadPanelContext.diagnostics?.propertyDataKeyAvailable && (
-                        <span className="text-[9px] text-amber-600 normal-case">PD key not configured</span>
-                      )}
+                      <span className="text-[9px] text-gray-400 normal-case">via PlanIt</span>
                     </div>
                     {goadPanelContext.planningApplications.length === 0 && (
                       <p className="text-[11px] text-gray-500 italic mb-1.5">
-                        {goadPanelContext.diagnostics?.propertyDataKeyAvailable
-                          ? "No planning applications recorded at this postcode in the last 10 years."
-                          : "Planning lookup skipped — PropertyData key not configured."}
+                        No planning applications found within ~200m in the last 10 years.
                       </p>
                     )}
                     {goadPanelContext.planningApplications.slice(0, 5).map((a: any, i: number) => {
