@@ -66,3 +66,43 @@ export function formatAmlWarning(result: AmlGateResult): string | null {
   if (result.notReady.length === 0) return null;
   return `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}.`;
 }
+
+// Auto-derive crm_deals.kyc_approved (the flag that gates invoicing) from the
+// real counterparty KYC state, for every deal that has `companyId` as a
+// counterparty. Previously kyc_approved was ONLY ever set by hand, so deals
+// sat invoice-locked even when every party was approved. Call this whenever a
+// company's KYC status changes (approve/reject) to keep linked deals in sync.
+export async function recomputeDealKycApproved(companyId: string, approvedBy?: string | null): Promise<number> {
+  if (!companyId) return 0;
+  const { rows: deals } = await pool.query(
+    `SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id, kyc_approved
+       FROM crm_deals
+      WHERE landlord_id = $1 OR tenant_id = $1 OR vendor_id = $1 OR purchaser_id = $1`,
+    [companyId],
+  );
+  let changed = 0;
+  for (const d of deals as any[]) {
+    const result = await checkCounterpartyAml({
+      landlordId: d.landlord_id,
+      tenantId: d.tenant_id,
+      vendorId: d.vendor_id,
+      purchaserId: d.purchaser_id,
+    });
+    const shouldApprove = result.hasCounterparties && result.notReady.length === 0;
+    if (!!d.kyc_approved === shouldApprove) continue; // already in sync
+    if (shouldApprove) {
+      await pool.query(
+        `UPDATE crm_deals SET kyc_approved = true, kyc_approved_at = NOW(),
+                kyc_approved_by = $2, updated_at = NOW() WHERE id = $1`,
+        [d.id, approvedBy || "auto: all counterparties KYC-approved"],
+      );
+    } else {
+      await pool.query(
+        `UPDATE crm_deals SET kyc_approved = false, updated_at = NOW() WHERE id = $1`,
+        [d.id],
+      );
+    }
+    changed++;
+  }
+  return changed;
+}

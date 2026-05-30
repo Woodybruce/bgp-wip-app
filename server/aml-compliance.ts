@@ -7,6 +7,7 @@ import { contentDispositionFor } from "./utils/http-headers";
 import { requireAuth, getUserIdFromToken } from "./auth";
 import { pool } from "./db";
 import { saveFile } from "./file-storage";
+import { recomputeDealKycApproved } from "./deal-gates";
 
 const router = Router();
 
@@ -763,6 +764,9 @@ router.post("/api/kyc/company/:id/approve", requireAuth, async (req: Request, re
     } catch (rmErr: any) {
       console.warn("[kyc-approve] reminder insert failed:", rmErr?.message);
     }
+    // This counterparty is now approved — re-derive kyc_approved on every deal
+    // it's a party to, so deals stop sitting invoice-locked once all parties pass.
+    try { await recomputeDealKycApproved(String(req.params.id), approverName); } catch (e: any) { console.warn("[kyc-approve] deal kyc recompute failed:", e?.message); }
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -783,6 +787,8 @@ router.post("/api/kyc/company/:id/reject", requireAuth, async (req: Request, res
       [userId, reason, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Company not found" });
+    // Counterparty rejected — re-derive kyc_approved on its deals (re-locks them).
+    try { await recomputeDealKycApproved(String(req.params.id), null); } catch (e: any) { console.warn("[kyc-reject] deal kyc recompute failed:", e?.message); }
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
