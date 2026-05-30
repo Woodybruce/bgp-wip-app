@@ -309,11 +309,11 @@ export async function findProprietorsByAddress(
  * Last-completed ingest run for a dataset — used by the admin UI / health
  * check to show "CCOD last refreshed: 3 days ago".
  */
-export async function lastIngestRun(dataset: string): Promise<{ startedAt: string; finishedAt: string | null; rowsProcessed: number; status: string } | null> {
+export async function lastIngestRun(dataset: string): Promise<{ startedAt: string; finishedAt: string | null; rowsProcessed: number; status: string; error: string | null } | null> {
   const r = await pool.query<any>(
     `SELECT to_char(started_at, 'YYYY-MM-DD"T"HH24:MI:SSOF') AS started_at,
             to_char(finished_at, 'YYYY-MM-DD"T"HH24:MI:SSOF') AS finished_at,
-            rows_processed, status
+            rows_processed, status, error
        FROM hmlr_ingest_runs
       WHERE dataset = $1
       ORDER BY started_at DESC
@@ -327,5 +327,6 @@ export async function lastIngestRun(dataset: string): Promise<{ startedAt: strin
     finishedAt: row.finished_at,
     rowsProcessed: row.rows_processed,
     status: row.status,
+    error: row.error || null,
   };
 }

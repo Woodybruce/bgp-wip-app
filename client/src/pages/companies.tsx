@@ -1465,12 +1465,6 @@ function CompanyDetail({ id }: { id: string }) {
 
         </div>
 
-        {/* CompaniesHouseCard and CompanyFoldersCard kept but hidden — content surfaced in Brand Profile tabs */}
-        <div className="hidden">
-          <CompaniesHouseCard company={company} />
-          <CompanyFoldersCard companyName={company.name} linkedProperties={linkedProperties} />
-        </div>
-
         {(propertiesWithDeals.grouped.length > 0 || propertiesWithDeals.unlinkedDeals.length > 0) && (
           <Card className="lg:col-span-3">
             <CardContent className="p-3 space-y-3">
