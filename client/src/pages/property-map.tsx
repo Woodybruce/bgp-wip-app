@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +31,8 @@ import {
 import { Link } from "wouter";
 import type { CrmProperty } from "@shared/schema";
 import { loadGoogleMaps, isGoogleMapsLoaded } from "@/lib/google-maps-loader";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 const STATUS_COLORS: Record<string, string> = {
   "BGP Active": "bg-emerald-500",
@@ -203,6 +204,22 @@ export default function PropertyMap() {
 
   const { data: properties = [], isLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+  });
+
+  const { toast } = useToast();
+  const importPipnet = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/external-requirements/import-pipnet-properties", { allPages: true });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({
+        title: "PIPnet listings imported",
+        description: `${data.imported ?? 0} listings · ${data.geocoded ?? 0} mapped · ${data.withBrochure ?? 0} with brochure (of ${data.total ?? 0} found).`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
   });
 
   useEffect(() => {
@@ -852,6 +869,19 @@ export default function PropertyMap() {
             data-testid="button-view-map"
           >
             <MapIcon className="w-3.5 h-3.5 mr-1" /> Full Map
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => importPipnet.mutate()}
+            disabled={importPipnet.isPending}
+            title="Scrape PIPnet available retail properties onto the map"
+            data-testid="button-import-pipnet-properties"
+          >
+            {importPipnet.isPending
+              ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              : <Building2 className="w-3.5 h-3.5 mr-1" />}
+            {importPipnet.isPending ? "Importing…" : "Import PIPnet"}
           </Button>
         </div>
       </div>
