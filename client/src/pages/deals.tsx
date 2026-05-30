@@ -4785,7 +4785,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     feeAgreement: false,
     // Fee Split is a popover-on-click on the Fee cell — separate column was
     // duplicative. Off by default; toggle on for agent commission reviews.
-    feeAlloc: false,
+    feeAlloc: true,
     // Floor Areas is per-unit physical detail — useful but heavy. Off by
     // default; the deal-detail page carries the full areas card.
     floorAreas: false,
