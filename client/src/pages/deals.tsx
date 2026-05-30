@@ -243,7 +243,6 @@ const COLUMN_LABELS: Record<string, string> = {
   clientXero: "Client / Billing",
   type: "Deal Type",
   status: "Status",
-  teamAgent: "Team / BGP Contact",
   tenant: "Tenant",
   parties: "Parties",
   feeCombined: "Fee & Agreement",
@@ -1082,80 +1081,6 @@ function FeeCombinedCell({
 // over the assigned agent(s); popover holds both InlineMultiSelect
 // editors so a single click captures both. Empty rosters surface a
 // "+ Add team / agent" affordance.
-function TeamAgentCell({
-  deal, users, onSave,
-}: {
-  deal: any;
-  users: Array<{ id: string; name: string }>;
-  onSave: (field: string, value: string[] | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const teams: string[] = Array.isArray(deal.team)
-    ? deal.team
-    : (deal.team ? [deal.team] : []);
-  const agents: string[] = Array.isArray(deal.internalAgent)
-    ? deal.internalAgent
-    : (deal.internalAgent ? [deal.internalAgent] : []);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[140px]"
-          data-testid={`team-agent-cell-${deal.id}`}
-        >
-          {teams.length > 0 ? (
-            <div className="flex flex-wrap gap-0.5">
-              {teams.map(t => (
-                <Badge
-                  key={t}
-                  variant="secondary"
-                  className={`text-[9px] px-1 py-0 leading-tight ${DEAL_TEAM_COLORS[t] || ""}`}
-                >
-                  {t}
-                </Badge>
-              ))}
-            </div>
-          ) : (
-            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Add team
-            </span>
-          )}
-          {agents.length > 0 ? (
-            <span className="text-[11px] text-muted-foreground truncate">{agents.join(", ")}</span>
-          ) : (
-            <span className="text-[10px] text-muted-foreground italic">No agent</span>
-          )}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[320px] p-3 space-y-2.5" align="start">
-        <p className="text-xs font-semibold">Team &amp; BGP contact</p>
-        <div className="grid grid-cols-[90px_1fr] items-start gap-2">
-          <Label className="text-xs text-muted-foreground pt-1">Team</Label>
-          <InlineMultiSelect
-            value={teams}
-            options={CRM_OPTIONS.dealTeam.map((t: string) => ({ label: t, value: t }))}
-            colorMap={DEAL_TEAM_COLORS}
-            placeholder="Set team"
-            onSave={(v) => onSave("team", v.length > 0 ? v : null)}
-            testId={`team-agent-team-${deal.id}`}
-          />
-        </div>
-        <div className="grid grid-cols-[90px_1fr] items-start gap-2">
-          <Label className="text-xs text-muted-foreground pt-1">BGP Contact</Label>
-          <InlineMultiSelect
-            value={agents}
-            options={users.map((u) => ({ label: u.name, value: u.name }))}
-            placeholder="Set agent"
-            onSave={(v) => onSave("internalAgent", v.length > 0 ? v : null)}
-            testId={`team-agent-agent-${deal.id}`}
-          />
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 // Consolidated Dates cell — Date Added (read-only) sits above the
 // editable Target Date. Target Date is what feeds the WIP report's
@@ -2772,18 +2697,30 @@ export function DealFormDialog({
   );
 }
 
-function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, onClick }: { dealId: string; dealFee: number | null | undefined; allAllocations: Record<string, DealFeeAllocation[]> | undefined; colorMap?: Record<string, string>; onClick?: () => void }) {
+function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClick }: { dealId: string; dealFee: number | null | undefined; allAllocations: Record<string, DealFeeAllocation[]> | undefined; colorMap?: Record<string, string>; teams?: string[] | string | null; onClick?: () => void }) {
   const allocations = allAllocations?.[dealId];
   const fee = dealFee || 0;
+  const teamList: string[] = Array.isArray(teams) ? teams : (teams ? [teams] : []);
+  const teamBadges = teamList.length > 0 ? (
+    <div className="flex flex-wrap gap-0.5 mb-0.5">
+      {teamList.map(t => (
+        <Badge key={t} variant="secondary" className={`text-[9px] px-1 py-0 leading-tight ${DEAL_TEAM_COLORS[t] || ""}`}>{t}</Badge>
+      ))}
+    </div>
+  ) : null;
   if (!allocations || allocations.length === 0) {
     return (
-      <button onClick={onClick} className="text-xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer">
-        + Add split
-      </button>
+      <div className="space-y-0.5">
+        {teamBadges}
+        <button onClick={onClick} className="text-xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer">
+          + Add split
+        </button>
+      </div>
     );
   }
   return (
     <div className="space-y-0.5 cursor-pointer group" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
+      {teamBadges}
       {allocations.map((a, i) => {
         const amount = a.allocationType === "percentage"
           ? (fee ?? 0) * (a.percentage || 0) / 100
@@ -4821,9 +4758,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     landlord: false,
     status: true,
     type: true,
-    // Team + BGP Contact now live behind one cell. Toggle the granular
-    // columns back on from the column-visibility menu if you need them.
-    teamAgent: true,
+    // The combined Team / BGP column was dropped — the agent is now read
+    // off the Fee Split column (deal_fee_allocations is the source of
+    // truth). Granular Team / Agent columns stay available from the
+    // column-visibility menu if you need them in-table.
     team: false,
     agent: false,
     // Asset Class is property-level — the parent Property tab carries it.
@@ -5749,7 +5687,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.teamAgent && <TableHead className="min-w-[150px]">Team / BGP</TableHead>}
                     {visibleColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
                     {visibleColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {visibleColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
@@ -5933,15 +5870,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.teamAgent && (
-                        <TableCell className="px-1.5 py-1">
-                          <TeamAgentCell
-                            deal={deal}
-                            users={users}
-                            onSave={(field, value) => handleInlineSave(deal.id, field, value)}
-                          />
-                        </TableCell>
-                      )}
                       {visibleColumns.tenant && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
@@ -5986,7 +5914,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {visibleColumns.feeAlloc && (
                         <TableCell className="px-1.5 py-1">
-                          <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} onClick={() => setFeeAllocEditDeal(deal)} />
+                          <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}
                       {visibleColumns.agent && (
