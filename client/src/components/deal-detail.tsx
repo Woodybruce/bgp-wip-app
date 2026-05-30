@@ -83,6 +83,7 @@ import {
   DealRelatedEmails,
   DealRelatedMeetings,
 } from "@/pages/deals";
+import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard } from "@/components/ai-activity-card";
 import { DealAmlStatusCard } from "@/components/deal-aml-status";
@@ -1069,6 +1070,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
             <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
               <div className="space-y-2" data-testid="deal-files-section">
+                {/* The deal's files live in its property's folder — render the
+                    same unified Files panel (browse / upload / new folder /
+                    rename / delete / share) instead of just a link. */}
+                {linkedProperty && (
+                  <PropertyFoldersPanel
+                    propertyName={linkedProperty.name}
+                    folderTeams={(linkedProperty as any).folderTeams}
+                    sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
+                  />
+                )}
                 {deal.sharepointLink ? (
                   <div className="flex items-center gap-2">
                     <a
