@@ -354,7 +354,10 @@ export async function importPipnetProperties(params: {
     maxSize: params.maxSize,
     type: params.type,
   });
-  const cookie = await login();
+  // Reuse the search's session cookie — calling login() here would wipe the
+  // result context and break every detail fetch (see importPipnetRequirements).
+  const cookie = sessionCookie;
+  if (!cookie) throw new Error("PIPnet session missing after search");
   let imported = 0;
   let geocoded = 0;
   let withBrochure = 0;
@@ -486,19 +489,25 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
   documentDate?: string;
   landlordPackUrl?: string;
 }> {
-  const url = href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
+  // Fetch by folderid alone. The row link carries a session-positional
+  // `index=N` that errors out once the search result set rotates (across
+  // paginated runs), whereas folderid is PIPnet's stable requirement id and
+  // resolves directly. (folderid 87746 == the brochure's requirement=87746.)
+  const folderId = href.match(/folderid=(\d+)/i)?.[1] || null;
+  const url = folderId
+    ? `${PIPNET_URL}/reqdetails.jsp?folderid=${folderId}`
+    : href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
   const res = await pipFetch(url, { headers: { Cookie: cookie } });
   if (!res.ok) {
     console.error(`[pipnet detail] ${url}: HTTP ${res.status}`);
     return {};
   }
   const html = await res.text();
-  // If the detail request bounced to the login/search form the session was
-  // lost mid-scrape (transport/IP mismatch). Surface it loudly instead of
-  // silently returning an empty record — an empty detail is why Use class,
-  // tenure, email and the brochure link all come back blank.
-  if (looksUnauthenticated(html)) {
-    console.error(`[pipnet detail] ${url}: bounced to login/search form — session lost, no brochure link available`);
+  // PIPnet serves a small "unexpected error has occured" page when it can't
+  // resolve the detail (e.g. the search result context was wiped by a stray
+  // reqSearch.jsp hit). Treat that as a failure rather than parsing 0 fields.
+  if (/unexpected error has occ/i.test(html)) {
+    console.error(`[pipnet detail] ${url}: PIPnet returned its error page (result context lost) — no brochure link`);
     return {};
   }
 
@@ -540,10 +549,19 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
     : undefined;
 
   // "Requirement ID: 87425" — sometimes in a labelled row, sometimes inline.
+  // Fall back to the folderid from the link, which IS the requirement id — the
+  // detail page often has no th/td label rows, so without this the brochure
+  // download (gated on requirementId) would be skipped even when the page and
+  // its View All Images PDF link are present.
   let requirementId = fields["Requirement ID"] || fields["Req. ID"] || fields["Req ID"];
   if (!requirementId) {
     const idMatch = html.match(/Requirement\s*ID\s*:?\s*<\/?[^>]*>?\s*(\d+)/i);
     if (idMatch) requirementId = idMatch[1];
+  }
+  if (!requirementId && folderId) requirementId = folderId;
+  // The brochure URL embeds requirement=<id> — last-resort source of the id.
+  if (!requirementId && landlordPackUrl) {
+    requirementId = landlordPackUrl.match(/requirement=(\d+)/i)?.[1];
   }
 
   return {
@@ -747,7 +765,13 @@ export async function importPipnetRequirements(params: {
   let skippedOld = 0;
   let loggedHeaders = false;
 
-  const cookie = await login();
+  // Reuse the cookie the search just established — do NOT call login() here.
+  // login() pings reqSearch.jsp to validate the session, and that hit wipes
+  // PIPnet's server-side result set, making every subsequent reqdetails fetch
+  // return the "unexpected error" page (no fields, no brochure link). That was
+  // the real reason Use class / tenure / email / brochure all came back empty.
+  const cookie = sessionCookie;
+  if (!cookie) throw new Error("PIPnet session missing after search");
 
   for (const row of results) {
     if (!loggedHeaders) {
