@@ -609,7 +609,7 @@ export async function registerRoutes(
            LEFT JOIN crm_companies lc ON lc.id = p.landlord_id
            LEFT JOIN crm_companies fc ON fc.id = p.freeholder_id
            WHERE (p.postcode IS NOT NULL AND UPPER(REPLACE(p.postcode, ' ', '')) = REPLACE($1, ' ', ''))
-              OR ($2 <> '' AND UPPER(p.name) LIKE $2)
+              OR ($2 <> '' AND (UPPER(p.name) LIKE $2 OR UPPER(p.address::text) LIKE $2))
            LIMIT 8`,
           [postcode, addressPattern],
         ).catch(() => ({ rows: [] as any[] })),
@@ -742,8 +742,50 @@ export async function registerRoutes(
         })
         .slice(0, 20);
 
+      // Fuzzy CRM fallback — only runs when the strict (exact-postcode /
+      // name-LIKE) lookup found nothing, so it can never override a good
+      // match. Catches the cases the strict query misses: the address
+      // living in `address` not `name`, "St" vs "Street" abbreviations,
+      // and a slightly different postcode on the CRM record (e.g. the
+      // building spans W1K 2TJ and W1K 2AP). Anchored on the street number
+      // so it can't drag in unrelated properties on the same street.
+      let crmPropertiesOut = crmRows.rows;
+      if (crmPropertiesOut.length === 0 && street) {
+        const normAddr = (s: string) => (s || "").toUpperCase()
+          .replace(/\bSTREET\b/g, "ST").replace(/\bROAD\b/g, "RD")
+          .replace(/\bAVENUE\b/g, "AVE").replace(/\bSQUARE\b/g, "SQ")
+          .replace(/\bPLACE\b/g, "PL").replace(/[^A-Z0-9 ]/g, " ")
+          .replace(/\s+/g, " ").trim();
+        const streetCore = normAddr(street).replace(/\b(ST|RD|AVE|SQ|PL)\b/g, "").replace(/\s+/g, " ").trim();
+        const numHead = String(streetNum).replace(/\s+/g, "").split(/[-–—,]/)[0];
+        const outward = postcodeNoSpace.length > 3 ? postcodeNoSpace.slice(0, postcodeNoSpace.length - 3) : postcodeNoSpace;
+        if (streetCore) {
+          const cand = await pool.query(
+            `SELECT p.id, p.name, p.status, p.asset_class, p.sqft, p.postcode, p.latitude, p.longitude,
+                    p.address, p.monday_item_id, p.group_name, p.landlord_id,
+                    lc.name AS landlord_name, lc.company_type AS landlord_type,
+                    lc.company_number AS landlord_company_number,
+                    fc.id AS freeholder_id, fc.name AS freeholder_name
+             FROM crm_properties p
+             LEFT JOIN crm_companies lc ON lc.id = p.landlord_id
+             LEFT JOIN crm_companies fc ON fc.id = p.freeholder_id
+             WHERE (p.postcode IS NOT NULL AND UPPER(REPLACE(p.postcode, ' ', '')) LIKE $1)
+                OR UPPER(p.name) LIKE $2
+                OR UPPER(p.address::text) LIKE $2
+             LIMIT 40`,
+            [`${outward}%`, `%${streetCore}%`],
+          ).catch(() => ({ rows: [] as any[] }));
+          crmPropertiesOut = cand.rows.filter((p: any) => {
+            const hay = normAddr(`${p.name || ""} ${typeof p.address === "string" ? p.address : JSON.stringify(p.address || "")}`);
+            if (!hay.includes(streetCore)) return false;
+            if (numHead) return new RegExp(`(^|[^0-9])${numHead}([^0-9]|$)`).test(hay);
+            return true;
+          }).slice(0, 8);
+        }
+      }
+
       res.json({
-        crmProperties: crmRows.rows,
+        crmProperties: crmPropertiesOut,
         deals: dealRows.rows,
         parentCompany: parentRows.rows[0] || null,
         parentCompanyCandidates: parentRows.rows,
