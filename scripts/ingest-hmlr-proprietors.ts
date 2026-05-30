@@ -245,7 +245,13 @@ async function main() {
   let processed = 0, inserted = 0, updated = 0, skipped = 0;
   let batch: ProprietorRow[] = [];
 
-  const parser = parse({ columns: true, skip_empty_lines: true, trim: true, bom: true });
+  // relax_column_count_less: HMLR's CCOD/OCOD CSVs end with a short footer
+  // line ("Row Count: N", ~2 fields vs the 35 data columns). Without this the
+  // parser throws "Invalid Record Length" on the last line and the whole run
+  // is marked errored even though every data row loaded. The footer gets
+  // padded then dropped by explodeRow (no title number) — so it's skipped, not
+  // inserted as junk. Matches server/hmlr-fetch.ts.
+  const parser = parse({ columns: true, skip_empty_lines: true, trim: true, bom: true, relax_column_count_less: true });
   const stream = fs.createReadStream(args.file).pipe(parser);
 
   try {
