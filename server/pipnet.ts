@@ -1374,11 +1374,31 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
   const cookie = await login();
   const out: any = { formPages: [], detailsfetch: null };
 
+  // First, crawl the main menu pages and collect every link (with its anchor
+  // text) so we can FIND the property / available-space search page rather than
+  // guess its filename. PIPnet's logo links to index.jsp.
+  out.menuLinks = [];
+  for (const menu of ["index.jsp", "menu.jsp", "home.jsp", "main.jsp"]) {
+    try {
+      const r = await pipFetch(`${PIPNET_URL}/${menu}`, { headers: { Cookie: cookie } });
+      if (!r.ok) { out.menuLinks.push({ menu, status: r.status }); continue; }
+      const html = await r.text();
+      const links = [...html.matchAll(/<a[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+        .map(m => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
+        .filter(l => !/^(#|javascript:|mailto:)/i.test(l.href));
+      // surface anything property/space/detail-ish first
+      const interesting = links.filter(l => /detail|propert|space|available|avail|search|retail/i.test(l.href + " " + l.text));
+      out.menuLinks.push({ menu, status: 200, htmlLength: html.length, interesting, allLinks: links.slice(0, 40) });
+    } catch (e: any) { out.menuLinks.push({ menu, error: e?.message }); }
+  }
+
   // Candidate property search pages (parallel to reqsearchretailtabbed.htm).
   const candidates = [
     "detailsearchretailtabbed.htm",
+    "detailsearchtabbed.htm",
+    "detailsearch.htm",
+    "detailsearch.jsp",
     "propsearchretailtabbed.htm",
-    "propertysearchretailtabbed.htm",
     "reqsearchretailtabbed.htm", // tabbed page may host BOTH req + property forms
   ];
   for (const page of candidates) {
