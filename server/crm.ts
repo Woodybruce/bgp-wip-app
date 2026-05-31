@@ -1410,7 +1410,7 @@ export function setupCrmRoutes(app: Express) {
         -- show the same company.
         WHERE LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%'
           AND (
-            LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit')
+            LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit', 'developer', 'fund')
             OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
             OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
           )

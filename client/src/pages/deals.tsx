@@ -670,6 +670,37 @@ function formToPayloadWithLearning(form: DealFormData, changeReason: string | un
 // Map a deal status code to the tenancy status we stamp on a freshly
 // created unit. Keeps the tenancy spine in sync with what the deal is
 // doing the moment Layla types a new unit name into the picker.
+// Server returns gate failures as `409: {JSON body}` via apiRequest's
+// throwIfResNotOk. This decodes the body and classifies the failure so
+// callers can render a useful dialog instead of a raw error toast.
+//   AML gate: { error, code: "AML_GATE_FAILED", notReady: [{name,reason,role}], hint }
+//   Senior approval: { error: "Senior approval required to mark deals as ..." }
+function parseGateError(message: string): { kind: "aml" | "senior" | "other"; message: string } {
+  // Try JSON parse first (new gate shape)
+  const jsonStart = message.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const body = JSON.parse(message.slice(jsonStart));
+      if (body?.code === "AML_GATE_FAILED") {
+        const blockers = (body.notReady || []).map((c: any) => `• ${c.name} (${c.role}) — ${c.reason}`).join("\n");
+        const lines = [body.error || "AML not complete"];
+        if (blockers) lines.push("", "Blocking counterparties:", blockers);
+        if (body.hint) lines.push("", body.hint);
+        return { kind: "aml", message: lines.join("\n") };
+      }
+      if (typeof body?.error === "string") {
+        const senior = body.error.includes("Senior approval required") || body.error.includes("senior approval");
+        return { kind: senior ? "senior" : "other", message: body.error };
+      }
+    } catch { /* fall through to legacy regex */ }
+  }
+  if (message.includes("Senior approval required")) {
+    const msg = message.replace(/^\d+:\s*/, "").replace(/^{?"?error"?:?\s*"?/, "").replace(/"?\s*}?$/, "");
+    return { kind: "senior", message: msg };
+  }
+  return { kind: "other", message };
+}
+
 function dealStatusToTenancyStatus(dealStatus: string | undefined | null): string {
   const code = legacyToCode(dealStatus || "") || dealStatus || "";
   if (code === "SOL" || code === "EXC") return "Under Offer";
@@ -1994,9 +2025,11 @@ export function DealFormDialog({
       onOpenChange(false);
     },
     onError: (err: Error) => {
-      // Handle approval gate 403
-      if (err.message.includes("Senior approval required")) {
-        setApprovalGateMessage(err.message.replace(/^\d+:\s*/, "").replace(/^{?"?error"?:?\s*"?/, "").replace(/"?\s*}?$/, ""));
+      // Handle approval gate (senior 403) and AML gate (409) — both surface
+      // through the same dialog so the user can see why the save was blocked.
+      const parsed = parseGateError(err.message);
+      if (parsed.kind === "aml" || parsed.kind === "senior") {
+        setApprovalGateMessage(parsed.message);
         setApprovalGateOpen(true);
       } else {
         toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -2680,13 +2713,15 @@ export function DealFormDialog({
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <Shield className="w-5 h-5 text-amber-500" />
-              Approval Required
+              {approvalGateMessage?.includes("AML") ? "AML Check Required" : "Approval Required"}
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
-              <p>{approvalGateMessage || "This status change requires senior approval."}</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Please ask a senior team member (Woody, Charlotte, Rupert, or Jack) to make this change, or contact them to approve it on your behalf.
-              </p>
+              <span className="whitespace-pre-line block">{approvalGateMessage || "This status change requires senior approval."}</span>
+              {!approvalGateMessage?.includes("AML") && (
+                <span className="text-xs text-muted-foreground mt-2 block">
+                  Please ask a senior team member (Woody, Charlotte, Rupert, or Jack) to make this change, or contact them to approve it on your behalf.
+                </span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -4971,9 +5006,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       // to its old column. Otherwise the card looks like it landed in
       // the new status while the server actually rejected the write.
       invalidateDealCaches();
-      if (err.message.includes("Senior approval required")) {
-        const msg = err.message.replace(/^\d+:\s*/, "").replace(/^{?"?error"?:?\s*"?/, "").replace(/"?\s*}?$/, "");
-        setListApprovalGateMsg(msg);
+      const parsed = parseGateError(err.message);
+      if (parsed.kind === "aml") {
+        setListApprovalGateMsg(parsed.message);
+        setListApprovalGateOpen(true);
+      } else if (parsed.kind === "senior") {
+        setListApprovalGateMsg(parsed.message);
         setListApprovalGateOpen(true);
       } else {
         toast({ title: "Error saving", description: err.message, variant: "destructive" });
@@ -6531,13 +6569,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <Shield className="w-5 h-5 text-amber-500" />
-              Approval Required
+              {listApprovalGateMsg?.includes("AML") ? "AML Check Required" : "Approval Required"}
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
-              <p>{listApprovalGateMsg || "This status change requires senior approval."}</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Please ask a senior team member (Woody, Charlotte, Rupert, or Jack) to make this change.
-              </p>
+              <span className="whitespace-pre-line block">{listApprovalGateMsg || "This status change requires senior approval."}</span>
+              {!listApprovalGateMsg?.includes("AML") && (
+                <span className="text-xs text-muted-foreground mt-2 block">
+                  Please ask a senior team member (Woody, Charlotte, Rupert, or Jack) to make this change.
+                </span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

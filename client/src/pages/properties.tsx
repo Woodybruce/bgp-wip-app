@@ -682,9 +682,16 @@ export function InlineLandlord({
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
   const landlord = landlordId ? allCompanies.find(c => c.id === landlordId) : null;
+  // Only landlord-side company types in the dropdown. Currently-linked row
+  // stays selectable even if its type drifts, so we never strand a row.
+  const isLandlordType = (c: CrmCompany) => {
+    const t = (c.companyType || "").toLowerCase();
+    return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund") || t.includes("freeholder") || c.id === landlordId;
+  };
+  const landlordCompanies = allCompanies.filter(isLandlordType);
   const filteredCompanies = searchTerm
-    ? allCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
-    : allCompanies.slice(0, 20);
+    ? landlordCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
+    : landlordCompanies.slice(0, 20);
 
   const updateMutation = useMutation({
     mutationFn: async (companyId: string | null) => {
@@ -1278,7 +1285,12 @@ export function InlineTenants({
   const [searchTerm, setSearchTerm] = useState("");
   const assignedCompanyIds = tenantLinks.filter(l => l.propertyId === propertyId).map(l => l.companyId);
   const assignedCompanies = allCompanies.filter(c => assignedCompanyIds.includes(c.id));
-  const unassignedCompanies = allCompanies.filter(c => !assignedCompanyIds.includes(c.id));
+  // Only offer Tenant-typed companies in the picker — anything else (vendors,
+  // landlords, investors) is irrelevant here and clutters the dropdown.
+  // Already-assigned rows stay regardless so we can still detach them.
+  const unassignedCompanies = allCompanies.filter(c =>
+    !assignedCompanyIds.includes(c.id) && (c.companyType || "").startsWith("Tenant")
+  );
   const filteredUnassigned = searchTerm
     ? unassignedCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
     : unassignedCompanies.slice(0, 20);
