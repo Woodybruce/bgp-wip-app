@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
-  AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, ChevronDown,
+  AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet,
 } from "lucide-react";
 
 type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
@@ -61,14 +60,11 @@ export default function MobileHome() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/tasks"] }),
   });
 
-  const [showAllBoards, setShowAllBoards] = useState(false);
   // The bottom-nav "More" drawer is gone — board navigation lives here.
   // Default to the core daily boards; the rest (admin / WIP tools) sit behind
   // "Show all" so Home stays focused. Admins still get their extra tools.
   const visibleBoards = (mobileOverlayItems as any[]).filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
-  const coreBoards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url));
-  const moreBoards = visibleBoards.filter(b => !CORE_BOARD_URLS.has(b.url));
-  const boards = showAllBoards ? [...coreBoards, ...moreBoards] : coreBoards;
+  const boards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url));
   const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -163,16 +159,6 @@ export default function MobileHome() {
             </Link>
           ))}
         </div>
-        {moreBoards.length > 0 && (
-          <button
-            onClick={() => setShowAllBoards(v => !v)}
-            className="mt-2 mx-auto flex items-center gap-1 text-[11px] font-medium text-muted-foreground active:text-foreground"
-            data-testid="mobile-home-toggle-boards"
-          >
-            {showAllBoards ? "Show less" : `Show all (${moreBoards.length} more)`}
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAllBoards ? "rotate-180" : ""}`} />
-          </button>
-        )}
       </section>
 
       {/* Today — actionable alerts */}
