@@ -11,7 +11,7 @@ import {
 type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
 type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null };
 type DealSummary = { id: string; name: string; status: string; property_name?: string | null };
-type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string };
+type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; sol: number; exc: number; com: number } };
 
 // Core boards shown on Home by default. Everything else (admin / WIP tools)
 // hides behind "Show all" so the home screen stays focused on daily work.
@@ -104,7 +104,7 @@ export default function MobileHome() {
       {/* My billing & commission — the number everyone wants to see */}
       {commission && (
         <Link
-          href="/hr"
+          href="/deals"
           className="block rounded-2xl bg-[#1C1917] text-white shadow-sm active:opacity-90 px-4 py-3.5"
           data-testid="mobile-home-commission"
         >
@@ -127,6 +127,18 @@ export default function MobileHome() {
               <p className="text-[10px] opacity-70">Potential</p>
             </div>
           </div>
+          {commission.wipByStage && (
+            <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-sm font-semibold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.neg)}</p>
+                <p className="text-[10px] opacity-70">Negotiating</p>
+              </div>
+              <div>
+                <p className="text-sm font-semibold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.sol)}</p>
+                <p className="text-[10px] opacity-70">Solicitors</p>
+              </div>
+            </div>
+          )}
         </Link>
       )}
 

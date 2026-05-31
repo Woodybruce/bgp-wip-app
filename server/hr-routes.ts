@@ -680,7 +680,7 @@ export function setupHrRoutes(app: Express) {
       //   COM     = completed but not yet invoiced    (almost-billed)
       // Date filter on the scheme year uses completed_at → exchanged_at →
       // target_date → instructed_at, whichever is set.
-      let wipByStage: { neg: number; exc: number; com: number } = { neg: 0, exc: 0, com: 0 };
+      let wipByStage: { neg: number; sol: number; exc: number; com: number } = { neg: 0, sol: 0, exc: 0, com: 0 };
       let topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }> = [];
       let awaitingPayment: Array<{ id: string; name: string; fee: number; status: string; date: string | null; invoicedAt: string | null }> = [];
       try {
@@ -718,7 +718,8 @@ export function setupHrRoutes(app: Express) {
         );
         for (const r of dealRows) {
           const pence = Math.round((parseFloat(r.my_portion) || 0) * 100);
-          if (r.status === "NEG" || r.status === "SOL") wipByStage.neg += pence;
+          if (r.status === "NEG") wipByStage.neg += pence;
+          else if (r.status === "SOL") wipByStage.sol += pence;
           else if (r.status === "EXC") wipByStage.exc += pence;
           else if (r.status === "COM") wipByStage.com += pence;
         }
@@ -804,7 +805,7 @@ export function setupHrRoutes(app: Express) {
       // default) and Paid-only. Commission rules: deal counts in the FY when
       // invoiced; actual cash payout at month-end payroll when BGP gets paid.
       const primaryBilledPence = paidOnly ? paidPence : invoicedPence;
-      const wipTotal = wipByStage.neg + wipByStage.exc + wipByStage.com;
+      const wipTotal = wipByStage.neg + wipByStage.sol + wipByStage.exc + wipByStage.com;
       const forecastPence = primaryBilledPence + wipTotal;
       const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
@@ -887,7 +888,7 @@ export function setupHrRoutes(app: Express) {
         sources: {
           invoiced: { billedPence: invoicedPence },
           paid:     { billedPence: paidPence },
-          wip:      { neg: wipByStage.neg, exc: wipByStage.exc, com: wipByStage.com, total: wipTotal },
+          wip:      { neg: wipByStage.neg, sol: wipByStage.sol, exc: wipByStage.exc, com: wipByStage.com, total: wipTotal },
         },
         t1, t2, t3,
         tierBreakdown,

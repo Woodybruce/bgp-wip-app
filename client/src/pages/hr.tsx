@@ -131,14 +131,14 @@ interface CommissionData {
   schemeYearStart?: string;
   schemeYearEnd?: string;
   billedPence: number;
-  wipByStage: { neg: number; exc: number; com: number };
+  wipByStage: { neg: number; sol: number; exc: number; com: number };
   wipTotal: number;
   forecastPence: number;
   paidOnly?: boolean;
   sources?: {
     invoiced: { billedPence: number };
     paid:     { billedPence: number };
-    wip:      { neg: number; exc: number; com: number; total: number };
+    wip:      { neg: number; sol: number; exc: number; com: number; total: number };
   };
   t1: number; t2: number; t3: number;
   tierBreakdown?: Array<{ name: string; thresholdLow: number; thresholdHigh: number | null; rate: number; billedInBand: number; commission: number }>;
@@ -686,7 +686,7 @@ function CommissionTab({ userId }: { userId: string }) {
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-md border p-2.5 text-center">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Negotiating</div>
-                <div className="text-sm font-semibold mt-0.5">{fmtSalary(data.wipByStage.neg)}</div>
+                <div className="text-sm font-semibold mt-0.5">{fmtSalary(data.wipByStage.neg + data.wipByStage.sol)}</div>
               </div>
               <div className="rounded-md border p-2.5 text-center">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Exchanged</div>
