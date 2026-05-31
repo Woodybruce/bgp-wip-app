@@ -1400,23 +1400,26 @@ function CompanyDetail({ id }: { id: string }) {
             return <BrandProfilePanel companyId={id} />;
           })()}
 
-          {/* BGP Team — wrapped in a 3-col grid so the card occupies 2/3
-              width (matching the Landlord Profile content area in the
-              brand panel above) rather than spreading across the full
-              page. Sits under the brand-expansion narrative. */}
-          {id && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <Card className="md:col-span-2">
-                <CardContent className="p-3 space-y-2">
-                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-indigo-500" />
-                    BGP Team
-                  </h3>
-                  <ClientTeamOrgChart clientCompanyId={id} />
-                </CardContent>
-              </Card>
-            </div>
-          )}
+          {/* BGP Team — kept for Landlords only (they're a separate workflow
+              now). Removed from brand/occupier profiles to declutter. */}
+          {id && (() => {
+            const t = (company.companyType || "").toLowerCase();
+            const isLandlordCo = t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund");
+            if (!isLandlordCo) return null;
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Card className="md:col-span-2">
+                  <CardContent className="p-3 space-y-2">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-indigo-500" />
+                      BGP Team
+                    </h3>
+                    <ClientTeamOrgChart clientCompanyId={id} />
+                  </CardContent>
+                </Card>
+              </div>
+            );
+          })()}
 
           {linkedProperties.length > 0 && (() => {
             const userIdToName = new Map<string, string>();

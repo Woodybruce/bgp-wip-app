@@ -419,6 +419,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     }
   }
 
+  // Current user — the 'BGP portfolio — potential pitches' block is parked
+  // admin-only (work-in-progress) so it's hidden from the team.
+  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isAdmin = !!currentUser?.isAdmin;
+
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
@@ -2157,12 +2162,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
-            {/* Suggested BGP units — available portfolio units not yet pitched to this brand */}
-            {suggestedUnits && suggestedUnits.length > 0 && (
+            {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
+                clutter the brand profile for the team. */}
+            {isAdmin && suggestedUnits && suggestedUnits.length > 0 && (
               <div className="border-t pt-2">
                 <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
                   <Building2 className="w-3 h-3 text-emerald-600" />
-                  <span>BGP portfolio — potential pitches ({suggestedUnits.length})</span>
+                  <span>BGP portfolio — potential pitches ({suggestedUnits.length}) <span className="text-[9px] text-amber-600">· admin</span></span>
                 </div>
                 <div className="space-y-1">
                   {suggestedUnits.map((u) => (
