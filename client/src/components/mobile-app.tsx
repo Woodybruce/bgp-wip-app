@@ -2652,6 +2652,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   const [activeThreadAi, setActiveThreadAi] = useState(initialTab === "ai");
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [showChat, setShowChat] = useState(initialTab === "ai");
+  // True only when the chat was opened from MobileApp's own conversation
+  // list. When entered directly (ChatBGP nav → chat), back leaves the old
+  // shell and returns to the new app instead of exposing the list.
+  const [chatFromList, setChatFromList] = useState(false);
   const [chatSearch, setChatSearch] = useState("");
   const [moreSubTab, setMoreSubTab] = useState<MoreSubTab>("tracker");
   const [peopleToggle, setPeopleToggle] = useState<"contacts" | "companies">("contacts");
@@ -3096,6 +3100,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   const openThread = (thread: ThreadData) => {
     setActiveThreadId(thread.id);
     setActiveThreadAi(thread.isAiChat);
+    setChatFromList(true);
     setShowChat(true);
   };
 
@@ -3143,7 +3148,21 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       <MobileChatView
         threadId={activeThreadId}
         isAiChat={activeThreadAi}
-        onBack={() => { setShowChat(false); setActiveThreadId(null); queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] }); }}
+        onBack={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
+          if (chatFromList) {
+            // Opened from the in-app conversation list — return to it.
+            setChatFromList(false);
+            setActiveThreadId(null);
+            setShowChat(false);
+          } else if (window.history.length > 1) {
+            // Entered directly via the ChatBGP nav — leave the old shell
+            // and go back to the new app (Home / wherever we came from).
+            window.history.back();
+          } else {
+            navigate("/");
+          }
+        }}
         onNewChat={openNewAiChat}
         currentUser={currentUser ?? null}
       />
