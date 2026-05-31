@@ -1378,7 +1378,17 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
   // text) so we can FIND the property / available-space search page rather than
   // guess its filename. PIPnet's logo links to index.jsp.
   out.menuLinks = [];
-  for (const menu of ["index.jsp", "menu.jsp", "home.jsp", "main.jsp"]) {
+  const fetchForms = async (page: string) => {
+    const r = await pipFetch(page.startsWith("http") ? page : `${PIPNET_URL}/${page.replace(/^\//, "")}`, { headers: { Cookie: cookie } });
+    if (!r.ok) return { status: r.status };
+    const html = await r.text();
+    const forms = [...html.matchAll(/<form[^>]*?action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/gi)].map(m => ({
+      action: m[1],
+      inputs: Array.from(new Set([...m[2].matchAll(/<(?:input|select|textarea)[^>]*?name="([^"]+)"/gi)].map(x => x[1]))),
+    }));
+    return { status: 200, htmlLength: html.length, forms };
+  };
+  for (const menu of ["choice.jsp", "watchresults.jsp", "index.jsp", "menu.jsp"]) {
     try {
       const r = await pipFetch(`${PIPNET_URL}/${menu}`, { headers: { Cookie: cookie } });
       if (!r.ok) { out.menuLinks.push({ menu, status: r.status }); continue; }
@@ -1386,9 +1396,14 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
       const links = [...html.matchAll(/<a[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
         .map(m => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
         .filter(l => !/^(#|javascript:|mailto:)/i.test(l.href));
-      // surface anything property/space/detail-ish first
+      const jspRefs = Array.from(new Set([...html.matchAll(/\b([a-zA-Z][\w]*\.(?:jsp|htm))\b/g)].map(m => m[1])));
       const interesting = links.filter(l => /detail|propert|space|available|avail|search|retail/i.test(l.href + " " + l.text));
-      out.menuLinks.push({ menu, status: 200, htmlLength: html.length, interesting, allLinks: links.slice(0, 40) });
+      // Follow each interesting link one level deep to capture its form inputs.
+      const followed: any[] = [];
+      for (const l of interesting.slice(0, 8)) {
+        try { followed.push({ link: l, ...(await fetchForms(l.href)) }); } catch (e: any) { followed.push({ link: l, error: e?.message }); }
+      }
+      out.menuLinks.push({ menu, status: 200, htmlLength: html.length, jspRefs, interesting, allLinks: links.slice(0, 40), followed });
     } catch (e: any) { out.menuLinks.push({ menu, error: e?.message }); }
   }
 
