@@ -1383,21 +1383,37 @@ export default function InvestmentTrackerPage() {
         </div>
       </div>
 
+      {isMobile ? (
+        <div className="flex flex-wrap gap-1.5 shrink-0">
+          {SUMMARY_STATUSES.map(s => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+              data-testid={`stat-chip-${s.toLowerCase().replace(/\s/g, "-")}`}
+            >
+              <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
+              {DEAL_STATUS_LABELS[s]}
+              <span className="font-bold tabular-nums">{statusSummary[s] || 0}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
       <ScrollArea className="w-full shrink-0">
         <div className="flex items-center gap-3 pb-1">
           {SUMMARY_STATUSES.map(s => (
             <Card
               key={s}
-              className={`flex-shrink-0 min-w-[84px] sm:min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
+              className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
               onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
               data-testid={`card-status-${s.toLowerCase().replace(/\s/g, "-")}`}
             >
-              <CardContent className="p-2 sm:p-3">
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
                   <div>
-                    <p className="text-base sm:text-lg font-bold leading-tight">{statusSummary[s] || 0}</p>
-                    <p className="text-[10px] sm:text-xs text-muted-foreground truncate max-w-[72px] sm:max-w-[100px]">{DEAL_STATUS_LABELS[s]}</p>
+                    <p className="text-lg font-bold">{statusSummary[s] || 0}</p>
+                    <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s]}</p>
                   </div>
                 </div>
               </CardContent>
@@ -1406,6 +1422,7 @@ export default function InvestmentTrackerPage() {
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap shrink-0">
         <div className="relative flex-1 min-w-[200px] max-w-sm">

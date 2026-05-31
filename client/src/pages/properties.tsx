@@ -5151,7 +5151,29 @@ function PropertiesList({
         />
       )}
 
-      {activeView === "list" && <><div className="flex items-center gap-3 overflow-x-auto pb-1">
+      {activeView === "list" && <>{isMobile ? (
+        <div className="flex flex-wrap gap-1.5">
+          {groupCounts.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => setActiveGroup(activeGroup === g.id ? "Properties" : g.id)}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === g.id ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+              data-testid={`chip-group-${g.id.toLowerCase()}`}
+            >
+              {g.label}
+              <span className="font-bold tabular-nums">{g.count}</span>
+            </button>
+          ))}
+          <button
+            onClick={() => setActiveGroup("all")}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === "all" ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+            data-testid="chip-group-all"
+          >
+            All <span className="font-bold tabular-nums">{items.length}</span>
+          </button>
+        </div>
+      ) : (
+      <div className="flex items-center gap-3 overflow-x-auto pb-1">
         {groupCounts.map((g) => (
           <Card
             key={g.id}
@@ -5190,6 +5212,7 @@ function PropertiesList({
           </CardContent>
         </Card>
       </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[180px]">
