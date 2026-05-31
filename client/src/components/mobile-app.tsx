@@ -1126,12 +1126,11 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
   );
 }
 
-function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, onShowList, currentUser }: {
+function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, currentUser }: {
   threadId: string | null;
   isAiChat: boolean;
   onBack: () => void;
   onNewChat?: () => void;
-  onShowList?: () => void;
   currentUser: UserType | null;
 }) {
   const [localThreadId, setLocalThreadId] = useState<string | null>(null);
@@ -2030,16 +2029,6 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               </div>
             </button>
             <div className="flex items-center gap-0.5">
-              {onShowList && (
-                <button
-                  onClick={onShowList}
-                  className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
-                  data-testid="button-mobile-chat-list"
-                  aria-label="All conversations"
-                >
-                  <MessageSquare className="w-[18px] h-[18px] text-gray-400" />
-                </button>
-              )}
               <button
                 onClick={() => setSearchInChat(!searchInChat)}
                 className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
@@ -3161,24 +3150,16 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         isAiChat={activeThreadAi}
         onBack={() => {
           queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
-          // Back from a chat returns to the conversation list (your ChatBGP
-          // history + team chats) — not straight home. The list's own back
-          // arrow then exits to the app.
+          // Return to the matching history list: ChatBGP (AI) threads for an
+          // AI chat, team conversations for a team chat. The list's header
+          // back arrow then exits to the app.
+          const wasAi = activeThreadAi;
           setActiveThreadId(null);
           setShowChat(false);
           setChatFromList(false);
-          setTab("chats");
+          setTab(wasAi ? "ai" : "chats");
         }}
         onNewChat={openNewAiChat}
-        onShowList={() => {
-          // Surface the WhatsApp-style conversation list (ChatBGP history +
-          // internal team chats) instead of leaving the shell.
-          queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-          setChatFromList(false);
-          setActiveThreadId(null);
-          setShowChat(false);
-          setTab("chats");
-        }}
         currentUser={currentUser ?? null}
       />
     );
@@ -3200,7 +3181,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
           <div className="flex items-center gap-2 min-w-0">
-            {tab === "chats" && (
+            {(tab === "chats" || tab === "ai") && (
               <button
                 onClick={() => { if (window.history.length > 1) window.history.back(); else navigate("/"); }}
                 className="w-9 h-9 -ml-2 rounded-full flex items-center justify-center active:bg-white/10 shrink-0"
