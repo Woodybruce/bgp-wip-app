@@ -1526,15 +1526,21 @@ export function setupNewsFeedRoutes(app: Express) {
     try {
       const { team, limit: limitStr, search } = req.query;
       const limit = parseInt(limitStr as string) || 50;
+      const RELEVANCE_FLOOR = 30;
 
+      // Fetch a WIDER pool than `limit` so relevance/team filtering below
+      // doesn't starve the result (previously we limited to `limit` first,
+      // then filtered — which let off-topic items survive simply by being
+      // the newest, and shrank the list). Slice to `limit` at the very end.
+      const pool = Math.max(limit * 5, 80);
       let articles = await db.select()
         .from(newsArticles)
         .orderBy(desc(newsArticles.publishedAt))
-        .limit(limit);
+        .limit(pool);
 
       if (search) {
         const searchLower = (search as string).toLowerCase();
-        articles = articles.filter(a => 
+        articles = articles.filter(a =>
           a.title.toLowerCase().includes(searchLower) ||
           a.summary?.toLowerCase().includes(searchLower) ||
           a.aiSummary?.toLowerCase().includes(searchLower) ||
@@ -1542,20 +1548,39 @@ export function setupNewsFeedRoutes(app: Express) {
         );
       }
 
+      // Max relevance across all teams. null = never classified (keep it,
+      // benefit of the doubt for freshly-ingested items).
+      const maxRelevance = (a: any): number | null => {
+        const s = a.aiRelevanceScores;
+        if (!s || typeof s !== "object") return null;
+        const vals = Object.values(s).map(Number).filter((n) => Number.isFinite(n));
+        return vals.length ? Math.max(...vals) : null;
+      };
+
       if (team && team !== "All" && team !== "All Teams") {
         const teamStr = team as string;
         articles = articles.filter(a => {
           const score = (a.aiRelevanceScores as any)?.[teamStr];
-          return score === undefined || score === null || score >= 30;
+          return score === undefined || score === null || score >= RELEVANCE_FLOOR;
         });
         articles.sort((a, b) => {
           const scoreA = (a.aiRelevanceScores as any)?.[teamStr] || 0;
           const scoreB = (b.aiRelevanceScores as any)?.[teamStr] || 0;
           return scoreB - scoreA;
         });
+      } else {
+        // No team (e.g. the Dashboard default feed): drop articles that were
+        // classified as irrelevant to every team — this is what keeps loose
+        // Google-News keyword hits (e.g. an off-topic New York story) from
+        // floating to the top just because they're the newest. Unscored
+        // articles are kept. Order stays newest-first.
+        articles = articles.filter(a => {
+          const m = maxRelevance(a);
+          return m === null || m >= RELEVANCE_FLOOR;
+        });
       }
 
-      res.json(articles);
+      res.json(articles.slice(0, limit));
     } catch (err: any) {
       console.error("News articles error:", err);
       res.status(500).json({ message: "Failed to fetch articles" });
