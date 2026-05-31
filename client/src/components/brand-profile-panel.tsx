@@ -1948,13 +1948,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               compact
             />
 
-            {/* Interactions — shared InteractionsBoard component with company
-                scope. Banner with top BGP contacts + next interaction, type
-                toggle, 3-line rows, click to pop out the email/meeting. Auto-
-                fires meeting sync if 0 meetings on first open. */}
-            <div className="border-t pt-2">
-              <InteractionsBoard scope="company" contextId={companyId} />
-            </div>
+            {/* Interactions — the AI Activity card above is the primary view;
+                the full raw list duplicates it and includes system noise, so
+                it's tucked into an expandable "All correspondence" drawer. */}
+            <details className="border-t pt-2 group/corr">
+              <summary className="text-[11px] uppercase tracking-wider text-muted-foreground cursor-pointer list-none flex items-center gap-1 hover:text-foreground">
+                <ChevronRight className="w-3 h-3 transition-transform group-open/corr:rotate-90" />
+                All correspondence
+              </summary>
+              <div className="mt-2">
+                <InteractionsBoard scope="company" contextId={companyId} />
+              </div>
+            </details>
 
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
             {leaseEvents.length > 0 && (
@@ -4706,13 +4711,32 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 text-sm space-y-1.5">
+          {/* Key contacts at the brand — clickable through to each CRM record,
+              so the relationship card connects to "who" we actually deal with. */}
+          {topContacts.length > 0 && (
+            <div>
+              <div className="text-[10px] text-muted-foreground mb-1">Key contacts ({topContacts.length})</div>
+              <div className="flex flex-wrap gap-1">
+                {topContacts.map((ct: any) => (
+                  <Link
+                    key={ct.id}
+                    href={`/contacts/${ct.id}`}
+                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border bg-card hover:bg-muted transition-colors"
+                    title={ct.role || ct.email || ct.name}
+                  >
+                    <span className="font-medium truncate max-w-[120px]">{ct.name}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
-            <div className="text-[10px] text-muted-foreground mb-1">BGP contacts</div>
+            <div className="text-[10px] text-muted-foreground mb-1">BGP team</div>
             <InlineMultiSelect
               value={currentBgpContacts}
               options={userOptions}
               colorMap={userColorMap}
-              placeholder="Set contacts"
+              placeholder="Set BGP team"
               onSave={saveBgpContacts}
               testId={`sidebar-bgp-contacts-${companyId}`}
             />

@@ -138,7 +138,13 @@ export function InteractionsBoard({ scope, contextId }: Props) {
     },
   });
 
-  const interactions = useMemo(() => (data?.interactions || []).map(norm), [data]);
+  const interactions = useMemo(() => {
+    // KYC/Veriff verification-status emails get mis-matched onto company
+    // records — they're system noise, not real correspondence. Drop them so
+    // the board mirrors what the AI Activity card shows.
+    const noise = /verification (was )?(expired|approved|declined|submitted|pending|completed|created|reminder)|verification for |\bveriff\b/i;
+    return (data?.interactions || []).map(norm).filter((i: any) => !noise.test(`${i.subject || ""}`));
+  }, [data]);
   const emailCount = interactions.filter(i => i.type === "email" || i.type === "call" || i.type === "note").length;
   const meetingCount = interactions.filter(i => i.type === "meeting").length;
   const totalCount = interactions.length;
