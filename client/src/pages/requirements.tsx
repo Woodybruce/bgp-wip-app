@@ -837,6 +837,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
             ],
             onEdit: () => setEditItem(item),
+            footer: <LandlordPackCell itemId={item.id} landlordPack={item.landlordPack} />,
           }))}
         />
       ) : (<>
@@ -2900,6 +2901,7 @@ function LeasingFormDialog({
 
 function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
   const [, navigate] = useLocation();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
@@ -3217,6 +3219,25 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
         </Button>
       </div>
 
+      {isMobile ? (
+        <MobileCardView
+          emptyMessage="No requirements"
+          items={filteredItems.map((item) => ({
+            id: item.id,
+            title: (item.companyId ? companyMap.get(item.companyId)?.name : null) || item.name,
+            subtitle: item.contactName || undefined,
+            status: item.status || "Active",
+            statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
+            fields: [
+              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
+              { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
+              { label: "Lot size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
+              { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
+            ],
+            onEdit: () => setEditItem(item),
+          }))}
+        />
+      ) : (
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -3454,6 +3475,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
           )}
         </CardContent>
       </Card>
+      )}
 
       <InvestmentFormDialog
         open={createOpen}

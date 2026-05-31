@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Eye, Pencil, Inbox } from "lucide-react";
 import { Link } from "wouter";
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 
@@ -21,6 +22,8 @@ export type MobileCardItem = {
   statusColor?: string;
   fields: MobileCardField[];
   onEdit?: () => void;
+  /** Optional extra control rendered in the action row (e.g. a download). */
+  footer?: ReactNode;
 };
 
 function StatusDot({ color }: { color?: string }) {
@@ -111,33 +114,36 @@ export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: Mobi
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-2 pt-1 border-t">
-            {item.href && (
-              <Link href={item.href}>
+          {(item.href || item.onEdit || item.footer) && (
+            <div className="flex items-center gap-2 pt-1 border-t">
+              {item.href && (
+                <Link href={item.href}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 px-3 text-xs gap-1.5"
+                    data-testid={`button-view-card-${item.id}`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    View
+                  </Button>
+                </Link>
+              )}
+              {item.onEdit && (
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-9 px-3 text-xs gap-1.5"
-                  data-testid={`button-view-card-${item.id}`}
+                  onClick={item.onEdit}
+                  data-testid={`button-edit-card-${item.id}`}
                 >
-                  <Eye className="w-3.5 h-3.5" />
-                  View
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit
                 </Button>
-              </Link>
-            )}
-            {item.onEdit && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-9 px-3 text-xs gap-1.5"
-                onClick={item.onEdit}
-                data-testid={`button-edit-card-${item.id}`}
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                Edit
-              </Button>
-            )}
-          </div>
+              )}
+              {item.footer && <div className="ml-auto">{item.footer}</div>}
+            </div>
+          )}
         </div>
       ))}
     </div>
