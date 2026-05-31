@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BarChart3, Store, TrendingUp, FileText, Building2 } from "lucide-react";
+import { BarChart3, Store, TrendingUp, Building2 } from "lucide-react";
 import { useTeam } from "@/lib/team-context";
 
 const Deals = lazy(() => import("@/pages/deals"));
@@ -32,9 +32,9 @@ function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
   if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
   if (loc.startsWith("/deals/list")) return "deals";
-  // Bare /deals now lands on the WIP Report — it's the financial roll-up
-  // every agent wants first. The deals schedule lives at /deals/list.
-  if (loc === "/deals") return "wip-report";
+  // Bare /deals lands on the Deals schedule. (WIP Report retired from the
+  // hub tabs, but /wip-report + /deals/report still render it for old links.)
+  if (loc === "/deals") return "deals";
   return null;
 }
 
@@ -47,7 +47,7 @@ function isDealProfile(loc: string): boolean {
 export default function DealsHub() {
   const [location, setLocation] = useLocation();
   const { activeTeam } = useTeam();
-  const [tab, setTab] = useState<TabKey>(() => getTabFromLocation(location) || "wip-report");
+  const [tab, setTab] = useState<TabKey>(() => getTabFromLocation(location) || "deals");
   const isProfile = isDealProfile(location);
 
   useEffect(() => {
@@ -59,7 +59,6 @@ export default function DealsHub() {
   // WIP Report leads — it's the financial roll-up every agent wants on
   // landing. Then it's what we own → what's transacting.
   const allTabs = useMemo(() => [
-    { key: "wip-report" as const, label: "WIP Report", icon: FileText },
     { key: "properties" as const, label: "Properties", icon: Building2 },
     { key: "deals" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
@@ -95,13 +94,13 @@ export default function DealsHub() {
 
   return (
     <div>
-      <div className="flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0 overflow-x-auto">
-        <div className="inline-flex min-w-max rounded-lg border bg-muted p-0.5" data-testid="toggle-deals-tabs">
+      <div className="flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0">
+        <div className="flex flex-wrap md:inline-flex md:min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" data-testid="toggle-deals-tabs">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => switchTab(key)}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 md:px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 tab === key
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"

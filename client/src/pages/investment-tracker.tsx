@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -960,6 +961,7 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
 
 export default function InvestmentTrackerPage() {
   const { activeTeam } = useTeam();
+  const isMobile = useIsMobile();
   const [boardType, setBoardType] = useState<BoardType>("Purchases");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
@@ -1386,16 +1388,16 @@ export default function InvestmentTrackerPage() {
           {SUMMARY_STATUSES.map(s => (
             <Card
               key={s}
-              className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
+              className={`flex-shrink-0 min-w-[84px] sm:min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
               onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
               data-testid={`card-status-${s.toLowerCase().replace(/\s/g, "-")}`}
             >
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
+              <CardContent className="p-2 sm:p-3">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
                   <div>
-                    <p className="text-lg font-bold">{statusSummary[s] || 0}</p>
-                    <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s]}</p>
+                    <p className="text-base sm:text-lg font-bold leading-tight">{statusSummary[s] || 0}</p>
+                    <p className="text-[10px] sm:text-xs text-muted-foreground truncate max-w-[72px] sm:max-w-[100px]">{DEAL_STATUS_LABELS[s]}</p>
                   </div>
                 </div>
               </CardContent>
@@ -1416,6 +1418,7 @@ export default function InvestmentTrackerPage() {
             data-testid="input-search-assets"
           />
         </div>
+        {!isMobile && (<>
         <div className="flex items-center gap-1.5 flex-wrap">
           {STATUSES.map(s => (
             <button
@@ -1474,6 +1477,7 @@ export default function InvestmentTrackerPage() {
             <X className="h-3 w-3" /> Clear filters
           </Button>
         )}
+        </>)}
       </div>
 
       {/* Monthly Activity Charts */}
