@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import PDFViewer from "@/components/pdf-viewer";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, Download, Maximize2, Pencil, Archive, ChevronDown, ChevronRight,
@@ -341,7 +342,12 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         )}
       </Card>
 
-      {previewing && <BrochurePreviewDialog brochure={previewing} onClose={() => setPreviewing(null)} />}
+      <PDFViewer
+        open={!!previewing}
+        url={previewing?.fileUrl || ""}
+        fileName={previewing?.name || "Brochure"}
+        onClose={() => setPreviewing(null)}
+      />
       {editing && (
         <BrochureEditDialog
           brochure={editing}
@@ -485,34 +491,6 @@ function BrochureTile({
         </div>
       </div>
     </div>
-  );
-}
-
-function BrochurePreviewDialog({ brochure, onClose }: { brochure: Brochure; onClose: () => void }) {
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-6xl h-[90vh] p-0 flex flex-col">
-        <DialogHeader className="px-4 pt-3 pb-2 border-b">
-          <DialogTitle className="text-sm flex items-center gap-2">
-            <FileText className="w-4 h-4 text-muted-foreground" />
-            <span className="truncate">{brochure.name}</span>
-            <span className="text-[10px] text-muted-foreground font-normal ml-auto whitespace-nowrap">
-              {fmtSize(brochure.size)} · {fmtDate(brochure.uploadedAt)}
-            </span>
-            <a
-              href={brochure.downloadUrl}
-              download={brochure.name}
-              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
-            >
-              <Download className="w-3.5 h-3.5" /> Download
-            </a>
-          </DialogTitle>
-        </DialogHeader>
-        <div className="flex-1 overflow-hidden">
-          <iframe src={brochure.fileUrl} className="w-full h-full border-0" title={brochure.name} />
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 

@@ -18,6 +18,7 @@ interface PDFViewerProps {
 
 export default function PDFViewer({ url, fileName, open, onClose, propertyName }: PDFViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [pageNum, setPageNum] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -88,6 +89,26 @@ export default function PDFViewer({ url, fileName, open, onClose, propertyName }
   useEffect(() => {
     if (pdfDoc) renderPage(pdfDoc, pageNum, scale);
   }, [pdfDoc, pageNum, scale, renderPage]);
+
+  // Fit the first page to the viewer width on open so the brochure isn't
+  // rendered "massive" off the right edge (especially on a phone). The user
+  // can still zoom in/out from there.
+  useEffect(() => {
+    if (!pdfDoc || !containerRef.current) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const page = await pdfDoc.getPage(1);
+        const vp = page.getViewport({ scale: 1 });
+        const avail = (containerRef.current?.clientWidth || vp.width) - 24;
+        const fit = Math.max(0.3, Math.min(3, avail / vp.width));
+        if (!cancelled) setScale(fit);
+      } catch {
+        /* keep default scale */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pdfDoc]);
 
   useEffect(() => {
     if (!open) {
@@ -165,9 +186,12 @@ export default function PDFViewer({ url, fileName, open, onClose, propertyName }
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col p-0 gap-0">
-        <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
-          <DialogTitle className="text-sm font-medium truncate max-w-[50%]">{fileName}</DialogTitle>
+      <DialogContent className="max-w-full sm:max-w-5xl w-full h-[100dvh] sm:h-[90vh] rounded-none sm:rounded-lg flex flex-col p-0 gap-0">
+        <div
+          className="flex items-center justify-between px-4 py-3 border-b shrink-0"
+          style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
+        >
+          <DialogTitle className="text-sm font-medium truncate max-w-[45%]">{fileName}</DialogTitle>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" onClick={() => setScale(s => Math.max(0.5, s - 0.25))} disabled={loading}>
               <ZoomOut className="w-4 h-4" />
@@ -192,7 +216,7 @@ export default function PDFViewer({ url, fileName, open, onClose, propertyName }
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto bg-muted/30 flex items-start justify-center p-4">
+        <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30 flex items-start justify-center p-4">
           {loading && (
             <div className="flex items-center gap-2 mt-20 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" />

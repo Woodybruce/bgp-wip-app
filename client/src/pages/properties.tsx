@@ -3,6 +3,7 @@ import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -4725,6 +4726,7 @@ function PropertiesList({
   teamFilter?: string | null;
 }) {
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -5103,23 +5105,29 @@ function PropertiesList({
       subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
         <>
-          <Button
-            variant={activeView === "landlordHealth" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveView(v => v === "landlordHealth" ? "list" : "landlordHealth")}
-            data-testid="button-landlord-health"
-          >
-            <ShieldAlert className="w-4 h-4 mr-2" />
-            Landlord Health
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setShowImport(true)}
-            data-testid="button-import-properties"
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Import
-          </Button>
+          {/* On mobile keep just the primary action — Landlord Health and
+              Import are desktop tools and bled off the right edge on a phone. */}
+          {!isMobile && (
+            <>
+              <Button
+                variant={activeView === "landlordHealth" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setActiveView(v => v === "landlordHealth" ? "list" : "landlordHealth")}
+                data-testid="button-landlord-health"
+              >
+                <ShieldAlert className="w-4 h-4 mr-2" />
+                Landlord Health
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowImport(true)}
+                data-testid="button-import-properties"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Import
+              </Button>
+            </>
+          )}
           <Button
             onClick={() => setCreateDialogOpen(true)}
             data-testid="button-create-property"
@@ -5183,8 +5191,8 @@ function PropertiesList({
         </Card>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search properties..."
@@ -5194,6 +5202,10 @@ function PropertiesList({
             data-testid="input-search-properties"
           />
         </div>
+        {/* On mobile the toolbar collapses to just the search box — the
+            column/saved-view controls are desktop power tools that squeezed
+            the search field down to nothing. */}
+        {!isMobile && (<>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" data-testid="button-toggle-columns">
@@ -5286,6 +5298,7 @@ function PropertiesList({
           </Button>
         )}
         <ViewToggle view={viewMode} onToggle={setViewMode} />
+        </>)}
       </div>
 
       {viewMode === "card" ? (
