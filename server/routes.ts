@@ -2343,6 +2343,19 @@ export async function registerRoutes(
     res.json(getJobStatus("pipnet-prop-import") || { state: "idle" });
   });
 
+  // External (scraped) available properties — a STANDALONE dataset, separate
+  // from the CRM (crm_properties), so PIPnet market listings never clutter the
+  // CRM. Feeds its own toggleable map layer.
+  app.get("/api/external-properties", requireAuth, async (_req, res) => {
+    try {
+      const { listExternalProperties } = await import("./external-properties");
+      res.json(await listExternalProperties());
+    } catch (err: any) {
+      console.error("[external-properties] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to load external properties" });
+    }
+  });
+
   // Diagnostic: dump PIPnet's property search form inputs + current detailsfetch
   // result, so we can fix the property scrape's params (they differ from reqs).
   app.get("/api/external-requirements/pipnet-inspect-property-search", requireAuth, requireAdmin, async (_req, res) => {

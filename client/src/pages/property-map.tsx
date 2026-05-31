@@ -174,6 +174,9 @@ export default function PropertyMap() {
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const pipnetMarkersRef = useRef<google.maps.Marker[]>([]);
+  const pipnetInfoRef = useRef<google.maps.InfoWindow | null>(null);
+  const [showPipnet, setShowPipnet] = useState(true);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const mapSearchInputRef = useRef<HTMLInputElement>(null);
   const searchBoxRef = useRef<google.maps.places.Autocomplete | null>(null);
@@ -206,6 +209,12 @@ export default function PropertyMap() {
     queryKey: ["/api/crm/properties"],
   });
 
+  // External (scraped) PIPnet listings — a SEPARATE dataset, not part of the
+  // CRM. Drawn as its own toggleable layer.
+  const { data: externalProps = [] } = useQuery<any[]>({
+    queryKey: ["/api/external-properties"],
+  });
+
   const { toast } = useToast();
   const importPipnet = useMutation({
     // Background job — geocoding + brochure download per listing exceeds the
@@ -227,7 +236,7 @@ export default function PropertyMap() {
       throw new Error("Import still running — check back shortly");
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/external-properties"] });
       toast({
         title: "PIPnet listings imported",
         description: `${data.imported ?? 0} listings · ${data.geocoded ?? 0} mapped · ${data.withBrochure ?? 0} with brochure (of ${data.total ?? 0} found).`,
@@ -474,6 +483,53 @@ export default function PropertyMap() {
       googleMapRef.current.setZoom(16);
     }
   }, [filteredWithCoords, scriptReady]);
+
+  // PIPnet external-listing layer — separate markers, separate info window,
+  // toggleable, never touches the CRM property markers above.
+  useEffect(() => {
+    if (!googleMapRef.current || !scriptReady) return;
+    pipnetMarkersRef.current.forEach((m) => m.setMap(null));
+    pipnetMarkersRef.current = [];
+    if (!showPipnet) return;
+    if (!pipnetInfoRef.current) pipnetInfoRef.current = new google.maps.InfoWindow();
+    const showMarkers = mapZoom >= MARKER_ZOOM_THRESHOLD;
+
+    for (const p of externalProps) {
+      const lat = parseFloat(p.latitude);
+      const lng = parseFloat(p.longitude);
+      if (isNaN(lat) || isNaN(lng)) continue;
+
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: showMarkers ? googleMapRef.current! : null,
+        title: p.address || "PIPnet listing",
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: "#06b6d4", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+      marker.addListener("click", () => {
+        const fmtMoney = (v: any) => { const n = parseFloat(String(v || "").replace(/[^\d.]/g, "")); return isNaN(n) ? null : `£${n.toLocaleString()}`; };
+        let pack: any = null; try { pack = p.landlord_pack ? JSON.parse(p.landlord_pack) : null; } catch {}
+        const rows = [
+          p.rent ? `Rent: ${fmtMoney(p.rent) || p.rent} pa` : null,
+          p.service_charge ? `Service charge: ${fmtMoney(p.service_charge) || p.service_charge}` : null,
+          p.rateable_value ? `Rateable value: ${fmtMoney(p.rateable_value) || p.rateable_value}` : null,
+          p.area_sqft ? `${Number(p.area_sqft).toLocaleString()} sq ft` : null,
+          p.tenure ? `Tenure: ${p.tenure}` : null,
+          p.availability ? `Availability: ${p.availability}` : null,
+          p.agent ? `Agent: ${p.agent}` : null,
+        ].filter(Boolean).map((t) => `<p style="font-size:11px;color:#555;margin:2px 0;">${t}</p>`).join("");
+        const content = `
+          <div style="padding:8px;max-width:260px;">
+            <p style="font-weight:600;font-size:14px;margin:0 0 2px;">${p.address || "PIPnet listing"}</p>
+            <span style="display:inline-block;background:#06b6d4;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">PIPnet listing</span>
+            ${rows}
+            ${pack?.url ? `<a href="${pack.url}" target="_blank" rel="noopener" style="font-size:11px;color:#3b82f6;display:block;margin-top:6px;">📄 ${pack.name || "Landlord pack"} →</a>` : ""}
+          </div>`;
+        pipnetInfoRef.current!.setContent(content);
+        pipnetInfoRef.current!.open(googleMapRef.current!, marker);
+      });
+      pipnetMarkersRef.current.push(marker);
+    }
+  }, [externalProps, showPipnet, scriptReady, mapZoom]);
 
   // Toggle marker visibility based on zoom level to prevent overlap at low zoom
   useEffect(() => {
@@ -896,6 +952,16 @@ export default function PropertyMap() {
               ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
               : <Building2 className="w-3.5 h-3.5 mr-1" />}
             {importPipnet.isPending ? "Importing…" : "Import PIPnet"}
+          </Button>
+          <Button
+            variant={showPipnet ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowPipnet((v) => !v)}
+            title="Toggle PIPnet available-listing pins"
+            data-testid="button-toggle-pipnet-layer"
+          >
+            <span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{ background: "#06b6d4" }} />
+            PIPnet ({externalProps.length})
           </Button>
         </div>
       </div>

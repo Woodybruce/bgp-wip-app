@@ -1,6 +1,6 @@
 import { db } from "./db";
-import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts, crmProperties } from "@shared/schema";
-import { eq, and, isNull, sql } from "drizzle-orm";
+import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
+import { eq, and, isNull } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
 import { saveFile } from "./file-storage";
@@ -381,6 +381,76 @@ export async function searchPipnetProperties(params: {
 // so the row→field mapping below is defensive — it tries every plausible
 // header — and should be tuned against real headers after the first live run
 // (the [pipnet props] column log prints them).
+// Fetch a property's detail page(s) and capture EVERY field. Summary lives on
+// detailsdetails.jsp (Rent, Rateable Value, Tenure, User Category, Agent,
+// Contact, Telephone + Address/Availability in the header + the "View All
+// Images" brochure link); the "View Full Details" page (detailsfulldetail.jsp)
+// holds the rest, incl. Service Charge. Returns structured fields plus a flat
+// map of all captured label/value pairs (rawData), so nothing is lost.
+async function fetchPipnetPropertyDetail(folderId: string, cookie: string): Promise<{
+  address?: string | null; town?: string | null; street?: string | null; postcode?: string | null;
+  availability?: string | null; rent?: string | null; serviceCharge?: string | null;
+  rateableValue?: string | null; areaSqft?: string | null; tenure?: string | null;
+  useCategory?: string | null; agent?: string | null; contactName?: string | null;
+  telephone?: string | null; email?: string | null; documentDate?: string | null;
+  brochureUrl?: string | null; allFields?: Record<string, string>;
+}> {
+  const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&pound;/g, "£").replace(/&#149;/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  const cellAfter = (html: string, labelPat: string): string | null => {
+    const m = html.match(new RegExp(`>\\s*${labelPat}\\s*</td>\\s*<td[^>]*>([\\s\\S]*?)</td>`, "i"));
+    const v = m ? clean(m[1]) : "";
+    return v || null;
+  };
+  const out: any = { allFields: {} };
+
+  const res = await pipFetch(`${PIPNET_URL}/detailsdetails.jsp?folderid=${folderId}`, { headers: { Cookie: cookie } });
+  if (!res.ok) { console.error(`[pipnet prop detail] ${folderId}: HTTP ${res.status}`); return out; }
+  const html = await res.text();
+  if (/Please provide your account information|name="password"/i.test(html)) { console.error(`[pipnet prop detail] ${folderId}: bounced to login`); return out; }
+  if (/unexpected error has occ/i.test(html)) { console.error(`[pipnet prop detail] ${folderId}: error page`); return out; }
+
+  out.rent = cellAfter(html, "Rent\\s*&pound;");
+  out.rateableValue = cellAfter(html, "Rateable Value\\s*&pound;");
+  out.tenure = cellAfter(html, "Tenure");
+  out.useCategory = cellAfter(html, "User Category");
+  out.agent = cellAfter(html, "Agent");
+  out.contactName = cellAfter(html, "Contact");
+  out.telephone = cellAfter(html, "Telephone");
+
+  // Header: "Address: , , 244/256, STATION ROAD, , ADDLESTONE, KT15 2PS  • Availability: AVAILABLE"
+  const addrRaw = html.match(/Address:\s*([^•<]+)/i)?.[1];
+  if (addrRaw) {
+    const parts = clean(addrRaw).split(",").map(s => s.trim()).filter(Boolean);
+    out.address = parts.join(", ");
+    out.postcode = out.address.match(/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/i)?.[0] || null;
+    if (parts.length >= 2) out.town = out.postcode ? parts[parts.length - 2] : parts[parts.length - 1];
+    const streetPart = parts.find(p => /road|street|lane|avenue|way|place|square|hill|gate|parade|precinct|centre|mall/i.test(p));
+    if (streetPart) out.street = streetPart;
+  }
+  out.availability = html.match(/Availability:\s*([A-Za-z][^•<]*)/i)?.[1]?.trim() || null;
+  out.documentDate = html.match(/Document Date:\s*([0-9/]+)/i)?.[1] || null;
+  out.email = html.match(/mailto:([^?"&]+)/i)?.[1] || null;
+  out.brochureUrl = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i)?.[1] || null;
+
+  // "View Full Details" page — Service Charge, EPC, lease terms, etc. Capture
+  // every label/value pair so nothing is dropped.
+  try {
+    const fr = await pipFetch(`${PIPNET_URL}/detailsfulldetail.jsp?folderid=${folderId}`, { headers: { Cookie: cookie } });
+    if (fr.ok) {
+      const fhtml = await fr.text();
+      if (!/Please provide your account information|unexpected error has occ/i.test(fhtml)) {
+        out.serviceCharge = cellAfter(fhtml, "Service Charge\\s*&pound;") || cellAfter(fhtml, "Service Charge");
+        for (const m of fhtml.matchAll(/>\s*([A-Za-z][^<:]{1,40}?)\s*(?:&pound;)?\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+          const k = clean(m[1]); const v = clean(m[2]);
+          if (k && v && k.length < 40 && !(k in out.allFields)) out.allFields[k] = v;
+        }
+      }
+    }
+  } catch (e: any) { /* full-detail is best-effort */ }
+
+  return out;
+}
+
 export async function importPipnetProperties(params: {
   location?: string;
   minSize?: string;
@@ -388,6 +458,7 @@ export async function importPipnetProperties(params: {
   type?: string;
   allPages?: boolean;
 }): Promise<{ imported: number; geocoded: number; withBrochure: number; total: number }> {
+  const { upsertExternalProperty } = await import("./external-properties");
   const results = await searchPipnetProperties({
     location: params.location,
     minSize: params.minSize,
@@ -409,98 +480,70 @@ export async function importPipnetProperties(params: {
       loggedHeaders = true;
     }
 
-    // Per-row detail page — full address, brochure ("View All Images") URL,
-    // tenure etc. Reuses the requirements detail parser (PIPnet detail pages
-    // share the same label/value layout).
-    let detail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
-    if (row._detailHref) {
-      try {
-        detail = await fetchPipnetDetail(row._detailHref, cookie);
-        await new Promise(r => setTimeout(r, 150));
-      } catch (e: any) {
-        console.error(`[pipnet props] detail ${row._detailHref}: ${e?.message}`);
-      }
+    const folderId = row._detailHref?.match(/folderid=(\d+)/i)?.[1] || null;
+    if (!folderId) continue;
+    const sourceId = `pipnet-prop-${folderId}`;
+
+    let detail: Awaited<ReturnType<typeof fetchPipnetPropertyDetail>> = {};
+    try {
+      detail = await fetchPipnetPropertyDetail(folderId, cookie);
+      await new Promise(r => setTimeout(r, 150));
+    } catch (e: any) {
+      console.error(`[pipnet props] detail ${folderId}: ${e?.message}`);
     }
 
-    // Address — prefer the structured detail-page fields, fall back to the
-    // list row's various address/location columns.
-    const detailAddress = [detail.address1, detail.address2, detail.town, detail.county, detail.postCode]
-      .filter(Boolean).join(", ");
-    const listAddress = (row["Address"] || row["Property"] || row["Property Address"] || row["Location"] || row["Town"] || "").trim();
-    const fullAddress = detailAddress || listAddress;
-    if (!fullAddress) continue; // can't place a property without an address
+    // Address — prefer the detail-page address, fall back to the list row.
+    const listStreet = (row["Street"] || "").trim();
+    const listNo = (row["No"] || "").trim();
+    const listTown = (row["Town"] || "").trim();
+    const listSuburb = (row["Suburb"] || "").trim();
+    const fullAddress = detail.address || [listNo, listStreet, listSuburb, listTown].filter(Boolean).join(", ");
+    if (!fullAddress) continue;
 
-    const postcode = detail.postCode || (fullAddress.match(/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/i)?.[0] ?? null);
-    const sizeRange = (row["Size"] || row["Sales Area"] || row["Sq Ft"] || row["Square Footage"] || row["Floor Area"] || row["Area"] || "").trim();
-    const sqftNum = (() => {
-      const m = sizeRange.replace(/,/g, "").match(/\d{2,}/);
-      return m ? parseFloat(m[0]) : null;
-    })();
-    const agent = (row["Agent"] || row["Agency"] || row["Acting Agent"] || detail.contactName || "").trim();
+    const postcode = detail.postcode || (fullAddress.match(/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/i)?.[0] ?? null);
+    const areaSqft = (row["Primary Area ft2"] || row["Primary Area ft²"] || "").trim() || null;
 
-    // Stable id from the PIPnet folder id (in the detail href) or the address.
-    const folderId = row._detailHref?.match(/folderid=(\d+)/i)?.[1] || detail.requirementId || null;
-    const sourceId = folderId ? `pipnet-prop-${folderId}` : `pipnet-prop-${fullAddress}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
-
-    // Brochure → landlord pack (same storage path as requirements).
+    // Brochure ("View All Images" → allimages PDF) → landlord pack, named after
+    // the address. Fetched as raw binary (the proxy mangles binaries).
     let brochurePack: { url: string; name: string; pages: number } | null = null;
-    if (detail.landlordPackUrl) {
+    if (detail.brochureUrl) {
       try {
-        const pack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, folderId || sourceId, fullAddress);
+        const pack = await downloadBrochureAsPdf(detail.brochureUrl, cookie, folderId, fullAddress);
         if (pack) { brochurePack = { url: pack.url, name: pack.name, pages: pack.pages }; withBrochure++; }
       } catch (e: any) {
         console.error(`[pipnet props] brochure ${fullAddress}: ${e?.message}`);
       }
     }
 
-    // Geocode for the map. geocodeOne is cached, so re-syncs are cheap.
+    // Geocode for the map (cached).
     const geo = await geocodeOne(fullAddress);
     if (geo.lat != null && geo.lng != null) geocoded++;
 
-    const addressJson = {
-      address: geo.formattedAddress || fullAddress,
-      lat: geo.lat != null ? String(geo.lat) : null,
-      lng: geo.lng != null ? String(geo.lng) : null,
-      postcode,
+    await upsertExternalProperty({
+      id: sourceId,
       source: "PIPnet",
-    };
-    const notesParts = [
-      agent ? `Agent: ${agent}` : null,
-      sizeRange ? `Size: ${sizeRange}` : null,
-      detail.tenure ? `Tenure: ${detail.tenure}` : null,
-      brochurePack ? `Landlord pack: ${brochurePack.url}` : (detail.landlordPackUrl ? `Brochure: ${detail.landlordPackUrl}` : null),
-      detail.comments || null,
-      `Source: PIPnet (${sourceId})`,
-    ].filter(Boolean).join("\n");
-
-    // Upsert by the PIPnet source id stashed in notes (avoids duplicate pins
-    // on re-sync). Match on the sourceId marker we always write into notes.
-    const existing = await db
-      .select({ id: crmProperties.id })
-      .from(crmProperties)
-      .where(sql`${crmProperties.notes} LIKE ${"%" + sourceId + "%"}`)
-      .limit(1);
-
-    const values = {
-      name: geo.formattedAddress || fullAddress,
-      groupName: "PIPnet",
-      status: "Market Listing",
-      address: addressJson as any,
+      folderId,
+      address: geo.formattedAddress || fullAddress,
+      town: detail.town || listTown || null,
+      street: detail.street || listStreet || null,
       postcode,
-      latitude: geo.lat != null ? String(geo.lat) : null,
-      longitude: geo.lng != null ? String(geo.lng) : null,
+      latitude: geo.lat ?? null,
+      longitude: geo.lng ?? null,
+      rent: detail.rent || null,
+      serviceCharge: detail.serviceCharge || null,
+      rateableValue: detail.rateableValue || null,
+      areaSqft,
       tenure: detail.tenure || null,
-      sqft: sqftNum,
-      agent: agent || null,
-      notes: notesParts,
-      updatedAt: new Date(),
-    };
-
-    if (existing.length > 0) {
-      await db.update(crmProperties).set(values).where(eq(crmProperties.id, existing[0].id));
-    } else {
-      await db.insert(crmProperties).values(values);
-    }
+      useCategory: detail.useCategory || null,
+      availability: detail.availability || null,
+      agent: detail.agent || (row["Agent"] || "").trim() || null,
+      contactName: detail.contactName || (row["Contact"] || "").trim() || null,
+      contactPhone: detail.telephone || (row["Telephone"] || "").trim() || null,
+      contactEmail: detail.email || null,
+      landlordPack: brochurePack ? JSON.stringify(brochurePack) : null,
+      documentDate: detail.documentDate || (row["Date"] || "").trim() || null,
+      rawData: { listRow: row, allFields: detail.allFields, brochureUrl: detail.brochureUrl },
+    });
     imported++;
   }
 
