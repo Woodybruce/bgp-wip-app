@@ -5,6 +5,7 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
 import { HandwritingPanel } from "@/components/handwriting-panel";
+import { GlobalPdfHandler } from "@/components/global-pdf-handler";
 import { useToast } from "@/hooks/use-toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -629,6 +630,7 @@ function App() {
               <EntitySidebarProvider>
                 <AppContent />
                 <Toaster />
+                <GlobalPdfHandler />
                 <HandwritingPanel />
               </EntitySidebarProvider>
             </TooltipProvider>
