@@ -382,7 +382,10 @@ function AuthenticatedApp() {
   if ((isMobile || nativeMobile) && location === "/") {
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
-        <div className="flex-1 overflow-y-auto min-h-0 pb-14">
+        <div
+          className="flex-1 overflow-y-auto min-h-0"
+          style={{ paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom) + 0.5rem)" }}
+        >
           <MobileHome />
         </div>
         <MobileBottomNav />
@@ -434,7 +437,10 @@ function AuthenticatedApp() {
             })()}
           </span>
         </div>
-        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 pb-14 md:pb-0">
+        <div
+          className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 md:pb-0"
+          style={{ paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom) + 0.5rem)" }}
+        >
           <Router />
         </div>
         <MobileBottomNav />
