@@ -3409,6 +3409,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showLeaseEvents, setShowLeaseEvents] = useState(true);
   const [showPathway, setShowPathway] = useState(true);
   const pathwayMarkersRef = useRef<L.LayerGroup | null>(null);
+  // Available Properties layer — market listings (external_properties: PIPnet /
+  // emailed / WhatsApp flyers) + BGP's own available units, shown together.
+  const [showAvailable, setShowAvailable] = useState(true);
+  const [availableProps, setAvailableProps] = useState<any[]>([]);
+  const availableMarkersRef = useRef<L.LayerGroup | null>(null);
   // ── Street View on-click ───────────────────────────────────────────────────
   // When toggled on, clicking the map opens an embedded Google Street View
   // panorama at that lat/lng in a popup. Reuses the GOOGLE_API_KEY already
@@ -3799,6 +3804,26 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         setCrmProperties(props);
       })
       .catch(() => {});
+
+    // Available Properties layer data — external (scraped/emailed/WhatsApp)
+    // listings + BGP's own available units, normalised to {kind,lat,lng,...}.
+    Promise.all([
+      fetch("/api/external-properties", { credentials: "include", headers }).then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch("/api/available-units", { credentials: "include", headers }).then(r => r.ok ? r.json() : []).catch(() => []),
+    ]).then(([ext, units]) => {
+      const out: any[] = [];
+      for (const p of (Array.isArray(ext) ? ext : [])) {
+        const lat = parseFloat(p.latitude), lng = parseFloat(p.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) out.push({ kind: "market", lat, lng, ...p });
+      }
+      for (const u of (Array.isArray(units) ? units : [])) {
+        let addr: any = u.propertyAddress;
+        if (typeof addr === "string") { try { addr = JSON.parse(addr); } catch { addr = null; } }
+        const lat = parseFloat(addr?.lat), lng = parseFloat(addr?.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) out.push({ kind: "bgp", lat, lng, address: addr?.address, ...u });
+      }
+      setAvailableProps(out);
+    }).catch(() => {});
   }, []);
 
   // Fetch CRM map pins (Deals, Comps, Lease Events) on mount
@@ -3914,6 +3939,45 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       pathwayMarkersRef.current.addLayer(marker);
     }
   }, [showPathway, mapPins]);
+
+  // Render Available Properties layer — market listings (cyan) + BGP's own
+  // available units (emerald), with rent / service charge / area in the popup.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!availableMarkersRef.current) availableMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    availableMarkersRef.current.clearLayers();
+    if (!showAvailable || !availableProps.length) return;
+    const money = (v: any) => { const n = parseFloat(String(v ?? "").replace(/[^\d.]/g, "")); return isNaN(n) ? null : `£${n.toLocaleString()}`; };
+    for (const p of availableProps) {
+      const isBgp = p.kind === "bgp";
+      const color = isBgp ? "#10b981" : "#06b6d4";
+      const marker = L.circleMarker([p.lat, p.lng], { radius: 7, fillColor: color, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9 });
+      let pack: any = null; try { pack = p.landlord_pack ? JSON.parse(p.landlord_pack) : null; } catch {}
+      const rent = isBgp ? p.askingRent : p.rent;
+      const sc = isBgp ? p.serviceChargePa : p.service_charge;
+      const area = isBgp ? p.sqft : p.area_sqft;
+      const use = isBgp ? p.useClass : p.use_category;
+      const statusTxt = isBgp ? p.marketingStatus : p.availability;
+      const rows = [
+        area ? `${Number(area).toLocaleString()} sq ft` : null,
+        rent ? `Rent: ${money(rent) || rent}${isBgp ? " pa" : " pa"}` : null,
+        sc ? `Service charge: ${money(sc) || sc}` : null,
+        use ? `Use: ${use}` : null,
+        !isBgp && p.tenure ? `Tenure: ${p.tenure}` : null,
+        statusTxt ? `${statusTxt}` : null,
+        !isBgp && p.agent ? `Agent: ${p.agent}` : null,
+      ].filter(Boolean).map((t) => `<p style="margin:2px 0;font-size:11px;color:#555">${t}</p>`).join("");
+      const title = isBgp ? `${p.propertyName || "Property"}${p.unitName ? " — " + p.unitName : ""}` : (p.address || "Available property");
+      const badge = isBgp
+        ? `<span style="background:#10b981;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px">BGP available</span>`
+        : `<span style="background:#06b6d4;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px">Market listing</span>`;
+      const link = isBgp
+        ? `<a href="/properties/${p.propertyId}" style="display:inline-block;margin-top:8px;font-size:11px;color:#10b981;text-decoration:none;border:1px solid #d1fae5;padding:3px 8px;border-radius:4px">View property →</a>`
+        : (pack?.url ? `<a href="${pack.url}" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px;font-size:11px;color:#0891b2;text-decoration:none;border:1px solid #cffafe;padding:3px 8px;border-radius:4px">📄 ${pack.name || "Landlord pack"} →</a>` : "");
+      marker.bindPopup(`<div style="font-size:12px;max-width:250px"><strong>${title}</strong><br/>${badge}${rows}${link}</div>`, { closeButton: false, offset: L.point(0, -5), maxWidth: 270 });
+      availableMarkersRef.current.addLayer(marker);
+    }
+  }, [showAvailable, availableProps]);
 
   // Render Lease Events layer
   useEffect(() => {
@@ -5261,6 +5325,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
               { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
+              { key: "avail",  label: "Available Properties", count: availableProps.length, dot: "#06b6d4", on: showAvailable, set: setShowAvailable },
               { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: goadFeatures.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
               { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
               { key: "osb",    label: showOSBuildings && showRetailContext ? "OS Buildings (hidden — Goad on)" : (mapZoom < 16 && showOSBuildings ? "OS Buildings (zoom 16+)" : "OS Buildings"),     count: 0, dot: "#3b82f6", on: showOSBuildings, set: setShowOSBuildings },
@@ -5337,19 +5402,19 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         {/* Recent Searches — capped at a sensible chunk of the sidebar
             so it doesn't run all the way to the bottom, and tightly
             clipped so long addresses don't bleed across the divider. */}
-        <div className="border-t flex flex-col overflow-hidden max-h-[40vh]">
+        <div className="border-t flex flex-col overflow-hidden max-h-64">
           <div className="px-3 pt-2.5 pb-1 shrink-0">
             <p className="text-[11px] font-semibold text-gray-700">
-              Recent Searches {recentSearches.length > 0 && <span className="font-normal text-gray-400">({recentSearches.length})</span>}
+              Recent Searches {recentSearches.length > 0 && <span className="font-normal text-gray-400">(last 10 of {recentSearches.length})</span>}
             </p>
           </div>
-          <ScrollArea className="flex-1 overflow-hidden">
+          <ScrollArea className="flex-1 min-h-0 overflow-hidden">
             <div className="px-3 pb-2.5">
             {recentSearches.length === 0 ? (
               <p className="text-[10px] text-gray-400 py-3 text-center">No recent searches yet.</p>
             ) : (
               <div className="space-y-1">
-                {recentSearches.slice(0, 20).map((s: any) => {
+                {recentSearches.slice(0, 10).map((s: any) => {
                   const isAcquired = s.status === "Acquired";
                   const pinColor = isAcquired ? "text-emerald-500" : "text-red-400";
                   const ownerName = s.ownership?.freeholders?.[0]?.name;
