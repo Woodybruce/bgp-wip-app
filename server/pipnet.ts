@@ -1536,7 +1536,11 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
       for (const m of html.matchAll(/<td[^>]*>\s*([^<:]{2,40}):\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&!(k in fields))fields[k]=v; }
       const broch = html.match(/<a[^>]+href="([^"]*allreqimages[^"]*|[^"]*allimages[^"]*|[^"]*viewallimages[^"]*)"/i)?.[1]
         || html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i)?.[1] || null;
-      out.propertyDetail = { url, status: r.status, isError: /unexpected error/i.test(html), htmlLength: html.length, fields, brochure: broch, preview: html.slice(0, 500) };
+      // Page is small + uses an unknown layout — dump all table cells and the
+      // full HTML so we can see exactly how Rent / Service Charge are presented.
+      const cells = [...html.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => clean(m[1])).filter(Boolean);
+      const allLinks = [...html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].map(m => ({ href: m[1], text: clean(m[2]) }));
+      out.propertyDetail = { url, status: r.status, isError: /unexpected error/i.test(html), htmlLength: html.length, fields, brochure: broch, cells, allLinks, fullHtml: html.slice(0, 4000) };
     } catch (e: any) { out.propertyDetail = { error: e?.message }; }
   }
 
