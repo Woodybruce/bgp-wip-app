@@ -256,21 +256,41 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
   const syncPipnet = async () => {
     setPipnetSyncing(true);
     try {
-      const res = await fetch("/api/external-requirements/import-pipnet", {
+      // Kick off as a background job — a full sync (per-row detail fetch +
+      // brochure download + Claude vision) far exceeds the request timeout, so
+      // we start it and poll for completion.
+      const res = await fetch("/api/external-requirements/import-pipnet-async", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ allPages: true, monthsBack: 3, autoPromote: true }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Sync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
-      const parts = [
-        `${data.imported} from last 3 months`,
-        data.promoted ? `${data.promoted} added to requirements page` : null,
-        data.skippedOld ? `${data.skippedOld} older skipped` : null,
-      ].filter(Boolean).join(" · ");
-      toast({ title: "Pipnet synced", description: parts || "No new requirements found" });
+      const kick = await res.json();
+      if (!res.ok) throw new Error(kick.message || "Sync failed");
+      toast({ title: "Pipnet sync started", description: "Importing in the background — this can take a few minutes." });
+
+      const started = Date.now();
+      while (Date.now() - started < 15 * 60_000) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const sres = await fetch("/api/external-requirements/import-pipnet-status", {
+          credentials: "include",
+          headers: { ...getAuthHeaders() },
+        });
+        const s = await sres.json();
+        if (s.state === "done") {
+          const d = s.result || {};
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+          const parts = [
+            `${d.imported ?? 0} imported`,
+            d.promoted ? `${d.promoted} added to requirements` : null,
+            d.skippedOld ? `${d.skippedOld} older skipped` : null,
+          ].filter(Boolean).join(" · ");
+          toast({ title: "Pipnet synced", description: parts || "No new requirements found" });
+          return;
+        }
+        if (s.state === "error") throw new Error(s.error || "Import failed");
+      }
+      toast({ title: "Pipnet sync still running", description: "Taking longer than expected — check back shortly." });
     } catch (err: any) {
       toast({ title: "Pipnet sync failed", description: err.message, variant: "destructive" });
     } finally {

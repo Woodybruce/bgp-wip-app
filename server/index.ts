@@ -3323,6 +3323,20 @@ app.use("/api/branding/assets", express.static(
               console.error("[brand-scraper] cron run failed:", err?.message)
             );
           }
+          // Daily PIPnet sync — 05:30. Pulls newly-posted PIPnet requirements
+          // AND available properties so the boards/map update themselves when
+          // PIPnet puts something new up. Both imports dedup (requirements by
+          // normalised brand, properties by folder id), so re-running is safe.
+          if (now.getHours() === 5 && now.getMinutes() >= 30) {
+            import("./pipnet")
+              .then(async (m) => {
+                const reqs = await m.importPipnetRequirements({ allPages: true, monthsBack: 3, autoPromote: true }).catch((e: any) => { console.error("[pipnet-cron] requirements failed:", e?.message); return null; });
+                if (reqs) console.log(`[pipnet-cron] requirements: ${reqs.imported} imported, ${reqs.promoted} promoted`);
+                const props = await m.importPipnetProperties({ allPages: true }).catch((e: any) => { console.error("[pipnet-cron] properties failed:", e?.message); return null; });
+                if (props) console.log(`[pipnet-cron] properties: ${props.imported} imported, ${props.withBrochure} with brochure`);
+              })
+              .catch(err => console.error("[pipnet-cron] run failed:", err?.message));
+          }
           // Weekly social scrape — Monday 05:00, Instagram + TikTok follower counts
           if (now.getDay() === 1 && now.getHours() === 5 && now.getMinutes() < 60) {
             runWeeklySocialScrape().catch(err =>

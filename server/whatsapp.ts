@@ -554,6 +554,22 @@ export function setupWhatsAppRoutes(app: Express) {
                     await sendWhatsAppText(config, fromNumber, "⏳ Processing your file — I'll import it and let you know what was found...");
                     const { bytes, filename } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
                     const overrideName = msg.document?.filename || filename;
+                    // Available-property (to-let) flyer? Route to external_properties
+                    // (outside the CRM, deduped) so it lands on the Available
+                    // Properties map. Anything else falls through to normal ingest.
+                    const isPdfFlyer = /\.pdf$/i.test(overrideName) || /pdf/i.test(msg.document?.mime_type || "");
+                    if (isPdfFlyer) {
+                      try {
+                        const { ingestAvailableProperty } = await import("./property-ingest");
+                        const avail = await ingestAvailableProperty({ source: "WhatsApp", pdfBuffer: bytes, originalName: overrideName });
+                        if (avail.ok && avail.confidence !== "low") {
+                          await sendWhatsAppText(config, fromNumber, `✅ Added to Available Properties: ${avail.address}${avail.duplicate ? " (updated existing)" : ""}`);
+                          return;
+                        }
+                      } catch (err: any) {
+                        console.warn("[whatsapp-ingest] available-property ingest failed:", err?.message);
+                      }
+                    }
                     const result = await ingestBytes({ bytes, filename: overrideName, userId: fromNumber, userName: contactName || fromNumber });
                     const errCount = Array.isArray(result.errors) ? result.errors.length : 0;
                     const reply = `✅ Imported from ${overrideName}:\n${result.narrative}\n\n${result.written} record(s) written${errCount > 0 ? `, ${errCount} error(s)` : ""}.`;

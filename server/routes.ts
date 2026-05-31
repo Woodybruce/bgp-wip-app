@@ -52,7 +52,8 @@ import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
 import { fetchPlanitPlanning } from "./planit-planning";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
-import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
+import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements, importPipnetProperties, inspectPipnetPropertySearch } from "./pipnet";
+import { startJob, getJobStatus } from "./brand-jobs";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
@@ -2301,6 +2302,88 @@ export async function registerRoutes(
     } catch (err: any) {
       console.error("[import-pipnet] failed:", err?.message);
       if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet import failed" });
+    }
+  });
+
+  // Import PIPnet AVAILABLE retail properties — the mirror of import-pipnet but
+  // for space on the market. Each listing is geocoded and upserted into
+  // crm_properties (status "Market Listing", group "PIPnet") so it appears on
+  // the Property Map; its brochure is stored under landlord-packs.
+  app.post("/api/external-requirements/import-pipnet-properties", requireAuth, async (req, res) => {
+    try {
+      const { location, minSize, maxSize, type, allPages } = req.body;
+      const result = await importPipnetProperties({ location, minSize, maxSize, type, allPages });
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[import-pipnet-properties] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet property import failed" });
+    }
+  });
+
+  // ─── Background-job versions ────────────────────────────────────────────
+  // A full import does a detail fetch + brochure download + Claude vision per
+  // row, which blows past Railway's ~60s/300s request limits. These kick the
+  // work off, return 202 immediately, and the client polls *-status until done.
+  app.post("/api/external-requirements/import-pipnet-async", requireAuth, async (req, res) => {
+    const { location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote } = req.body || {};
+    const { alreadyRunning } = startJob("pipnet-req-import", () =>
+      importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages: allPages ?? true, monthsBack, autoPromote }));
+    res.status(202).json({ started: !alreadyRunning, alreadyRunning, statusUrl: "/api/external-requirements/import-pipnet-status" });
+  });
+  app.get("/api/external-requirements/import-pipnet-status", requireAuth, (_req, res) => {
+    res.json(getJobStatus("pipnet-req-import") || { state: "idle" });
+  });
+  app.post("/api/external-requirements/import-pipnet-properties-async", requireAuth, async (req, res) => {
+    const { location, minSize, maxSize, type, allPages } = req.body || {};
+    const { alreadyRunning } = startJob("pipnet-prop-import", () =>
+      importPipnetProperties({ location, minSize, maxSize, type, allPages: allPages ?? true }));
+    res.status(202).json({ started: !alreadyRunning, alreadyRunning, statusUrl: "/api/external-requirements/import-pipnet-properties-status" });
+  });
+  app.get("/api/external-requirements/import-pipnet-properties-status", requireAuth, (_req, res) => {
+    res.json(getJobStatus("pipnet-prop-import") || { state: "idle" });
+  });
+
+  // External (scraped) available properties — a STANDALONE dataset, separate
+  // from the CRM (crm_properties), so PIPnet market listings never clutter the
+  // CRM. Feeds its own toggleable map layer.
+  app.get("/api/external-properties", requireAuth, async (_req, res) => {
+    try {
+      const { listExternalProperties } = await import("./external-properties");
+      res.json(await listExternalProperties());
+    } catch (err: any) {
+      console.error("[external-properties] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to load external properties" });
+    }
+  });
+
+  // Ingest an available-property flyer/email into external_properties. Shared
+  // entry point for ChatBGP, forwarded emails and WhatsApp. Accepts a PDF
+  // (multipart "file") and/or text body; Claude extracts, we geocode + dedup.
+  app.post("/api/external-properties/ingest", requireAuth, marketingUpload.single("file"), async (req: any, res) => {
+    try {
+      const { ingestAvailableProperty } = await import("./property-ingest");
+      const source = (req.body?.source || "Upload").toString();
+      const text = req.body?.text ? String(req.body.text) : undefined;
+      const pdfBuffer = req.file?.buffer;
+      if (!pdfBuffer && !text) return res.status(400).json({ message: "Provide a PDF file and/or text" });
+      const result = await ingestAvailableProperty({ source, pdfBuffer, text, originalName: req.file?.originalname });
+      if (!result.ok) return res.status(422).json(result);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[external-properties/ingest] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Property ingest failed" });
+    }
+  });
+
+  // Diagnostic: dump PIPnet's property search form inputs + current detailsfetch
+  // result, so we can fix the property scrape's params (they differ from reqs).
+  app.get("/api/external-requirements/pipnet-inspect-property-search", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const result = await inspectPipnetPropertySearch();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[pipnet-inspect-property-search] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet property search inspect failed" });
     }
   });
 

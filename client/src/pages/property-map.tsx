@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +31,8 @@ import {
 import { Link } from "wouter";
 import type { CrmProperty } from "@shared/schema";
 import { loadGoogleMaps, isGoogleMapsLoaded } from "@/lib/google-maps-loader";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 const STATUS_COLORS: Record<string, string> = {
   "BGP Active": "bg-emerald-500",
@@ -39,6 +40,7 @@ const STATUS_COLORS: Record<string, string> = {
   "Leasing Instruction": "bg-blue-500",
   "Lease Advisory Instruction": "bg-violet-500",
   "Sales Instruction": "bg-emerald-600",
+  "Market Listing": "bg-cyan-500",
   "Archive": "bg-zinc-400",
 };
 
@@ -48,6 +50,7 @@ const MARKER_COLORS: Record<string, string> = {
   "Leasing Instruction": "#3b82f6",
   "Lease Advisory Instruction": "#8b5cf6",
   "Sales Instruction": "#059669",
+  "Market Listing": "#06b6d4",
   "Archive": "#a1a1aa",
 };
 
@@ -171,6 +174,9 @@ export default function PropertyMap() {
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const pipnetMarkersRef = useRef<google.maps.Marker[]>([]);
+  const pipnetInfoRef = useRef<google.maps.InfoWindow | null>(null);
+  const [showPipnet, setShowPipnet] = useState(true);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const mapSearchInputRef = useRef<HTMLInputElement>(null);
   const searchBoxRef = useRef<google.maps.places.Autocomplete | null>(null);
@@ -201,6 +207,48 @@ export default function PropertyMap() {
 
   const { data: properties = [], isLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+  });
+
+  // External (scraped) PIPnet listings — a SEPARATE dataset, not part of the
+  // CRM. Drawn as its own toggleable layer.
+  const { data: externalProps = [] } = useQuery<any[]>({
+    queryKey: ["/api/external-properties"],
+  });
+
+  // BGP's OWN available units — shown on the same "Available Properties" layer
+  // in a distinct colour, so the map shows market stock + our stock together.
+  const { data: bgpAvailable = [] } = useQuery<any[]>({
+    queryKey: ["/api/available-units"],
+  });
+
+  const { toast } = useToast();
+  const importPipnet = useMutation({
+    // Background job — geocoding + brochure download per listing exceeds the
+    // request timeout, so kick it off and poll for completion.
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/external-requirements/import-pipnet-properties-async", { allPages: true });
+      await res.json();
+      toast({ title: "PIPnet import started", description: "Scraping listings in the background — this can take a few minutes." });
+      const started = Date.now();
+      while (Date.now() - started < 15 * 60_000) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const sres = await fetch("/api/external-requirements/import-pipnet-properties-status", {
+          credentials: "include", headers: { ...getAuthHeaders() },
+        });
+        const s = await sres.json();
+        if (s.state === "done") return s.result || {};
+        if (s.state === "error") throw new Error(s.error || "Import failed");
+      }
+      throw new Error("Import still running — check back shortly");
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/external-properties"] });
+      toast({
+        title: "PIPnet listings imported",
+        description: `${data.imported ?? 0} listings · ${data.geocoded ?? 0} mapped · ${data.withBrochure ?? 0} with brochure (of ${data.total ?? 0} found).`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
   });
 
   useEffect(() => {
@@ -441,6 +489,89 @@ export default function PropertyMap() {
       googleMapRef.current.setZoom(16);
     }
   }, [filteredWithCoords, scriptReady]);
+
+  // PIPnet external-listing layer — separate markers, separate info window,
+  // toggleable, never touches the CRM property markers above.
+  useEffect(() => {
+    if (!googleMapRef.current || !scriptReady) return;
+    pipnetMarkersRef.current.forEach((m) => m.setMap(null));
+    pipnetMarkersRef.current = [];
+    if (!showPipnet) return;
+    if (!pipnetInfoRef.current) pipnetInfoRef.current = new google.maps.InfoWindow();
+    const showMarkers = mapZoom >= MARKER_ZOOM_THRESHOLD;
+
+    for (const p of externalProps) {
+      const lat = parseFloat(p.latitude);
+      const lng = parseFloat(p.longitude);
+      if (isNaN(lat) || isNaN(lng)) continue;
+
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: showMarkers ? googleMapRef.current! : null,
+        title: p.address || "PIPnet listing",
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: "#06b6d4", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+      marker.addListener("click", () => {
+        const fmtMoney = (v: any) => { const n = parseFloat(String(v || "").replace(/[^\d.]/g, "")); return isNaN(n) ? null : `£${n.toLocaleString()}`; };
+        let pack: any = null; try { pack = p.landlord_pack ? JSON.parse(p.landlord_pack) : null; } catch {}
+        const rows = [
+          p.rent ? `Rent: ${fmtMoney(p.rent) || p.rent} pa` : null,
+          p.service_charge ? `Service charge: ${fmtMoney(p.service_charge) || p.service_charge}` : null,
+          p.rateable_value ? `Rateable value: ${fmtMoney(p.rateable_value) || p.rateable_value}` : null,
+          p.area_sqft ? `${Number(p.area_sqft).toLocaleString()} sq ft` : null,
+          p.tenure ? `Tenure: ${p.tenure}` : null,
+          p.availability ? `Availability: ${p.availability}` : null,
+          p.agent ? `Agent: ${p.agent}` : null,
+        ].filter(Boolean).map((t) => `<p style="font-size:11px;color:#555;margin:2px 0;">${t}</p>`).join("");
+        const content = `
+          <div style="padding:8px;max-width:260px;">
+            <p style="font-weight:600;font-size:14px;margin:0 0 2px;">${p.address || "PIPnet listing"}</p>
+            <span style="display:inline-block;background:#06b6d4;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">Available</span>
+            ${rows}
+            ${pack?.url ? `<a href="${pack.url}" target="_blank" rel="noopener" style="font-size:11px;color:#3b82f6;display:block;margin-top:6px;">📄 ${pack.name || "Landlord pack"} →</a>` : ""}
+          </div>`;
+        pipnetInfoRef.current!.setContent(content);
+        pipnetInfoRef.current!.open(googleMapRef.current!, marker);
+      });
+      pipnetMarkersRef.current.push(marker);
+    }
+
+    // BGP's own available units (emerald) — coords come from the linked
+    // crm_property's address json.
+    for (const u of bgpAvailable) {
+      let addr: any = u.propertyAddress;
+      if (typeof addr === "string") { try { addr = JSON.parse(addr); } catch { addr = null; } }
+      const lat = parseFloat(addr?.lat);
+      const lng = parseFloat(addr?.lng);
+      if (isNaN(lat) || isNaN(lng)) continue;
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: showMarkers ? googleMapRef.current! : null,
+        title: `${u.propertyName || ""} ${u.unitName || ""}`.trim(),
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: "#10b981", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+      marker.addListener("click", () => {
+        const money = (v: any) => (v == null ? null : `£${Number(v).toLocaleString()}`);
+        const rows = [
+          u.sqft ? `${Number(u.sqft).toLocaleString()} sq ft` : null,
+          u.askingRent ? `Rent: ${money(u.askingRent)} pa` : null,
+          u.serviceChargePa ? `Service charge: ${money(u.serviceChargePa)} pa` : null,
+          u.useClass ? `Use: ${u.useClass}` : null,
+          u.marketingStatus ? `Status: ${u.marketingStatus}` : null,
+        ].filter(Boolean).map((t) => `<p style="font-size:11px;color:#555;margin:2px 0;">${t}</p>`).join("");
+        const content = `
+          <div style="padding:8px;max-width:260px;">
+            <p style="font-weight:600;font-size:14px;margin:0 0 2px;">${u.propertyName || "Property"}${u.unitName ? " — " + u.unitName : ""}</p>
+            <span style="display:inline-block;background:#10b981;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">BGP available</span>
+            ${rows}
+            <a href="/properties/${u.propertyId}" style="font-size:11px;color:#3b82f6;display:block;margin-top:6px;">View property →</a>
+          </div>`;
+        pipnetInfoRef.current!.setContent(content);
+        pipnetInfoRef.current!.open(googleMapRef.current!, marker);
+      });
+      pipnetMarkersRef.current.push(marker);
+    }
+  }, [externalProps, bgpAvailable, showPipnet, scriptReady, mapZoom]);
 
   // Toggle marker visibility based on zoom level to prevent overlap at low zoom
   useEffect(() => {
@@ -850,6 +981,29 @@ export default function PropertyMap() {
             data-testid="button-view-map"
           >
             <MapIcon className="w-3.5 h-3.5 mr-1" /> Full Map
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => importPipnet.mutate()}
+            disabled={importPipnet.isPending}
+            title="Scrape PIPnet available retail properties onto the map"
+            data-testid="button-import-pipnet-properties"
+          >
+            {importPipnet.isPending
+              ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              : <Building2 className="w-3.5 h-3.5 mr-1" />}
+            {importPipnet.isPending ? "Importing…" : "Import PIPnet"}
+          </Button>
+          <Button
+            variant={showPipnet ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowPipnet((v) => !v)}
+            title="Toggle PIPnet available-listing pins"
+            data-testid="button-toggle-pipnet-layer"
+          >
+            <span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{ background: "#06b6d4" }} />
+            Available Properties ({externalProps.length + bgpAvailable.length})
           </Button>
         </div>
       </div>

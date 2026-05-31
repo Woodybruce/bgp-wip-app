@@ -6,6 +6,7 @@ import { getPipnetCreds } from "./integration-credentials";
 import { saveFile } from "./file-storage";
 import { randomBytes } from "crypto";
 import { parseRequirementBrochure, mergeVisionIntoRecord } from "./requirement-vision-parser";
+import { geocodeOne } from "./geocode";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -34,12 +35,11 @@ let sessionCookie: string | null = null;
 // session. Reset between full scrapes via `resetSession()` below.
 let scraperSession: ScraperSession | null = null;
 const PIPNET_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
+function withPipHeaders(init: RequestInit = {}): RequestInit {
   // ScraperAPI requires a User-Agent whenever keep_headers=true, otherwise
   // it rejects the request with HTTP 400 "Error, malformed request". PIPnet
-  // also responds more reliably with a real-browser UA, so we always set
-  // one here even on the direct-fetch dev path.
-  const mergedInit: RequestInit = {
+  // also responds more reliably with a real-browser UA, so we always set one.
+  return {
     ...init,
     headers: {
       "User-Agent": PIPNET_UA,
@@ -48,12 +48,30 @@ function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
       ...(init.headers as Record<string, string> | undefined),
     },
   };
-  // Fall back to direct fetch if ScraperAPI isn't configured (dev mode,
-  // tests, etc). PIPnet works fine direct from a dev laptop — this proxy
-  // detour is purely for Railway egress where pip's WAF blocks the IP.
+}
+function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const mergedInit = withPipHeaders(init);
+  // Fall back to direct fetch if ScraperAPI isn't configured (dev mode, tests).
+  // Otherwise route through the sticky proxy session. NOTE: login() logs in via
+  // a DIRECT fetch first (PIPnet's WAF lets the login POST through, and the
+  // JSESSIONID it returns works fine even when the follow-up reqfetch/detail
+  // calls come via the proxy — PIPnet does not pin the session to the IP).
   if (!isScraperApiAvailable()) return fetch(url, mergedInit);
   if (!scraperSession) scraperSession = new ScraperSession();
   return scraperSession.fetch(url, mergedInit);
+}
+
+// PIPnet serves its login/search form with HTTP 200, so a bare status check
+// can't tell an authenticated page from a bounced one. These markers only
+// appear on the unauthenticated login/search form (never on a result list or
+// a requirement detail page), so their presence means the session is dead.
+function looksUnauthenticated(html: string): boolean {
+  if (!html) return true;
+  if (/checkLogin\.jsp|name=["']password["']|Invalid logon/i.test(html)) return true;
+  // The retail search form — bounced detail/result fetches land here.
+  const isSearchForm = /reqsearchretailtabbed|locationListBox|minSalesArea/i.test(html);
+  const hasResults = /class=["']results?Table["']|reqdetails\.jsp/i.test(html);
+  return isSearchForm && !hasResults;
 }
 
 async function login(): Promise<string> {
@@ -77,11 +95,12 @@ async function login(): Promise<string> {
     Submit: "Login",
   });
 
-  // ScraperAPI's standard API has been returning HTTP 400 "malformed request"
-  // for our PIPnet POST (probably because we combine premium + session_number
-  // + keep_headers in a way it doesn't like). Try direct fetch first — if
-  // PIPnet's WAF blocks Railway's egress IP we'll see a 403 or similar and
-  // fall back to the proxy. The fallback path keeps the original behaviour.
+  // Log in via DIRECT fetch first — PIPnet's WAF lets the login POST through
+  // from Railway, and the JSESSIONID it returns works fine even though the
+  // follow-up reqfetch/reqdetails calls come via the ScraperAPI proxy (PIPnet
+  // does not pin the session to the egress IP). Only fall back to the proxy if
+  // the direct login is actually blocked. (Routing the login POST through
+  // ScraperAPI produces a broken session and the search comes back empty.)
   const loginUrl = `${PIPNET_URL}/checkLogin.jsp`;
   const loginInit: RequestInit = {
     method: "POST",
@@ -275,6 +294,39 @@ export async function searchPipnetRequirements(params: {
   return allRows;
 }
 
+// Serialise an HTML form's current field defaults into URL-encoded params —
+// text/hidden input values, checked checkboxes/radios, and each select's
+// selected (or first) option. Lets us "replay" PIPnet's property search exactly
+// as the browser would on a default Search, without hardcoding its operator
+// option values.
+function serializeFormDefaults(html: string, actionContains: string): URLSearchParams {
+  const params = new URLSearchParams();
+  const formRe = new RegExp(`<form[^>]*action="[^"]*${actionContains}[^"]*"[^>]*>([\\s\\S]*?)</form>`, "i");
+  const scope = html.match(formRe)?.[1] ?? html;
+  for (const m of scope.matchAll(/<input\b[^>]*>/gi)) {
+    const tag = m[0];
+    const name = tag.match(/name="([^"]+)"/i)?.[1];
+    if (!name) continue;
+    const type = (tag.match(/type="([^"]+)"/i)?.[1] || "text").toLowerCase();
+    const value = tag.match(/value="([^"]*)"/i)?.[1] ?? "";
+    if (type === "checkbox" || type === "radio") {
+      if (/\bchecked\b/i.test(tag)) params.append(name, value || "on");
+    } else if (type !== "submit" && type !== "button" && type !== "reset") {
+      params.set(name, value);
+    }
+  }
+  for (const m of scope.matchAll(/<select\b[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/select>/gi)) {
+    const name = m[1];
+    const inner = m[2];
+    const sel =
+      inner.match(/<option[^>]*\bselected\b[^>]*?value="([^"]*)"/i)?.[1] ??
+      inner.match(/<option[^>]*?value="([^"]*)"[^>]*\bselected\b/i)?.[1] ??
+      inner.match(/<option[^>]*?value="([^"]*)"/i)?.[1] ?? "";
+    params.set(name, sel);
+  }
+  return params;
+}
+
 export async function searchPipnetProperties(params: {
   location?: string;
   minSize?: string;
@@ -282,31 +334,220 @@ export async function searchPipnetProperties(params: {
   type?: string;
 }): Promise<Record<string, string>[]> {
   const cookie = await login();
-  const body = new URLSearchParams({
-    propertyType: params.type || "PropRetail",
-    locationSearchEdit: "",
-    locationListBox: params.location || "",
-    status: "Available",
-    documentDate: "",
-    extrapolated: "True",
-    addressSearchEdit: "",
-    minSalesArea: params.minSize || "",
-    maxSalesArea: params.maxSize || "",
-    Search: "Search",
-  });
+
+  // Load the property search form (retailsearch.jsp → posts to detailsfetch.jsp)
+  // from the choice.jsp menu, so we get a valid form + prime the session. Then
+  // replay its defaults. PIPnet's property form is an operator/operand filter,
+  // completely different from the requirements form.
+  let formHtml = "";
+  try {
+    const choice = await pipFetch(`${PIPNET_URL}/choice.jsp`, { headers: { Cookie: cookie } });
+    const chtml = await choice.text();
+    const link = (chtml.match(/href="(retailsearch\.jsp[^"]*)"/i)?.[1] || "retailsearch.jsp").replace(/&amp;/g, "&");
+    const formRes = await pipFetch(`${PIPNET_URL}/${link.replace(/^\//, "")}`, { headers: { Cookie: cookie } });
+    formHtml = await formRes.text();
+  } catch (e: any) {
+    console.warn(`[pipnet props] could not load property search form: ${e?.message}`);
+  }
+
+  const body = serializeFormDefaults(formHtml, "detailsfetch.jsp");
+  body.set("Search", "Search");
+  body.delete("Reset");
+  // Optional overrides — narrow by town / size when asked.
+  if (params.location) body.set("operandTown", params.location);
+  if (params.minSize) body.set("operandAreaMinimum", params.minSize);
+  if (params.maxSize) body.set("operandAreaMaximum", params.maxSize);
 
   const res = await pipFetch(`${PIPNET_URL}/detailsfetch.jsp`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: cookie,
-    },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
     body: body.toString(),
   });
-
   if (!res.ok) throw new Error(`PIPnet prop search failed: ${res.status}`);
   const html = await res.text();
   return parseHtmlTable(html);
+}
+
+// Import PIPnet's AVAILABLE (retail) properties — the mirror of
+// importPipnetRequirements but for space on the market rather than occupier
+// requirements. Each listing is upserted into crm_properties (which is what
+// the Property Map plots), geocoded for lat/lng, and its "View All Images"
+// brochure is downloaded and stored under landlord-packs (same mechanism the
+// requirements side uses). Listings are tagged status "Market Listing" /
+// group "PIPnet" so they're distinguishable from BGP's own instructed stock.
+//
+// NOTE: PIPnet's property result columns aren't visible from this sandbox
+// (the search returns rows only once the session/transport fix is deployed),
+// so the row→field mapping below is defensive — it tries every plausible
+// header — and should be tuned against real headers after the first live run
+// (the [pipnet props] column log prints them).
+// Fetch a property's detail page(s) and capture EVERY field. Summary lives on
+// detailsdetails.jsp (Rent, Rateable Value, Tenure, User Category, Agent,
+// Contact, Telephone + Address/Availability in the header + the "View All
+// Images" brochure link); the "View Full Details" page (detailsfulldetail.jsp)
+// holds the rest, incl. Service Charge. Returns structured fields plus a flat
+// map of all captured label/value pairs (rawData), so nothing is lost.
+async function fetchPipnetPropertyDetail(folderId: string, cookie: string): Promise<{
+  address?: string | null; town?: string | null; street?: string | null; postcode?: string | null;
+  availability?: string | null; rent?: string | null; serviceCharge?: string | null;
+  rateableValue?: string | null; areaSqft?: string | null; tenure?: string | null;
+  useCategory?: string | null; agent?: string | null; contactName?: string | null;
+  telephone?: string | null; email?: string | null; documentDate?: string | null;
+  brochureUrl?: string | null; allFields?: Record<string, string>;
+}> {
+  const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&pound;/g, "£").replace(/&#149;/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  const cellAfter = (html: string, labelPat: string): string | null => {
+    const m = html.match(new RegExp(`>\\s*${labelPat}\\s*</td>\\s*<td[^>]*>([\\s\\S]*?)</td>`, "i"));
+    const v = m ? clean(m[1]) : "";
+    return v || null;
+  };
+  const out: any = { allFields: {} };
+
+  const res = await pipFetch(`${PIPNET_URL}/detailsdetails.jsp?folderid=${folderId}`, { headers: { Cookie: cookie } });
+  if (!res.ok) { console.error(`[pipnet prop detail] ${folderId}: HTTP ${res.status}`); return out; }
+  const html = await res.text();
+  if (/Please provide your account information|name="password"/i.test(html)) { console.error(`[pipnet prop detail] ${folderId}: bounced to login`); return out; }
+  if (/unexpected error has occ/i.test(html)) { console.error(`[pipnet prop detail] ${folderId}: error page`); return out; }
+
+  out.rent = cellAfter(html, "Rent\\s*&pound;");
+  out.rateableValue = cellAfter(html, "Rateable Value\\s*&pound;");
+  out.tenure = cellAfter(html, "Tenure");
+  out.useCategory = cellAfter(html, "User Category");
+  out.agent = cellAfter(html, "Agent");
+  out.contactName = cellAfter(html, "Contact");
+  out.telephone = cellAfter(html, "Telephone");
+
+  // Header: "Address: , , 244/256, STATION ROAD, , ADDLESTONE, KT15 2PS  • Availability: AVAILABLE"
+  const addrRaw = html.match(/Address:\s*([^•<]+)/i)?.[1];
+  if (addrRaw) {
+    const parts = clean(addrRaw).split(",").map(s => s.trim()).filter(Boolean);
+    out.address = parts.join(", ");
+    out.postcode = out.address.match(/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/i)?.[0] || null;
+    if (parts.length >= 2) out.town = out.postcode ? parts[parts.length - 2] : parts[parts.length - 1];
+    const streetPart = parts.find(p => /road|street|lane|avenue|way|place|square|hill|gate|parade|precinct|centre|mall/i.test(p));
+    if (streetPart) out.street = streetPart;
+  }
+  out.availability = html.match(/Availability:\s*([A-Za-z][^•<]*)/i)?.[1]?.trim() || null;
+  out.documentDate = html.match(/Document Date:\s*([0-9/]+)/i)?.[1] || null;
+  out.email = html.match(/mailto:([^?"&]+)/i)?.[1] || null;
+  out.brochureUrl = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i)?.[1] || null;
+
+  // "View Full Details" page — Service Charge, EPC, lease terms, etc. Capture
+  // every label/value pair so nothing is dropped.
+  try {
+    const fr = await pipFetch(`${PIPNET_URL}/detailsfulldetail.jsp?folderid=${folderId}`, { headers: { Cookie: cookie } });
+    if (fr.ok) {
+      const fhtml = await fr.text();
+      if (!/Please provide your account information|unexpected error has occ/i.test(fhtml)) {
+        out.serviceCharge = cellAfter(fhtml, "Service Charge\\s*&pound;") || cellAfter(fhtml, "Service Charge");
+        for (const m of fhtml.matchAll(/>\s*([A-Za-z][^<:]{1,40}?)\s*(?:&pound;)?\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+          const k = clean(m[1]); const v = clean(m[2]);
+          if (k && v && k.length < 40 && !(k in out.allFields)) out.allFields[k] = v;
+        }
+      }
+    }
+  } catch (e: any) { /* full-detail is best-effort */ }
+
+  return out;
+}
+
+export async function importPipnetProperties(params: {
+  location?: string;
+  minSize?: string;
+  maxSize?: string;
+  type?: string;
+  allPages?: boolean;
+}): Promise<{ imported: number; geocoded: number; withBrochure: number; total: number }> {
+  const { upsertExternalProperty } = await import("./external-properties");
+  const results = await searchPipnetProperties({
+    location: params.location,
+    minSize: params.minSize,
+    maxSize: params.maxSize,
+    type: params.type,
+  });
+  // Reuse the search's session cookie — calling login() here would wipe the
+  // result context and break every detail fetch (see importPipnetRequirements).
+  const cookie = sessionCookie;
+  if (!cookie) throw new Error("PIPnet session missing after search");
+  let imported = 0;
+  let geocoded = 0;
+  let withBrochure = 0;
+  let loggedHeaders = false;
+
+  for (const row of results) {
+    if (!loggedHeaders) {
+      console.log(`[pipnet props] PIPnet property columns: ${JSON.stringify(Object.keys(row))}`);
+      loggedHeaders = true;
+    }
+
+    const folderId = row._detailHref?.match(/folderid=(\d+)/i)?.[1] || null;
+    if (!folderId) continue;
+    const sourceId = `pipnet-prop-${folderId}`;
+
+    let detail: Awaited<ReturnType<typeof fetchPipnetPropertyDetail>> = {};
+    try {
+      detail = await fetchPipnetPropertyDetail(folderId, cookie);
+      await new Promise(r => setTimeout(r, 150));
+    } catch (e: any) {
+      console.error(`[pipnet props] detail ${folderId}: ${e?.message}`);
+    }
+
+    // Address — prefer the detail-page address, fall back to the list row.
+    const listStreet = (row["Street"] || "").trim();
+    const listNo = (row["No"] || "").trim();
+    const listTown = (row["Town"] || "").trim();
+    const listSuburb = (row["Suburb"] || "").trim();
+    const fullAddress = detail.address || [listNo, listStreet, listSuburb, listTown].filter(Boolean).join(", ");
+    if (!fullAddress) continue;
+
+    const postcode = detail.postcode || (fullAddress.match(/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/i)?.[0] ?? null);
+    const areaSqft = (row["Primary Area ft2"] || row["Primary Area ft²"] || "").trim() || null;
+
+    // Brochure ("View All Images" → allimages PDF) → landlord pack, named after
+    // the address. Fetched as raw binary (the proxy mangles binaries).
+    let brochurePack: { url: string; name: string; pages: number } | null = null;
+    if (detail.brochureUrl) {
+      try {
+        const pack = await downloadBrochureAsPdf(detail.brochureUrl, cookie, folderId, fullAddress);
+        if (pack) { brochurePack = { url: pack.url, name: pack.name, pages: pack.pages }; withBrochure++; }
+      } catch (e: any) {
+        console.error(`[pipnet props] brochure ${fullAddress}: ${e?.message}`);
+      }
+    }
+
+    // Geocode for the map (cached).
+    const geo = await geocodeOne(fullAddress);
+    if (geo.lat != null && geo.lng != null) geocoded++;
+
+    await upsertExternalProperty({
+      id: sourceId,
+      source: "PIPnet",
+      folderId,
+      address: geo.formattedAddress || fullAddress,
+      town: detail.town || listTown || null,
+      street: detail.street || listStreet || null,
+      postcode,
+      latitude: geo.lat ?? null,
+      longitude: geo.lng ?? null,
+      rent: detail.rent || null,
+      serviceCharge: detail.serviceCharge || null,
+      rateableValue: detail.rateableValue || null,
+      areaSqft,
+      tenure: detail.tenure || null,
+      useCategory: detail.useCategory || null,
+      availability: detail.availability || null,
+      agent: detail.agent || (row["Agent"] || "").trim() || null,
+      contactName: detail.contactName || (row["Contact"] || "").trim() || null,
+      contactPhone: detail.telephone || (row["Telephone"] || "").trim() || null,
+      contactEmail: detail.email || null,
+      landlordPack: brochurePack ? JSON.stringify(brochurePack) : null,
+      documentDate: detail.documentDate || (row["Date"] || "").trim() || null,
+      rawData: { listRow: row, allFields: detail.allFields, brochureUrl: detail.brochureUrl },
+    });
+    imported++;
+  }
+
+  return { imported, geocoded, withBrochure, total: results.length };
 }
 
 // Pulls every additional field that lives on a requirement's detail page —
@@ -331,10 +572,27 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
   documentDate?: string;
   landlordPackUrl?: string;
 }> {
-  const url = href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
+  // Fetch by folderid alone. The row link carries a session-positional
+  // `index=N` that errors out once the search result set rotates (across
+  // paginated runs), whereas folderid is PIPnet's stable requirement id and
+  // resolves directly. (folderid 87746 == the brochure's requirement=87746.)
+  const folderId = href.match(/folderid=(\d+)/i)?.[1] || null;
+  const url = folderId
+    ? `${PIPNET_URL}/reqdetails.jsp?folderid=${folderId}`
+    : href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
   const res = await pipFetch(url, { headers: { Cookie: cookie } });
-  if (!res.ok) return {};
+  if (!res.ok) {
+    console.error(`[pipnet detail] ${url}: HTTP ${res.status}`);
+    return {};
+  }
   const html = await res.text();
+  // PIPnet serves a small "unexpected error has occured" page when it can't
+  // resolve the detail (e.g. the search result context was wiped by a stray
+  // reqSearch.jsp hit). Treat that as a failure rather than parsing 0 fields.
+  if (/unexpected error has occ/i.test(html)) {
+    console.error(`[pipnet detail] ${url}: PIPnet returned its error page (result context lost) — no brochure link`);
+    return {};
+  }
 
   const fields: Record<string, string> = {};
   const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -374,10 +632,19 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
     : undefined;
 
   // "Requirement ID: 87425" — sometimes in a labelled row, sometimes inline.
+  // Fall back to the folderid from the link, which IS the requirement id — the
+  // detail page often has no th/td label rows, so without this the brochure
+  // download (gated on requirementId) would be skipped even when the page and
+  // its View All Images PDF link are present.
   let requirementId = fields["Requirement ID"] || fields["Req. ID"] || fields["Req ID"];
   if (!requirementId) {
     const idMatch = html.match(/Requirement\s*ID\s*:?\s*<\/?[^>]*>?\s*(\d+)/i);
     if (idMatch) requirementId = idMatch[1];
+  }
+  if (!requirementId && folderId) requirementId = folderId;
+  // The brochure URL embeds requirement=<id> — last-resort source of the id.
+  if (!requirementId && landlordPackUrl) {
+    requirementId = landlordPackUrl.match(/requirement=(\d+)/i)?.[1];
   }
 
   return {
@@ -399,39 +666,98 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
   };
 }
 
+// Turn a tenant/company name into a safe, readable file slug for the landlord
+// pack — "City Slots" → "City-Slots". Keeps the saved file named after the
+// tenant (what the team wants) rather than the opaque PIPnet folder id.
+function packSlug(name: string): string {
+  return (name || "landlord-pack")
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "landlord-pack";
+}
+
+// Count UTF-8 replacement-char sequences (EF BF BD). ScraperAPI re-encodes
+// binary responses as UTF-8, turning every high byte (incl. JPEG 0xFF markers)
+// into U+FFFD — which destroys the embedded images and yields a blank PDF. A
+// clean binary has essentially none; a mangled one has thousands.
+function isMangledBinary(buf: Buffer): boolean {
+  let hits = 0;
+  for (let i = 0; i + 2 < buf.length && hits <= 25; i++) {
+    if (buf[i] === 0xef && buf[i + 1] === 0xbf && buf[i + 2] === 0xbd) hits++;
+  }
+  return hits > 25;
+}
+
+// Fetch a PIPnet binary (the brochure PDF / its images) WITHOUT corrupting it.
+// The brochure URL carries its own ?sessionid= auth, so a direct fetch works
+// and — unlike the ScraperAPI proxy — preserves the raw bytes. We only fall
+// back to the proxy if the direct fetch is blocked, and reject a proxied body
+// that came back UTF-8-mangled rather than save a blank PDF.
+async function fetchPipnetBinary(url: string, cookie: string): Promise<{ buf: Buffer; ct: string } | null> {
+  const headers = { "User-Agent": PIPNET_UA, Accept: "*/*", Cookie: cookie };
+  try {
+    const r = await fetch(url, { headers });
+    if (r.ok) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!isMangledBinary(buf)) return { buf, ct: (r.headers.get("content-type") || "").toLowerCase() };
+      console.warn(`[pipnet brochure] direct fetch returned mangled bytes for ${url} — trying proxy`);
+    } else if (isScraperApiAvailable()) {
+      console.warn(`[pipnet brochure] direct fetch HTTP ${r.status} — trying proxy`);
+    } else {
+      return null;
+    }
+  } catch (e: any) {
+    console.warn(`[pipnet brochure] direct fetch threw (${e?.message}) — trying proxy`);
+  }
+  if (!isScraperApiAvailable()) return null;
+  const r = await pipFetch(url, { headers: { Cookie: cookie } });
+  if (!r.ok) return null;
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (isMangledBinary(buf)) {
+    console.error(`[pipnet brochure] proxy also returned mangled binary for ${url} — cannot recover image`);
+    return null;
+  }
+  return { buf, ct: (r.headers.get("content-type") || "").toLowerCase() };
+}
+
 // Download a requirement's "View All Images" brochure, stitch every page into
 // a single PDF, save via the existing file-storage helper and return the
 // BGP-hosted URL ready for the landlord_pack JSON. Returns null if the
-// brochure couldn't be fetched or contained no usable pages.
-async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId: string): Promise<{ url: string; name: string; pages: number; buffer: Buffer } | null> {
+// brochure couldn't be fetched or contained no usable pages. `displayName`
+// (the tenant/company) names the saved file.
+async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId: string, displayName?: string): Promise<{ url: string; name: string; pages: number; buffer: Buffer } | null> {
   try {
-    const res = await pipFetch(brochureUrl, { headers: { Cookie: cookie } });
-    if (!res.ok) {
-      console.error(`[pipnet brochure] ${reqId}: fetch failed ${res.status}`);
+    const slug = packSlug(displayName || `pipnet-${reqId}`);
+    const packName = displayName ? `${displayName} — Landlord Pack` : "PIPnet brochure";
+    const fileName = `${displayName || `requirement-${reqId}`}.pdf`;
+    const fetched = await fetchPipnetBinary(brochureUrl, cookie);
+    if (!fetched) {
+      console.error(`[pipnet brochure] ${reqId}: could not fetch a clean brochure binary`);
       return null;
     }
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const ct = fetched.ct;
 
     // Direct PDF — save as-is.
-    if (ct.includes("pdf")) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
-      await saveFile(key, buf, "application/pdf", `pipnet-${reqId}.pdf`);
-      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1, buffer: buf };
+    if (ct.includes("pdf") || fetched.buf.slice(0, 5).toString("latin1") === "%PDF-") {
+      const buf = fetched.buf;
+      const key = `landlord-packs/${slug}-${randomBytes(4).toString("hex")}.pdf`;
+      await saveFile(key, buf, "application/pdf", fileName);
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: packName, pages: 1, buffer: buf };
     }
 
     // Direct image — wrap in single-page PDF.
     if (ct.startsWith("image/")) {
-      const buf = Buffer.from(await res.arrayBuffer());
+      const buf = fetched.buf;
       const pdf = await imagesToPdf([{ bytes: buf, contentType: ct }]);
       if (!pdf) return null;
-      const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
-      await saveFile(key, pdf, "application/pdf", `pipnet-${reqId}.pdf`);
-      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure`, pages: 1, buffer: pdf };
+      const key = `landlord-packs/${slug}-${randomBytes(4).toString("hex")}.pdf`;
+      await saveFile(key, pdf, "application/pdf", fileName);
+      return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: packName, pages: 1, buffer: pdf };
     }
 
     // HTML index — find every <img>, download each, stitch.
-    const html = await res.text();
+    const html = fetched.buf.toString("utf8");
     const imgSrcs = Array.from(new Set(
       [...html.matchAll(/<img[^>]+src="([^"]+)"/gi)].map(m => m[1])
     ));
@@ -456,16 +782,13 @@ async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId:
 
     const pages: { bytes: Buffer; contentType: string }[] = [];
     for (const u of pageImageUrls.slice(0, 50)) { // cap at 50 pages just in case
-      try {
-        const r = await pipFetch(u, { headers: { Cookie: cookie } });
-        if (!r.ok) continue;
-        const ict = (r.headers.get("content-type") || "image/jpeg").toLowerCase();
-        if (!ict.startsWith("image/")) continue;
-        pages.push({ bytes: Buffer.from(await r.arrayBuffer()), contentType: ict });
-        await new Promise(rs => setTimeout(rs, 80));
-      } catch (e: any) {
-        console.error(`[pipnet brochure] ${reqId}: image fetch failed for ${u}: ${e?.message}`);
-      }
+      // Use the binary-safe fetch — these page images are JPEGs and would be
+      // UTF-8-mangled (blank) if pulled through the proxy.
+      const got = await fetchPipnetBinary(u, cookie);
+      if (!got) continue;
+      const ict = got.ct.startsWith("image/") ? got.ct : "image/jpeg";
+      pages.push({ bytes: got.buf, contentType: ict });
+      await new Promise(rs => setTimeout(rs, 80));
     }
 
     if (pages.length === 0) {
@@ -475,9 +798,9 @@ async function downloadBrochureAsPdf(brochureUrl: string, cookie: string, reqId:
 
     const pdfBytes = await imagesToPdf(pages);
     if (!pdfBytes) return null;
-    const key = `landlord-packs/pipnet-${reqId}-${randomBytes(4).toString("hex")}.pdf`;
-    await saveFile(key, pdfBytes, "application/pdf", `pipnet-${reqId}.pdf`);
-    return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `PIPnet brochure (${pages.length} pages)`, pages: pages.length, buffer: pdfBytes };
+    const key = `landlord-packs/${slug}-${randomBytes(4).toString("hex")}.pdf`;
+    await saveFile(key, pdfBytes, "application/pdf", fileName);
+    return { url: `/api/crm/landlord-packs/${key.split("/").pop()}`, name: `${packName} (${pages.length} pages)`, pages: pages.length, buffer: pdfBytes };
   } catch (e: any) {
     console.error(`[pipnet brochure] ${reqId}: ${e?.message}`);
     return null;
@@ -581,7 +904,13 @@ export async function importPipnetRequirements(params: {
   let skippedOld = 0;
   let loggedHeaders = false;
 
-  const cookie = await login();
+  // Reuse the cookie the search just established — do NOT call login() here.
+  // login() pings reqSearch.jsp to validate the session, and that hit wipes
+  // PIPnet's server-side result set, making every subsequent reqdetails fetch
+  // return the "unexpected error" page (no fields, no brochure link). That was
+  // the real reason Use class / tenure / email / brochure all came back empty.
+  const cookie = sessionCookie;
+  if (!cookie) throw new Error("PIPnet session missing after search");
 
   for (const row of results) {
     if (!loggedHeaders) {
@@ -621,7 +950,7 @@ export async function importPipnetRequirements(params: {
     // raw PIPnet URL on failure so the link still works (with PIPnet login).
     let brochurePack: { url: string; name: string; pages: number; buffer?: Buffer } | null = null;
     if (detail.landlordPackUrl && detail.requirementId) {
-      brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId);
+      brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId, companyName);
       if (!brochurePack) {
         console.warn(`[pipnet import] brochure download returned null for ${companyName} (${detail.requirementId}): ${detail.landlordPackUrl}`);
       }
@@ -733,7 +1062,12 @@ export async function importPipnetRequirements(params: {
     }
     imported++;
 
-    if (autoPromote && (existing.length === 0 || existing[0].status !== "converted")) {
+    // Always run promote — for new rows it creates the CRM requirement, for
+    // already-converted rows it RE-ENRICHES (fills empty columns from the
+    // vision parse and refreshes the landlord pack). Without this, rows
+    // converted by an earlier sync never pick up newly-extracted Use / Type /
+    // locations or the freshly-downloaded clean brochure.
+    if (autoPromote) {
       const created = await promoteToCrmRequirement(externalId, record);
       if (created) promoted++;
     }
@@ -908,7 +1242,11 @@ async function promoteToCrmRequirement(
       if ((!existingReq.requirementLocations || existingReq.requirementLocations.length === 0) && item.locations && item.locations.length > 0) {
         updates.requirementLocations = item.locations;
       }
-      if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
+      // Refresh the landlord pack: a freshly-downloaded clean brochure this run
+      // (brochurePack) replaces any stale/mangled pack from an earlier sync;
+      // otherwise just fill it if empty.
+      if (brochurePack && landlordPackJson) updates.landlordPack = landlordPackJson;
+      else if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
       if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
       if ((!existingReq.comments || !existingReq.comments.trim()) && aiSummary) updates.comments = aiSummary;
       // Append "PIPnet" to the sources array if not already there.
@@ -962,9 +1300,11 @@ export function resetSession() {
 export async function inspectPipnetDetail(): Promise<{
   candidateLinks: string[];
   detailUrl: string | null;
+  bounced?: boolean;
   fields: Record<string, string>;
   htmlPreview: string;
   htmlLength: number;
+  variants?: any;
   brochure?: {
     url: string;
     contentType: string;
@@ -974,45 +1314,61 @@ export async function inspectPipnetDetail(): Promise<{
     imageUrls?: string[];
   } | null;
 }> {
+  // Diagnostic: log in ONCE, run the search inline (so the result set is held
+  // in this session), then fetch the detail page in the SAME session with NO
+  // intervening login()/reqSearch.jsp call — the production importer re-logs-in
+  // between search and detail, and that reqSearch.jsp hit appears to reset the
+  // server-side result context that reqdetails.jsp?index=N depends on, making
+  // every detail return PIPnet's "unexpected error" page. We test two fetch
+  // strategies so we know which one to use in the importer.
+  resetSession();
   const cookie = await login();
-  const body = new URLSearchParams({
-    requirementType: "ReqRetail",
-    locationSearchEdit: "",
-    locationListBox: "",
-    status: "Latest",
-    documentDate: "",
-    extrapolated: "True",
-    clientSearchEdit: "",
-    clientListBox: "",
-    minSalesArea: "",
-    maxSalesArea: "",
-    Search: "Search",
+  const searchBody = new URLSearchParams({
+    requirementType: "ReqRetail", locationSearchEdit: "", locationListBox: "",
+    status: "Latest", documentDate: "", extrapolated: "True",
+    clientSearchEdit: "", clientListBox: "", minSalesArea: "", maxSalesArea: "", Search: "Search",
   });
   const listRes = await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
-    body: body.toString(),
+    body: searchBody.toString(),
   });
-  if (!listRes.ok) throw new Error(`PIPnet list fetch failed: ${listRes.status}`);
   const listHtml = await listRes.text();
-
-  // Pull every href on the page; filter to ones that look like a per-row
-  // detail link (not pagination, not nav, not search).
-  const allHrefs = Array.from(new Set(
-    [...listHtml.matchAll(/href="([^"]+)"/gi)].map(m => m[1])
-  ));
-  const skip = /^(#|javascript:|mailto:|\/?logout|\/?login|reqresults\.jsp\?action=next|.*\.css|.*\.js)/i;
-  const detailCandidates = allHrefs.filter(h => !skip.test(h));
-  const detailHref = detailCandidates.find(h => /req|detail|show|view/i.test(h)) || detailCandidates[0] || null;
+  const rows = parseHtmlTable(listHtml);
+  const detailHref = rows.map(r => r._detailHref).find(Boolean) || null;
+  const candidateLinks = rows.map(r => r._detailHref).filter(Boolean).slice(0, 20) as string[];
 
   if (!detailHref) {
-    return { candidateLinks: detailCandidates.slice(0, 20), detailUrl: null, fields: {}, htmlPreview: listHtml.slice(0, 800), htmlLength: listHtml.length };
+    return { candidateLinks, detailUrl: null, fields: {}, htmlPreview: listHtml.slice(0, 900), htmlLength: listHtml.length };
   }
 
+  const folderId = detailHref.match(/folderid=(\d+)/i)?.[1] || null;
   const detailUrl = detailHref.startsWith("http") ? detailHref : `${PIPNET_URL}/${detailHref.replace(/^\//, "")}`;
-  const detailRes = await pipFetch(detailUrl, { headers: { Cookie: cookie } });
-  if (!detailRes.ok) throw new Error(`PIPnet detail fetch failed: ${detailRes.status}`);
-  const detailHtml = await detailRes.text();
+  const isErr = (h: string) => /unexpected error has occ/i.test(h);
+
+  // Strategy A: the row's link as-is (index=N&folderid=X), fetched immediately.
+  const resA = await pipFetch(detailUrl, { headers: { Cookie: cookie } });
+  const htmlA = await resA.text();
+  // Strategy B: folderid only (no session-positional index). Re-run the search
+  // first so the session context is fresh for this attempt.
+  await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+    body: searchBody.toString(),
+  });
+  const urlB = folderId ? `${PIPNET_URL}/reqdetails.jsp?folderid=${folderId}` : detailUrl;
+  const resB = await pipFetch(urlB, { headers: { Cookie: cookie } });
+  const htmlB = await resB.text();
+
+  const countFields = (h: string) => [...h.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)].length;
+  const variants = {
+    A_indexAndFolder: { url: detailUrl, status: resA.status, htmlLength: htmlA.length, isError: isErr(htmlA), thtdPairs: countFields(htmlA) },
+    B_folderOnly: { url: urlB, status: resB.status, htmlLength: htmlB.length, isError: isErr(htmlB), thtdPairs: countFields(htmlB) },
+  };
+
+  // Use whichever strategy produced a real page for the field/brochure dump.
+  const detailHtml = !isErr(htmlA) && htmlA.length > 1500 ? htmlA : (!isErr(htmlB) ? htmlB : htmlA);
+  const bounced = looksUnauthenticated(detailHtml);
 
   const fields: Record<string, string> = {};
   const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -1070,8 +1426,10 @@ export async function inspectPipnetDetail(): Promise<{
   }
 
   return {
-    candidateLinks: detailCandidates.slice(0, 20),
+    candidateLinks,
     detailUrl,
+    bounced,
+    variants,
     fields,
     htmlPreview: detailHtml.slice(0, 1200),
     htmlLength: detailHtml.length,
@@ -1088,4 +1446,153 @@ export async function testPipnetLogin(): Promise<{ ok: boolean; message: string;
   } catch (err: any) {
     return { ok: false, message: err?.message || String(err), via };
   }
+}
+
+// Diagnostic: dump PIPnet's PROPERTY search form so we can see the real input
+// names + endpoint (they differ from the requirements form, which is why the
+// property search returns 0 rows). Also fires the current detailsfetch.jsp
+// params and reports whether they yield a result table, an error, or the form.
+export async function inspectPipnetPropertySearch(): Promise<any> {
+  resetSession();
+  const cookie = await login();
+  const out: any = { formPages: [], detailsfetch: null };
+
+  // First, crawl the main menu pages and collect every link (with its anchor
+  // text) so we can FIND the property / available-space search page rather than
+  // guess its filename. PIPnet's logo links to index.jsp.
+  out.menuLinks = [];
+  const fetchForms = async (page: string) => {
+    const r = await pipFetch(page.startsWith("http") ? page : `${PIPNET_URL}/${page.replace(/^\//, "")}`, { headers: { Cookie: cookie } });
+    if (!r.ok) return { status: r.status };
+    const html = await r.text();
+    const forms = [...html.matchAll(/<form[^>]*?action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/gi)].map(m => ({
+      action: m[1],
+      inputs: Array.from(new Set([...m[2].matchAll(/<(?:input|select|textarea)[^>]*?name="([^"]+)"/gi)].map(x => x[1]))),
+    }));
+    return { status: 200, htmlLength: html.length, forms };
+  };
+  for (const menu of ["choice.jsp", "watchresults.jsp", "index.jsp", "menu.jsp"]) {
+    try {
+      const r = await pipFetch(`${PIPNET_URL}/${menu}`, { headers: { Cookie: cookie } });
+      if (!r.ok) { out.menuLinks.push({ menu, status: r.status }); continue; }
+      const html = await r.text();
+      const links = [...html.matchAll(/<a[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+        .map(m => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
+        .filter(l => !/^(#|javascript:|mailto:)/i.test(l.href));
+      const jspRefs = Array.from(new Set([...html.matchAll(/\b([a-zA-Z][\w]*\.(?:jsp|htm))\b/g)].map(m => m[1])));
+      const interesting = links.filter(l => /detail|propert|space|available|avail|search|retail/i.test(l.href + " " + l.text));
+      // Follow each interesting link one level deep to capture its form inputs.
+      const followed: any[] = [];
+      for (const l of interesting.slice(0, 8)) {
+        try { followed.push({ link: l, ...(await fetchForms(l.href)) }); } catch (e: any) { followed.push({ link: l, error: e?.message }); }
+      }
+      out.menuLinks.push({ menu, status: 200, htmlLength: html.length, jspRefs, interesting, allLinks: links.slice(0, 40), followed });
+    } catch (e: any) { out.menuLinks.push({ menu, error: e?.message }); }
+  }
+
+  // Candidate property search pages (parallel to reqsearchretailtabbed.htm).
+  const candidates = [
+    "detailsearchretailtabbed.htm",
+    "detailsearchtabbed.htm",
+    "detailsearch.htm",
+    "detailsearch.jsp",
+    "propsearchretailtabbed.htm",
+    "reqsearchretailtabbed.htm", // tabbed page may host BOTH req + property forms
+  ];
+  for (const page of candidates) {
+    try {
+      const r = await pipFetch(`${PIPNET_URL}/${page}`, { headers: { Cookie: cookie } });
+      if (!r.ok) { out.formPages.push({ page, status: r.status }); continue; }
+      const html = await r.text();
+      const forms = [...html.matchAll(/<form[^>]*?action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/gi)].map(m => ({
+        action: m[1],
+        inputs: Array.from(new Set([...m[2].matchAll(/<(?:input|select|textarea)[^>]*?name="([^"]+)"/gi)].map(x => x[1]))),
+        selectOptions: [...m[2].matchAll(/<select[^>]*?name="([^"]+)"[\s\S]*?<\/select>/gi)].slice(0, 6).map(s => ({
+          name: s[0].match(/name="([^"]+)"/)?.[1],
+          options: [...s[0].matchAll(/<option[^>]*?value="([^"]*)"[^>]*>([^<]*)</gi)].slice(0, 12).map(o => `${o[1]}=${o[2].trim()}`),
+        })),
+      }));
+      const allNames = Array.from(new Set([...html.matchAll(/<(?:input|select|textarea)[^>]*?name="([^"]+)"/gi)].map(x => x[1])));
+      // Tabs/nav links — these point to the sibling search pages (e.g. property
+      // / available-space search). Capture href + text, and any onclick targets.
+      const links = [...html.matchAll(/<a[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+        .map(m => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
+        .filter(l => !/^(#|javascript:void|mailto:)/i.test(l.href));
+      const onclicks = [...html.matchAll(/(?:onclick|location(?:\.href)?\s*=)\s*["']?([^"'<>]*\.(?:jsp|htm)[^"'<>]*)/gi)].map(m => m[1]);
+      const jspRefs = Array.from(new Set([...html.matchAll(/\b([a-zA-Z][\w]*\.jsp)\b/g)].map(m => m[1])));
+      out.formPages.push({ page, status: 200, htmlLength: html.length, forms, allNames, links: links.slice(0, 60), onclicks: Array.from(new Set(onclicks)).slice(0, 40), jspRefs });
+    } catch (e: any) { out.formPages.push({ page, error: e?.message }); }
+  }
+
+  // What does the CURRENT property search params return?
+  const body = new URLSearchParams({
+    propertyType: "PropRetail", locationSearchEdit: "", locationListBox: "London",
+    status: "Available", documentDate: "", extrapolated: "True", addressSearchEdit: "",
+    minSalesArea: "", maxSalesArea: "", Search: "Search",
+  });
+  try {
+    const dr = await pipFetch(`${PIPNET_URL}/detailsfetch.jsp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+      body: body.toString(),
+    });
+    const dhtml = await dr.text();
+    const firstRow = dhtml.match(/<table class="results?Table"[\s\S]*?<tr[^>]*>([\s\S]*?)<\/tr>/i);
+    out.detailsfetch = {
+      status: dr.status,
+      htmlLength: dhtml.length,
+      hasResultTable: /class="results?Table"/i.test(dhtml),
+      isError: /unexpected error/i.test(dhtml),
+      looksLikeForm: /detailsearchretailtabbed|propertyType|addressSearchEdit/i.test(dhtml) && !/class="results?Table"/i.test(dhtml),
+      firstRowCells: firstRow ? firstRow[1].replace(/<[^>]+>/g, "|").replace(/\s+/g, " ").slice(0, 300) : null,
+      preview: dhtml.slice(0, 600),
+    };
+  } catch (e: any) { out.detailsfetch = { error: e?.message }; }
+
+  // Run the REWRITTEN searchPipnetProperties end-to-end and report the rows it
+  // gets, so we can confirm the new form-replay actually returns listings.
+  let firstHref: string | null = null;
+  try {
+    const rows = await searchPipnetProperties({});
+    firstHref = rows.map(r => r._detailHref).find(Boolean) || null;
+    out.liveSearch = {
+      rows: rows.length,
+      columns: rows.length ? Array.from(new Set(rows.flatMap(r => Object.keys(r)))) : [],
+      sample: rows.slice(0, 3),
+    };
+  } catch (e: any) { out.liveSearch = { error: e?.message }; }
+
+  // CLEAN detail test: fresh session → property search → fetch the first
+  // listing's detail IMMEDIATELY in the same session (no intervening fetches),
+  // exactly as the importer will. Try the href as-is (index+folderid) and
+  // folderid-only. This avoids the session-expiry artifact from all the
+  // exploratory fetches above.
+  try {
+    resetSession();
+    const rows = await searchPipnetProperties({});
+    const href = rows.map(r => r._detailHref).find(Boolean) || null;
+    const cookie2 = sessionCookie || cookie;
+    const folderId = href?.match(/folderid=(\d+)/i)?.[1] || null;
+    const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+    const probe = async (label: string, u: string) => {
+      const r = await pipFetch(u, { headers: { Cookie: cookie2 } });
+      const html = await r.text();
+      const isLogin = /Please provide your account information|name="password"/i.test(html);
+      const fields: Record<string, string> = {};
+      for (const m of html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&k.length<60)fields[k]=v; }
+      for (const m of html.matchAll(/<td[^>]*>\s*([^<:]{2,40}):\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&!(k in fields))fields[k]=v; }
+      const cells = [...html.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => clean(m[1])).filter(Boolean);
+      const links = [...html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].map(m => ({ href: m[1], text: clean(m[2]) }));
+      const broch = links.find(l => /image|brochure|pdf|pack|view all/i.test(l.href + " " + l.text));
+      return { label, url: u, status: r.status, isLogin, isError: /unexpected error/i.test(html), htmlLength: html.length, fields, cells, links, brochure: broch || null, fullHtml: html.slice(0, 4000) };
+    };
+    out.cleanDetail = { firstHref: href };
+    if (href) {
+      const urlA = href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
+      out.cleanDetail.A_asIs = await probe("as-is (index+folderid)", urlA);
+      if (folderId) out.cleanDetail.B_folderOnly = await probe("folderid-only", `${PIPNET_URL}/detailsdetails.jsp?folderid=${folderId}`);
+    }
+  } catch (e: any) { out.cleanDetail = { error: e?.message }; }
+
+  return out;
 }
