@@ -1257,7 +1257,7 @@ export default function AvailableUnitsPage() {
                       viewing, register an interested tenant + comment, edit. */}
                   <div className="flex items-center flex-wrap gap-1 pt-2 border-t">
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
-                      <Eye className="w-3.5 h-3.5" /> View
+                      <Eye className="w-3.5 h-3.5" /> Brochure
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
                       <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
