@@ -29,7 +29,7 @@ export function registerLeaseEventRoutes(app: Express) {
       }
       const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
       const rows = await pool.query(
-        `SELECT id, property_id AS "propertyId", address, tenant, tenant_company_id AS "tenantCompanyId",
+        `SELECT id, property_id AS "propertyId", address, landlord, tenant, tenant_company_id AS "tenantCompanyId",
                 unit_ref AS "unitRef", event_type AS "eventType", event_date AS "eventDate",
                 notice_date AS "noticeDate", current_rent AS "currentRent", estimated_erv AS "estimatedErv",
                 sqft, source_evidence AS "sourceEvidence", source_url AS "sourceUrl",
