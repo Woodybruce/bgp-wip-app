@@ -560,26 +560,42 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
           </button>
         </div>
         <div className="flex-1 overflow-y-auto py-2">
-          {items.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.url);
+          {(() => {
+            // Surface the field-relevant boards first; tuck tools/utilities
+            // under a "Tools & more" divider so the phone menu isn't a wall.
+            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
+            const primary = items.filter((i: any) => PRIMARY.has(i.url));
+            const more = items.filter((i: any) => !PRIMARY.has(i.url));
+            const renderRow = (item: any) => {
+              const Icon = item.icon;
+              const active = isActive(item.url);
+              return (
+                <Link key={item.url} href={item.url}>
+                  <div
+                    onClick={onClose}
+                    className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
+                      active
+                        ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                        : "text-foreground hover:bg-muted"
+                    }`}
+                    data-testid={`mobile-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                  >
+                    <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                    <span>{item.title}</span>
+                  </div>
+                </Link>
+              );
+            };
             return (
-              <Link key={item.url} href={item.url}>
-                <div
-                  onClick={onClose}
-                  className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
-                    active
-                      ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
-                      : "text-foreground hover:bg-muted"
-                  }`}
-                  data-testid={`mobile-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
-                >
-                  <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
-                  <span>{item.title}</span>
-                </div>
-              </Link>
+              <>
+                {primary.map(renderRow)}
+                {more.length > 0 && (
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-5 pt-3 pb-1">Tools &amp; more</p>
+                )}
+                {more.map(renderRow)}
+              </>
             );
-          })}
+          })()}
         </div>
       </div>
     </>
