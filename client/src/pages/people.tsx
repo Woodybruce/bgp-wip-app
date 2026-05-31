@@ -422,12 +422,6 @@ function AgentsTab({
     return map;
   }, [investmentItems]);
 
-  const companyMap = useMemo(() => {
-    const m: Record<string, CrmCompany> = {};
-    for (const c of companies) m[c.id] = c;
-    return m;
-  }, [companies]);
-
   const agentCompanies = useMemo(() => {
     return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent");
   }, [companies]);
@@ -801,6 +795,7 @@ function LendersTab({
   properties: CrmProperty[];
   onAddCompany?: () => void;
 }) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [subFilter, setSubFilter] = useState<LenderSubFilter>("all");
 
@@ -1054,7 +1049,6 @@ function PeopleHub() {
   });
 
   const onDeleteCompany = (id: string, name: string) => setDeleteTarget({ type: "company", id, name });
-  const onDeleteContact = (id: string, name: string) => setDeleteTarget({ type: "contact", id, name });
   const landsecAppliedRef = useRef(false);
   useEffect(() => {
     if (isLandsec && !landsecAppliedRef.current && tab === "landlords") {
@@ -1120,7 +1114,7 @@ function PeopleHub() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-4">
+    <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">

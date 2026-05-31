@@ -5,13 +5,13 @@ import { useLocation } from "wouter";
 const TasksPage = lazy(() => import("./tasks"));
 import {
   Users, User, TrendingUp, Calendar, FileText, CreditCard,
-  Building2, GraduationCap, Phone, Mail, MapPin, Linkedin,
+  Building2, GraduationCap, Phone, Mail, Linkedin,
   ChevronRight, ChevronDown, Plus, Pencil, Check, X,
   AlertCircle, Clock, CheckCircle2, BarChart3, ArrowLeft,
   Shield, Heart, Briefcase, Star, DollarSign, BookOpen,
   ExternalLink, Loader2, Search, SlidersHorizontal,
-  Network, Cake, UserPlus, Trash2, FolderLock, Folder, Upload,
-  LayoutGrid, GitBranch, Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
+  Network, UserPlus, Trash2, Folder, Upload,
+  Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
   Train, HeartHandshake, Mountain, Award, Megaphone, Sparkles, Target,
   MessageSquare, PoundSterling, Trophy, Coffee,
 } from "lucide-react";
@@ -5967,10 +5967,15 @@ export default function HRPage() {
 
   return (
     <div className="h-full overflow-y-auto">
+      <div className="max-w-[1600px] mx-auto">
       <div className="p-4 border-b sticky top-0 bg-background z-10">
         <div className="flex items-center gap-2 mb-3">
-          <Users className="w-5 h-5 text-primary" />
-          <h1 className="text-lg font-semibold">People & HR</h1>
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <Users className="w-6 h-6 text-emerald-500" /> People & HR
+            </h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Team directory, benefits, holidays and policies</p>
+          </div>
           <Badge variant="secondary" className="ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
             <div className="ml-auto flex items-center gap-2">
@@ -6006,13 +6011,23 @@ export default function HRPage() {
       </div>
 
       <Tabs defaultValue="overview" className="px-4">
-        <TabsList className="mt-3 mb-3">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="my-tasks">My Tasks</TabsTrigger>
-          <TabsTrigger value="benefits">Benefits</TabsTrigger>
-          <TabsTrigger value="marketing">Marketing</TabsTrigger>
-          {isAdmin && <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>}
-          <TabsTrigger value="policies">Policies</TabsTrigger>
+        <TabsList className="flex gap-1 border-b bg-transparent p-0 h-auto rounded-none justify-start w-full mt-3 mb-3">
+          {[
+            { value: "overview", label: "Overview" },
+            { value: "my-tasks", label: "My Tasks" },
+            { value: "benefits", label: "Benefits" },
+            { value: "marketing", label: "Marketing" },
+            ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
+            { value: "policies", label: "Policies" },
+          ].map(t => (
+            <TabsTrigger
+              key={t.value}
+              value={t.value}
+              className="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px rounded-none bg-transparent shadow-none data-[state=active]:shadow-none border-transparent text-muted-foreground hover:text-foreground data-[state=active]:border-emerald-500 data-[state=active]:text-emerald-600 data-[state=active]:bg-transparent"
+            >
+              {t.label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
         <TabsContent value="overview">
@@ -6041,6 +6056,7 @@ export default function HRPage() {
           <div className="pb-6"><PoliciesPanel isAdmin={isAdmin} /></div>
         </TabsContent>
       </Tabs>
+      </div>
 
       {isAdmin && <AddStaffDialog allStaff={allStaff} open={addStaffOpen} onClose={() => setAddStaffOpen(false)} />}
       {isAdmin && <ImportSalariesDialog open={importSalariesOpen} onClose={() => setImportSalariesOpen(false)} />}

@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles } from "lucide-react";
+import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, File, MapPin, Check, Circle, Loader2, Sparkles } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -243,7 +243,6 @@ function MapLocationsCell({
 function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | null; companyFilter?: string | null }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<CrmRequirementsLeasing | null>(null);
@@ -619,7 +618,6 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
         if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
       }
       if (groupFilter !== "all" && item.groupName !== groupFilter) return false;
-      if (statusFilter !== "all" && item.status !== statusFilter) return false;
       if (columnFilters.status?.length && !columnFilters.status.includes(item.status || "")) return false;
       if (columnFilters.use?.length) {
         const vals = Array.isArray(item.use) ? item.use : [];
@@ -648,7 +646,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
       }
       return true;
     });
-  }, [items, groupFilter, statusFilter, columnFilters, search, teamUserIds, companyFilter]);
+  }, [items, groupFilter, columnFilters, search, teamUserIds, companyFilter]);
 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
@@ -3642,7 +3640,7 @@ export default function Requirements() {
   const [isInvestmentView, setIsInvestmentView] = useState(initialView);
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="requirements-page">
+    <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">

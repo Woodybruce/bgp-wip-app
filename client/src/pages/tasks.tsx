@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 
+const SHOW_NOTE_PICKER = false;
+
 interface Task {
   id: string;
   user_id: string;
@@ -383,7 +385,7 @@ export default function TasksPage() {
 
   const [editForm, setEditForm] = useState({
     title: "", description: "", priority: "medium", category: "", dueDate: "",
-    linkedDealId: "", linkedPropertyId: "", linkedContactId: "",
+    linkedDealId: "", linkedPropertyId: "",
     linkedOnenotePageId: "", linkedOnenotePageUrl: "",
     linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
     tags: "",
@@ -566,7 +568,6 @@ export default function TasksPage() {
       dueDate: task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : "",
       linkedDealId: task.linked_deal_id || "",
       linkedPropertyId: task.linked_property_id || "",
-      linkedContactId: task.linked_contact_id || "",
       linkedOnenotePageId: task.linked_onenote_page_id || "",
       linkedOnenotePageUrl: task.linked_onenote_page_url || "",
       linkedEvernoteNoteId: task.linked_evernote_note_id || "",
@@ -587,7 +588,6 @@ export default function TasksPage() {
       dueDate: editForm.dueDate || null,
       linkedDealId: editForm.linkedDealId || null,
       linkedPropertyId: editForm.linkedPropertyId || null,
-      linkedContactId: editForm.linkedContactId || null,
       linkedOnenotePageId: editForm.linkedOnenotePageId || null,
       linkedOnenotePageUrl: editForm.linkedOnenotePageUrl || null,
       linkedEvernoteNoteId: editForm.linkedEvernoteNoteId || null,
@@ -629,14 +629,15 @@ export default function TasksPage() {
       (subtaskMap[t.id] || []).some(s => s.title.toLowerCase().includes(q))
     );
   }
-  const displayActive = filteredTasks.filter(t => t.status !== "done");
+  const overdueIds = new Set(overdueTasks.map(t => t.id));
+  const displayActive = filteredTasks.filter(t => t.status !== "done" && !overdueIds.has(t.id));
   const displayCompleted = filteredTasks.filter(t => t.status === "done");
 
   return (
     <>
       <div className="flex flex-col h-full overflow-hidden" data-testid="tasks-page">
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-6">
 
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -667,7 +668,10 @@ export default function TasksPage() {
                   className="gap-1.5"
                   onClick={() => { setShowEditDialog(true); setEditTask(null); setEditForm({
                     title: "", description: "", priority: "medium", category: "", dueDate: "",
-                    linkedDealId: "", linkedPropertyId: "", linkedContactId: "",
+                    linkedDealId: "", linkedPropertyId: "",
+                    linkedOnenotePageId: "", linkedOnenotePageUrl: "",
+                    linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
+                    tags: "",
                   }); }}
                   data-testid="button-new-task"
                 >
@@ -793,18 +797,20 @@ export default function TasksPage() {
                     <CircleDot className="w-4 h-4 text-primary" />
                     Tasks
                   </CardTitle>
-                  <div className="flex items-center gap-1">
+                  <div className="flex gap-1 border-b">
                     {(["all", "todo", "in_progress", "done"] as const).map(f => (
-                      <Button
+                      <button
                         key={f}
-                        variant={filter === f ? "default" : "ghost"}
-                        size="sm"
-                        className="h-7 text-xs px-2"
+                        className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
+                          filter === f
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
+                        }`}
                         onClick={() => setFilter(f)}
                         data-testid={`filter-${f}`}
                       >
                         {f === "all" ? "All" : f === "todo" ? "To Do" : f === "in_progress" ? "In Progress" : "Done"}
-                      </Button>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -922,37 +928,6 @@ export default function TasksPage() {
               </CardContent>
             </Card>
 
-            {urgentHighTasks.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded bg-red-100 dark:bg-red-900 flex items-center justify-center">
-                      <Flame className="w-3.5 h-3.5 text-red-500" />
-                    </div>
-                    <span className="text-xs font-semibold text-muted-foreground">Urgent</span>
-                  </div>
-                  <p className="text-2xl font-bold">{activeTasks.filter(t => t.priority === "urgent").length}</p>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded bg-orange-100 dark:bg-orange-900 flex items-center justify-center">
-                      <ArrowUp className="w-3.5 h-3.5 text-orange-500" />
-                    </div>
-                    <span className="text-xs font-semibold text-muted-foreground">High Priority</span>
-                  </div>
-                  <p className="text-2xl font-bold">{activeTasks.filter(t => t.priority === "high").length}</p>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded bg-emerald-100 dark:bg-emerald-900 flex items-center justify-center">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    </div>
-                    <span className="text-xs font-semibold text-muted-foreground">Done Today</span>
-                  </div>
-                  <p className="text-2xl font-bold">{completedTasks.filter(t => t.completed_at && new Date(t.completed_at).toDateString() === new Date().toDateString()).length}</p>
-                </Card>
-              </div>
-            )}
 
           </div>
         </div>
@@ -1062,6 +1037,7 @@ export default function TasksPage() {
               </div>
 
               {/* Linked Notes */}
+              {SHOW_NOTE_PICKER && (
               <div className="border rounded-lg p-3 space-y-2 bg-muted/20">
                 <label className="text-xs font-semibold text-muted-foreground block">Linked Notes</label>
                 <div className="space-y-1.5">
@@ -1167,9 +1143,10 @@ export default function TasksPage() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Note picker sub-dialog */}
-              {showNotePicker && (
+              {SHOW_NOTE_PICKER && showNotePicker && (
                 <div className="border rounded-lg p-3 bg-background space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold">
@@ -1250,7 +1227,7 @@ export default function TasksPage() {
               )}
 
               {/* Export picker sub-dialog */}
-              {showExportPicker && editTask && (
+              {SHOW_NOTE_PICKER && showExportPicker && editTask && (
                 <div className="border rounded-lg p-3 bg-background space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold">
@@ -1349,7 +1326,6 @@ export default function TasksPage() {
                     dueDate: editForm.dueDate || null,
                     linkedDealId: editForm.linkedDealId || null,
                     linkedPropertyId: editForm.linkedPropertyId || null,
-                    linkedContactId: editForm.linkedContactId || null,
                   });
                   setShowEditDialog(false);
                 }}

@@ -276,7 +276,7 @@ export default function BrandsHub() {
               <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
               <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0}</Badge>
             </div>
-            <Link href="/turnover">
+            <Link href="/brands?tab=turnover">
               <Button variant="ghost" size="sm" className="text-xs h-7">
                 Full <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
@@ -342,8 +342,8 @@ export default function BrandsHub() {
                         </div>
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
-                            {parseInt(b.deal_count) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count}d</Badge>}
-                            {parseInt(b.req_count) > 0 && <Badge className="text-[9px] px-1 bg-blue-500">{b.req_count}r</Badge>}
+                            {(parseInt(b.deal_count) || 0) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count}d</Badge>}
+                            {(parseInt(b.req_count) || 0) > 0 && <Badge className="text-[9px] px-1 bg-pink-500">{b.req_count}r</Badge>}
                           </div>
                           <p className="text-[9px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d`}</p>
                         </div>
@@ -394,7 +394,7 @@ export default function BrandsHub() {
           <div className="flex items-center gap-2">
             <Maximize2 className="w-4 h-4 text-blue-500" />
             <CardTitle className="text-sm font-semibold">Active Requirements Radar</CardTitle>
-            <Badge className="text-[10px] bg-blue-500">{data?.activeRequirements?.length || 0} brands searching</Badge>
+            <Badge className="text-[10px] bg-pink-500">{data?.activeRequirements?.length || 0} brands searching</Badge>
           </div>
         </CardHeader>
         <CardContent className="px-5 pb-4">
@@ -403,7 +403,7 @@ export default function BrandsHub() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {data.activeRequirements.map(r => (
-                <Link key={r.id} href={`/companies/${r.company_id}`}>
+                <Link key={r.id} href={`/companies/${r.company_id}?tab=requirements`}>
                   <div className="flex items-start gap-2.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors cursor-pointer">
                     <BrandLogo name={r.company_name} domain={r.domain} size={28} />
                     <div className="flex-1 min-w-0">

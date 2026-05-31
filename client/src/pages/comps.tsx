@@ -44,6 +44,7 @@ import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import InvestmentCompsPage from "@/pages/investment-comps";
 import LeaseEventsPage from "@/pages/lease-events";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 interface CompFile {
   id: string;
@@ -1865,9 +1866,25 @@ export default function Comps() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   // Default to Leasing. The Leads tab is parked (admin-only, reached via
   // /admin/comps-leads → /comps?tab=leads) and not shown in the normal bar.
-  const [activeTab, setActiveTab] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get("tab") || "table"; } catch { return "table"; }
+  const VALID_TABS = ["table", "investment", "leads", "lease-events", "pdf-template"];
+  const [activeTab, setActiveTabState] = useState(() => {
+    try {
+      const t = new URLSearchParams(window.location.search).get("tab");
+      if (t && VALID_TABS.includes(t)) return t;
+    } catch {}
+    return "table";
   });
+  // Persist the active tab in ?tab= so refresh/back doesn't reset to 'table'.
+  const setActiveTab = useCallback((tab: string) => {
+    setActiveTabState(tab);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (tab === "table") params.delete("tab");
+      else params.set("tab", tab);
+      const qs = params.toString();
+      navigate(`${window.location.pathname}${qs ? `?${qs}` : ""}`, { replace: true });
+    } catch {}
+  }, [navigate]);
   const [scanning, setScanning] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfConfirmComps, setPdfConfirmComps] = useState<CrmComp[]>([]);
@@ -1951,7 +1968,7 @@ export default function Comps() {
     return companyByName.get(n) || null;
   }, [companyByName]);
 
-  const propertyLinkFor = useCallback((comp: CrmComp): { href: string; external: boolean } => {
+  const propertyLinkFor = useCallback((comp: CrmComp): { href: string | null; external: boolean } => {
     if (comp.propertyId) return { href: `/properties/${comp.propertyId}`, external: false };
     if (comp.name) {
       const match = propertyByName.get(normName(comp.name));
@@ -1961,7 +1978,9 @@ export default function Comps() {
     const addr = comp.address as any;
     const googleUrl = buildGoogleMapsUrl(addr?.formatted || comp.name);
     if (googleUrl) return { href: googleUrl, external: true };
-    return { href: "/properties", external: false };
+    // No id and no usable address — render plain text rather than linking to
+    // the bare /properties list (which would be the wrong destination).
+    return { href: null, external: false };
   }, [propertyByName]);
 
   const { data: deals = [] } = useQuery<{ id: string; name: string; status?: string | null }[]>({
@@ -2659,6 +2678,16 @@ export default function Comps() {
                     <div className="flex items-center gap-1">
                       {(() => {
                         const link = propertyLinkFor(comp);
+                        if (!link.href) {
+                          return (
+                            <span
+                              className="text-left font-medium truncate block"
+                              data-testid={`comp-name-${comp.id}`}
+                            >
+                              {comp.name}
+                            </span>
+                          );
+                        }
                         return link.external ? (
                           <a
                             href={link.href}
@@ -3020,11 +3049,15 @@ export default function Comps() {
       </TabsContent>
 
       <TabsContent value="investment" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
-        <InvestmentCompsPage embedded />
+        <ErrorBoundary name="Investment Comps">
+          <InvestmentCompsPage embedded />
+        </ErrorBoundary>
       </TabsContent>
 
       <TabsContent value="lease-events" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
-        <LeaseEventsPage embedded />
+        <ErrorBoundary name="Lease Events">
+          <LeaseEventsPage embedded />
+        </ErrorBoundary>
       </TabsContent>
 
       <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4">
@@ -3158,6 +3191,16 @@ export default function Comps() {
                         <td className="px-2 py-1.5 truncate">
                           {(() => {
                             const link = propertyLinkFor(lead);
+                            if (!link.href) {
+                              return (
+                                <span
+                                  className="text-left font-medium truncate block w-full"
+                                  data-testid={`lead-name-${lead.id}`}
+                                >
+                                  {lead.name || "Untitled"}
+                                </span>
+                              );
+                            }
                             return link.external ? (
                               <a
                                 href={link.href}
