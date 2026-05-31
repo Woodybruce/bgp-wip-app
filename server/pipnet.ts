@@ -1508,14 +1508,37 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
 
   // Run the REWRITTEN searchPipnetProperties end-to-end and report the rows it
   // gets, so we can confirm the new form-replay actually returns listings.
+  let firstHref: string | null = null;
   try {
     const rows = await searchPipnetProperties({});
+    firstHref = rows.map(r => r._detailHref).find(Boolean) || null;
     out.liveSearch = {
       rows: rows.length,
       columns: rows.length ? Array.from(new Set(rows.flatMap(r => Object.keys(r)))) : [],
       sample: rows.slice(0, 3),
     };
   } catch (e: any) { out.liveSearch = { error: e?.message }; }
+
+  // Fetch one property DETAIL page (detailsdetails.jsp) and dump its label/value
+  // pairs + brochure link — this is where Rent / Service Charge / Rateable Value
+  // / Tenure / Availability / Use live. Tells us the exact labels to map.
+  if (firstHref) {
+    try {
+      const folderId = firstHref.match(/folderid=(\d+)/i)?.[1] || null;
+      const url = folderId ? `${PIPNET_URL}/detailsdetails.jsp?folderid=${folderId}`
+                           : `${PIPNET_URL}/${firstHref.replace(/^\//, "")}`;
+      const r = await pipFetch(url, { headers: { Cookie: cookie } });
+      const html = await r.text();
+      const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+      const fields: Record<string, string> = {};
+      for (const m of html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&k.length<60)fields[k]=v; }
+      for (const m of html.matchAll(/<td[^>]*class="[^"]*(?:label|fieldLabel|key)[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&k.length<60&&!(k in fields))fields[k]=v; }
+      for (const m of html.matchAll(/<td[^>]*>\s*([^<:]{2,40}):\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&!(k in fields))fields[k]=v; }
+      const broch = html.match(/<a[^>]+href="([^"]*allreqimages[^"]*|[^"]*allimages[^"]*|[^"]*viewallimages[^"]*)"/i)?.[1]
+        || html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i)?.[1] || null;
+      out.propertyDetail = { url, status: r.status, isError: /unexpected error/i.test(html), htmlLength: html.length, fields, brochure: broch, preview: html.slice(0, 500) };
+    } catch (e: any) { out.propertyDetail = { error: e?.message }; }
+  }
 
   return out;
 }
