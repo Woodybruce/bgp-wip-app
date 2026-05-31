@@ -4,8 +4,76 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
-  AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet,
+  AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
 } from "lucide-react";
+
+type BriefingData = { briefing: string; generatedAt: string };
+
+// Minimal markdown for the AI briefing — headings, bullets, bold, rules.
+function renderBriefingInline(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
+    p.startsWith("**") && p.endsWith("**")
+      ? <strong key={i}>{p.slice(2, -2)}</strong>
+      : <span key={i}>{p}</span>
+  );
+}
+
+function AiDailyBriefing() {
+  const { data, isLoading, isFetching, refetch } = useQuery<BriefingData>({ queryKey: ["/api/ai-briefing"] });
+  return (
+    <section className="rounded-2xl border border-[#E7E5E4] bg-white dark:bg-card overflow-hidden shadow-sm" data-testid="mobile-home-briefing">
+      <div className="px-4 py-3 flex items-center justify-between bg-gradient-to-r from-primary/5 to-transparent">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+            <Sparkles className="w-4 h-4 text-primary" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold leading-tight">AI Daily Briefing</h2>
+            <p className="text-[11px] text-muted-foreground truncate">
+              {data ? `Generated ${new Date(data.generatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "Your personalised morning summary"}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => refetch()}
+          className="w-8 h-8 rounded-full flex items-center justify-center active:bg-gray-100 shrink-0"
+          aria-label="Refresh briefing"
+          data-testid="mobile-home-briefing-refresh"
+        >
+          <RefreshCw className={`w-4 h-4 text-muted-foreground ${isFetching ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+      <div className="px-4 pb-4 pt-1">
+        {isLoading ? (
+          <div className="space-y-2">
+            {[1, 2, 3, 4].map(i => <div key={i} className="h-3 rounded bg-muted animate-pulse" style={{ width: `${90 - i * 8}%` }} />)}
+          </div>
+        ) : data?.briefing ? (
+          <div className="text-[13px] leading-relaxed">
+            {data.briefing.split("\n").map((line, i) => {
+              if (line.startsWith("# ")) return <h3 key={i} className="text-[15px] font-bold mt-3 mb-1 first:mt-0">{renderBriefingInline(line.slice(2))}</h3>;
+              if (line.startsWith("## ")) return <h4 key={i} className="text-[13px] font-semibold mt-3 mb-1">{renderBriefingInline(line.slice(3))}</h4>;
+              if (line.startsWith("### ")) return <h4 key={i} className="text-[13px] font-semibold mt-2 mb-0.5">{renderBriefingInline(line.slice(4))}</h4>;
+              if (/^\*\*.*\*\*$/.test(line.trim())) return <h4 key={i} className="text-[13px] font-semibold mt-3 mb-1">{line.replace(/\*\*/g, "")}</h4>;
+              if (line.startsWith("- ") || line.startsWith("• ")) return <li key={i} className="ml-4 list-disc marker:text-primary/40">{renderBriefingInline(line.slice(2))}</li>;
+              if (/^\d+\.\s/.test(line)) return <li key={i} className="ml-4 list-decimal marker:text-primary/40">{renderBriefingInline(line.replace(/^\d+\.\s/, ""))}</li>;
+              if (line.startsWith("---")) return <hr key={i} className="my-3 border-border" />;
+              if (line.trim() === "") return <div key={i} className="h-2" />;
+              return <p key={i} className="mb-1">{renderBriefingInline(line)}</p>;
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-4">
+            <p className="text-sm text-muted-foreground">Your AI briefing will appear here</p>
+            <button onClick={() => refetch()} className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary" data-testid="mobile-home-briefing-generate">
+              <Sparkles className="w-3.5 h-3.5" /> Generate
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 
 type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
 type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null };
@@ -14,7 +82,7 @@ type Commission = { billedPence: number; commissionEarned: number; commissionFor
 
 // Core boards shown on Home by default. Everything else (admin / WIP tools)
 // hides behind "Show all" so the home screen stays focused on daily work.
-const CORE_BOARD_URLS = new Set(["/tasks", "/comps", "/brands", "/property-intelligence", "/sharepoint"]);
+const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint"]);
 
 // Pence → compact £ (e.g. £1.2m, £340k, £980)
 function fmtMoney(pence: number | undefined | null): string {
@@ -161,27 +229,8 @@ export default function MobileHome() {
         </div>
       </section>
 
-      {/* Today — actionable alerts */}
-      {alerts.length > 0 && (
-        <section>
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">Needs attention ({alerts.length})</h2>
-          <div className="space-y-2">
-            {alerts.slice(0, 5).map((a, i) => {
-              const s = SEV[a.severity] || SEV.info;
-              return (
-                <Link key={i} href={alertHref(a)} className={`flex items-start gap-2 rounded-2xl border p-3 bg-white dark:bg-card active:bg-gray-50`} data-testid={`mobile-home-alert-${i}`}>
-                  <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 border ${s.cls}`}><s.icon className="w-3.5 h-3.5" /></span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13px] font-medium leading-tight truncate">{a.title}</p>
-                    {a.detail && <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{a.detail}</p>}
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-1.5" />
-                </Link>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {/* AI Daily Briefing — the personalised morning summary */}
+      <AiDailyBriefing />
 
       {/* My tasks */}
       <section>
