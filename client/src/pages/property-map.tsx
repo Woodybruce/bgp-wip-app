@@ -520,7 +520,7 @@ export default function PropertyMap() {
         const content = `
           <div style="padding:8px;max-width:260px;">
             <p style="font-weight:600;font-size:14px;margin:0 0 2px;">${p.address || "PIPnet listing"}</p>
-            <span style="display:inline-block;background:#06b6d4;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">PIPnet listing</span>
+            <span style="display:inline-block;background:#06b6d4;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">Available</span>
             ${rows}
             ${pack?.url ? `<a href="${pack.url}" target="_blank" rel="noopener" style="font-size:11px;color:#3b82f6;display:block;margin-top:6px;">📄 ${pack.name || "Landlord pack"} →</a>` : ""}
           </div>`;
@@ -961,7 +961,7 @@ export default function PropertyMap() {
             data-testid="button-toggle-pipnet-layer"
           >
             <span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{ background: "#06b6d4" }} />
-            PIPnet ({externalProps.length})
+            Available Properties ({externalProps.length})
           </Button>
         </div>
       </div>
