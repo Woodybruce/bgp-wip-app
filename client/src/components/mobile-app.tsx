@@ -4493,14 +4493,6 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             <Sparkles className="w-[22px] h-[22px]" strokeWidth={tab === "ai" ? 2.2 : 1.8} fill={tab === "ai" ? "currentColor" : "none"} />
             <span className={`text-[10px] tracking-tight ${tab === "ai" ? "font-semibold" : "font-medium"}`}>ChatBGP</span>
           </button>
-          <button onClick={() => { setTab("today"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "today" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-today">
-            <Sun className="w-[22px] h-[22px]" strokeWidth={tab === "today" ? 2.2 : 1.8} />
-            <span className={`text-[10px] tracking-tight ${tab === "today" ? "font-semibold" : "font-medium"}`}>Today</span>
-          </button>
-          <button onClick={() => { setTab("menu"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "menu" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-menu">
-            <Menu className="w-[22px] h-[22px]" strokeWidth={tab === "menu" ? 2.2 : 1.8} />
-            <span className={`text-[10px] tracking-tight ${tab === "menu" ? "font-semibold" : "font-medium"}`}>More</span>
-          </button>
         </div>
       </div>
     </div>
