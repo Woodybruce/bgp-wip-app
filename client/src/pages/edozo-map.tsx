@@ -3973,7 +3973,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         : `<span style="background:#06b6d4;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px">Market listing</span>`;
       const link = isBgp
         ? `<a href="/properties/${p.propertyId}" style="display:inline-block;margin-top:8px;font-size:11px;color:#10b981;text-decoration:none;border:1px solid #d1fae5;padding:3px 8px;border-radius:4px">View property →</a>`
-        : (pack?.url ? `<a href="${pack.url}" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px;font-size:11px;color:#0891b2;text-decoration:none;border:1px solid #cffafe;padding:3px 8px;border-radius:4px">📄 ${pack.name || "Landlord pack"} →</a>` : "");
+        : (pack?.url ? `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+             <a href="${pack.url}" target="_blank" rel="noopener" style="font-size:11px;color:#0891b2;text-decoration:none;border:1px solid #cffafe;padding:3px 8px;border-radius:4px">📄 View pack</a>
+             <a href="${pack.url}${pack.url.includes('?') ? '&' : '?'}download=1" style="font-size:11px;color:#64748b;text-decoration:none">Download</a>
+           </div>` : "");
       marker.bindPopup(`<div style="font-size:12px;max-width:250px"><strong>${title}</strong><br/>${badge}${rows}${link}</div>`, { closeButton: false, offset: L.point(0, -5), maxWidth: 270 });
       availableMarkersRef.current.addLayer(marker);
     }

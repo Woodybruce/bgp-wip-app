@@ -4023,14 +4023,22 @@ Return a JSON object with these fields (use null for any field you cannot find):
   app.get("/api/crm/landlord-packs/:filename", async (req, res) => {
     try {
       const sanitized = path.basename(req.params.filename);
+      // Render in the browser by default (inline) so clicking a landlord pack
+      // shows the PDF instead of force-downloading a blank tab. Download is
+      // opt-in via ?download=1 (the popup offers a Download link).
+      const disposition = (req.query.download === "1" || req.query.dl === "1") ? "attachment" : "inline";
       const file = await getFile(`landlord-packs/${sanitized}`);
       if (!file) {
         const diskPath = path.join(LANDLORD_PACKS_DIR, sanitized);
-        if (fs.existsSync(diskPath)) return res.download(diskPath);
+        if (fs.existsSync(diskPath)) {
+          res.setHeader("Content-Type", "application/pdf");
+          res.setHeader("Content-Disposition", contentDispositionFor(sanitized, disposition));
+          return res.sendFile(diskPath);
+        }
         return res.status(404).json({ error: "File not found" });
       }
       res.set("Content-Type", file.contentType);
-      res.set("Content-Disposition", contentDispositionFor(file.originalName || sanitized));
+      res.set("Content-Disposition", contentDispositionFor(file.originalName || sanitized, disposition));
       res.send(file.data);
     } catch (err: any) { console.error("[crm] File download error:", err?.message); res.status(500).end(); }
   });
