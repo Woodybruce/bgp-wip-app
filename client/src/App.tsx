@@ -34,6 +34,7 @@ import { useSocket } from "@/hooks/use-socket";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { useIsMobile, isNativeMobile, getForceDesktop, setForceDesktop } from "@/hooks/use-mobile";
 import MobileApp from "@/components/mobile-app";
+import MobileHome from "@/components/mobile-home";
 import { MobileBottomNav, BOTTOM_NAV_PATHS } from "@/components/mobile-bottom-nav";
 import { MobileSidebarOverlay } from "@/components/app-sidebar";
 import type { User } from "@shared/schema";
@@ -373,8 +374,23 @@ function AuthenticatedApp() {
   const nativeMobile = isNativeMobile();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  if ((isMobile || nativeMobile) && (location === "/" || location === "/chatbgp")) {
+  if ((isMobile || nativeMobile) && location === "/chatbgp") {
     return <MobileApp initialTab="ai" />;
+  }
+
+  // Mobile Home — a focused "what do I do today" dashboard (alerts, tasks,
+  // recent deals, quick links) rather than the ChatBGP screen, so Home and
+  // ChatBGP are distinct destinations.
+  if ((isMobile || nativeMobile) && location === "/") {
+    return (
+      <div className="flex flex-col" style={{ height: "100dvh" }}>
+        <div className="flex-1 overflow-y-auto min-h-0 pb-14">
+          <MobileHome />
+        </div>
+        <MobileBottomNav onMoreTap={() => setMobileSidebarOpen(true)} />
+        <MobileSidebarOverlay open={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
+      </div>
+    );
   }
 
   if ((isMobile || nativeMobile) && location === "/upload") {
