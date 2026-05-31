@@ -43,6 +43,7 @@ import { Link, useLocation } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import InvestmentCompsPage from "@/pages/investment-comps";
+import { useIsMobile } from "@/hooks/use-mobile";
 import LeaseEventsPage from "@/pages/lease-events";
 import { ErrorBoundary } from "@/components/error-boundary";
 
@@ -1843,6 +1844,7 @@ function PropertyAddressInput({ value, propertyOptions, onSelectProperty, onSele
 export default function Comps() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
@@ -2309,13 +2311,14 @@ export default function Comps() {
     <TooltipProvider delayDuration={200}>
     <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col" data-testid="leasing-comps-page">
       <div className="border-b px-4 py-3 shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 min-w-0">
+            <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
               <Scale className="w-5 h-5 text-primary" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight" data-testid="text-comps-title">
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-comps-title">
                 {activeTab === "investment" ? "Investment Comps"
                   : activeTab === "leads" ? "Comps Leads"
                   : activeTab === "lease-events" ? "Lease Events"
@@ -2330,7 +2333,8 @@ export default function Comps() {
                   : "Rent review evidence & comparable transactions"}
               </p>
             </div>
-            <TabsList className="ml-4">
+            </div>
+            <TabsList className="ml-0 sm:ml-4 max-w-full overflow-x-auto self-start">
               <TabsTrigger value="table" data-testid="tab-comps-table">
                 <Scale className="w-3.5 h-3.5 mr-1.5" />
                 Leasing
@@ -2350,6 +2354,7 @@ export default function Comps() {
                 )}
               </TabsTrigger>
               )}
+              {!isMobile && (<>
               <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
                 <Bell className="w-3.5 h-3.5 mr-1.5" />
                 Lease Events
@@ -2358,10 +2363,12 @@ export default function Comps() {
                 <Presentation className="w-3.5 h-3.5 mr-1.5" />
                 PDF Template
               </TabsTrigger>
+              </>)}
             </TabsList>
           </div>
           {activeTab === "table" && (
           <div className="flex items-center gap-2">
+            {!isMobile && (<>
             <Button
               variant="outline"
               size="sm"
@@ -2402,6 +2409,7 @@ export default function Comps() {
               <Download className="w-3.5 h-3.5" />
               Export
             </Button>
+            </>)}
             <Button size="sm" className="gap-1.5 h-8" onClick={() => { resetCreateForm(); setCreateOpen(true); }} data-testid="button-create-comp">
               <Plus className="w-3.5 h-3.5" />
               Add Comp
@@ -2549,6 +2557,55 @@ export default function Comps() {
                 <Plus className="w-4 h-4 mr-1.5" /> Add First Comp
               </Button>
             )}
+          </div>
+        ) : isMobile ? (
+          <div className="grid grid-cols-1 gap-3 p-3">
+            {filtered.map(comp => {
+              const addr = comp.address as any;
+              const sub = comp.areaLocation || addr?.city || comp.postcode || undefined;
+              const rows = [
+                { label: "Headline rent", value: comp.headlineRent },
+                { label: "Zone A psf", value: comp.zoneARate },
+                { label: "NIA", value: comp.niaSqft ? `${comp.niaSqft} sq ft` : null },
+                { label: "ITZA", value: comp.itzaSqft ? `${comp.itzaSqft} sq ft` : null },
+                { label: "Term", value: comp.term ? `${comp.term} yrs` : null },
+                { label: "Tenant", value: comp.tenant },
+              ].filter(r => r.value);
+              return (
+                <button
+                  key={comp.id}
+                  onClick={() => setSelectedComp(comp)}
+                  className="w-full text-left rounded-xl border bg-card p-4 space-y-3 shadow-sm active:bg-muted/40"
+                  data-testid={`comp-card-${comp.id}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm font-semibold leading-tight block truncate">{comp.name || "Untitled"}</span>
+                      {sub && <p className="text-xs text-muted-foreground truncate mt-0.5">{sub}</p>}
+                    </div>
+                    {comp.verified
+                      ? <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1"><CheckCircle2 className="w-3 h-3 text-green-600" />Verified</Badge>
+                      : <Badge variant="outline" className="shrink-0 text-[10px] px-2 py-0.5 gap-1"><Sparkles className="w-3 h-3 text-amber-500" />AI</Badge>}
+                  </div>
+                  {(comp.useClass || comp.transactionType) && (
+                    <div className="flex flex-wrap gap-1">
+                      {comp.useClass && <Badge variant="outline" className="text-[10px] px-1.5 py-0">{comp.useClass}</Badge>}
+                      {comp.transactionType && <Badge variant="outline" className="text-[10px] px-1.5 py-0">{comp.transactionType}</Badge>}
+                    </div>
+                  )}
+                  {rows.length > 0 && (
+                    <div className="space-y-1.5">
+                      {rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground shrink-0">{r.label}</span>
+                          <span className="font-medium truncate text-right">{String(r.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         ) : (
           <table className="border-collapse" data-testid="comps-table" style={{ tableLayout: "fixed" }}>
