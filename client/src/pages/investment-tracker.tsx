@@ -1132,6 +1132,7 @@ export default function InvestmentTrackerPage() {
     mutationFn: ({ id, dealId }: { id: string; dealId: string }) => apiRequest("POST", `/api/investment-tracker/${id}/link-deal`, { dealId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
+      invalidateDealCaches();
       setLinkDealOpen(null);
       setLinkDealId("");
       toast({ title: "Deal linked" });
@@ -1143,6 +1144,7 @@ export default function InvestmentTrackerPage() {
     mutationFn: (id: string) => apiRequest("POST", `/api/investment-tracker/${id}/unlink-deal`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
+      invalidateDealCaches();
       toast({ title: "Deal unlinked" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),

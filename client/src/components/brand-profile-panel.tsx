@@ -4061,9 +4061,18 @@ export function BrandComplianceCard({
   return (
     <Card>
       <CardHeader className="p-3 pb-2">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
-        </CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
+          </CardTitle>
+          <Link
+            href={`/kyc-clouseau?company=${companyId}`}
+            className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+            title="Open in KYC Hub"
+          >
+            KYC Hub <ChevronRight className="w-2.5 h-2.5" />
+          </Link>
+        </div>
       </CardHeader>
       <CardContent className="p-3 pt-0">{inner}</CardContent>
     </Card>

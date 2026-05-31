@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
@@ -1446,11 +1446,10 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
     mutationFn: (data: any) => apiRequest("PUT", `/api/leasing-schedule/unit/${data.id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
-      // Status changes mirror server-side to available_units + crm_deals,
-      // so refresh the Letting Tracker + Deals caches too — otherwise the
-      // user changes status here and doesn't see the other boards update.
-      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      // Status changes mirror server-side to available_units + crm_deals
+      // (+ tenancy spine), so refresh the whole deal-board family — WIP
+      // Report, Pipeline + Performance, dashboard included.
+      invalidateDealCaches();
       setEditUnit(null);
       toast({ title: "Unit updated" });
     },
@@ -3429,7 +3428,7 @@ export default function LeasingSchedulePage() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="sticky top-0 z-10 bg-background -mx-4 sm:-mx-6 px-4 sm:px-6 -mt-4 sm:-mt-6 pt-4 sm:pt-6 pb-3 border-b flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
             <Building2 className="w-5 h-5" />Leasing Schedule Board
