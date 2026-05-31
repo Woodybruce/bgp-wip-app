@@ -49,7 +49,10 @@ export default function MobileHome() {
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 
   return (
-    <div className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pt-3 pb-2 space-y-4">
+    <div
+      className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pb-2 space-y-4"
+      style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+    >
       {/* Greeting */}
       <div className="flex items-center gap-2 pt-1">
         <Sun className="w-5 h-5 text-amber-500" />
