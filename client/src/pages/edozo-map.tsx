@@ -3388,8 +3388,17 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // stays off because turning it on hijacks the click handler.
   const [showSearchHistory, setShowSearchHistory] = useState(true);
   const [showCrmLayer, setShowCrmLayer] = useState(true);
+  // Investment comps were bulk-loaded into crm_properties (~553 rows) and
+  // clutter "CRM Properties". Split them onto their own default-off layer so
+  // CRM Properties only shows properties BGP is directly involved with.
+  const [showInvestmentComps, setShowInvestmentComps] = useState(false);
   const searchMarkersRef = useRef<L.LayerGroup | null>(null);
   const crmMarkersRef = useRef<L.LayerGroup | null>(null);
+  const investmentCompsMarkersRef = useRef<L.LayerGroup | null>(null);
+
+  // A crm_property row that is really an investment comparable, not one of our
+  // own properties. Excluded from the CRM Properties layer/views.
+  const isInvestmentComp = (p: any) => p?.status === "Investment Comp" || p?.groupName === "Investment Comps";
 
   // OS Data layers
   const [showOSBuildings, setShowOSBuildings] = useState(true);
@@ -4143,6 +4152,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (!showCrmLayer) return;
 
     for (const p of crmProperties) {
+      if (isInvestmentComp(p)) continue; // shown on the separate Investment Comps layer
       if (!p.latitude || !p.longitude) continue;
 
       const marker = L.circleMarker([p.latitude, p.longitude], {
@@ -4174,6 +4184,32 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       crmMarkersRef.current.addLayer(marker);
     }
   }, [showCrmLayer, crmProperties]);
+
+  // Render Investment Comps layer (the bulk-loaded comparables) — default-off,
+  // purple, so the data is still reachable but doesn't clutter CRM Properties.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!investmentCompsMarkersRef.current) {
+      investmentCompsMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    investmentCompsMarkersRef.current.clearLayers();
+    if (!showInvestmentComps) return;
+    for (const p of crmProperties) {
+      if (!isInvestmentComp(p) || !p.latitude || !p.longitude) continue;
+      const marker = L.circleMarker([p.latitude, p.longitude], {
+        radius: 6, fillColor: "#8b5cf6", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.85,
+      });
+      marker.bindPopup(`
+        <div style="font-size:12px;max-width:220px">
+          <strong>${p.name || "Investment comp"}</strong>
+          ${p.postcode ? `<br/><span style="color:#666">${p.postcode}</span>` : ""}
+          ${p.assetClass ? `<br/><span style="color:#666">${String(p.assetClass).replace(/[{}]/g, "")}</span>` : ""}
+          <br/><span style="font-size:10px;background:#8b5cf6;color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">Investment comp</span>
+        </div>
+      `, { closeButton: false, offset: L.point(0, -5) });
+      investmentCompsMarkersRef.current.addLayer(marker);
+    }
+  }, [showInvestmentComps, crmProperties]);
 
   // When Retail Context is on, suppress the legacy layers underneath it:
   //   - buildingLayerRef: pale-yellow auto-classified buildings with dark
@@ -5323,7 +5359,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           <div className="space-y-2.5">
             {[
               { key: "search", label: "Search History", count: recentSearches.length, dot: "#ef4444", on: showSearchHistory, set: setShowSearchHistory },
-              { key: "crm",    label: "CRM Properties", count: crmProperties.length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
+              { key: "crm",    label: "CRM Properties", count: crmProperties.filter((p: any) => !isInvestmentComp(p)).length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
+              { key: "icomps", label: "Investment Comps", count: crmProperties.filter((p: any) => isInvestmentComp(p)).length, dot: "#8b5cf6", on: showInvestmentComps, set: setShowInvestmentComps },
               { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
