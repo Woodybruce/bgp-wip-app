@@ -294,6 +294,39 @@ export async function searchPipnetRequirements(params: {
   return allRows;
 }
 
+// Serialise an HTML form's current field defaults into URL-encoded params —
+// text/hidden input values, checked checkboxes/radios, and each select's
+// selected (or first) option. Lets us "replay" PIPnet's property search exactly
+// as the browser would on a default Search, without hardcoding its operator
+// option values.
+function serializeFormDefaults(html: string, actionContains: string): URLSearchParams {
+  const params = new URLSearchParams();
+  const formRe = new RegExp(`<form[^>]*action="[^"]*${actionContains}[^"]*"[^>]*>([\\s\\S]*?)</form>`, "i");
+  const scope = html.match(formRe)?.[1] ?? html;
+  for (const m of scope.matchAll(/<input\b[^>]*>/gi)) {
+    const tag = m[0];
+    const name = tag.match(/name="([^"]+)"/i)?.[1];
+    if (!name) continue;
+    const type = (tag.match(/type="([^"]+)"/i)?.[1] || "text").toLowerCase();
+    const value = tag.match(/value="([^"]*)"/i)?.[1] ?? "";
+    if (type === "checkbox" || type === "radio") {
+      if (/\bchecked\b/i.test(tag)) params.append(name, value || "on");
+    } else if (type !== "submit" && type !== "button" && type !== "reset") {
+      params.set(name, value);
+    }
+  }
+  for (const m of scope.matchAll(/<select\b[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/select>/gi)) {
+    const name = m[1];
+    const inner = m[2];
+    const sel =
+      inner.match(/<option[^>]*\bselected\b[^>]*?value="([^"]*)"/i)?.[1] ??
+      inner.match(/<option[^>]*?value="([^"]*)"[^>]*\bselected\b/i)?.[1] ??
+      inner.match(/<option[^>]*?value="([^"]*)"/i)?.[1] ?? "";
+    params.set(name, sel);
+  }
+  return params;
+}
+
 export async function searchPipnetProperties(params: {
   location?: string;
   minSize?: string;
@@ -301,28 +334,35 @@ export async function searchPipnetProperties(params: {
   type?: string;
 }): Promise<Record<string, string>[]> {
   const cookie = await login();
-  const body = new URLSearchParams({
-    propertyType: params.type || "PropRetail",
-    locationSearchEdit: "",
-    locationListBox: params.location || "",
-    status: "Available",
-    documentDate: "",
-    extrapolated: "True",
-    addressSearchEdit: "",
-    minSalesArea: params.minSize || "",
-    maxSalesArea: params.maxSize || "",
-    Search: "Search",
-  });
+
+  // Load the property search form (retailsearch.jsp → posts to detailsfetch.jsp)
+  // from the choice.jsp menu, so we get a valid form + prime the session. Then
+  // replay its defaults. PIPnet's property form is an operator/operand filter,
+  // completely different from the requirements form.
+  let formHtml = "";
+  try {
+    const choice = await pipFetch(`${PIPNET_URL}/choice.jsp`, { headers: { Cookie: cookie } });
+    const chtml = await choice.text();
+    const link = (chtml.match(/href="(retailsearch\.jsp[^"]*)"/i)?.[1] || "retailsearch.jsp").replace(/&amp;/g, "&");
+    const formRes = await pipFetch(`${PIPNET_URL}/${link.replace(/^\//, "")}`, { headers: { Cookie: cookie } });
+    formHtml = await formRes.text();
+  } catch (e: any) {
+    console.warn(`[pipnet props] could not load property search form: ${e?.message}`);
+  }
+
+  const body = serializeFormDefaults(formHtml, "detailsfetch.jsp");
+  body.set("Search", "Search");
+  body.delete("Reset");
+  // Optional overrides — narrow by town / size when asked.
+  if (params.location) body.set("operandTown", params.location);
+  if (params.minSize) body.set("operandAreaMinimum", params.minSize);
+  if (params.maxSize) body.set("operandAreaMaximum", params.maxSize);
 
   const res = await pipFetch(`${PIPNET_URL}/detailsfetch.jsp`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: cookie,
-    },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
     body: body.toString(),
   });
-
   if (!res.ok) throw new Error(`PIPnet prop search failed: ${res.status}`);
   const html = await res.text();
   return parseHtmlTable(html);
@@ -1465,6 +1505,17 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
       preview: dhtml.slice(0, 600),
     };
   } catch (e: any) { out.detailsfetch = { error: e?.message }; }
+
+  // Run the REWRITTEN searchPipnetProperties end-to-end and report the rows it
+  // gets, so we can confirm the new form-replay actually returns listings.
+  try {
+    const rows = await searchPipnetProperties({});
+    out.liveSearch = {
+      rows: rows.length,
+      columns: rows.length ? Array.from(new Set(rows.flatMap(r => Object.keys(r)))) : [],
+      sample: rows.slice(0, 3),
+    };
+  } catch (e: any) { out.liveSearch = { error: e?.message }; }
 
   return out;
 }
