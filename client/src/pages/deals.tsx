@@ -6455,7 +6455,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
       {selectedIds.size > 0 && (
         <div
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-md border bg-card px-4 py-3 shadow-lg"
+          className="fixed bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-md border bg-card px-4 py-3 shadow-lg"
           data-testid="bulk-action-bar-deals"
         >
           <span className="text-sm font-medium" data-testid="text-selected-count-deals">

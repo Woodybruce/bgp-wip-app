@@ -5638,7 +5638,7 @@ function PropertiesList({
 
       {selectedIds.size > 0 && (
         <div
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-lg"
+          className="fixed bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-lg"
           data-testid="bulk-action-bar-properties"
         >
           <span className="text-sm font-medium" data-testid="text-selected-count-properties">

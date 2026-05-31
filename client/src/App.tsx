@@ -418,7 +418,7 @@ function AuthenticatedApp() {
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
-          <span className="text-sm font-semibold flex-1">
+          <span className="text-sm font-semibold flex-1 truncate">
             {(() => {
               // Slug-from-URL fallback for normal routes. Detail pages
               // (/deals/:id, /properties/:id, /companies/:id…) used to
