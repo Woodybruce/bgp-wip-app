@@ -107,3 +107,21 @@ export async function countExternalProperties(): Promise<number> {
   const res = await pool.query(`SELECT COUNT(*)::int AS n FROM external_properties`);
   return res.rows[0]?.n ?? 0;
 }
+
+export async function externalPropertyExists(id: string): Promise<boolean> {
+  await ensureTable();
+  const res = await pool.query(`SELECT 1 FROM external_properties WHERE id = $1`, [id]);
+  return res.rows.length > 0;
+}
+
+// Deterministic dedup id from a normalised address + postcode, so the same
+// property forwarded by two people / re-scraped collapses to one row.
+export function addressDedupeId(address: string, postcode?: string | null): string {
+  const norm = `${address || ""} ${postcode || ""}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const crypto = require("crypto");
+  return `addr-${crypto.createHash("sha1").update(norm).digest("hex").slice(0, 16)}`;
+}
+

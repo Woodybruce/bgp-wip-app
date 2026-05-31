@@ -2356,6 +2356,25 @@ export async function registerRoutes(
     }
   });
 
+  // Ingest an available-property flyer/email into external_properties. Shared
+  // entry point for ChatBGP, forwarded emails and WhatsApp. Accepts a PDF
+  // (multipart "file") and/or text body; Claude extracts, we geocode + dedup.
+  app.post("/api/external-properties/ingest", requireAuth, marketingUpload.single("file"), async (req: any, res) => {
+    try {
+      const { ingestAvailableProperty } = await import("./property-ingest");
+      const source = (req.body?.source || "Upload").toString();
+      const text = req.body?.text ? String(req.body.text) : undefined;
+      const pdfBuffer = req.file?.buffer;
+      if (!pdfBuffer && !text) return res.status(400).json({ message: "Provide a PDF file and/or text" });
+      const result = await ingestAvailableProperty({ source, pdfBuffer, text, originalName: req.file?.originalname });
+      if (!result.ok) return res.status(422).json(result);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[external-properties/ingest] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Property ingest failed" });
+    }
+  });
+
   // Diagnostic: dump PIPnet's property search form inputs + current detailsfetch
   // result, so we can fix the property scrape's params (they differ from reqs).
   app.get("/api/external-requirements/pipnet-inspect-property-search", requireAuth, requireAdmin, async (_req, res) => {

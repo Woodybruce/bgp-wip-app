@@ -47,6 +47,22 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
         // brochure (single-page receipt etc.), fall through to ingestBytes.
         const isPdf = /\.pdf$/i.test(att.name) || /pdf/i.test(att.contentType || "");
         if (isPdf) {
+          // Available-property (to-let) flyer? Route it to the external_properties
+          // store (OUTSIDE the CRM, deduped on address) so market listings land
+          // on the Available Properties map without cluttering the CRM. Only
+          // catches confident available-space docs; anything else falls through
+          // to the existing brochure pipeline unchanged.
+          try {
+            const { ingestAvailableProperty } = await import("./property-ingest");
+            const avail = await ingestAvailableProperty({ source: "Email", pdfBuffer: bytes, originalName: att.name });
+            if (avail.ok && avail.confidence !== "low") {
+              summaries.push(`**${att.name}**: added to Available Properties — ${avail.address}${avail.duplicate ? " (updated existing)" : ""}`);
+              continue;
+            }
+          } catch (err: any) {
+            console.warn(`[email-ingest] available-property ingest failed for ${att.name}: ${err?.message}`);
+          }
+
           const messages: string[] = [];
           try {
             const { tryIngestBrochure } = await import("./whatsapp-brochure-pipeline");
