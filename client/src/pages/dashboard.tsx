@@ -996,9 +996,9 @@ export default function Dashboard() {
                           <div>
                             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-0.5">KYC & Ownership</p>
                             <div className="flex items-center gap-2">
-                              <Badge className={`text-[10px] ${companyInfo.kycStatus === "pass" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"}`}>
+                              <Badge className={`text-[10px] ${companyInfo.kycStatus === "approved" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"}`}>
                                 <ShieldCheck className="w-3 h-3 mr-0.5" />
-                                {companyInfo.kycStatus === "pass" ? "KYC Passed" : companyInfo.kycStatus}
+                                {companyInfo.kycStatus === "approved" ? "KYC Passed" : companyInfo.kycStatus}
                               </Badge>
                               {companyInfo.kycCheckedAt && (
                                 <span className="text-[10px] text-muted-foreground">

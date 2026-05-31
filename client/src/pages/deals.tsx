@@ -4064,9 +4064,9 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       if (data.success) {
         toast({
-          title: data.kycStatus === "pass" ? "KYC Passed" : data.kycStatus === "warning" ? "KYC Needs Review" : "KYC Failed",
-          description: `${data.profile?.companyName || entity?.name} — ${data.kycStatus === "pass" ? "Active, no adverse flags" : "Review needed"}`,
-          variant: data.kycStatus === "fail" ? "destructive" : "default",
+          title: data.kycStatus === "approved" ? "KYC Passed" : data.kycStatus === "in_review" ? "KYC Needs Review" : "KYC Failed",
+          description: `${data.profile?.companyName || entity?.name} — ${data.kycStatus === "approved" ? "Active, no adverse flags" : "Review needed"}`,
+          variant: data.kycStatus === "rejected" ? "destructive" : "default",
         });
       } else {
         toast({ title: "KYC Failed", description: data.message || data.error || "Could not complete", variant: "destructive" });

@@ -3062,7 +3062,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
       } catch {}
       setScreening(false);
 
-      toast({ title: "KYC Complete", description: `${data.kycStatus === "pass" ? "Passed" : data.kycStatus === "warning" ? "Needs review" : "Failed"}` });
+      toast({ title: "KYC Complete", description: `${data.kycStatus === "approved" ? "Passed" : data.kycStatus === "in_review" ? "Needs review" : "Failed"}` });
     } catch (err: any) {
       toast({ title: "KYC Error", description: err.message, variant: "destructive" });
     } finally {
@@ -3103,11 +3103,11 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
   };
 
   const getKycBadge = () => {
-    if (kycStatus === "pass") return <Badge className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Passed</Badge>;
-    if (kycStatus === "warning") return <Badge className="text-[10px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>;
-    if (kycStatus === "fail") return <Badge className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Failed</Badge>;
-    if (kycStatus === "individual") return <Badge className="text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Individual</Badge>;
-    if (kycStatus === "not_found") return <Badge variant="outline" className="text-[10px]">Not found</Badge>;
+    if (kycStatus === "approved") return <Badge className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Passed</Badge>;
+    if (kycStatus === "in_review") return <Badge className="text-[10px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>;
+    if (kycStatus === "rejected") return <Badge className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Failed</Badge>;
+    if (kycStatus === "pending") return <Badge variant="outline" className="text-[10px]">Pending</Badge>;
+    if (kycStatus === "expired") return <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700">Expired</Badge>;
     return null;
   };
 
@@ -3128,7 +3128,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     if (property.proprietorCompanyNumber) lines.push(`Company Number: ${property.proprietorCompanyNumber}`);
     lines.push("");
     if (prof) {
-      lines.push(`KYC Status: ${kycStatus === "pass" ? "PASS" : kycStatus === "warning" ? "WARNING" : kycStatus === "fail" ? "FAIL" : kycStatus?.toUpperCase() || "NOT CHECKED"}`);
+      lines.push(`KYC Status: ${kycStatus === "approved" ? "PASS" : kycStatus === "in_review" ? "WARNING" : kycStatus === "rejected" ? "FAIL" : kycStatus?.toUpperCase() || "NOT CHECKED"}`);
       lines.push(`CH Status: ${prof.companyStatus}`);
       if (prof.companyType) lines.push(`Type: ${prof.companyType}`);
       const pscs = (kycData?.pscs || []).filter((p: any) => !p.ceasedOn);
@@ -3155,9 +3155,9 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <ShieldCheck className="w-4 h-4" />
             Property KYC & Ownership
-            {kycStatus === "pass" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-            {kycStatus === "fail" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
-            {kycStatus === "warning" && <AlertCircle className="w-3.5 h-3.5 text-yellow-500" />}
+            {kycStatus === "approved" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+            {kycStatus === "rejected" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+            {kycStatus === "in_review" && <AlertCircle className="w-3.5 h-3.5 text-yellow-500" />}
           </h3>
           {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </button>

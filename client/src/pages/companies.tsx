@@ -171,9 +171,9 @@ function KycInlineSummary({ company }: { company: CrmCompany }) {
     <div className="col-span-2">
       <p className="text-xs text-muted-foreground mb-1">KYC & Ownership</p>
       <div className="flex items-center gap-2 flex-wrap">
-        {kycStatus === "pass" && <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0"><CheckCircle2 className="w-3 h-3 mr-1" />KYC Passed</Badge>}
-        {kycStatus === "warning" && <Badge className="text-[10px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0"><AlertCircle className="w-3 h-3 mr-1" />Needs Review</Badge>}
-        {kycStatus === "fail" && <Badge className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0"><XCircle className="w-3 h-3 mr-1" />KYC Failed</Badge>}
+        {kycStatus === "approved" && <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0"><CheckCircle2 className="w-3 h-3 mr-1" />KYC Passed</Badge>}
+        {kycStatus === "in_review" && <Badge className="text-[10px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0"><AlertCircle className="w-3 h-3 mr-1" />Needs Review</Badge>}
+        {kycStatus === "rejected" && <Badge className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0"><XCircle className="w-3 h-3 mr-1" />KYC Failed</Badge>}
         {!kycStatus && chData && <Badge variant="outline" className="text-[10px]"><ShieldCheck className="w-3 h-3 mr-1" />Linked — not checked</Badge>}
         {checkedAt && <span className="text-[10px] text-muted-foreground">{new Date(checkedAt).toLocaleDateString("en-GB")}</span>}
       </div>
@@ -231,9 +231,9 @@ function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentN
                   {sub.company_type && <Badge variant="outline" className="text-[10px] shrink-0">{sub.company_type}</Badge>}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {sub.kyc_status === "pass" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
-                  {sub.kyc_status === "warning" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 border-0 px-1.5"><AlertCircle className="w-2.5 h-2.5 mr-0.5 inline" />Review</Badge>}
-                  {sub.kyc_status === "fail" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
+                  {sub.kyc_status === "approved" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
+                  {sub.kyc_status === "in_review" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 border-0 px-1.5"><AlertCircle className="w-2.5 h-2.5 mr-0.5 inline" />Review</Badge>}
+                  {sub.kyc_status === "rejected" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
                   {!sub.kyc_status && <Badge variant="outline" className="text-[9px] px-1.5"><ShieldCheck className="w-2.5 h-2.5 mr-0.5 inline" />No KYC</Badge>}
                   {sub.aml_risk && <Badge className={`text-[9px] px-1.5 border-0 ${sub.aml_risk === "high" ? "bg-red-100 text-red-700" : sub.aml_risk === "medium" ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}`}>{sub.aml_risk}</Badge>}
                 </div>
@@ -550,7 +550,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
 
       await runSanctionsScreening(data.officers || [], data.pscs || []);
 
-      toast({ title: "KYC Report Generated", description: `Status: ${data.kycStatus === "pass" ? "Passed" : data.kycStatus === "warning" ? "Needs Review" : "Failed"}` });
+      toast({ title: "KYC Report Generated", description: `Status: ${data.kycStatus === "approved" ? "Passed" : data.kycStatus === "in_review" ? "Needs Review" : "Failed"}` });
     } catch (err: any) {
       toast({ title: "KYC Error", description: err.message, variant: "destructive" });
     } finally {
@@ -563,7 +563,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
     const lines: string[] = [];
     lines.push(`KYC REPORT — ${profile.companyName || company.name}`);
     lines.push(`Generated: ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`);
-    lines.push(`Status: ${kycStatus === "pass" ? "PASS" : kycStatus === "warning" ? "WARNING" : "FAIL"}`);
+    lines.push(`Status: ${kycStatus === "approved" ? "PASS" : kycStatus === "in_review" ? "WARNING" : "FAIL"}`);
     lines.push("");
     lines.push("COMPANY DETAILS");
     lines.push(`Company Number: ${profile.companyNumber || displayNumber}`);
@@ -649,9 +649,9 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
             KYC Full Report
           </h3>
           <div className="flex items-center gap-1">
-            {kycStatus === "pass" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">Passed</Badge>}
-            {kycStatus === "warning" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0">Review</Badge>}
-            {kycStatus === "fail" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0">Failed</Badge>}
+            {kycStatus === "approved" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">Passed</Badge>}
+            {kycStatus === "in_review" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0">Review</Badge>}
+            {kycStatus === "rejected" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0">Failed</Badge>}
           </div>
         </button>
 
@@ -720,13 +720,13 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
           <ScrollArea className="max-h-[250px] overflow-y-auto">
             <div className="space-y-2 pr-3">
               <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/30">
-                {kycStatus === "pass" && <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />}
-                {kycStatus === "warning" && <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0" />}
-                {kycStatus === "fail" && <XCircle className="w-5 h-5 text-red-500 shrink-0" />}
+                {kycStatus === "approved" && <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />}
+                {kycStatus === "in_review" && <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0" />}
+                {kycStatus === "rejected" && <XCircle className="w-5 h-5 text-red-500 shrink-0" />}
                 {!kycStatus && <ShieldCheck className="w-5 h-5 text-muted-foreground shrink-0" />}
                 <div>
                   <p className="text-sm font-semibold">
-                    {kycStatus === "pass" ? "KYC Passed" : kycStatus === "warning" ? "Needs Review" : kycStatus === "fail" ? "KYC Failed" : "Linked — Run KYC to verify"}
+                    {kycStatus === "approved" ? "KYC Passed" : kycStatus === "in_review" ? "Needs Review" : kycStatus === "rejected" ? "KYC Failed" : "Linked — Run KYC to verify"}
                   </p>
                   <p className="text-[10px] text-muted-foreground">
                     {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"}
@@ -1239,7 +1239,7 @@ function CompanyDetail({ id }: { id: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       if (!data.success && data.kycStatus === "not_found") {
         toast({ title: "No match found", description: "Couldn't match to Companies House — try setting a CH number or domain manually", variant: "destructive" });
-      } else if (data.kycStatus === "pass") {
+      } else if (data.kycStatus === "approved") {
         const parts: string[] = ["CH verified"];
         if (data.experian) parts.push("Experian credit data");
         if (data.riskLevel) parts.push(`Risk: ${data.riskLevel}`);
