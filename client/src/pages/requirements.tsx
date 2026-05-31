@@ -41,6 +41,8 @@ import {
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCardView } from "@/components/mobile-card-view";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { CRM_OPTIONS } from "@/lib/crm-options";
@@ -246,6 +248,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<CrmRequirementsLeasing | null>(null);
+  const isMobile = useIsMobile();
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsLeasing | null>(null);
   const [matchItem, setMatchItem] = useState<CrmRequirementsLeasing | null>(null);
   const [pipnetSyncing, setPipnetSyncing] = useState(false);
@@ -814,6 +817,25 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
         </Button>
       </div>
 
+      {isMobile ? (
+        <MobileCardView
+          emptyMessage="No requirements"
+          items={[...activeItems, ...pastItems, ...archivedItems].map((item) => ({
+            id: item.id,
+            title: item.name,
+            subtitle: item.companyId ? companyMap.get(item.companyId)?.name : undefined,
+            status: item.status || "Active",
+            statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
+            fields: [
+              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
+              { label: "Size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
+              { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
+              { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
+            ],
+            onEdit: () => setEditItem(item),
+          }))}
+        />
+      ) : (<>
       <LeasingSection
         title="Active Requirements"
         items={activeItems}
@@ -914,6 +936,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
           )}
         </div>
       )}
+      </>)}
 
       <LeasingFormDialog
         open={createOpen}
