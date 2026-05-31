@@ -5222,6 +5222,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     { key: "circle", icon: Circle, label: "Circle" },
   ];
 
+  // Mobile bottom-sheet: the right detail panel becomes a slide-up sheet.
+  // The drag handle toggles between a peek (header only) and expanded.
+  const [sheetCollapsed, setSheetCollapsed] = useState(false);
+  // Selecting a new unit should always open the sheet expanded.
+  useEffect(() => { if (goadPanelUnit) setSheetCollapsed(false); }, [goadPanelUnit]);
+
   return (
     <div className="relative w-full h-full flex font-sans">
       <style>{`
@@ -5293,7 +5299,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         .leaflet-tile-container img { filter: grayscale(0.35) brightness(1.02); }
       `}</style>
 
-      <div className="w-[220px] border-r bg-white flex flex-col z-[1001] relative shrink-0">
+      <div className="w-[220px] border-r bg-white hidden lg:flex flex-col z-[1001] relative shrink-0">
         <div className="px-3 pt-3 pb-2">
           <p className="text-xs text-gray-500 mb-2.5">
             Current area: <span className="font-semibold text-gray-900">{currentArea}</span>
@@ -5546,9 +5552,19 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
             up top, joins in BGP CRM + recent deals + parent company below. */}
         {goadPanelUnit && (
           <div
-            className="absolute top-3 right-3 bottom-3 z-[1001] w-[340px] bg-white rounded-lg shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+            className={`absolute z-[1001] bg-white shadow-2xl border border-gray-200 flex flex-col overflow-hidden transition-[max-height] duration-200 inset-x-2 bottom-2 rounded-2xl ${sheetCollapsed ? "max-h-[4.5rem]" : "max-h-[65vh]"} lg:inset-x-auto lg:top-3 lg:right-3 lg:bottom-3 lg:max-h-none lg:w-[340px] lg:rounded-lg`}
             data-testid="goad-polygon-panel"
           >
+            {/* Drag handle — mobile only. Tap to peek/expand the sheet. */}
+            <button
+              type="button"
+              onClick={() => setSheetCollapsed(v => !v)}
+              className="lg:hidden w-full flex items-center justify-center pt-2 pb-1 shrink-0 touch-manipulation"
+              aria-label={sheetCollapsed ? "Expand details" : "Collapse details"}
+              data-testid="goad-panel-sheet-handle"
+            >
+              <span className="w-10 h-1.5 rounded-full bg-gray-300" />
+            </button>
             <div className="px-4 py-3 border-b flex items-start gap-2" style={{ background: goadPanelUnit.bandFill + "22" }}>
               <div className="min-w-0 flex-1">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
