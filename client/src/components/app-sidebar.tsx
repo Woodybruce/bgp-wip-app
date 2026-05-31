@@ -480,7 +480,7 @@ export function AppSidebar() {
  * in the bottom nav bar. Shows all navigation items not present in the
  * bottom nav (Home, ChatBGP, Properties, Deals are in the bottom nav).
  */
-const mobileOverlayItems = [
+export const mobileOverlayItems = [
   { title: "Today", url: "/today", icon: Sun },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },

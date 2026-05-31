@@ -36,7 +36,6 @@ import { useIsMobile, isNativeMobile, getForceDesktop, setForceDesktop } from "@
 import MobileApp from "@/components/mobile-app";
 import MobileHome from "@/components/mobile-home";
 import { MobileBottomNav, BOTTOM_NAV_PATHS } from "@/components/mobile-bottom-nav";
-import { MobileSidebarOverlay } from "@/components/app-sidebar";
 import type { User } from "@shared/schema";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
@@ -372,7 +371,6 @@ function AuthenticatedApp() {
   }, []);
 
   const nativeMobile = isNativeMobile();
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   if ((isMobile || nativeMobile) && location === "/chatbgp") {
     return <MobileApp initialTab="ai" />;
@@ -387,8 +385,7 @@ function AuthenticatedApp() {
         <div className="flex-1 overflow-y-auto min-h-0 pb-14">
           <MobileHome />
         </div>
-        <MobileBottomNav onMoreTap={() => setMobileSidebarOpen(true)} />
-        <MobileSidebarOverlay open={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
+        <MobileBottomNav />
       </div>
     );
   }
@@ -427,7 +424,7 @@ function AuthenticatedApp() {
               if (location === "/") return "Dashboard";
               const seg = location.replace(/^\//, "").split("/");
               const root = seg[0];
-              const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties"].includes(seg[1]);
+              const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties", "list"].includes(seg[1]);
               const DETAIL_LABELS: Record<string, string> = {
                 deals: "Deal", properties: "Property", companies: "Company",
                 contacts: "Contact", hr: "Profile", comps: "Comp",
@@ -440,8 +437,7 @@ function AuthenticatedApp() {
         <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 pb-14 md:pb-0">
           <Router />
         </div>
-        <MobileBottomNav onMoreTap={() => setMobileSidebarOpen(true)} />
-        <MobileSidebarOverlay open={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
+        <MobileBottomNav />
       </div>
     );
   }

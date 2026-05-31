@@ -5322,7 +5322,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
   }, [statusCounts, activeGroup]);
 
-  if (params?.id && !isNegotiationsMode) {
+  // '/deals/list' is the deals schedule tab (the bare '/deals' now lands on
+  // the WIP Report). 'list' is a reserved hub segment, not a deal id, so
+  // don't mistake it for a profile route.
+  if (params?.id && params.id !== "list" && !isNegotiationsMode) {
     return <DealDetail id={params.id} isComps={isCompsMode} />;
   }
 

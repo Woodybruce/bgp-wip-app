@@ -24,14 +24,17 @@ function PageLoader() {
 // to 'deals' so the TabKey, label and URL all carry the same word.
 type TabKey = "deals" | "letting" | "investment" | "wip-report" | "properties";
 
-const TAB_PATHS = new Set(["letting", "investment", "report", "properties"]);
+const TAB_PATHS = new Set(["letting", "investment", "report", "properties", "list"]);
 
 function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/letting")) return "letting";
   if (loc.startsWith("/deals/investment") || loc.startsWith("/investment-tracker")) return "investment";
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
   if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
-  if (loc === "/deals") return "deals";
+  if (loc.startsWith("/deals/list")) return "deals";
+  // Bare /deals now lands on the WIP Report — it's the financial roll-up
+  // every agent wants first. The deals schedule lives at /deals/list.
+  if (loc === "/deals") return "wip-report";
   return null;
 }
 
@@ -44,7 +47,7 @@ function isDealProfile(loc: string): boolean {
 export default function DealsHub() {
   const [location, setLocation] = useLocation();
   const { activeTeam } = useTeam();
-  const [tab, setTab] = useState<TabKey>(() => getTabFromLocation(location) || "deals");
+  const [tab, setTab] = useState<TabKey>(() => getTabFromLocation(location) || "wip-report");
   const isProfile = isDealProfile(location);
 
   useEffect(() => {
@@ -53,15 +56,14 @@ export default function DealsHub() {
     if (t) setTab(t);
   }, [location, isProfile]);
 
-  // Order is: what we own → what's transacting → what's billing.
-  // Properties leads because every row on the other tabs derives from
-  // a property; WIP Report trails because it's the financial roll-up.
+  // WIP Report leads — it's the financial roll-up every agent wants on
+  // landing. Then it's what we own → what's transacting.
   const allTabs = useMemo(() => [
+    { key: "wip-report" as const, label: "WIP Report", icon: FileText },
     { key: "properties" as const, label: "Properties", icon: Building2 },
     { key: "deals" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
-    { key: "wip-report" as const, label: "WIP Report", icon: FileText },
   ], []);
 
   const tabs = useMemo(() => {
@@ -81,10 +83,10 @@ export default function DealsHub() {
   const switchTab = (t: TabKey) => {
     setTab(t);
     const routes: Record<TabKey, string> = {
-      deals: "/deals",
+      "wip-report": "/deals",
+      deals: "/deals/list",
       letting: "/deals/letting",
       investment: "/deals/investment",
-      "wip-report": "/deals/report",
       properties: "/deals/properties",
     };
     const target = routes[t];

@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun,
@@ -42,6 +43,9 @@ export default function MobileHome() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/tasks"] }),
   });
 
+  // The bottom-nav "More" drawer is gone — board navigation lives here.
+  // Show every non-admin board (admins additionally see the WIP tools).
+  const boards = (mobileOverlayItems as any[]).filter(b => user?.isAdmin || !b.adminOnly);
   const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -82,6 +86,20 @@ export default function MobileHome() {
           </Link>
         ))}
       </div>
+
+      {/* All boards — full navigation (replaces the old More drawer) */}
+      <section>
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">Boards</h2>
+        <div className="grid grid-cols-4 gap-2">
+          {boards.map((b: any) => (
+            <Link key={b.url} href={b.url} className="relative flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-board-${b.title.toLowerCase().replace(/\s+/g, "-")}`}>
+              <span className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-100 text-gray-700 dark:bg-muted"><b.icon className="w-4 h-4" /></span>
+              <span className="text-[10px] font-medium text-center leading-tight">{b.title}</span>
+              {b.badge && <span className="absolute top-1 right-1 text-[7px] px-1 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">{b.badge}</span>}
+            </Link>
+          ))}
+        </div>
+      </section>
 
       {/* Today — actionable alerts */}
       {alerts.length > 0 && (
