@@ -49,7 +49,7 @@ function AiDailyBriefing() {
             {[1, 2, 3, 4].map(i => <div key={i} className="h-3 rounded bg-muted animate-pulse" style={{ width: `${90 - i * 8}%` }} />)}
           </div>
         ) : data?.briefing ? (
-          <div className="text-[13px] leading-relaxed">
+          <div className="text-[13px] leading-relaxed max-h-[300px] overflow-y-auto pr-1">
             {data.briefing.split("\n").map((line, i) => {
               if (line.startsWith("# ")) return <h3 key={i} className="text-[15px] font-bold mt-3 mb-1 first:mt-0">{renderBriefingInline(line.slice(2))}</h3>;
               if (line.startsWith("## ")) return <h4 key={i} className="text-[13px] font-semibold mt-3 mb-1">{renderBriefingInline(line.slice(3))}</h4>;
