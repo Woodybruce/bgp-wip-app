@@ -15,7 +15,7 @@ type Commission = { billedPence: number; commissionEarned: number; commissionFor
 
 // Core boards shown on Home by default. Everything else (admin / WIP tools)
 // hides behind "Show all" so the home screen stays focused on daily work.
-const CORE_BOARD_URLS = new Set(["/tasks", "/comps", "/brands", "/property-intelligence", "/mail", "/sharepoint"]);
+const CORE_BOARD_URLS = new Set(["/tasks", "/comps", "/brands", "/property-intelligence", "/sharepoint"]);
 
 // Pence → compact £ (e.g. £1.2m, £340k, £980)
 function fmtMoney(pence: number | undefined | null): string {
@@ -50,7 +50,6 @@ export default function MobileHome() {
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
-  const { data: deals = [] } = useQuery<DealSummary[]>({ queryKey: ["/api/crm/deals?limit=5&sort=updated"] });
   const { data: commission } = useQuery<Commission>({
     queryKey: [`/api/hr/staff/${user?.id}/commission`],
     queryFn: () => apiRequest("GET", `/api/hr/staff/${user?.id}/commission`).then(r => r.json()),
@@ -66,7 +65,7 @@ export default function MobileHome() {
   // The bottom-nav "More" drawer is gone — board navigation lives here.
   // Default to the core daily boards; the rest (admin / WIP tools) sit behind
   // "Show all" so Home stays focused. Admins still get their extra tools.
-  const visibleBoards = (mobileOverlayItems as any[]).filter(b => user?.isAdmin || !b.adminOnly);
+  const visibleBoards = (mobileOverlayItems as any[]).filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
   const coreBoards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url));
   const moreBoards = visibleBoards.filter(b => !CORE_BOARD_URLS.has(b.url));
   const boards = showAllBoards ? [...coreBoards, ...moreBoards] : coreBoards;
@@ -225,28 +224,6 @@ export default function MobileHome() {
           </div>
         )}
       </section>
-
-      {/* Recent deals */}
-      {deals.length > 0 && (
-        <section>
-          <div className="flex items-center justify-between mb-2 px-1">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recent deals</h2>
-            <Link href="/deals" className="text-[11px] text-primary font-medium">View all</Link>
-          </div>
-          <div className="space-y-1.5">
-            {deals.slice(0, 5).map(d => (
-              <Link key={d.id} href={`/deals/${d.id}`} className="flex items-center gap-2 rounded-2xl border p-3 bg-white dark:bg-card active:bg-gray-50" data-testid={`mobile-home-deal-${d.id}`}>
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-medium truncate">{d.name}</p>
-                  {d.property_name && <p className="text-[11px] text-muted-foreground truncate">{d.property_name}</p>}
-                </div>
-                <span className="text-[10px] text-muted-foreground shrink-0">{d.status}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }

@@ -490,7 +490,7 @@ function MessageRow({
 
   return (
     <button
-      className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors border-b border-border/50 ${
+      className={`w-full text-left pl-2 pr-4 py-3 flex items-start gap-2.5 transition-colors border-b border-border/40 ${
         selected
           ? "bg-primary/10 dark:bg-primary/20"
           : "hover:bg-muted/50"
@@ -498,36 +498,37 @@ function MessageRow({
       onClick={onClick}
       data-testid={`mail-row-${message.id}`}
     >
-      <div className={`w-9 h-9 rounded-full ${color} flex items-center justify-center shrink-0 mt-0.5`}>
-        <span className="text-white text-xs font-semibold">{initials}</span>
+      {/* Unread indicator — far left, Outlook-style */}
+      <div className="w-2.5 shrink-0 self-center flex justify-center">
+        {!message.isRead && <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
+      </div>
+      <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center shrink-0`}>
+        <span className="text-white text-sm font-semibold">{initials}</span>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <p className={`text-sm truncate ${!message.isRead ? "font-semibold text-gray-900" : "font-medium text-gray-800"}`}>
+        <div className="flex items-baseline justify-between gap-2">
+          <p className={`text-[15px] truncate ${!message.isRead ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>
             {senderName}
           </p>
-          <span className="text-[11px] text-gray-500 shrink-0">
+          <span className="text-[12px] text-gray-500 shrink-0">
             {formatMailDate(message.receivedDateTime)}
           </span>
         </div>
-        <p className={`text-[13px] truncate mt-0.5 ${!message.isRead ? "font-medium text-gray-900" : "text-gray-700"}`}>
-          {message.subject || "(No subject)"}
-        </p>
-        <div className="flex items-center gap-1.5 mt-0.5">
-          <p className="text-xs text-gray-500 truncate flex-1">
-            {message.bodyPreview}
+        <div className="flex items-center gap-1.5">
+          <p className={`text-[14px] truncate flex-1 ${!message.isRead ? "font-semibold text-gray-900" : "text-gray-800"}`}>
+            {message.subject || "(No subject)"}
           </p>
           {message.meetingMessageType && (
-            <Calendar className="w-3 h-3 text-blue-500 shrink-0" />
+            <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
           )}
           {message.hasAttachments && (
-            <Paperclip className="w-3 h-3 text-muted-foreground shrink-0" />
+            <Paperclip className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           )}
         </div>
+        <p className="text-[13px] text-gray-500 line-clamp-2 mt-0.5 leading-snug">
+          {message.bodyPreview}
+        </p>
       </div>
-      {!message.isRead && (
-        <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0 mt-1.5" />
-      )}
     </button>
   );
 }
