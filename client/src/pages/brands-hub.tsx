@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useSearch } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -141,8 +142,20 @@ export default function BrandsHub() {
   const { toast } = useToast();
   const searchParams = useSearch();
   const rawTab = new URLSearchParams(searchParams).get("tab");
-  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover", "hunter"].includes(rawTab) ? rawTab as HubTab : "overview";
+  const isMobile = useIsMobile();
+  // Mobile goes straight to Brand Explorer; desktop keeps the Overview landing.
+  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover", "hunter"].includes(rawTab)
+    ? rawTab as HubTab
+    : (typeof window !== "undefined" && window.innerWidth < 768 ? "explorer" : "overview");
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
+  // The other boards (Overview/Turnover/Hunter) are still being built, so on
+  // mobile we show only Brand Explorer. Desktop keeps the full tab bar.
+  const VISIBLE_HUB_TABS = ([
+    { key: "overview", label: "Overview", icon: BarChart3 },
+    { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
+    { key: "turnover", label: "Turnover Board", icon: TrendingUp },
+    { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
+  ] as { key: HubTab; label: string; icon: any }[]).filter(t => !isMobile || t.key === "explorer");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
@@ -218,13 +231,12 @@ export default function BrandsHub() {
       </div>
 
       {/* ── Tabs ───────────────────────────────────────────────────── */}
+      {/* Mobile shows only Brand Explorer (the other boards are still being
+          built); desktop keeps the full tab bar. Hidden tabs stay reachable
+          via ?tab= for development. */}
+      {VISIBLE_HUB_TABS.length > 1 && (
       <div className="flex gap-1 border-b">
-        {([
-          { key: "overview", label: "Overview", icon: BarChart3 },
-          { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
-          { key: "turnover", label: "Turnover Board", icon: TrendingUp },
-          { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
-        ] as { key: HubTab; label: string; icon: any }[]).map(t => (
+        {(VISIBLE_HUB_TABS as { key: HubTab; label: string; icon: any }[]).map(t => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
@@ -239,6 +251,7 @@ export default function BrandsHub() {
           </button>
         ))}
       </div>
+      )}
 
       {activeTab === "overview" && (<>
 
