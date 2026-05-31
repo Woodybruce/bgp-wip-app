@@ -93,8 +93,8 @@ export default function DealsHub() {
 
   return (
     <div>
-      <div className="flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0">
-        <div className="inline-flex rounded-lg border bg-muted p-0.5" data-testid="toggle-deals-tabs">
+      <div className="flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0 overflow-x-auto">
+        <div className="inline-flex min-w-max rounded-lg border bg-muted p-0.5" data-testid="toggle-deals-tabs">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}

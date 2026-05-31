@@ -1089,7 +1089,7 @@ export default function WipReport() {
   const clickFilterActiveValue = clickFilter?.value || null;
 
   return (
-    <div className="h-[calc(100vh-64px)] flex flex-col overflow-hidden p-4 sm:p-6 print:p-2 print:h-auto print:overflow-visible" data-testid="wip-report-page">
+    <div className="min-h-[calc(100vh-64px)] md:h-[calc(100vh-64px)] flex flex-col md:overflow-hidden p-4 sm:p-6 print:p-2 print:h-auto print:overflow-visible" data-testid="wip-report-page">
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -1098,7 +1098,7 @@ export default function WipReport() {
         }
       `}</style>
 
-      <div className="flex items-center justify-between flex-shrink-0 mb-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between flex-shrink-0 mb-4">
         <div className="flex items-center gap-4">
           {isLandsec ? (
             <div
@@ -1133,7 +1133,7 @@ export default function WipReport() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 no-print">
+        <div className="flex flex-wrap items-center gap-2 no-print">
           {clickFilter && (
             <Button variant="outline" size="sm" onClick={clearClickFilter} data-testid="wip-clear-click-filter">
               <X className="h-4 w-4 mr-1" />
@@ -1190,8 +1190,8 @@ export default function WipReport() {
       {activeTab === "agent-summary" ? (
         <AgentSummaryTab />
       ) : (
-      <div className="flex gap-4 flex-1 min-h-0">
-        <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
+      <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
+        <div className="flex-1 md:overflow-y-auto space-y-4 min-h-0">
           {/* KPI stat cards — matching Investment Tracker style */}
           <ScrollArea className="w-full shrink-0">
             <div className="flex items-center gap-3 pb-1">
@@ -1462,7 +1462,7 @@ export default function WipReport() {
           </div>
         </div>
 
-        <div className="w-52 flex-shrink-0 no-print overflow-y-auto space-y-3 min-h-0 max-h-full" data-testid="wip-filters-panel">
+        <div className="w-full md:w-52 md:flex-shrink-0 no-print md:overflow-y-auto space-y-3 min-h-0 md:max-h-full" data-testid="wip-filters-panel">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-1">
               <Filter className="h-3 w-3" /> Filters
