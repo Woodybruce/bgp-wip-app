@@ -116,15 +116,15 @@ export default function PropertyIntelligence() {
               }}
             />
           </div>
-          <div className="px-4 lg:px-6 pt-3">
-            <TabsList className="bg-transparent p-0 h-auto gap-1">
+          <div className="px-4 lg:px-6 pt-3 overflow-x-auto">
+            <TabsList className="bg-transparent p-0 h-auto gap-1 w-max">
               {TABS.map((t) => {
                 const Icon = t.icon;
                 return (
                   <TabsTrigger
                     key={t.id}
                     value={t.id}
-                    className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-none border-b-2 -mb-px border-transparent text-muted-foreground hover:text-foreground data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-600 data-[state=active]:shadow-none"
+                    className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-none border-b-2 -mb-px border-transparent text-muted-foreground hover:text-foreground data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-600 data-[state=active]:shadow-none shrink-0 whitespace-nowrap"
                     data-testid={`pi-tab-${t.id}`}
                   >
                     <Icon className="w-3.5 h-3.5" />

@@ -1296,7 +1296,7 @@ function CompanyDetail({ id }: { id: string }) {
   const hasGlobalHq = !!ukAddressText && !!globalAddressText && ukAddressText !== globalAddressText;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="company-detail">
+    <div className="p-4 sm:p-6 space-y-6 overflow-x-hidden" data-testid="company-detail">
       <CompanyFormDialog open={editOpen} onOpenChange={setEditOpen} company={company} />
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -1373,8 +1373,8 @@ function CompanyDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-3 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-w-0">
+        <div className="lg:col-span-3 space-y-4 min-w-0">
           {/* Page-level Details card removed May 2026 — BGP Contacts dropdown
               now lives in the brand profile sidebar (BGP Relationship card),
               UK registered office + KYC + Ownership (PSCs) moved into the

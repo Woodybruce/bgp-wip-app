@@ -1160,9 +1160,11 @@ export default function KycClouseau() {
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden flex">
-        {/* Left sidebar — search */}
-        <div className="w-80 border-r flex flex-col flex-shrink-0">
+      <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+        {/* Left sidebar — search. On mobile it stacks on top with a bounded
+            height so its internal history scroll still works; main column
+            takes the rest. */}
+        <div className="w-full h-[45vh] lg:h-auto lg:w-80 border-b lg:border-b-0 lg:border-r flex flex-col flex-shrink-0">
           <div className="p-4 border-b space-y-3">
             {/* Search mode tabs */}
             <div className="flex gap-1 p-0.5 bg-muted rounded-lg">
