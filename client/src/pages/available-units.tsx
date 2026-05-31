@@ -1014,10 +1014,13 @@ export default function AvailableUnitsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="available-units-page">
-      {/* Page title removed — the DealsHub tab bar carries the label
-          ("Letting Tracker"), so an inner h1 just stacked a third title
-          on top of the browser tab + hub tab. */}
-      <div className="flex items-center justify-end">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
+          <p className="text-sm text-muted-foreground">
+            {teamUnits.length} unit{teamUnits.length !== 1 ? "s" : ""}
+          </p>
+        </div>
         <Button onClick={() => { setForm(emptyForm); setCreateOpen(true); }} data-testid="button-add-unit">
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
