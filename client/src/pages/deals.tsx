@@ -109,6 +109,7 @@ import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { toDateInputValue } from "@/lib/format";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
@@ -4787,6 +4788,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
+  const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     // Mobile defaults to the stacked Card view (fits the phone). The kanban
     // Board view overflows horizontally on a phone, so it's opt-in there.
@@ -5416,6 +5418,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM`}
       actions={!isCompsMode ? (
         <>
+          {!isMobile && (<>
           <Button
             variant="outline"
             size="sm"
@@ -5444,6 +5447,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             <Brain className="w-4 h-4 mr-2" />
             AI Match
           </Button>
+          </>)}
           <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
             <Plus className="w-4 h-4 mr-2" />
             New Deal
@@ -5507,6 +5511,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             data-testid="input-search-deals"
           />
         </div>
+        {!isMobile && (<>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" data-testid="button-toggle-columns">
@@ -5618,6 +5623,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </Button>
         )}
         <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
+        </>)}
       </div>
 
       {viewMode === "board" ? (

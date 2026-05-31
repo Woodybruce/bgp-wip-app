@@ -34,6 +34,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCardView, type MobileCardItem } from "@/components/mobile-card-view";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
@@ -309,6 +311,7 @@ const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t 
 
 export default function AvailableUnitsPage() {
   const { activeTeam } = useTeam();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -1025,6 +1028,7 @@ export default function AvailableUnitsPage() {
           (~240px) with bar charts that were 16px tall and rarely
           scanned beyond the headline number. Now one row carrying the
           two totals + tiny sparkline of monthly counts. */}
+      {!isMobile && (
       <Card>
         <CardContent className="px-4 py-2.5 flex items-center gap-6 flex-wrap">
           <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -1054,6 +1058,7 @@ export default function AvailableUnitsPage() {
           })}
         </CardContent>
       </Card>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -1066,6 +1071,7 @@ export default function AvailableUnitsPage() {
             data-testid="input-search-units"
           />
         </div>
+        {!isMobile && (<>
         <Select value={propertyFilter} onValueChange={setPropertyFilter}>
           <SelectTrigger className="w-[220px]" data-testid="select-property-filter">
             <SelectValue placeholder="All Properties" />
@@ -1115,6 +1121,7 @@ export default function AvailableUnitsPage() {
             ))}
           </div>
         )}
+        </>)}
       </div>
 
       {/* KPI stat cards — matching Investment Tracker style */}
@@ -1181,6 +1188,37 @@ export default function AvailableUnitsPage() {
         </div>
       )}
 
+      {isMobile && (
+        <MobileCardView
+          items={filtered.map((u): MobileCardItem => {
+            const prop = propertyMap[u.propertyId];
+            const deal = u.dealId ? dealMap[u.dealId] : null;
+            const code = legacyToCode(u.marketingStatus) || "AVA";
+            const tenant = deal?.tenantId ? companyMap[deal.tenantId] : null;
+            const rent = deal?.rentPa ?? (u as any).askingRent;
+            const size = deal?.totalAreaSqft ?? u.sqft;
+            return {
+              id: u.id,
+              title: prop?.name || u.unitName || "Unit",
+              subtitle: [u.unitName, u.floor].filter(Boolean).join(" · ") || undefined,
+              href: deal ? `/deals/${deal.id}` : undefined,
+              status: DEAL_STATUS_LABELS[code] || code,
+              statusColor: STATUS_LABEL_COLORS[code] || "bg-gray-400",
+              fields: [
+                { label: "Type", value: deal?.dealType, badge: true },
+                { label: "Tenant", value: tenant },
+                { label: "Rent p.a.", value: rent ? `£${Number(rent).toLocaleString()}` : null },
+                { label: "Size", value: size ? `${Number(size).toLocaleString()} sf` : null },
+              ],
+              onEdit: () => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); },
+            };
+          })}
+          emptyMessage={teamUnits.length === 0 ? "No available units yet" : "No units match filters"}
+          emptyIcon={Store}
+        />
+      )}
+
+      {!isMobile && (
       <Card>
         <ScrollableTable minWidth={2600}>
           <Table>
@@ -1603,6 +1641,7 @@ export default function AvailableUnitsPage() {
           </Table>
         </ScrollableTable>
       </Card>
+      )}
 
       <UnitFormDialog
         open={createOpen}
