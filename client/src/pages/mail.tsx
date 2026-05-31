@@ -47,7 +47,7 @@ import {
   Calendar,
   Check,
 } from "lucide-react";
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect, type TouchEvent as ReactTouchEvent } from "react";
 
 interface EmailAddress {
   emailAddress: { name: string; address: string };
@@ -479,25 +479,50 @@ function MessageRow({
   message,
   selected,
   onClick,
+  onDelete,
 }: {
   message: MailMessage;
   selected: boolean;
   onClick: () => void;
+  onDelete?: () => void;
 }) {
   const senderName = message.from?.emailAddress?.name || message.from?.emailAddress?.address || "Unknown";
   const initials = getInitials(senderName);
   const color = getAvatarColor(senderName);
+  // Swipe-left-to-delete (touch). Drag the row left; release past the
+  // threshold to delete it.
+  const [dragX, setDragX] = useState(0);
+  const startX = useRef<number | null>(null);
+  const moved = useRef(false);
+  const onTouchStart = (e: ReactTouchEvent) => { startX.current = e.touches[0].clientX; moved.current = false; };
+  const onTouchMove = (e: ReactTouchEvent) => {
+    if (startX.current == null) return;
+    const dx = e.touches[0].clientX - startX.current;
+    if (dx < -4) { moved.current = true; setDragX(Math.max(dx, -110)); }
+  };
+  const onTouchEnd = () => {
+    if (dragX < -64 && onDelete) onDelete();
+    setDragX(0);
+    startX.current = null;
+  };
 
   return (
-    <button
-      className={`w-full text-left pl-2 pr-4 py-3 flex items-start gap-2.5 transition-colors border-b border-border/40 ${
-        selected
-          ? "bg-primary/10 dark:bg-primary/20"
-          : "hover:bg-muted/50"
-      }`}
-      onClick={onClick}
-      data-testid={`mail-row-${message.id}`}
-    >
+    <div className="relative overflow-hidden border-b border-border/40" data-testid={`mail-row-wrap-${message.id}`}>
+      {/* Red delete layer revealed when swiping left */}
+      <div className="absolute inset-y-0 right-0 left-0 flex items-center justify-end pr-5 bg-red-500">
+        <Trash2 className="w-5 h-5 text-white" />
+      </div>
+      <button
+        className={`relative w-full text-left pl-2 pr-4 py-3 flex items-start gap-2.5 ${
+          selected ? "bg-primary/10 dark:bg-primary/20" : "bg-white dark:bg-card active:bg-muted/50"
+        }`}
+        style={{ transform: `translateX(${dragX}px)`, transition: startX.current == null ? "transform 0.18s ease" : "none" }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onClick={() => { if (!moved.current) onClick(); }}
+        data-testid={`mail-row-${message.id}`}
+      >
       {/* Unread indicator — far left, Outlook-style */}
       <div className="w-2.5 shrink-0 self-center flex justify-center">
         {!message.isRead && <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
@@ -529,7 +554,8 @@ function MessageRow({
           {message.bodyPreview}
         </p>
       </div>
-    </button>
+      </button>
+    </div>
   );
 }
 
@@ -1344,9 +1370,9 @@ export function MailView({
           <RefreshCw className="w-3.5 h-3.5" />
         </Button>
         <div className="flex-1" />
-        <div className="flex items-center gap-0.5 text-xs text-muted-foreground">
+        <div className="hidden sm:flex items-center gap-0.5 text-xs text-muted-foreground">
           <Cloud className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="hidden sm:inline text-[11px] truncate max-w-[180px]">
+          <span className="text-[11px] truncate max-w-[180px]">
             {isPersonal ? "Connected" : status?.email || "Connected"}
           </span>
         </div>
@@ -1415,6 +1441,7 @@ export function MailView({
                     message={msg}
                     selected={selectedId === msg.id}
                     onClick={() => handleSelect(msg.id)}
+                    onDelete={() => handleDelete(msg)}
                   />
                 ))
               )}
