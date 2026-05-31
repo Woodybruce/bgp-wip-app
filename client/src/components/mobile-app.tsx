@@ -3161,18 +3161,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         isAiChat={activeThreadAi}
         onBack={() => {
           queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
-          if (chatFromList) {
-            // Opened from the in-app conversation list — return to it.
-            setChatFromList(false);
-            setActiveThreadId(null);
-            setShowChat(false);
-          } else if (window.history.length > 1) {
-            // Entered directly via the ChatBGP nav — leave the old shell
-            // and go back to the new app (Home / wherever we came from).
-            window.history.back();
-          } else {
-            navigate("/");
-          }
+          // Back from a chat returns to the conversation list (your ChatBGP
+          // history + team chats) — not straight home. The list's own back
+          // arrow then exits to the app.
+          setActiveThreadId(null);
+          setShowChat(false);
+          setChatFromList(false);
+          setTab("chats");
         }}
         onNewChat={openNewAiChat}
         onShowList={() => {
