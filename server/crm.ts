@@ -1404,9 +1404,16 @@ export function setupCrmRoutes(app: Express) {
            WHERE company_id IS NOT NULL
            GROUP BY company_id
         ) contact_stats ON contact_stats.company_id = c.id
-        WHERE LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit')
-           OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
-           OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+        -- Hard rule: a landlord is never a tenant/brand. Explicit brands
+        -- (company_type 'Tenant - …') are excluded even if they appear as a
+        -- landlord_id on a deal, so the Brands and Landlords boards never
+        -- show the same company.
+        WHERE LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%'
+          AND (
+            LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit')
+            OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
+            OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+          )
         ORDER BY total_fee DESC NULLS LAST, c.name ASC
       `);
       res.json({ landlords: rows });
