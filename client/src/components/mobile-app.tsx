@@ -1126,11 +1126,12 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
   );
 }
 
-function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, currentUser }: {
+function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, onTeamChats, currentUser }: {
   threadId: string | null;
   isAiChat: boolean;
   onBack: () => void;
   onNewChat?: () => void;
+  onTeamChats?: () => void;
   currentUser: UserType | null;
 }) {
   const [localThreadId, setLocalThreadId] = useState<string | null>(null);
@@ -2029,6 +2030,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
               </div>
             </button>
             <div className="flex items-center gap-0.5">
+              {onTeamChats && (
+                <button
+                  onClick={onTeamChats}
+                  className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
+                  data-testid="button-mobile-team-chats"
+                  aria-label="Internal team chats"
+                >
+                  <Users className="w-[18px] h-[18px] text-gray-400" />
+                </button>
+              )}
               <button
                 onClick={() => setSearchInChat(!searchInChat)}
                 className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
@@ -3160,6 +3171,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           setTab(wasAi ? "ai" : "chats");
         }}
         onNewChat={openNewAiChat}
+        onTeamChats={() => {
+          // Jump from ChatBGP to the internal team chats list.
+          queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+          setActiveThreadId(null);
+          setShowChat(false);
+          setChatFromList(false);
+          setTab("chats");
+        }}
         currentUser={currentUser ?? null}
       />
     );
