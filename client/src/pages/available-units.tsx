@@ -35,7 +35,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { MobileCardView, type MobileCardItem } from "@/components/mobile-card-view";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
@@ -1209,33 +1208,72 @@ export default function AvailableUnitsPage() {
       )}
 
       {isMobile && (
-        <MobileCardView
-          items={filtered.map((u): MobileCardItem => {
-            const prop = propertyMap[u.propertyId];
-            const deal = u.dealId ? dealMap[u.dealId] : null;
-            const code = legacyToCode(u.marketingStatus) || "AVA";
-            const tenant = deal?.tenantId ? companyMap[deal.tenantId] : null;
-            const rent = deal?.rentPa ?? (u as any).askingRent;
-            const size = deal?.totalAreaSqft ?? u.sqft;
-            return {
-              id: u.id,
-              title: prop?.name || u.unitName || "Unit",
-              subtitle: [u.unitName, u.floor].filter(Boolean).join(" · ") || undefined,
-              href: deal ? `/deals/${deal.id}` : undefined,
-              status: DEAL_STATUS_LABELS[code] || code,
-              statusColor: STATUS_LABEL_COLORS[code] || "bg-gray-400",
-              fields: [
-                { label: "Type", value: deal?.dealType, badge: true },
+        filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
+            <Store className="h-8 w-8 opacity-40" />
+            <p className="text-sm">{teamUnits.length === 0 ? "No available units yet" : "No units match filters"}</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 pb-2">
+            {filtered.map(u => {
+              const prop = propertyMap[u.propertyId];
+              const deal = u.dealId ? dealMap[u.dealId] : null;
+              const code = legacyToCode(u.marketingStatus) || "AVA";
+              const tenant = deal?.tenantId ? companyMap[deal.tenantId] : null;
+              const rent = deal?.rentPa ?? (u as any).askingRent;
+              const size = deal?.totalAreaSqft ?? u.sqft;
+              const vCount = viewingsCounts[u.id] || 0;
+              const oCount = offersCounts[u.id] || 0;
+              const rows = [
+                { label: "Area", value: size ? `${Number(size).toLocaleString()} sq ft` : null },
                 { label: "Tenant", value: tenant },
                 { label: "Rent p.a.", value: rent ? `£${Number(rent).toLocaleString()}` : null },
-                { label: "Size", value: size ? `${Number(size).toLocaleString()} sf` : null },
-              ],
-              onEdit: () => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); },
-            };
-          })}
-          emptyMessage={teamUnits.length === 0 ? "No available units yet" : "No units match filters"}
-          emptyIcon={Store}
-        />
+              ].filter(r => r.value);
+              return (
+                <div key={u.id} className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`mobile-unit-${u.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm font-semibold leading-tight block truncate">{prop?.name || u.unitName || "Unit"}</span>
+                      {(u.unitName || u.floor) && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName, u.floor].filter(Boolean).join(" · ")}</p>
+                      )}
+                    </div>
+                    <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1.5">
+                      <span className={`inline-block w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
+                      {DEAL_STATUS_LABELS[code] || code}
+                    </Badge>
+                  </div>
+                  {rows.length > 0 && (
+                    <div className="space-y-1.5">
+                      {rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground shrink-0">{r.label}</span>
+                          <span className="font-medium truncate text-right">{String(r.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Tenant-demand actions: View (brochure/details), log a
+                      viewing, register an interested tenant + comment, edit. */}
+                  <div className="flex items-center flex-wrap gap-1 pt-2 border-t">
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
+                      <Eye className="w-3.5 h-3.5" /> View
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
+                      <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-interest-${u.id}`}>
+                      <HandCoins className="w-3.5 h-3.5" /> Interest{oCount ? ` (${oCount})` : ""}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                      <Pencil className="w-3.5 h-3.5" /> Edit
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
       )}
 
       {!isMobile && (
