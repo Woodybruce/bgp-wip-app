@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, File, MapPin, Check, Circle, Loader2, Sparkles } from "lucide-react";
+import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -837,7 +837,22 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
             ],
             onEdit: () => setEditItem(item),
-            footer: <LandlordPackCell itemId={item.id} landlordPack={item.landlordPack} />,
+            footer: (() => {
+              let pack: { url?: string; name?: string } | null = null;
+              if (item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
+              return pack?.url ? (
+                <a
+                  href={pack.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
+                  data-testid={`download-landlord-pack-${item.id}`}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Landlord pack
+                </a>
+              ) : undefined;
+            })(),
           }))}
         />
       ) : (<>
