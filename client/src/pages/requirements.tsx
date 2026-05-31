@@ -3668,13 +3668,13 @@ export default function Requirements() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
             <FileText className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
             <p className="text-sm text-muted-foreground">
               {isInvestmentView ? "Investment requirements" : "Leasing requirements"}
               {teamParam ? ` · Filtered by ${teamParam} team` : ""}
@@ -3682,17 +3682,17 @@ export default function Requirements() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-1" data-testid="view-toggle">
+        <div className="flex items-center gap-1 bg-muted rounded-lg p-1 w-full sm:w-auto shrink-0" data-testid="view-toggle">
           <button
             onClick={() => setIsInvestmentView(false)}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${!isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${!isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             data-testid="button-leasing-view"
           >
             Leasing
           </button>
           <button
             onClick={() => setIsInvestmentView(true)}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             data-testid="button-investment-view"
           >
             Investment
