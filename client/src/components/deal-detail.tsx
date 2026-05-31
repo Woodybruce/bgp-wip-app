@@ -80,8 +80,6 @@ import {
   DealKYCPanel,
   DealTimeline,
   DealAuditLog,
-  DealRelatedEmails,
-  DealRelatedMeetings,
 } from "@/pages/deals";
 import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";

@@ -942,24 +942,24 @@ export default function ImageStudio() {
           </div>
         )}
       {/* Section tabs */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-shrink-0">
+      <div className="flex gap-1 px-4 border-b bg-background flex-shrink-0">
         <button
           onClick={() => { setActiveSection("library"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`text-sm px-2 py-0.5 rounded ${activeSection === "library" && collectionsTab === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${activeSection === "library" && collectionsTab === "grid" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-library"
         >
           Library ({images.filter(i => i.category !== "Brands").length})
         </button>
         <button
           onClick={() => { setActiveSection("brands"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`text-sm px-2 py-0.5 rounded ${activeSection === "brands" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${activeSection === "brands" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-brands"
         >
           Brand Library ({images.filter(i => i.category === "Brands").length})
         </button>
         <button
           onClick={() => { setActiveSection("library"); setCollectionsTab("collections"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`text-sm px-2 py-0.5 rounded ${collectionsTab === "collections" && activeSection === "library" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${collectionsTab === "collections" && activeSection === "library" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-collections"
         >
           Collections ({collections.length})
@@ -2512,7 +2512,13 @@ function resolveCrmLinks(
   if (propertyId) {
     const p = propertyLookup.get(propertyId);
     if (p) out.push({ kind: "property", label: p.name, href: `/properties/${p.id}` });
-    else if ((image as any).address) out.push({ kind: "property", label: (image as any).address, href: `/properties/${propertyId}` });
+    else if ((image as any).address) {
+      // Not in the lookup but we still have the id — link to it by id, label
+      // with the address. If the id is somehow blank, href is "" so the chip
+      // renders as plain text instead of a broken link.
+      const id = String(propertyId).trim();
+      out.push({ kind: "property", label: (image as any).address, href: id ? `/properties/${id}` : "" });
+    }
   }
   const brandName = (image as any).brandName || (image as any).brand_name;
   if (brandName) {
@@ -2536,6 +2542,25 @@ function CrmLinkChip({
   const cls = dark
     ? `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-500/85 text-white hover:bg-amber-500" : "bg-emerald-600/85 text-white hover:bg-emerald-600"}`
     : `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100" : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"}`;
+  const inner = (
+    <>
+      {isProp ? <Building2 className="w-2.5 h-2.5 shrink-0" /> : <Tag className="w-2.5 h-2.5 shrink-0" />}
+      <span className="truncate max-w-[140px]">{link.label}</span>
+    </>
+  );
+  // No href means we can't resolve a target page (e.g. property linked by
+  // address but with no id) — render plain text rather than a broken link.
+  if (!link.href) {
+    return (
+      <span
+        className={cls.replace(/ hover:[^\s]+/g, "") + " cursor-default opacity-90"}
+        data-testid={`crm-link-${link.kind}`}
+        title={link.label}
+      >
+        {inner}
+      </span>
+    );
+  }
   return (
     <WouterLink
       href={link.href}
@@ -2544,8 +2569,7 @@ function CrmLinkChip({
       data-testid={`crm-link-${link.kind}`}
       title={`Open ${link.kind === "property" ? "property page" : "brand profile"}`}
     >
-      {isProp ? <Building2 className="w-2.5 h-2.5 shrink-0" /> : <Tag className="w-2.5 h-2.5 shrink-0" />}
-      <span className="truncate max-w-[140px]">{link.label}</span>
+      {inner}
     </WouterLink>
   );
 }
