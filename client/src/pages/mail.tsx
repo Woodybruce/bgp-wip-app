@@ -1447,34 +1447,11 @@ export function MailView({
 }
 
 export default function Mail() {
-  // Everyone lands on their own inbox. The ChatBGP (shared) inbox is admin-only
-  // — regular users don't need to see those automated emails.
-  const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isAdmin = !!(user?.isAdmin || user?.is_admin);
-  const [activeTab, setActiveTab] = useState<string>("personal");
-  // Guard: if a non-admin somehow lands on the shared tab, force personal.
-  const effectiveTab = !isAdmin ? "personal" : activeTab;
-
+  // Personal inbox only. The ChatBGP (shared) inbox isn't needed here.
   return (
     <div className="h-full flex flex-col" data-testid="mail-page-wrapper">
-      {isAdmin && (
-        <div className="px-4 py-2.5 shrink-0 mail-tab-bar">
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="h-9 mail-tab-list">
-              <TabsTrigger value="personal" className={`text-xs gap-1.5 ${activeTab === "personal" ? "mail-tab-active" : "mail-tab-inactive"}`} data-testid="tab-personal-inbox">
-                <MailIcon className="w-3.5 h-3.5" />
-                My Inbox
-              </TabsTrigger>
-              <TabsTrigger value="shared" className={`text-xs gap-1.5 ${activeTab === "shared" ? "mail-tab-active" : "mail-tab-inactive"}`} data-testid="tab-shared-inbox">
-                <Bot className="w-3.5 h-3.5" />
-                ChatBGP Inbox
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      )}
       <div className="flex-1 min-h-0">
-        {effectiveTab === "shared" ? <MailView mailType="shared" /> : <MailView mailType="personal" />}
+        <MailView mailType="personal" />
       </div>
     </div>
   );
