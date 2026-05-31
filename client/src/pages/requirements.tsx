@@ -749,6 +749,9 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
             Clear
           </Button>
         )}
+        {/* Admin/debug sync + inspect tools — hidden on mobile so the board is
+            a clean Search + Add + cards layout, uniform with the others. */}
+        {!isMobile && (<>
         <Button
           variant="outline"
           size="sm"
@@ -811,6 +814,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
           {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
           Wipe & Resync TRL
         </Button>
+        </>)}
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
           Add Requirement
