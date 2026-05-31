@@ -1190,15 +1190,9 @@ function MobileNewsFeed() {
 
   return (
     <div
-      className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pb-4 space-y-3"
-      style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+      className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pt-3 pb-4 space-y-3"
       data-testid="news-page"
     >
-      <div className="flex items-center gap-2 pt-1 pb-1">
-        <Newspaper className="w-5 h-5 text-primary" />
-        <h1 className="text-xl font-bold tracking-tight">News</h1>
-      </div>
-
       {isLoading && (
         <div className="flex items-center justify-center py-16">
           <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
@@ -1225,7 +1219,13 @@ function MobileNewsFeed() {
         >
           {article.imageUrl && (
             <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
-              <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <img
+                src={article.imageUrl}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover"
+                onError={(e) => { const img = e.currentTarget as HTMLImageElement; if (img.parentElement) img.parentElement.style.display = "none"; }}
+              />
             </div>
           )}
           <div className="p-4">
