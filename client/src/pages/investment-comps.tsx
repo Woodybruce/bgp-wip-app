@@ -1108,6 +1108,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          {!isMobile && (
           <div className="flex items-center gap-4 text-xs">
             <span className="flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.total}</span> comps</span>
             <span className="flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5 text-green-600" /> <span className="font-semibold">{formatCurrency(totalPrice)}</span> total</span>
@@ -1115,6 +1116,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.cities}</span> cities</span>
             <span className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.sales}</span> completed</span>
           </div>
+          )}
           <div className="flex-1" />
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -1168,14 +1170,25 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
         </div>
 
         {isMobile ? (
-          <Select value={activeRegion} onValueChange={setActiveRegion}>
-            <SelectTrigger className="h-9 w-full text-sm mt-3" data-testid="select-region-filter">
-              <SelectValue placeholder="All Regions" />
-            </SelectTrigger>
-            <SelectContent>
-              {REGION_GROUPS.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <div className="flex gap-2 mt-3">
+            <Select value={activeRegion} onValueChange={setActiveRegion}>
+              <SelectTrigger className="h-9 flex-1 text-sm" data-testid="select-region-filter">
+                <SelectValue placeholder="All Regions" />
+              </SelectTrigger>
+              <SelectContent>
+                {REGION_GROUPS.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={filterType || "all"} onValueChange={(v) => setFilterType(v === "all" ? "" : v)}>
+              <SelectTrigger className="h-9 flex-1 text-sm" data-testid="select-use-filter">
+                <SelectValue placeholder="All Uses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Uses</SelectItem>
+                {TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
         ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
           {REGION_GROUPS.map(region => (
