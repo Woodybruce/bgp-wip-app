@@ -156,6 +156,14 @@ function MapRedirect() {
   return null;
 }
 
+// Comps "Leads" tab is parked out of the comps page (it's messy / WIP) and
+// reachable only here, admin-only, so it can be worked on later.
+function CompsLeadsRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/comps?tab=leads"); }, [setLocation]);
+  return null;
+}
+
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [, navigate] = useLocation();
@@ -208,6 +216,7 @@ function Router() {
       <Route path="/settings" component={SettingsPage} />
       <Route path="/comps" component={Comps} />
       <Route path="/comps/:id" component={Comps} />
+      <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
       <Route path="/investment-comps" component={InvestmentComps} />
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />

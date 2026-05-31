@@ -1863,7 +1863,11 @@ export default function Comps() {
   const [deleteComp, setDeleteComp] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("table");
+  // Default to Leasing. The Leads tab is parked (admin-only, reached via
+  // /admin/comps-leads → /comps?tab=leads) and not shown in the normal bar.
+  const [activeTab, setActiveTab] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("tab") || "table"; } catch { return "table"; }
+  });
   const [scanning, setScanning] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfConfirmComps, setPdfConfirmComps] = useState<CrmComp[]>([]);
@@ -2316,6 +2320,7 @@ export default function Comps() {
                 <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
                 Investment
               </TabsTrigger>
+              {activeTab === "leads" && (
               <TabsTrigger value="leads" data-testid="tab-comps-leads">
                 <Inbox className="w-3.5 h-3.5 mr-1.5" />
                 Leads
@@ -2325,6 +2330,7 @@ export default function Comps() {
                   </span>
                 )}
               </TabsTrigger>
+              )}
               <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
                 <Bell className="w-3.5 h-3.5 mr-1.5" />
                 Lease Events
