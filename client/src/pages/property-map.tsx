@@ -215,6 +215,12 @@ export default function PropertyMap() {
     queryKey: ["/api/external-properties"],
   });
 
+  // BGP's OWN available units — shown on the same "Available Properties" layer
+  // in a distinct colour, so the map shows market stock + our stock together.
+  const { data: bgpAvailable = [] } = useQuery<any[]>({
+    queryKey: ["/api/available-units"],
+  });
+
   const { toast } = useToast();
   const importPipnet = useMutation({
     // Background job — geocoding + brochure download per listing exceeds the
@@ -529,7 +535,43 @@ export default function PropertyMap() {
       });
       pipnetMarkersRef.current.push(marker);
     }
-  }, [externalProps, showPipnet, scriptReady, mapZoom]);
+
+    // BGP's own available units (emerald) — coords come from the linked
+    // crm_property's address json.
+    for (const u of bgpAvailable) {
+      let addr: any = u.propertyAddress;
+      if (typeof addr === "string") { try { addr = JSON.parse(addr); } catch { addr = null; } }
+      const lat = parseFloat(addr?.lat);
+      const lng = parseFloat(addr?.lng);
+      if (isNaN(lat) || isNaN(lng)) continue;
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: showMarkers ? googleMapRef.current! : null,
+        title: `${u.propertyName || ""} ${u.unitName || ""}`.trim(),
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: "#10b981", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+      marker.addListener("click", () => {
+        const money = (v: any) => (v == null ? null : `£${Number(v).toLocaleString()}`);
+        const rows = [
+          u.sqft ? `${Number(u.sqft).toLocaleString()} sq ft` : null,
+          u.askingRent ? `Rent: ${money(u.askingRent)} pa` : null,
+          u.serviceChargePa ? `Service charge: ${money(u.serviceChargePa)} pa` : null,
+          u.useClass ? `Use: ${u.useClass}` : null,
+          u.marketingStatus ? `Status: ${u.marketingStatus}` : null,
+        ].filter(Boolean).map((t) => `<p style="font-size:11px;color:#555;margin:2px 0;">${t}</p>`).join("");
+        const content = `
+          <div style="padding:8px;max-width:260px;">
+            <p style="font-weight:600;font-size:14px;margin:0 0 2px;">${u.propertyName || "Property"}${u.unitName ? " — " + u.unitName : ""}</p>
+            <span style="display:inline-block;background:#10b981;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">BGP available</span>
+            ${rows}
+            <a href="/properties/${u.propertyId}" style="font-size:11px;color:#3b82f6;display:block;margin-top:6px;">View property →</a>
+          </div>`;
+        pipnetInfoRef.current!.setContent(content);
+        pipnetInfoRef.current!.open(googleMapRef.current!, marker);
+      });
+      pipnetMarkersRef.current.push(marker);
+    }
+  }, [externalProps, bgpAvailable, showPipnet, scriptReady, mapZoom]);
 
   // Toggle marker visibility based on zoom level to prevent overlap at low zoom
   useEffect(() => {
@@ -961,7 +1003,7 @@ export default function PropertyMap() {
             data-testid="button-toggle-pipnet-layer"
           >
             <span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{ background: "#06b6d4" }} />
-            Available Properties ({externalProps.length})
+            Available Properties ({externalProps.length + bgpAvailable.length})
           </Button>
         </div>
       </div>
