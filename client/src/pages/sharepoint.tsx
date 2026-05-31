@@ -612,6 +612,21 @@ export default function SharePoint() {
     }
   }, [toast]);
 
+  // Listen for OAuth completion from popup (for reconnect flow). Must run
+  // before any early return below so the hook order stays stable.
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "microsoft_connected") {
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
+        toast({ title: "Reconnected to Microsoft 365" });
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [toast]);
+
   if (statusLoading) {
     return (
       <div className="p-4 sm:p-6 space-y-4">
@@ -672,20 +687,6 @@ export default function SharePoint() {
       toast({ title: "Reconnect failed", description: "Could not start Microsoft sign-in.", variant: "destructive" });
     }
   };
-
-  // Listen for OAuth completion from popup (for reconnect flow)
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "microsoft_connected") {
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
-        toast({ title: "Reconnected to Microsoft 365" });
-      }
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [toast]);
 
   const breadcrumb = [{ id: "root", name: "BGP SharePoint" }, ...folderStack];
 
