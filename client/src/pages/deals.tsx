@@ -5666,13 +5666,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     href: `/deals/${deal.id}`,
                     status: deal.status || undefined,
                     statusColor: DEAL_STATUS_COLORS[deal.status || ""] || "bg-muted-foreground",
+                    // Billing leads \u2014 fee first, then rent. Type/agent follow.
                     fields: [
-                      { label: "Type", value: deal.dealType, badge: true },
-                      { label: "Team", value: teams },
-                      { label: "Agent", value: agents },
-                      { label: "Asset Class", value: deal.assetClass },
                       { label: "Fee", value: deal.fee ? `\u00A3${Number(deal.fee).toLocaleString()}` : null },
-                      { label: "Headline Rent", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
+                      { label: "Rent p.a.", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
+                      { label: "Type", value: deal.dealType, badge: true },
+                      { label: "Agent", value: agents },
                     ],
                   };
                 })}
