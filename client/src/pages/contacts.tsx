@@ -43,6 +43,8 @@ import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCardView } from "@/components/mobile-card-view";
 import { useRoute, Link } from "wouter";
 import { apiRequest, queryClient, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1426,6 +1428,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     return Array.from(allocs).sort();
   }, [contacts]);
 
+  const isMobile = useIsMobile();
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
     const hasSearch = !!search.trim();
@@ -1764,6 +1767,23 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 </p>
               </CardContent>
             </Card>
+          ) : isMobile ? (
+            <MobileCardView
+              emptyMessage="No contacts found"
+              items={filteredContacts.map((c: any) => ({
+                id: c.id,
+                title: c.name || c.email || "Unknown",
+                subtitle: c.companyName || undefined,
+                status: c.contactType || undefined,
+                href: `/contacts/${c.id}`,
+                fields: [
+                  { label: "Role", value: c.role || c.jobTitle },
+                  { label: "Email", value: c.email },
+                  { label: "Phone", value: c.phone || c.phoneMobile },
+                  { label: "Specialty", value: c.agentSpecialty },
+                ],
+              }))}
+            />
           ) : (
             <Card>
               <ScrollableTable minWidth={2200}>

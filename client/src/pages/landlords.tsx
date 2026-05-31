@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCardView } from "@/components/mobile-card-view";
 import {
   Search, Building2, Briefcase, Users, BarChart3, Crosshair,
   Crown, MapPin, ChevronRight, ArrowUpDown, Landmark,
@@ -54,6 +56,7 @@ export default function LandlordsPage() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("total_fee");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const isMobile = useIsMobile();
 
   const { data, isLoading } = useQuery<{ landlords: Landlord[] }>({
     queryKey: ["/api/crm/landlords"],
@@ -217,7 +220,27 @@ export default function LandlordsPage() {
       )}
 
       {/* ── Portfolio (full sortable table) ──────────────────────── */}
-      {activeTab === "portfolio" && (
+      {activeTab === "portfolio" && isMobile && (
+        <MobileCardView
+          emptyMessage="No landlords match"
+          items={sorted.map(l => ({
+            id: l.id,
+            title: l.name,
+            subtitle: l.company_type || l.domain || undefined,
+            status: l.investment_hunter_flag ? "Hunter" : undefined,
+            statusColor: "bg-amber-500",
+            href: `/companies/${l.id}`,
+            fields: [
+              { label: "Active deals", value: l.active_deals || 0 },
+              { label: "Total fee", value: formatGBP(Number(l.total_fee) || 0) },
+              { label: "Properties", value: l.property_count || 0 },
+              { label: "Contacts", value: l.contact_count || 0 },
+              { label: "Last touch", value: formatRelative(l.last_deal_update || l.last_interaction_at) },
+            ],
+          }))}
+        />
+      )}
+      {activeTab === "portfolio" && !isMobile && (
         <Card>
           <CardContent className="p-0">
             <Table>
