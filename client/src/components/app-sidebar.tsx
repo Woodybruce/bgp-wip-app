@@ -112,7 +112,7 @@ const aiNav = [
   { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
   // Model Studio / Document Studio / Document Briefs / Decks parked in
   // the Admin section pending fixes — see adminNavBase.
-  { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
+  { title: "Image Studio", url: "/image-studio", icon: ImageIcon, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
 ];
@@ -500,7 +500,7 @@ const mobileOverlayItems = [
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon, adminOnly: true },
   { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI", adminOnly: true },
-  { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
+  { title: "Image Studio", url: "/image-studio", icon: ImageIcon, adminOnly: true },
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Mail", url: "/mail", icon: Mail },
