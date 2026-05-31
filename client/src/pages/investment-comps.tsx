@@ -666,6 +666,27 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     updateMutation.mutate({ id, field, value });
   };
 
+  // Promote a comp into the CRM on demand — creates a crm_property from the
+  // comp's details and links it (sets propertyId). Comps otherwise stay purely
+  // in the investment-comps table, out of the CRM.
+  const addToCrm = async (comp: InvestmentComp) => {
+    try {
+      const res = await apiRequest("POST", "/api/crm/properties", {
+        name: comp.propertyName || (comp as any).address || "Investment property",
+        address: (comp as any).address ? { address: (comp as any).address } : null,
+        assetClass: (comp as any).type || null,
+        status: "BGP Targeting",
+      });
+      const created = await res.json();
+      await apiRequest("PUT", `/api/investment-comps/${comp.id}`, { propertyId: created.id });
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-comps"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Added to CRM", description: `${created.name} created and linked to this comp.` });
+    } catch (e: any) {
+      toast({ title: "Couldn't add to CRM", description: e.message, variant: "destructive" });
+    }
+  };
+
   const renderCell = (comp: InvestmentComp, col: typeof ALL_COLUMNS[0]) => {
     const id = comp.id;
     const key = col.key as keyof InvestmentComp;
@@ -687,6 +708,14 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               onSave={(v) => handleUpdate(id, "propertyId", v)}
               compact
             />
+            {!comp.propertyId && (
+              <button
+                onClick={() => addToCrm(comp)}
+                title="Create a CRM property from this comp and link it"
+                className="text-[10px] px-1.5 py-0.5 rounded border border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+                data-testid={`add-to-crm-${id}`}
+              >+ CRM</button>
+            )}
           </div>
         );
 

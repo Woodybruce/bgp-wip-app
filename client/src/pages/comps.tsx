@@ -1864,6 +1864,8 @@ export default function Comps() {
   const [deleteComp, setDeleteComp] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  // Default to Leasing. The Leads tab is parked (admin-only, reached via
+  // /admin/comps-leads → /comps?tab=leads) and not shown in the normal bar.
   const VALID_TABS = ["table", "investment", "leads", "lease-events", "pdf-template"];
   const [activeTab, setActiveTabState] = useState(() => {
     try {
@@ -2337,6 +2339,7 @@ export default function Comps() {
                 <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
                 Investment
               </TabsTrigger>
+              {activeTab === "leads" && (
               <TabsTrigger value="leads" data-testid="tab-comps-leads">
                 <Inbox className="w-3.5 h-3.5 mr-1.5" />
                 Leads
@@ -2346,6 +2349,7 @@ export default function Comps() {
                   </span>
                 )}
               </TabsTrigger>
+              )}
               <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
                 <Bell className="w-3.5 h-3.5 mr-1.5" />
                 Lease Events

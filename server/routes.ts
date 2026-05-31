@@ -2016,6 +2016,50 @@ export async function registerRoutes(
   //                                                       downloaded mirror).
   // Always runs in the background; poll /status. CCOD file is ~150MB so
   // expect 10-30 min depending on instance size.
+  // Reversible cleanup of crm_properties clutter. Snapshots full rows into
+  // crm_properties_archive (JSONB) BEFORE deleting, so anything removed can be
+  // restored. mode:"investment_comps" removes the legacy bulk-loaded investment
+  // comparables (status 'Investment Comp' / group 'Investment Comps'); ids:[...]
+  // removes specific rows (the junk stubs). Dry-run unless confirm:true.
+  app.post("/api/admin/cleanup-crm-properties", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { mode, ids, confirm, reason } = req.body || {};
+      await pool.query(`CREATE TABLE IF NOT EXISTS crm_properties_archive (
+        id TEXT, data JSONB, reason TEXT, archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      let where = "", params: any[] = [];
+      if (mode === "investment_comps") {
+        where = `status = 'Investment Comp' OR group_name = 'Investment Comps'`;
+      } else if (Array.isArray(ids) && ids.length) {
+        where = `id = ANY($1)`; params = [ids];
+      } else {
+        return res.status(400).json({ message: "Provide mode:'investment_comps' or ids:[...]" });
+      }
+      const preview = await pool.query(
+        `SELECT id, name, status, group_name AS "groupName" FROM crm_properties WHERE ${where} LIMIT 1000`, params);
+      if (!confirm) {
+        return res.json({ dryRun: true, matched: preview.rowCount, sample: preview.rows.slice(0, 20) });
+      }
+      // Snapshot then delete, in a transaction.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO crm_properties_archive (id, data, reason)
+           SELECT id, to_jsonb(p), $${params.length + 1} FROM crm_properties p WHERE ${where}`,
+          [...params, reason || mode || "cleanup"]);
+        const del = await client.query(`DELETE FROM crm_properties WHERE ${where}`, params);
+        await client.query("COMMIT");
+        res.json({ archived: preview.rowCount, deleted: del.rowCount, restorableFrom: "crm_properties_archive" });
+      } catch (e: any) {
+        await client.query("ROLLBACK"); throw e;
+      } finally { client.release(); }
+    } catch (err: any) {
+      console.error("[cleanup-crm-properties] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "cleanup failed" });
+    }
+  });
+
   app.post("/api/admin/ingest-ccod", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { ingestCcodFromUrl, ingestLatestFor, resolveHmlrDownloadUrl, getIngestProgress } = await import("./land-registry-ccod");
