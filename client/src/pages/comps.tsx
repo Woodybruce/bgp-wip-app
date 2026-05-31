@@ -2439,6 +2439,7 @@ export default function Comps() {
               data-testid="input-search-comps"
             />
           </div>
+          {!isMobile && (<>
           <Select value={activeVerified} onValueChange={setActiveVerified}>
             <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-verified-filter">
               <SelectValue placeholder="Verified" />
@@ -2472,8 +2473,19 @@ export default function Comps() {
               <FilterX className="w-3.5 h-3.5" /> Clear
             </Button>
           )}
+          </>)}
         </div>
 
+        {isMobile ? (
+          <Select value={activeArea} onValueChange={setActiveArea}>
+            <SelectTrigger className="h-9 w-full text-sm mt-3" data-testid="select-area-filter">
+              <SelectValue placeholder="All Areas" />
+            </SelectTrigger>
+            <SelectContent>
+              {AREA_GROUPS.map(area => <SelectItem key={area} value={area}>{area}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
           {AREA_GROUPS.map(area => (
             <button
@@ -2490,6 +2502,7 @@ export default function Comps() {
             </button>
           ))}
         </div>
+        )}
         </>
         )}
       </div>
