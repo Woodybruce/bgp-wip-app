@@ -1126,11 +1126,12 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
   );
 }
 
-function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, currentUser }: {
+function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, onShowList, currentUser }: {
   threadId: string | null;
   isAiChat: boolean;
   onBack: () => void;
   onNewChat?: () => void;
+  onShowList?: () => void;
   currentUser: UserType | null;
 }) {
   const [localThreadId, setLocalThreadId] = useState<string | null>(null);
@@ -2029,6 +2030,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
               </div>
             </button>
             <div className="flex items-center gap-0.5">
+              {onShowList && (
+                <button
+                  onClick={onShowList}
+                  className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
+                  data-testid="button-mobile-chat-list"
+                  aria-label="All conversations"
+                >
+                  <MessageSquare className="w-[18px] h-[18px] text-gray-400" />
+                </button>
+              )}
               <button
                 onClick={() => setSearchInChat(!searchInChat)}
                 className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
@@ -3164,6 +3175,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           }
         }}
         onNewChat={openNewAiChat}
+        onShowList={() => {
+          // Surface the WhatsApp-style conversation list (ChatBGP history +
+          // internal team chats) instead of leaving the shell.
+          queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+          setChatFromList(false);
+          setActiveThreadId(null);
+          setShowChat(false);
+          setTab("chats");
+        }}
         currentUser={currentUser ?? null}
       />
     );
@@ -3184,9 +3204,21 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     <div className="flex flex-col w-screen bg-[#FAF9F7] overflow-x-hidden fixed inset-0">
       <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
-          <h1 className="text-[22px] font-semibold tracking-tight">
-            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : tab === "today" ? "Today" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
-          </h1>
+          <div className="flex items-center gap-2 min-w-0">
+            {tab === "chats" && (
+              <button
+                onClick={() => { if (window.history.length > 1) window.history.back(); else navigate("/"); }}
+                className="w-9 h-9 -ml-2 rounded-full flex items-center justify-center active:bg-white/10 shrink-0"
+                data-testid="button-mobile-chats-back"
+                aria-label="Back"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <h1 className="text-[22px] font-semibold tracking-tight truncate">
+              {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : tab === "today" ? "Today" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
+            </h1>
+          </div>
           <div className="flex items-center gap-2">
             {tab === "chats" && (
               <button onClick={() => setShowNewGroup(true)} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-new-group">
