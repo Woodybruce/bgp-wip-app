@@ -1,15 +1,29 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
-  AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun,
+  AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, ChevronDown,
 } from "lucide-react";
 
 type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
 type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null };
 type DealSummary = { id: string; name: string; status: string; property_name?: string | null };
+type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string };
+
+// Core boards shown on Home by default. Everything else (admin / WIP tools)
+// hides behind "Show all" so the home screen stays focused on daily work.
+const CORE_BOARD_URLS = new Set(["/tasks", "/comps", "/brands", "/property-intelligence", "/mail", "/sharepoint"]);
+
+// Pence → compact £ (e.g. £1.2m, £340k, £980)
+function fmtMoney(pence: number | undefined | null): string {
+  const p = Math.round((pence || 0) / 100);
+  if (p >= 1_000_000) return `£${(p / 1_000_000).toFixed(p >= 10_000_000 ? 0 : 1)}m`;
+  if (p >= 1_000) return `£${Math.round(p / 1_000)}k`;
+  return `£${p.toLocaleString("en-GB")}`;
+}
 
 const QUICK_LINKS = [
   { label: "Deals", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
@@ -37,15 +51,25 @@ export default function MobileHome() {
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: deals = [] } = useQuery<DealSummary[]>({ queryKey: ["/api/crm/deals?limit=5&sort=updated"] });
+  const { data: commission } = useQuery<Commission>({
+    queryKey: [`/api/hr/staff/${user?.id}/commission`],
+    queryFn: () => apiRequest("GET", `/api/hr/staff/${user?.id}/commission`).then(r => r.json()),
+    enabled: !!user?.id,
+  });
 
   const completeTask = useMutation({
     mutationFn: (id: string) => apiRequest("PATCH", `/api/tasks/${id}`, { status: "done" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/tasks"] }),
   });
 
+  const [showAllBoards, setShowAllBoards] = useState(false);
   // The bottom-nav "More" drawer is gone — board navigation lives here.
-  // Show every non-admin board (admins additionally see the WIP tools).
-  const boards = (mobileOverlayItems as any[]).filter(b => user?.isAdmin || !b.adminOnly);
+  // Default to the core daily boards; the rest (admin / WIP tools) sit behind
+  // "Show all" so Home stays focused. Admins still get their extra tools.
+  const visibleBoards = (mobileOverlayItems as any[]).filter(b => user?.isAdmin || !b.adminOnly);
+  const coreBoards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url));
+  const moreBoards = visibleBoards.filter(b => !CORE_BOARD_URLS.has(b.url));
+  const boards = showAllBoards ? [...coreBoards, ...moreBoards] : coreBoards;
   const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -77,6 +101,35 @@ export default function MobileHome() {
         <ChevronRight className="w-4 h-4 ml-auto opacity-70" />
       </button>
 
+      {/* My billing & commission — the number everyone wants to see */}
+      {commission && (
+        <Link
+          href="/hr"
+          className="block rounded-2xl bg-[#1C1917] text-white shadow-sm active:opacity-90 px-4 py-3.5"
+          data-testid="mobile-home-commission"
+        >
+          <div className="flex items-center gap-2 mb-2.5">
+            <Wallet className="w-4 h-4 opacity-80" />
+            <span className="text-xs font-semibold uppercase tracking-wider opacity-80">My billing — {commission.schemeYear}</span>
+            <ChevronRight className="w-4 h-4 ml-auto opacity-60" />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.billedPence)}</p>
+              <p className="text-[10px] opacity-70">Billed</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.commissionEarned)}</p>
+              <p className="text-[10px] opacity-70">Commission</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold tabular-nums leading-tight text-emerald-400">{fmtMoney(commission.commissionForecast)}</p>
+              <p className="text-[10px] opacity-70">Potential</p>
+            </div>
+          </div>
+        </Link>
+      )}
+
       {/* Quick links */}
       <div className="grid grid-cols-4 gap-2">
         {QUICK_LINKS.map(q => (
@@ -87,7 +140,7 @@ export default function MobileHome() {
         ))}
       </div>
 
-      {/* All boards — full navigation (replaces the old More drawer) */}
+      {/* Boards — core daily boards, with the rest behind "Show all" */}
       <section>
         <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">Boards</h2>
         <div className="grid grid-cols-4 gap-2">
@@ -99,6 +152,16 @@ export default function MobileHome() {
             </Link>
           ))}
         </div>
+        {moreBoards.length > 0 && (
+          <button
+            onClick={() => setShowAllBoards(v => !v)}
+            className="mt-2 mx-auto flex items-center gap-1 text-[11px] font-medium text-muted-foreground active:text-foreground"
+            data-testid="mobile-home-toggle-boards"
+          >
+            {showAllBoards ? "Show less" : `Show all (${moreBoards.length} more)`}
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAllBoards ? "rotate-180" : ""}`} />
+          </button>
+        )}
       </section>
 
       {/* Today — actionable alerts */}
