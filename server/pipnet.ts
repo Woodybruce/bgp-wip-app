@@ -1519,30 +1519,37 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
     };
   } catch (e: any) { out.liveSearch = { error: e?.message }; }
 
-  // Fetch one property DETAIL page (detailsdetails.jsp) and dump its label/value
-  // pairs + brochure link — this is where Rent / Service Charge / Rateable Value
-  // / Tenure / Availability / Use live. Tells us the exact labels to map.
-  if (firstHref) {
-    try {
-      const folderId = firstHref.match(/folderid=(\d+)/i)?.[1] || null;
-      const url = folderId ? `${PIPNET_URL}/detailsdetails.jsp?folderid=${folderId}`
-                           : `${PIPNET_URL}/${firstHref.replace(/^\//, "")}`;
-      const r = await pipFetch(url, { headers: { Cookie: cookie } });
+  // CLEAN detail test: fresh session → property search → fetch the first
+  // listing's detail IMMEDIATELY in the same session (no intervening fetches),
+  // exactly as the importer will. Try the href as-is (index+folderid) and
+  // folderid-only. This avoids the session-expiry artifact from all the
+  // exploratory fetches above.
+  try {
+    resetSession();
+    const rows = await searchPipnetProperties({});
+    const href = rows.map(r => r._detailHref).find(Boolean) || null;
+    const cookie2 = sessionCookie || cookie;
+    const folderId = href?.match(/folderid=(\d+)/i)?.[1] || null;
+    const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+    const probe = async (label: string, u: string) => {
+      const r = await pipFetch(u, { headers: { Cookie: cookie2 } });
       const html = await r.text();
-      const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+      const isLogin = /Please provide your account information|name="password"/i.test(html);
       const fields: Record<string, string> = {};
       for (const m of html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&k.length<60)fields[k]=v; }
-      for (const m of html.matchAll(/<td[^>]*class="[^"]*(?:label|fieldLabel|key)[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&k.length<60&&!(k in fields))fields[k]=v; }
       for (const m of html.matchAll(/<td[^>]*>\s*([^<:]{2,40}):\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) { const k=clean(m[1]),v=clean(m[2]); if(k&&v&&!(k in fields))fields[k]=v; }
-      const broch = html.match(/<a[^>]+href="([^"]*allreqimages[^"]*|[^"]*allimages[^"]*|[^"]*viewallimages[^"]*)"/i)?.[1]
-        || html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*View All Images\s*<\/a>/i)?.[1] || null;
-      // Page is small + uses an unknown layout — dump all table cells and the
-      // full HTML so we can see exactly how Rent / Service Charge are presented.
       const cells = [...html.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => clean(m[1])).filter(Boolean);
-      const allLinks = [...html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].map(m => ({ href: m[1], text: clean(m[2]) }));
-      out.propertyDetail = { url, status: r.status, isError: /unexpected error/i.test(html), htmlLength: html.length, fields, brochure: broch, cells, allLinks, fullHtml: html.slice(0, 4000) };
-    } catch (e: any) { out.propertyDetail = { error: e?.message }; }
-  }
+      const links = [...html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].map(m => ({ href: m[1], text: clean(m[2]) }));
+      const broch = links.find(l => /image|brochure|pdf|pack|view all/i.test(l.href + " " + l.text));
+      return { label, url: u, status: r.status, isLogin, isError: /unexpected error/i.test(html), htmlLength: html.length, fields, cells, links, brochure: broch || null, fullHtml: html.slice(0, 4000) };
+    };
+    out.cleanDetail = { firstHref: href };
+    if (href) {
+      const urlA = href.startsWith("http") ? href : `${PIPNET_URL}/${href.replace(/^\//, "")}`;
+      out.cleanDetail.A_asIs = await probe("as-is (index+folderid)", urlA);
+      if (folderId) out.cleanDetail.B_folderOnly = await probe("folderid-only", `${PIPNET_URL}/detailsdetails.jsp?folderid=${folderId}`);
+    }
+  } catch (e: any) { out.cleanDetail = { error: e?.message }; }
 
   return out;
 }
