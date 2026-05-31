@@ -1125,6 +1125,25 @@ export default function AvailableUnitsPage() {
       </div>
 
       {/* KPI stat cards — matching Investment Tracker style */}
+      {isMobile ? (
+        <div className="flex flex-wrap gap-1.5">
+          {MARKETING_STATUSES.map(s => {
+            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            return (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+                data-testid={`stat-chip-${s.toLowerCase()}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_STATUS_LABELS[s]}
+                <span className="font-bold tabular-nums">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
       <ScrollArea className="w-full">
         <div className="flex items-center gap-3 pb-1">
           {MARKETING_STATUSES.map(s => {
@@ -1150,6 +1169,7 @@ export default function AvailableUnitsPage() {
           })}
         </div>
       </ScrollArea>
+      )}
 
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-sm">

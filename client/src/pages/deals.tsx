@@ -5458,6 +5458,30 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       testId={isCompsMode ? "comps-page" : "deals-page"}
     >
 
+      {isMobile ? (
+        <div className="flex flex-wrap gap-1.5 shrink-0">
+          <button
+            onClick={() => setActiveGroup("all")}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === "all" ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+            data-testid="chip-group-all"
+          >
+            {isCompsMode ? "All Comps" : "All"}
+            <span className="font-bold tabular-nums">{teamFilteredDeals.length}</span>
+          </button>
+          {statusCounts.map((s) => (
+            <button
+              key={s.name}
+              onClick={() => setActiveGroup(activeGroup === s.name ? "all" : s.name)}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === s.name ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+              data-testid={`chip-status-${s.name}`}
+            >
+              <span className={`w-2 h-2 rounded-full ${DEAL_STATUS_COLORS[s.name] || "bg-primary/60"}`} />
+              {s.name}
+              <span className="font-bold tabular-nums">{s.count}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
       <ScrollArea className="w-full shrink-0">
         <div className="flex items-center gap-3 pb-1">
           <Card
@@ -5499,6 +5523,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           ))}
         </div>
       </ScrollArea>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap shrink-0">
         <div className="relative flex-1 min-w-[200px]">
