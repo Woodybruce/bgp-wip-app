@@ -5,6 +5,8 @@ import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
@@ -434,6 +436,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
   const isInvestment = currentUser?.team === "Investment";
 
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -1035,6 +1038,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               onChange={handleFileUpload}
               data-testid="input-file-upload"
             />
+            {!isMobile && (<>
             <Button
               variant="outline"
               size="sm"
@@ -1090,6 +1094,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
                 ))}
               </PopoverContent>
             </Popover>
+            </>)}
 
             <Button
               size="sm"
@@ -1126,6 +1131,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               </button>
             )}
           </div>
+          {!isMobile && (<>
           <Select value={filterStatus || "all"} onValueChange={(v) => setFilterStatus(v === "all" ? "" : v)}>
             <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-toolbar-status">
               <SelectValue placeholder="Status" />
@@ -1158,8 +1164,19 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               <FilterX className="w-3.5 h-3.5" /> Clear
             </Button>
           )}
+          </>)}
         </div>
 
+        {isMobile ? (
+          <Select value={activeRegion} onValueChange={setActiveRegion}>
+            <SelectTrigger className="h-9 w-full text-sm mt-3" data-testid="select-region-filter">
+              <SelectValue placeholder="All Regions" />
+            </SelectTrigger>
+            <SelectContent>
+              {REGION_GROUPS.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
           {REGION_GROUPS.map(region => (
             <button
@@ -1176,6 +1193,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {selectedIds.size > 0 && (
@@ -1188,6 +1206,43 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
       )}
 
       <div className="flex-1 overflow-auto">
+        {isMobile ? (
+          <div className="grid grid-cols-1 gap-3 p-3">
+            {filtered.length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground">No comps match your filters</div>
+            ) : filtered.map(c => {
+              const sub = [c.city, c.market].filter(Boolean).join(" · ") || undefined;
+              const rows = [
+                { label: "Price", value: c.price != null ? formatCurrency(c.price) : null },
+                { label: "Cap rate", value: c.capRate != null ? formatPercent(c.capRate) : null },
+                { label: "£/sf", value: c.pricePsf != null ? formatPsf(c.pricePsf) : null },
+                { label: "Buyer", value: c.buyer },
+                { label: "Seller", value: c.seller },
+              ].filter(r => r.value);
+              return (
+                <div key={c.id} className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`invcomp-card-${c.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm font-semibold leading-tight block truncate">{c.propertyName || c.address || "Untitled"}</span>
+                      {sub && <p className="text-xs text-muted-foreground truncate mt-0.5">{sub}</p>}
+                    </div>
+                    {c.subtype && <Badge variant="outline" className="shrink-0 text-[10px] px-2 py-0.5">{c.subtype}</Badge>}
+                  </div>
+                  {rows.length > 0 && (
+                    <div className="space-y-1.5">
+                      {rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground shrink-0">{r.label}</span>
+                          <span className="font-medium truncate text-right">{String(r.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
         <table className="w-full" data-testid="table-comps">
           <thead className="sticky top-0 bg-background border-b z-10 text-sm">
             <tr>
@@ -1288,6 +1343,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             )}
           </tbody>
         </table>
+        )}
       </div>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
