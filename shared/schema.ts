@@ -1203,6 +1203,7 @@ export const leaseEvents = pgTable("lease_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id"),
   address: text("address"),
+  landlord: text("landlord"),
   tenant: text("tenant"),
   tenantCompanyId: varchar("tenant_company_id"),
   unitRef: text("unit_ref"),

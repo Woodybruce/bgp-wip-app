@@ -40,6 +40,7 @@ import { pool } from "./db";
   const MIGRATIONS: string[] = [
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_url TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_title TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`,
