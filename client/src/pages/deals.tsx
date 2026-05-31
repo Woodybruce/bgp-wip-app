@@ -4788,7 +4788,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
-    typeof window !== "undefined" && window.innerWidth < 768 ? "board" : "table"
+    // Mobile defaults to the stacked Card view (fits the phone). The kanban
+    // Board view overflows horizontally on a phone, so it's opt-in there.
+    typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
   );
 
   useEffect(() => {

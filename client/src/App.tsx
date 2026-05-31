@@ -437,7 +437,7 @@ function AuthenticatedApp() {
             })()}
           </span>
         </div>
-        <div className="flex-1 overflow-y-auto min-h-0 pb-14 md:pb-0">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 pb-14 md:pb-0">
           <Router />
         </div>
         <MobileBottomNav onMoreTap={() => setMobileSidebarOpen(true)} />
