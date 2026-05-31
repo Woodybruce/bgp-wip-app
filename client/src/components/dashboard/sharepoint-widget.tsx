@@ -135,7 +135,7 @@ export function SharePointWidget() {
   };
 
   return (
-    <Card className="h-full flex flex-col" data-testid="widget-sharepoint">
+    <Card className="h-full flex flex-col overflow-hidden" data-testid="widget-sharepoint">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-4 h-4 text-blue-600" />

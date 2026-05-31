@@ -2178,9 +2178,9 @@ export default function Dashboard() {
               </div>
               <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}`}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
             </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-0 flex-1 overflow-hidden flex flex-col">
               {filteredReqs.length > 0 ? (
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                <div className="space-y-1.5 flex-1 overflow-y-auto">
                   {filteredReqs.map(r => (
                     <div key={r.id} className="flex items-center gap-2.5 p-2 rounded-md border text-xs" data-testid={`new-req-${r.id}`}>
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isInvestmentTeam ? "bg-amber-500/10" : "bg-blue-500/10"}`}>
