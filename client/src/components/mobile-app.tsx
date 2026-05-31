@@ -3215,6 +3215,16 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            {tab === "ai" && (
+              <button onClick={() => { setTab("chats"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-team-chats" aria-label="Team chats">
+                <Users className="w-5 h-5" />
+              </button>
+            )}
+            {tab === "chats" && (
+              <button onClick={() => { setTab("ai"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-chatbgp" aria-label="ChatBGP history">
+                <Sparkles className="w-5 h-5" />
+              </button>
+            )}
             {tab === "chats" && (
               <button onClick={() => setShowNewGroup(true)} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-new-group">
                 <Plus className="w-5 h-5" />
@@ -4476,25 +4486,6 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         </div>
       )}
 
-      <div className="bg-[#FAF9F7]/90 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] shrink-0" style={{ boxShadow: "0 -1px 0 rgba(0,0,0,0.04)" }}>
-        <div className="flex items-stretch justify-around px-1 pt-2 pb-1">
-          <button onClick={() => { setTab("chats"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "chats" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-chats">
-            <div className="relative">
-              <MessageSquare className="w-[22px] h-[22px]" strokeWidth={tab === "chats" ? 2.2 : 1.8} />
-              {unseenCount > 0 && (
-                <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
-                  {unseenCount > 99 ? "99+" : unseenCount}
-                </span>
-              )}
-            </div>
-            <span className={`text-[10px] tracking-tight ${tab === "chats" ? "font-semibold" : "font-medium"}`}>Chats</span>
-          </button>
-          <button onClick={() => { setTab("ai"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "ai" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-ai">
-            <Sparkles className="w-[22px] h-[22px]" strokeWidth={tab === "ai" ? 2.2 : 1.8} fill={tab === "ai" ? "currentColor" : "none"} />
-            <span className={`text-[10px] tracking-tight ${tab === "ai" ? "font-semibold" : "font-medium"}`}>ChatBGP</span>
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
