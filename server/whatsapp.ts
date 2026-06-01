@@ -494,7 +494,17 @@ export function setupWhatsAppRoutes(app: Express) {
               const fromNumber = msg.from;
               const contactInfo = value.contacts?.[0];
               const contactName = contactInfo?.profile?.name || null;
-              const messageBody = msg.text?.body || msg.type || "[Media]";
+              const mediaObj = msg.document || msg.image;
+              const mediaCaption = (msg.document?.caption || msg.image?.caption || "").trim();
+              // Store media with a descriptive body rather than a bare
+              // "[Media]" — the latter is filtered out of ChatBGP history, so
+              // a brochure/file event would otherwise vanish and the agent
+              // loses continuity on follow-up messages.
+              const messageBody = msg.text?.body
+                || (msg.document ? `[Sent file: ${msg.document.filename || "document"}]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
+                || (msg.image ? `[Sent an image]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
+                || msg.type
+                || "[Media]";
 
               const conversation = await storage.upsertWaConversation(
                 fromNumber,
@@ -543,8 +553,6 @@ export function setupWhatsAppRoutes(app: Express) {
               // so it can read the file and respond conversationally, like on the
               // dashboard. The universal-ingest pipeline (built on the other
               // branch) is preserved and still triggered when intent is clear.
-              const mediaObj = msg.document || msg.image;
-              const mediaCaption = (msg.document?.caption || msg.image?.caption || "").trim();
               const captionWantsImport = /\b(import|ingest|add|upload|save|file)\s+(this|that|it|the\s+\w+)\b|\b(this is|here'?s)\s+(a\s+)?(brochure|deal|property|leasing|rent|schedule|contact|company|list)\b/i.test(mediaCaption);
               const shouldAutoIngest = (msg.type === "document" || msg.type === "image") && captionWantsImport;
 
@@ -563,7 +571,7 @@ export function setupWhatsAppRoutes(app: Express) {
                         const { ingestAvailableProperty } = await import("./property-ingest");
                         const avail = await ingestAvailableProperty({ source: "WhatsApp", pdfBuffer: bytes, originalName: overrideName });
                         if (avail.ok && avail.confidence !== "low") {
-                          await sendWhatsAppText(config, fromNumber, `✅ Added to Available Properties: ${avail.address}${avail.duplicate ? " (updated existing)" : ""}`);
+                          await sendAndStoreReply(`✅ Added to Available Properties: ${avail.address}${avail.duplicate ? " (updated existing)" : ""}`, fromNumber, conversation.id, contactName, config);
                           return;
                         }
                       } catch (err: any) {
@@ -573,7 +581,7 @@ export function setupWhatsAppRoutes(app: Express) {
                     const result = await ingestBytes({ bytes, filename: overrideName, userId: fromNumber, userName: contactName || fromNumber });
                     const errCount = Array.isArray(result.errors) ? result.errors.length : 0;
                     const reply = `✅ Imported from ${overrideName}:\n${result.narrative}\n\n${result.written} record(s) written${errCount > 0 ? `, ${errCount} error(s)` : ""}.`;
-                    await sendWhatsAppText(config, fromNumber, reply);
+                    await sendAndStoreReply(reply, fromNumber, conversation.id, contactName, config);
                     if (mediaCaption) {
                       const followUp = `${mediaCaption}\n\n[Context: I just imported the file "${overrideName}" — ${result.written} record(s) created. Reply to the user about their question or instruction above, in light of the import result.]`;
                       runChatBgpWhatsAppReply(followUp, fromNumber, contactName, conversation.id, config).catch(
@@ -582,7 +590,7 @@ export function setupWhatsAppRoutes(app: Express) {
                     }
                   } catch (err: any) {
                     console.error("[whatsapp-ingest]", err?.message);
-                    await sendWhatsAppText(config, fromNumber, `❌ Couldn't import that file: ${err?.message || "unknown error"}. Try sending it via the BGP app instead.`).catch(() => {});
+                    await sendAndStoreReply(`❌ Couldn't import that file: ${err?.message || "unknown error"}. Try sending it via the BGP app instead.`, fromNumber, conversation.id, contactName, config).catch(() => {});
                   }
                 })();
                 continue;
@@ -647,7 +655,11 @@ export function setupWhatsAppRoutes(app: Express) {
                         source: "whatsapp",
                         userId: matchingUser?.id || null,
                         caption: mediaCaption,
-                        sendReply: (text) => sendWhatsAppText(config, fromNumber, text),
+                        // Store every pipeline reply as an outbound message so
+                        // ChatBGP reads "created Marylebone Village (Pipeline)
+                        // from a brochure" on the next turn instead of losing
+                        // the thread and confabulating a different property.
+                        sendReply: (text) => sendAndStoreReply(text, fromNumber, conversation.id, contactName, config),
                       });
                       if (result.handled) return;
                     } catch (err: any) {
