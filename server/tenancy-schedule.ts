@@ -595,6 +595,28 @@ const HEADER_ALIASES: Record<string, string> = {
   "turnover percent": "turnover_percent",
   "turnover": "turnover_percent",
   "blended erv": "blended_erv",
+  // Grosvenor / common UK tenancy-schedule variants
+  "lease name": "tenant_name",          // Grosvenor labels the tenant the "Lease Name"
+  "lessee": "tenant_name",
+  "occupier": "tenant_name",
+  "lease from": "lease_start",
+  "lease from date": "lease_start",
+  "contract end date": "lease_expiry",
+  "lease end": "lease_expiry",
+  "lease end date": "lease_expiry",
+  "area sq ft": "nia_sqft",
+  "area": "nia_sqft",
+  "net internal area": "nia_sqft",
+  "size sq ft": "nia_sqft",
+  "erv": "erv_pa",
+  "estimated rental value": "erv_pa",
+  "break expiration date": "break_date",
+  "break option": "break_date",
+  "next rent review date": "next_review_date",
+  "rent review date": "next_review_date",
+  "inside the 1954 act": "outside_lt_act",   // value text carries the meaning
+  "inside 1954 act": "outside_lt_act",
+  "1954 act": "outside_lt_act",
 };
 
 router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("file"), async (req: any, res) => {
@@ -640,9 +662,13 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     // Build column index → DB field map for this sheet.
     const headerRow = data[bestHeaderIdx] || [];
     const colToField: Record<number, string> = {};
+    const unmatchedHeaders: string[] = [];
     for (let c = 0; c < headerRow.length; c++) {
-      const field = HEADER_ALIASES[normaliseHeader(headerRow[c])];
+      const raw = headerRow[c];
+      if (raw == null || String(raw).trim() === "") continue;
+      const field = HEADER_ALIASES[normaliseHeader(raw)];
       if (field) colToField[c] = field;
+      else unmatchedHeaders.push(String(raw).trim());
     }
 
     const clearExisting = req.body.clearExisting === "true";
@@ -718,12 +744,16 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       console.warn("[tenancy-import] resolver pass failed:", e?.message);
     }
 
+    const unmatchedNote = unmatchedHeaders.length > 0
+      ? ` · Unrecognised columns (not imported): ${unmatchedHeaders.join(", ")}`
+      : "";
     res.json({
       imported,
       headerRow: bestHeaderIdx + 1,
       mappedColumns: Object.values(colToField),
+      unmatchedHeaders,
       resolution,
-      message: `${imported} units imported${resolution ? ` · ${resolution.resolved}/${resolution.total} tenants resolved` : ""}`,
+      message: `${imported} units imported${resolution ? ` · ${resolution.resolved}/${resolution.total} tenants resolved` : ""}${unmatchedNote}`,
     });
   } catch (e: any) {
     console.error("[tenancy-import] failed:", e);
