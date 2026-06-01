@@ -5869,16 +5869,24 @@ export default function HRPage() {
   const [initialTab, setInitialTab] = useState<string | undefined>(undefined);
 
   // Push the user's selection to the URL so browser back works.
-  // The useEffect below already reads ?person= back into state, so a
-  // back navigation pops the URL and clears the selection automatically.
+  // We set state directly here (not via the URL → useEffect path) because
+  // wouter's useLocation() returns ONLY the pathname — the search string
+  // is invisible to it, so a navigate("/hr?person=xyz") doesn't change
+  // its location value and the effect that reads window.location.search
+  // never re-fires. The popstate listener below handles browser-back
+  // (which actually does fire a location change).
   const selectPerson = (id: string, tab?: string) => {
     const params = new URLSearchParams();
     params.set("person", id);
     if (tab) params.set("tab", tab);
-    navigate(`/hr?${params.toString()}`);
+    setSelectedUserId(id);
+    setInitialTab(tab);
+    window.history.pushState({}, "", `/hr?${params.toString()}`);
   };
   const clearSelection = () => {
-    navigate("/hr");
+    setSelectedUserId(null);
+    setInitialTab(undefined);
+    window.history.pushState({}, "", "/hr");
   };
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
@@ -5886,17 +5894,22 @@ export default function HRPage() {
   const [importSalariesOpen, setImportSalariesOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"org" | "grid">("org");
 
-  // Honour ?person=:id (and optional &tab=:name) from the URL — links from
-  // the You panel set both so 'My Card & Expenses' lands on the right tab.
-  // Also drives browser-back: clearSelection() navigates to /hr (no params)
-  // which fires this effect and clears the selected user.
+  // Honour ?person=:id (and optional &tab=:name) from the URL on first
+  // mount + on browser-back (popstate). selectPerson() / clearSelection()
+  // set state directly so they don't depend on this effect re-firing —
+  // wouter's useLocation() doesn't see query-string changes.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const personId = params.get("person");
-    const tab = params.get("tab") || undefined;
-    setSelectedUserId(personId);   // null when ?person= absent — clears drill-in on back
-    setInitialTab(tab);
-  }, [location]);
+    const sync = () => {
+      const params = new URLSearchParams(window.location.search);
+      const personId = params.get("person");
+      const tab = params.get("tab") || undefined;
+      setSelectedUserId(personId);
+      setInitialTab(tab);
+    };
+    sync();
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
 
   const syncPhotosMutation = useMutation({
     mutationFn: async () => {
