@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, ImageIcon, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { PropertyProvider } from "@/lib/property-context";
 
@@ -104,18 +103,11 @@ export default function PropertyIntelligence() {
               Pathway, mapping, ownership and rating intelligence for any property — in one place.
             </p>
           </div>
-          <div className="px-4 lg:px-6 pt-3 pb-2">
-            <PropertyResolverBar
-              current={resolvedProperty}
-              onResolve={(id, prop) => {
-                setResolvedProperty({ id, name: prop.name, postcode: prop.postcode });
-                // Drive every tab — Map via pendingSearch, others via the
-                // PropertyContext (each can call usePropertyContext() to
-                // read the canonical selection and prefill).
-                setPendingSearch({ address: prop.name, postcode: prop.postcode });
-              }}
-            />
-          </div>
+          {/* Page-level resolver bar retired — the Map tab's sidebar now
+              hosts the same PropertyResolverBar, and resolution flows up
+              via onResolveProperty so every other tab still prefills via
+              PropertyContext + the resolvedProperty state below. Saves a
+              full bar of vertical real estate above the tab strip. */}
           <div className="px-4 lg:px-6 pt-3">
             <TabsList className="bg-transparent p-0 h-auto gap-x-1 gap-y-0.5 flex flex-wrap lg:flex-nowrap lg:w-max">
               {TABS.map((t) => {
@@ -149,7 +141,14 @@ export default function PropertyIntelligence() {
               <PropertyPathway />
             </TabsContent>
             <TabsContent value="map" className="m-0 h-full">
-              <EdozoMap initialSearch={pendingSearch} onSearchConsumed={() => setPendingSearch(null)} />
+              <EdozoMap
+                initialSearch={pendingSearch}
+                onSearchConsumed={() => setPendingSearch(null)}
+                onResolveProperty={(p) => {
+                  setResolvedProperty({ id: p.id, name: p.name, postcode: p.postcode });
+                  setPendingSearch({ address: p.name, postcode: p.postcode });
+                }}
+              />
             </TabsContent>
             <TabsContent value="investigator" className="m-0 h-full">
               <KycClouseau />

@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import {
   Search,
   X,
@@ -3442,7 +3443,7 @@ out body;>;out skel qt;`;
   }
 }
 
-export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void } = {}) {
+export default function EdozoMap({ initialSearch, onSearchConsumed, onResolveProperty }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void; onResolveProperty?: (p: { id: string; name: string; postcode: string | null }) => void } = {}) {
   const { toast } = useToast();
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -5408,56 +5409,23 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           </p>
 
           <p className="text-[11px] font-semibold mb-1.5 text-gray-700">Search new plan</p>
-          <div className="relative">
-            <Input
-              placeholder="Search by area, address or grid ref"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 text-xs pr-7 bg-white border-gray-300 rounded"
-              data-testid="map-search-input"
-            />
-            {searchQuery ? (
-              <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} className="absolute right-2 top-2">
-                <X className="w-3.5 h-3.5 text-gray-400" />
-              </button>
-            ) : (
-              <Search className="absolute right-2.5 top-2.5 w-3 h-3 text-gray-400" />
-            )}
-          </div>
-
-          {searching && (
-            <div className="flex items-center gap-1.5 text-[10px] text-gray-400 mt-1.5">
-              <Loader2 className="w-3 h-3 animate-spin" /> Searching...
-            </div>
-          )}
-
-          {searchResults.length > 0 && (
-            <div className="border rounded mt-1.5 max-h-64 overflow-auto bg-white shadow-lg">
-              {searchResults.map((r, i) => {
-                const isExact = r.addressType === "address" || r.type === "postcode";
-                const parts = r.label.split(" — ");
-                const mainAddr = parts[0] || "";
-                const pcPart = parts[1] || r.postcode || "";
-                return (
-                  <button
-                    key={i}
-                    onClick={() => selectSearchResult(r)}
-                    className="w-full text-left px-2.5 py-2 hover:bg-indigo-50 text-[11px] border-b last:border-0 flex items-start gap-2"
-                    data-testid={`search-result-${i}`}
-                  >
-                    <MapPin className={`w-3 h-3 mt-0.5 flex-shrink-0 ${isExact ? "text-indigo-500" : "text-gray-300"}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium text-gray-800 leading-tight">{mainAddr}</div>
-                      {pcPart && <div className="text-[10px] text-gray-400 mt-0.5">{pcPart}</div>}
-                    </div>
-                    {isExact && (
-                      <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium shrink-0 mt-0.5">EXACT</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* New resolver — same engine the Property Intelligence page-level
+              bar used to call (Address Resolver: autocomplete → resolve →
+              canonical crm_property). Replaces the legacy /api/address-search
+              dropdown that fed loadPropertyData with stale postcode-only
+              hits. When a property resolves we both navigate the map AND
+              bubble the resolution up so other Property Intelligence tabs
+              prefill via PropertyContext. */}
+          <PropertyResolverBar
+            placeholder="Address, postcode, UPRN, or title number…"
+            onResolve={(id, prop) => {
+              if (prop.postcode) {
+                setSelectedPostcode(prop.postcode);
+                loadPropertyData(prop.postcode, undefined, prop.name || undefined, null);
+              }
+              onResolveProperty?.({ id, name: prop.name, postcode: prop.postcode });
+            }}
+          />
         </div>
 
         <div className="border-t" />
