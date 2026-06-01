@@ -501,8 +501,11 @@ async function handleContactsCascade(companyId: string, res: Response) {
 
   if (rrRes.ok) {
     for (const p of rrRes.sample) {
-      const key = (p.email || "").toLowerCase();
-      if (!key) continue;
+      // RR search responses often withhold emails (you pay per lookupProfile
+      // to reveal them). Key by email when we have it, else fall back to
+      // a normalised name so the row still merges/dedupes against BGP.
+      const key = (p.email || "").toLowerCase() || `name:${(p.name || "").toLowerCase().trim()}`;
+      if (key === "name:") continue;
       const existing = byKey.get(key);
       if (existing) {
         existing.sources.push("rocketreach");
@@ -529,8 +532,8 @@ async function handleContactsCascade(companyId: string, res: Response) {
     apolloRes = await runApolloSearch(domain, company.name).catch((e) => ({ ok: false, total: 0, sample: [], error: e?.message }));
     if (apolloRes.ok) {
       for (const p of apolloRes.sample) {
-        const key = (p.email || "").toLowerCase();
-        if (!key) continue;
+        const key = (p.email || "").toLowerCase() || `name:${(p.name || "").toLowerCase().trim()}`;
+        if (key === "name:") continue;
         const existing = byKey.get(key);
         if (existing) {
           existing.sources.push("apollo");
