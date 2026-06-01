@@ -486,6 +486,17 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
     onError: (err: any) => { toast({ title: "Failed to delete unit", description: err.message, variant: "destructive" }); },
   });
 
+  // Promote vacant/letting-tracker "orphan" units into real editable tenancy
+  // rows, so every unit on the schedule behaves the same.
+  const promoteMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/properties/${propertyId}/promote-orphans-to-tenancy`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      toast({ title: "Added to schedule", description: "Vacant units are now editable rows." });
+    },
+    onError: (err: any) => { toast({ title: "Couldn't add to schedule", description: err.message, variant: "destructive" }); },
+  });
+
   const inlineUpdate = useCallback((unitId: string | number, field: string, value: string) => {
     updateMutation.mutate({ id: unitId, [field]: value });
   }, [updateMutation]);
@@ -821,6 +832,8 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
                   columns={visibleColumns}
                   onUpdate={inlineUpdate}
                   onDelete={() => deleteMutation.mutate(unit.id)}
+                  onPromote={() => promoteMutation.mutate()}
+                  promoting={promoteMutation.isPending}
                   deal={matchDeal(unit)}
                   letting={matchLetting(unit)}
                 />
@@ -921,11 +934,13 @@ function TenantBrandPicker({
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal, letting }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
   onDelete: () => void;
+  onPromote?: () => void;
+  promoting?: boolean;
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
@@ -946,7 +961,18 @@ function UnitRow({ unit, columns, onUpdate, onDelete, deal, letting }: {
           </Badge>
         </td>
         <td className="p-1 text-center">
-          <div className="flex gap-1 justify-center">
+          <div className="flex gap-1 justify-center items-center flex-wrap">
+            {onPromote && (
+              <button
+                onClick={onPromote}
+                disabled={promoting}
+                className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                title="Add this unit to the schedule as an editable row"
+                data-testid={`promote-vacant-${unit.id}`}
+              >
+                <Plus className="w-2.5 h-2.5" />{promoting ? "Adding…" : "Add to schedule"}
+              </button>
+            )}
             {unit.deal_id && (
               <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
                 <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50">
