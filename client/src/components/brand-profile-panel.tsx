@@ -423,6 +423,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   // admin-only (work-in-progress) so it's hidden from the team.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isAdmin = !!currentUser?.isAdmin;
+  // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
+  // brand profile for now (the £0pa rows aren't ready). The data + code stay;
+  // flip this to true (or move it to a dedicated admin page) when it's ready.
+  const SHOW_PORTFOLIO_PITCHES = false;
 
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
@@ -2169,7 +2173,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
             {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
                 clutter the brand profile for the team. */}
-            {isAdmin && suggestedUnits && suggestedUnits.length > 0 && (
+            {SHOW_PORTFOLIO_PITCHES && isAdmin && suggestedUnits && suggestedUnits.length > 0 && (
               <div className="border-t pt-2">
                 <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
                   <Building2 className="w-3 h-3 text-emerald-600" />
