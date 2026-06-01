@@ -16,7 +16,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Rss, Plus, Trash2, RefreshCw, Zap, AlertCircle, CheckCircle2, ExternalLink } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Rss, Plus, Trash2, RefreshCw, Zap, AlertCircle, CheckCircle2, ExternalLink, KeyRound } from "lucide-react";
+
+interface PaywallStatus {
+  label: string;
+  envVar: string;
+  domain: string;
+  configured: boolean;
+  source: "db" | "env" | "none";
+}
 
 interface NewsSource {
   id: string;
@@ -47,6 +56,34 @@ export function NewsSourcesTab() {
   const { data: rssHealth } = useQuery<{ ok: boolean; error?: string; feedCount?: number }>({
     queryKey: ["/api/rssapp/health"],
     retry: false,
+  });
+
+  // Paywall subscriber cookies
+  const [editingCookie, setEditingCookie] = useState<string | null>(null);
+  const [cookieText, setCookieText] = useState("");
+  const { data: paywall } = useQuery<{ status: PaywallStatus[] }>({
+    queryKey: ["/api/news-feed/auth-cookies/health"],
+    retry: false,
+  });
+  const saveCookieMutation = useMutation({
+    mutationFn: async ({ envVar, cookie }: { envVar: string; cookie: string }) => {
+      const res = await apiRequest("POST", "/api/news-feed/auth-cookies", { envVar, cookie });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Cookie saved", description: "Used on the next scrape — no redeploy needed." });
+      setEditingCookie(null);
+      setCookieText("");
+      qc.invalidateQueries({ queryKey: ["/api/news-feed/auth-cookies/health"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save cookie", description: e?.message || "Unknown error", variant: "destructive" }),
+  });
+  const clearCookieMutation = useMutation({
+    mutationFn: async (envVar: string) => { await apiRequest("DELETE", `/api/news-feed/auth-cookies/${envVar}`); },
+    onSuccess: () => {
+      toast({ title: "Cookie removed" });
+      qc.invalidateQueries({ queryKey: ["/api/news-feed/auth-cookies/health"] });
+    },
   });
 
   const addMutation = useMutation({
@@ -143,6 +180,65 @@ export function NewsSourcesTab() {
         </CardHeader>
         <CardContent>
           <NewsTagsManager />
+        </CardContent>
+      </Card>
+
+      {/* Paywall logins — paste a subscriber cookie, no redeploy */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <KeyRound className="w-4 h-4" /> Paywall logins
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Paste a subscriber cookie to unlock article images/content from paywalled press — saved instantly, no redeploy. Refresh when a publication starts showing the paywall again (cookies last ~30–90 days).
+          </p>
+          {(paywall?.status || []).map((p) => (
+            <div key={p.envVar} className="rounded-lg border p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${p.configured ? (p.source === "db" ? "bg-emerald-500" : "bg-blue-500") : "bg-gray-300"}`} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{p.label}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {p.domain} · {p.configured ? (p.source === "db" ? "cookie set" : "via env var") : "not connected"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {p.configured && p.source === "db" && (
+                    <Button size="sm" variant="ghost" className="h-8 text-xs text-red-600 hover:text-red-700" onClick={() => clearCookieMutation.mutate(p.envVar)} data-testid={`paywall-clear-${p.envVar}`}>
+                      Remove
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { setEditingCookie(editingCookie === p.envVar ? null : p.envVar); setCookieText(""); }} data-testid={`paywall-edit-${p.envVar}`}>
+                    {p.configured ? "Update" : "Add cookie"}
+                  </Button>
+                </div>
+              </div>
+              {editingCookie === p.envVar && (
+                <div className="mt-2 space-y-2">
+                  <Textarea
+                    value={cookieText}
+                    onChange={(e) => setCookieText(e.target.value)}
+                    placeholder="Paste the full cookie string (name=value; name=value; …)"
+                    className="text-xs font-mono h-20"
+                    data-testid={`paywall-input-${p.envVar}`}
+                  />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button size="sm" className="h-8 text-xs" disabled={!cookieText.trim() || saveCookieMutation.isPending} onClick={() => saveCookieMutation.mutate({ envVar: p.envVar, cookie: cookieText })}>
+                      Save
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => { setEditingCookie(null); setCookieText(""); }}>
+                      Cancel
+                    </Button>
+                    <span className="text-[10px] text-muted-foreground">Tip: the “Cookie-Editor” browser extension → Export → Header String gives you the exact value.</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </CardContent>
       </Card>
 

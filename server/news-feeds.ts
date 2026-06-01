@@ -3,7 +3,7 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps, newsTags } from "@shared/schema";
 import { DEFAULT_NEWS_TAGS } from "@shared/news-tags";
-import { authHeadersForUrl, authCookieStatus } from "./auth-cookies";
+import { authHeadersForUrl, authCookieStatus, loadPaywallCookies, setPaywallCookie, clearPaywallCookie } from "./auth-cookies";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
 import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, type SocialPlatform } from "./news-brand-linking";
@@ -1173,12 +1173,36 @@ export async function searchGreenStreet(query: string, limit: number = 10): Prom
 
 export function setupNewsFeedRoutes(app: Express) {
   seedNewsSources().catch(console.error);
+  // Load DB-stored paywall cookies into the in-memory cache at startup.
+  loadPaywallCookies().catch(console.error);
 
   // Diagnostic — which paywalled-publication auth cookies are configured.
-  // Returns { label, envVar, configured } per publication; never leaks the
-  // cookie value itself.
+  // Returns { label, envVar, domain, configured, source } per publication;
+  // never leaks the cookie value itself. Drives the "Paywall logins" panel.
   app.get("/api/news-feed/auth-cookies/health", requireAuth, async (_req: Request, res: Response) => {
     res.json({ status: authCookieStatus() });
+  });
+
+  // Save / clear a paywall subscriber cookie for a publication (by envVar).
+  // No redeploy needed — stored in system_settings and read on next scrape.
+  app.post("/api/news-feed/auth-cookies", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { envVar, cookie } = req.body || {};
+      if (!envVar) return res.status(400).json({ message: "envVar required" });
+      await setPaywallCookie(envVar, cookie || "");
+      res.json({ status: authCookieStatus() });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "failed" });
+    }
+  });
+
+  app.delete("/api/news-feed/auth-cookies/:envVar", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await clearPaywallCookie(req.params.envVar);
+      res.json({ status: authCookieStatus() });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "failed" });
+    }
   });
 
   // ─── Tag vocabulary CRUD ─────────────────────────────────────────────────
