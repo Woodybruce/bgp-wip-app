@@ -624,6 +624,16 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                       />
                     </a>
                   )}
+                  {s1.propertyImage?.aerialUrl && (
+                    <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="shrink-0 block hover:opacity-90 transition-opacity">
+                      <img
+                        src={s1.propertyImage.aerialUrl}
+                        alt={`Aerial view of ${run.address}`}
+                        className="w-28 h-20 rounded object-cover border"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    </a>
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm break-words">{run.address}{run.postcode ? `, ${run.postcode}` : ""}</p>
                     <div className="flex items-center gap-1.5 flex-wrap mt-0.5">

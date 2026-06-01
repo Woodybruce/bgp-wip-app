@@ -135,7 +135,7 @@ interface StageResults {
       listedStatus?: string;
       passingRent?: string;
     };
-    propertyImage?: { streetViewUrl?: string; googleMapsUrl?: string };
+    propertyImage?: { streetViewUrl?: string; aerialUrl?: string; googleMapsUrl?: string };
     rates?: {
       totalRateableValue?: number;
       assessmentCount?: number;
@@ -1249,6 +1249,9 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   const propertyImage = {
     streetViewUrl: gmapsKey
       ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
+      : undefined,
+    aerialUrl: gmapsKey
+      ? `https://maps.googleapis.com/maps/api/staticmap?center=${mapsQuery}&zoom=19&size=640x400&scale=2&maptype=hybrid&markers=color:0xff5252%7C${mapsQuery}&key=${gmapsKey}`
       : undefined,
     googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
   };
@@ -2954,6 +2957,9 @@ Return STRICT JSON only, no prose, no code fences:
   const propertyImage = {
     streetViewUrl: gmapsKey
       ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
+      : undefined,
+    aerialUrl: gmapsKey
+      ? `https://maps.googleapis.com/maps/api/staticmap?center=${mapsQuery}&zoom=19&size=640x400&scale=2&maptype=hybrid&markers=color:0xff5252%7C${mapsQuery}&key=${gmapsKey}`
       : undefined,
     googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
   };

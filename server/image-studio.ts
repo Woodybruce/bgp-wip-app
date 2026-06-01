@@ -782,7 +782,11 @@ export async function sweepStage8ImagesForRun(args: {
     ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Area", propertyId: args.propertyId, userId: args.userId }),
   ]);
 
-  const buildingImages: string[] = [];
+  let buildingImages: string[] = [];
+  // Brochure-extracted exteriors are the best on-asset photography we get —
+  // kept in their own array so they can lead the Building collection ahead of
+  // the (mostly interior) Google Places shots.
+  const brochureBuildingImages: string[] = [];
   const tenantImages: string[] = [];
   const areaImages: string[] = [];
 
@@ -902,7 +906,7 @@ export async function sweepStage8ImagesForRun(args: {
                 mimeType: img.mimeType,
                 filenameHint: `${bro.name}-${img.filename}`,
               });
-              buildingImages.push(stored.id);
+              brochureBuildingImages.push(stored.id);
             } catch (err: any) {
               console.warn(`[pathway sweep] brochure store failed:`, err?.message);
             }
@@ -915,6 +919,10 @@ export async function sweepStage8ImagesForRun(args: {
       console.warn("[pathway sweep] pdf-image-extract unavailable:", err?.message);
     }
   }
+
+  // Brochure exteriors lead, then Google Places — so the Building collection
+  // cover and ordering favour real on-asset photography.
+  buildingImages = [...brochureBuildingImages, ...buildingImages];
 
   const [buildingAdded, tenantAdded, areaAdded] = await Promise.all([
     addImagesToCollection(buildingId, buildingImages),
