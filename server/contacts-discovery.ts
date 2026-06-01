@@ -658,22 +658,11 @@ router.get("/api/admin/email-signatures/debug/:email", requireAuth, async (req: 
       return res.json(trace);
     }
 
-    // Step 3: isolate signature block.
-    const { isolateSignatureText } = await import("./email-signature-enrich") as any;
-    // isolateSignatureText is not exported — inline a minimal version here.
-    const plain = (foundMsg.body?.content || "")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/p>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-    const sigText = plain.slice(-600).trim();
-    trace.steps.push({ step: "isolate_signature", plainLen: plain.length, sigLen: sigText.length, sample: sigText.slice(0, 300) });
+    // Step 3: isolate signature block — uses the same heuristic as the
+    // production enrichSignaturesForDomain so debug results mirror prod.
+    const { isolateSignatureText } = await import("./email-signature-enrich");
+    const sigText = isolateSignatureText(foundMsg.body?.content || "");
+    trace.steps.push({ step: "isolate_signature", sigLen: sigText.length, sample: sigText.slice(0, 400) });
 
     // Step 4: Haiku extract.
     const Anthropic = (await import("@anthropic-ai/sdk")).default;

@@ -165,17 +165,22 @@ async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string
   return null;
 }
 
-// Strip HTML, isolate the signature block. Heuristic: signatures sit
-// below a sign-off ("Best", "Kind regards", "Thanks") or after a
-// `-- ` delimiter, or in the last ~600 characters of plain text. We
-// always pass at least 600 chars so a missing sign-off doesn't lose
-// the whole signature.
-function isolateSignatureText(htmlBody: string): string {
+// Strip HTML, isolate the signature block. The hard part is real-world
+// emails: corporate disclaimers run for 300+ chars at the bottom, FW:
+// chains stack multiple signatures, and the actual personal signature
+// sits between the sign-off and the disclaimer. Heuristic:
+//   1. Cut everything from the FIRST disclaimer/quoted-reply marker
+//      onwards (kills the legal boilerplate + original message tail).
+//   2. Find the FIRST sign-off in what remains. Take the next ~15 lines
+//      after it (signatures are usually 3-8 lines).
+//   3. Fallback: last 400 chars of the cleaned text.
+export function isolateSignatureText(htmlBody: string): string {
   const plain = htmlBody
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
+    .replace(/<\/div>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
@@ -187,30 +192,65 @@ function isolateSignatureText(htmlBody: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // Try to cut at the first sign-off. Common variants — order matters
-  // (most specific first) so "Many thanks" doesn't trigger off "Thanks".
+  // Cut at the first disclaimer / quoted-reply boundary. Everything
+  // after is noise (Landsec's "If you have received this email in
+  // error..." or the original FW message body).
+  const cutMarkers = [
+    /confidentiality notice/i,
+    /this (e-?mail|message)( and any attachments)? (is|are) (intended|confidential)/i,
+    /if you have received this (e-?mail|message) in error/i,
+    /(the )?unauthori[sz]ed (use|disclosure|copying)/i,
+    /please notify the (originator|sender) immediately/i,
+    /the contents of this e-?mail/i,
+    /this e-?mail (transmission )?(may )?contains? (confidential|proprietary)/i,
+    /-----Original Message-----/i,
+    /from:.*\nsent:.*\nto:/i,           // Outlook quoted reply header
+    /On .+ wrote:/i,                     // Gmail-style quoted reply
+    /www\.landsec\.com/i,                // bottom-of-email web banner
+    /follow us on/i,
+    /\bread our privacy notice\b/i,
+    /\bgreen by design\b/i,              // common Landsec footer line
+  ];
+  let truncated = plain;
+  let minCut = plain.length;
+  for (const re of cutMarkers) {
+    const m = truncated.search(re);
+    if (m >= 0 && m < minCut) minCut = m;
+  }
+  truncated = truncated.slice(0, minCut).trim();
+
+  // Find the FIRST sign-off in the truncated text. Take the next 15
+  // lines / 500 chars — signatures are 3-8 lines but might include a
+  // multi-line address.
   const signOffs = [
-    /\n(--+\s*\n)/i,
+    /\n([-_]{2,}\s*\n)/,
     /\n(many thanks,?\s*\n)/i,
     /\n(kind regards,?\s*\n)/i,
     /\n(best regards,?\s*\n)/i,
     /\n(warm regards,?\s*\n)/i,
     /\n(regards,?\s*\n)/i,
     /\n(thanks,?\s*\n)/i,
+    /\n(best,?\s*\n)/i,
     /\n(cheers,?\s*\n)/i,
     /\n(yours,?\s*\n)/i,
     /\n(sincerely,?\s*\n)/i,
+    /\n(speak soon,?\s*\n)/i,
   ];
+  let signOffIdx = -1;
   for (const re of signOffs) {
-    const idx = plain.search(re);
-    if (idx >= 0) {
-      // Take from the sign-off through to end of email, capped at 800.
-      return plain.slice(idx).slice(0, 800).trim();
-    }
+    const idx = truncated.search(re);
+    if (idx >= 0 && (signOffIdx === -1 || idx < signOffIdx)) signOffIdx = idx;
   }
-  // No sign-off — return last 600 chars; signatures almost always
-  // sit at the very bottom of the email.
-  return plain.slice(-600).trim();
+  if (signOffIdx >= 0) {
+    const block = truncated.slice(signOffIdx);
+    const lines = block.split("\n").slice(0, 18).join("\n");
+    return lines.slice(0, 700).trim();
+  }
+
+  // Fallback: last 400 chars of the cleaned text. Smaller than before
+  // (was 600) because disclaimer cuts above already removed the long
+  // tail — we want the personal sig, not the whole email body.
+  return truncated.slice(-400).trim();
 }
 
 // Extract structured fields from a signature block using Claude Haiku.
