@@ -612,7 +612,9 @@ router.get("/api/admin/email-signatures/by-domain/:domain", requireAuth, async (
 router.get("/api/admin/email-signatures/debug/:email", requireAuth, async (req: Request, res: Response) => {
   const email = String(req.params.email || "").trim().toLowerCase();
   if (!email || !email.includes("@")) return res.status(400).json({ error: "valid email required" });
-  const trace: any = { email, steps: [] };
+  // Build marker so we can verify in the response that the latest deploy
+  // is live. Bump this string when shipping new debug-endpoint logic.
+  const trace: any = { email, build: "2026-06-01.signature-isolation.v3", steps: [] };
 
   try {
     // Step 1: which BGP users have corresponded with this address?
