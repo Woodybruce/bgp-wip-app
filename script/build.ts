@@ -202,11 +202,14 @@ async function buildAll() {
   await viteBuild();
 
   // Generate PNG icons for the Excel add-in manifest. Office requires PNG
-  // (not SVG). We derive them from the existing icon.svg at the required sizes.
-  const svgSrc = await readFile("client/public/icon.svg");
+  // (not SVG). We derive them from the canonical icon-512.png — the
+  // largest brand asset we ship and the source-of-truth for the black-
+  // block BGP brand. The previous source (icon.svg) was the legacy green
+  // placeholder, deleted in favour of the proper PNG mark.
+  const iconSrc = await readFile("client/public/icon-512.png");
   for (const size of [16, 32, 64, 80, 128, 192]) {
     const dest = `dist/public/icon-${size}.png`;
-    await sharp(svgSrc).resize(size, size).png().toFile(dest);
+    await sharp(iconSrc).resize(size, size).png().toFile(dest);
   }
   console.log("generated PNG icons for Excel add-in manifest");
 
