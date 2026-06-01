@@ -835,6 +835,21 @@ export async function registerRoutes(
         }
       }
 
+      // When there's no CRM match for the fascia, try to resolve the tenant
+      // via Google Places (name + website + phone) so the drawer can offer
+      // a "verify on Companies House" → "add to CRM" mini-flow without
+      // any name-only guessing. Only runs when fascia + coords are set
+      // AND the CRM lookup turned up nothing — cheap path otherwise.
+      let tenantPlace: any = null;
+      if (fascia && tenantRows.rows.length === 0 && typeof lat === "number" && typeof lng === "number") {
+        try {
+          const { findPlaceWebsiteAtCoord } = await import("./goad-tenant-resolver");
+          tenantPlace = await findPlaceWebsiteAtCoord(lat, lng, fascia);
+        } catch (e: any) {
+          console.warn("[polygon-context] tenant Places lookup failed:", e?.message);
+        }
+      }
+
       res.json({
         crmProperties: crmPropertiesOut,
         deals: dealRows.rows,
@@ -846,6 +861,7 @@ export async function registerRoutes(
         pathwayRun: pathwayRow || null,
         tenantCompany: tenantRows.rows[0] || null,
         tenantCompanyCandidates: tenantRows.rows,
+        tenantPlace,
         // Diagnostics so the panel can show 'we ran X but found nothing'
         // rather than silently hiding the section.
         diagnostics: {

@@ -2454,6 +2454,7 @@ import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import brandAiTakeRouter from "./brand-ai-take";
+import goadTenantResolverRouter from "./goad-tenant-resolver";
 import brandDigestRouter, { runFortnightlyBrandDigest } from "./brand-digest";
 import brandTriggersRouter, { runDailyBrandTriggers } from "./brand-triggers";
 import brandPerplexityRefreshRouter, { runMonthlyPerplexityRefresh } from "./brand-perplexity-refresh";
@@ -2978,6 +2979,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
   app.use(brandAiTakeRouter);
+  app.use(goadTenantResolverRouter);
   app.use(brandDigestRouter);
   app.use(brandTriggersRouter);
   app.use(brandPerplexityRefreshRouter);

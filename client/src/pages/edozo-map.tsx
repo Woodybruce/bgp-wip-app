@@ -3462,7 +3462,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // Goad polygon → combined side panel. Holds the clicked feature's
   // properties plus any joined context fetched via /api/goad/polygon-context.
   const [goadPanelUnit, setGoadPanelUnit] = useState<any | null>(null);
-  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null; tenantCompany: any | null; tenantCompanyCandidates: any[]; diagnostics?: { voaAvailable: boolean; propertyDataKeyAvailable: boolean; landRegistryRan: boolean; landRegistryError: string | null; postcodeUsed?: string | null; postcodeRecoveredFromGeocode?: boolean } } | null>(null);
+  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null; tenantCompany: any | null; tenantCompanyCandidates: any[]; tenantPlace: { name: string; website: string | null; phone: string | null; placeId: string; address: string | null; businessStatus: string | null } | null; diagnostics?: { voaAvailable: boolean; propertyDataKeyAvailable: boolean; landRegistryRan: boolean; landRegistryError: string | null; postcodeUsed?: string | null; postcodeRecoveredFromGeocode?: boolean } } | null>(null);
+  // Tenant-resolver state for the polygon drawer. Separate from the
+  // polygon context so a click → verify → create lifecycle doesn't
+  // re-render the entire panel.
+  const [tenantVerifyState, setTenantVerifyState] = useState<{
+    loading: boolean;
+    result: { scraped: { entityName: string | null; chNumber: string | null; sourceUrl: string | null }; chProfile: any | null; verifyError?: string } | null;
+    error: string | null;
+  }>({ loading: false, result: null, error: null });
+  const [tenantCreateState, setTenantCreateState] = useState<{ loading: boolean; companyId: string | null; error: string | null }>({ loading: false, companyId: null, error: null });
   const [goadPanelStartingPathway, setGoadPanelStartingPathway] = useState(false);
   const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
@@ -4595,10 +4604,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   useEffect(() => {
     if (!goadPanelUnit) {
       setGoadPanelContext(null);
+      setTenantVerifyState({ loading: false, result: null, error: null });
+      setTenantCreateState({ loading: false, companyId: null, error: null });
       return;
     }
     let cancelled = false;
     setGoadPanelLoading(true);
+    // Reset the per-click tenant-resolver lifecycle whenever the user
+    // opens a different polygon.
+    setTenantVerifyState({ loading: false, result: null, error: null });
+    setTenantCreateState({ loading: false, companyId: null, error: null });
     const params = new URLSearchParams();
     if (goadPanelUnit.postcode) params.set("postcode", goadPanelUnit.postcode);
     if (goadPanelUnit.num) params.set("streetNum", goadPanelUnit.num);
@@ -5717,6 +5732,145 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                         +{goadPanelContext.tenantCompanyCandidates.length - 1} other possible match{goadPanelContext.tenantCompanyCandidates.length > 2 ? "es" : ""}
                       </p>
                     )}
+                  </section>
+                )}
+
+                {/* Tenant resolver — fires when fascia is set but no CRM
+                    match. Two explicit buttons: Verify (website footer
+                    scrape + CH lookup, no DB write), Add (creates the
+                    brand + fires auto-KYC + RocketReach property contacts). */}
+                {goadPanelContext && !goadPanelContext.tenantCompany && goadPanelContext.tenantPlace && (
+                  <section className="border-t pt-3" data-testid="goad-tenant-resolver">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Tenant brand · not in CRM
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1.5">
+                      <div className="text-[12px] font-medium text-gray-900">{goadPanelContext.tenantPlace.name}</div>
+                      {goadPanelContext.tenantPlace.website && (
+                        <a href={goadPanelContext.tenantPlace.website} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline block truncate">
+                          {goadPanelContext.tenantPlace.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                        </a>
+                      )}
+                      {goadPanelContext.tenantPlace.phone && (
+                        <div className="text-[10px] text-gray-600">{goadPanelContext.tenantPlace.phone}</div>
+                      )}
+
+                      {/* Stage 1 — Verify on Companies House */}
+                      {!tenantVerifyState.result && !tenantCreateState.companyId && (
+                        <div className="pt-1.5">
+                          <button
+                            type="button"
+                            disabled={tenantVerifyState.loading || !goadPanelContext.tenantPlace.website}
+                            onClick={async () => {
+                              setTenantVerifyState({ loading: true, result: null, error: null });
+                              try {
+                                const r = await fetch("/api/goad/tenant-verify", {
+                                  method: "POST",
+                                  credentials: "include",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    website: goadPanelContext.tenantPlace!.website,
+                                    fascia: goadPanelContext.tenantPlace!.name,
+                                  }),
+                                });
+                                const j = await r.json();
+                                if (!r.ok) throw new Error(j.error || "Verify failed");
+                                setTenantVerifyState({ loading: false, result: j, error: null });
+                              } catch (e: any) {
+                                setTenantVerifyState({ loading: false, result: null, error: e?.message || "Verify failed" });
+                              }
+                            }}
+                            className="text-[11px] font-medium px-2 py-1 rounded bg-gray-900 text-white disabled:opacity-40"
+                            data-testid="button-tenant-verify"
+                          >
+                            {tenantVerifyState.loading ? "Verifying…" : "Verify on Companies House"}
+                          </button>
+                          {!goadPanelContext.tenantPlace.website && (
+                            <p className="text-[9px] text-gray-500 italic mt-1">No website on Google Places — can't auto-verify.</p>
+                          )}
+                          {tenantVerifyState.error && (
+                            <p className="text-[9px] text-red-600 mt-1">{tenantVerifyState.error}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Stage 2 — Verify result + Add to CRM */}
+                      {tenantVerifyState.result && !tenantCreateState.companyId && (
+                        <div className="pt-1.5 space-y-1.5">
+                          {tenantVerifyState.result.chProfile ? (
+                            <div className="text-[10px] bg-white border border-gray-200 rounded p-1.5">
+                              <div className="font-medium text-gray-900">{tenantVerifyState.result.chProfile.company_name}</div>
+                              <div className="text-gray-600 mt-0.5">
+                                CH #{tenantVerifyState.result.chProfile.company_number} · {tenantVerifyState.result.chProfile.company_status}
+                                {tenantVerifyState.result.chProfile.date_of_creation && ` · Incorp ${tenantVerifyState.result.chProfile.date_of_creation}`}
+                              </div>
+                              {tenantVerifyState.result.scraped.sourceUrl && (
+                                <div className="text-gray-400 mt-0.5 truncate">via {tenantVerifyState.result.scraped.sourceUrl}</div>
+                              )}
+                            </div>
+                          ) : tenantVerifyState.result.scraped.entityName ? (
+                            <div className="text-[10px] bg-white border border-gray-200 rounded p-1.5">
+                              <div className="font-medium text-gray-900">{tenantVerifyState.result.scraped.entityName}</div>
+                              <div className="text-gray-500 mt-0.5">No CH number found in footer · will resolve on add</div>
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-gray-600 italic">
+                              Website didn't disclose UK entity. Can still add as brand — KYC will run Perplexity fallback.
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            disabled={tenantCreateState.loading}
+                            onClick={async () => {
+                              setTenantCreateState({ loading: true, companyId: null, error: null });
+                              try {
+                                const r = await fetch("/api/goad/tenant-create", {
+                                  method: "POST",
+                                  credentials: "include",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    fascia: goadPanelContext.tenantPlace!.name,
+                                    website: goadPanelContext.tenantPlace!.website,
+                                    chNumber: tenantVerifyState.result?.scraped?.chNumber || null,
+                                    entityName: tenantVerifyState.result?.scraped?.entityName || null,
+                                    goadCategory: goadPanelUnit?.category || null,
+                                    headOfficeAddress: goadPanelContext.tenantPlace!.address,
+                                    phone: goadPanelContext.tenantPlace!.phone,
+                                  }),
+                                });
+                                const j = await r.json();
+                                if (!r.ok) throw new Error(j.error || "Create failed");
+                                setTenantCreateState({ loading: false, companyId: j.companyId, error: null });
+                              } catch (e: any) {
+                                setTenantCreateState({ loading: false, companyId: null, error: e?.message || "Create failed" });
+                              }
+                            }}
+                            className="text-[11px] font-medium px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-40"
+                            data-testid="button-tenant-create"
+                          >
+                            {tenantCreateState.loading ? "Adding…" : "Add to CRM"}
+                          </button>
+                          {tenantCreateState.error && (
+                            <p className="text-[9px] text-red-600">{tenantCreateState.error}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Stage 3 — Created */}
+                      {tenantCreateState.companyId && (
+                        <div className="pt-1.5 bg-emerald-50 border border-emerald-200 rounded p-1.5">
+                          <div className="text-[11px] font-medium text-emerald-900">✓ Added to CRM</div>
+                          <div className="text-[9px] text-emerald-700 mt-0.5">KYC + RocketReach running in background</div>
+                          <a
+                            href={`/companies/${tenantCreateState.companyId}`}
+                            className="inline-block text-[10px] text-emerald-700 underline mt-1"
+                            data-testid="link-tenant-view"
+                          >
+                            View brand profile →
+                          </a>
+                        </div>
+                      )}
+                    </div>
                   </section>
                 )}
 
