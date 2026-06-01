@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 const STORAGE_KEY = "integration:paywall_cookies";
 
 export const COOKIE_RULES: Array<{ pattern: RegExp; envVar: string; label: string; domain: string }> = [
+  { pattern: /\b(greenstreetnews\.com)\b/i,   envVar: "GREENSTREET_AUTH_COOKIE",   label: "Green Street News",   domain: "greenstreetnews.com" },
   { pattern: /\b(businessoffashion\.com)\b/i, envVar: "BOF_AUTH_COOKIE",           label: "Business of Fashion", domain: "businessoffashion.com" },
   { pattern: /\b(drapersonline\.com)\b/i,     envVar: "DRAPERS_AUTH_COOKIE",       label: "Drapers",             domain: "drapersonline.com" },
   { pattern: /\b(retailweek\.com)\b/i,        envVar: "RETAILWEEK_AUTH_COOKIE",    label: "Retail Week",         domain: "retailweek.com" },
