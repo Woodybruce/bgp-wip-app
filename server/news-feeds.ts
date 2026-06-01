@@ -1557,8 +1557,14 @@ export function setupNewsFeedRoutes(app: Express) {
       // then filtered — which let off-topic items survive simply by being
       // the newest, and shrank the list). Slice to `limit` at the very end.
       const pool = Math.max(limit * 5, 80);
+      // Exclude per-brand Google News articles from the GENERAL feed. Those
+      // feeds (category 'brand:<id>', ~one per tracked brand) exist to power
+      // the Brand Intelligence pages — left in here they flood the feed and
+      // bury the trade-press RSS. The curated topical Google News queries
+      // (category 'Retail' etc.) are NOT brand-tagged, so they stay.
       let articles = await db.select()
         .from(newsArticles)
+        .where(sql`${newsArticles.sourceId} IS NULL OR ${newsArticles.sourceId} NOT IN (SELECT id FROM news_sources WHERE category LIKE 'brand:%')`)
         .orderBy(desc(newsArticles.publishedAt))
         .limit(pool);
 
