@@ -1,4 +1,4 @@
-var CACHE_NAME = 'bgp-v23';
+var CACHE_NAME = 'bgp-v24';
 var SHARE_CACHE = 'bgp-share-target';
 var PRECACHE_URLS = [
   '/',
@@ -15,7 +15,9 @@ self.addEventListener('install', function(event) {
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) { return cache.addAll(PRECACHE_URLS); })
   );
-  self.skipWaiting();
+  // Deliberately NOT calling skipWaiting() here. A fresh build installs but
+  // stays in the "waiting" state until the user accepts the update in-app
+  // (which posts 'skipWaiting' below). This stops mid-task reloads.
 });
 
 self.addEventListener('activate', function(event) {

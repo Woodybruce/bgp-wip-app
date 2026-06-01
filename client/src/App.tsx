@@ -21,6 +21,7 @@ import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
+import { UpdatePrompt } from "@/components/update-prompt";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
@@ -633,6 +634,7 @@ function AppContent() {
   return (
     <ChatBGPProvider>
       <ConnectionStatus />
+      <UpdatePrompt />
       <AuthenticatedApp />
     </ChatBGPProvider>
   );
