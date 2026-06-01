@@ -38,16 +38,19 @@ async function runApolloSearch(domain: string | null, companyName: string): Prom
   const key = process.env.APOLLO_API_KEY;
   if (!key) return { ok: false, total: 0, sample: [], error: "APOLLO_API_KEY not set" };
 
+  // Apollo deprecated /mixed_people/search in 2025 — use api_search.
+  // Body shape: organization_names + person_locations + paging. Domain
+  // filtering goes through the company by name; api_search resolves the
+  // organization lookup internally so we don't pass domain directly.
   const body: Record<string, any> = {
     page: 1,
     per_page: 50,
     person_locations: ["United Kingdom"],
+    organization_names: [companyName],
   };
-  if (domain) body.q_organization_domains = [domain];
-  else body.q_organization_name = companyName;
 
   try {
-    const res = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+    const res = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Api-Key": key },
       body: JSON.stringify(body),
@@ -76,6 +79,10 @@ async function runRocketReachSearch(domain: string | null, companyName: string, 
   const key = process.env.ROCKETREACH_API_KEY;
   if (!key) return { ok: false, total: 0, sample: [], error: "ROCKETREACH_API_KEY not set" };
 
+  // RocketReach renamed current_employer_website → invalid in late 2025.
+  // Falling back to current_employer (company name match) which is the
+  // long-standing stable field. Less precise than domain match but
+  // doesn't 400.
   const body: Record<string, any> = {
     query: scope === "landlord" ? {} : {
       current_title: [
@@ -88,8 +95,7 @@ async function runRocketReachSearch(domain: string | null, companyName: string, 
     page_size: 50,
     start: 1,
   };
-  if (domain) body.query.current_employer_website = [domain];
-  else body.query.current_employer = [companyName];
+  body.query.current_employer = [companyName];
   body.query.country = ["United Kingdom"];
 
   try {
@@ -125,11 +131,20 @@ async function handleCompareForCompanyId(companyId: string, res: Response) {
   );
   const company = rows[0];
   if (!company) return res.status(404).json({ error: "Company not found" });
-  const domain = (company.domain || company.domain_url || "")
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "")
-    .replace(/^www\./, "")
-    .toLowerCase() || null;
+  // CRM data is messy — some rows have "hammerson.com - https:" or
+  // "https://www.foo.co.uk/contact/" in the domain field. Strip
+  // protocol, paths, www., trailing junk after a space, hyphen-suffixes.
+  const cleanDomain = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const stripped = String(raw)
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split(/[\s/?#]/)[0]
+      .replace(/[^a-z0-9.\-]+$/, "");
+    return stripped || null;
+  };
+  const domain = cleanDomain(company.domain || company.domain_url);
   const ct = (company.company_type || "").toLowerCase();
   const scope: "tenant" | "landlord" = /landlord|freeholder|investor|developer|reit|fund|estate/.test(ct) ? "landlord" : "tenant";
 
