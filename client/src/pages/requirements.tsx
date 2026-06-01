@@ -2298,14 +2298,30 @@ function CompanySearchPicker({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const [creating, setCreating] = useState(false);
   const filtered = useMemo(() => {
-    if (!search) return companies.slice(0, 20);
+    const sorted = [...companies].sort((a, b) => a.name.localeCompare(b.name));
+    if (!search) return sorted.slice(0, 30);
     const s = search.toLowerCase();
-    return companies.filter((c) =>
+    return sorted.filter((c) =>
       c.name.toLowerCase().includes(s) ||
       (c.companyType || "").toLowerCase().includes(s)
-    ).slice(0, 20);
+    ).slice(0, 30);
   }, [companies, search]);
+  const trimmed = search.trim();
+  const exactMatch = companies.some((c) => c.name.trim().toLowerCase() === trimmed.toLowerCase());
+  const createCompany = async () => {
+    if (!trimmed || creating) return;
+    setCreating(true);
+    try {
+      const res = await apiRequest("POST", "/api/crm/companies", { name: trimmed });
+      const created = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      onSelect(created);
+      setSearch(""); setOpen(false);
+    } catch { /* surfaced by the global error toast */ }
+    finally { setCreating(false); }
+  };
 
   if (selectedId && selectedName) {
     const company = companies.find((c) => c.id === selectedId);
@@ -2342,8 +2358,8 @@ function CompanySearchPicker({
           ref={dropdownRef}
           className="absolute z-50 mt-1 w-full bg-popover border rounded-md shadow-md max-h-48 overflow-y-auto"
         >
-          {filtered.length === 0 ? (
-            <div className="p-3 text-xs text-muted-foreground text-center">No companies found</div>
+          {filtered.length === 0 && !trimmed ? (
+            <div className="p-3 text-xs text-muted-foreground text-center">Start typing to search companies</div>
           ) : (
             filtered.map((c) => (
               <button
@@ -2360,6 +2376,18 @@ function CompanySearchPicker({
                 )}
               </button>
             ))
+          )}
+          {trimmed && !exactMatch && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 hover:bg-accent flex items-center gap-2 text-sm border-t text-primary font-medium disabled:opacity-50"
+              onClick={createCompany}
+              disabled={creating}
+              data-testid="option-company-create"
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{creating ? "Adding…" : `Add “${trimmed}” as a new company`}</span>
+            </button>
           )}
         </div>
       )}
