@@ -1248,7 +1248,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
   const propertyImage = {
     streetViewUrl: gmapsKey
-      ? `https://maps.googleapis.com/maps/api/streetview?size=640x360&location=${mapsQuery}&fov=80&key=${gmapsKey}`
+      ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
       : undefined,
     googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
   };
@@ -2953,7 +2953,7 @@ Return STRICT JSON only, no prose, no code fences:
   const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
   const propertyImage = {
     streetViewUrl: gmapsKey
-      ? `https://maps.googleapis.com/maps/api/streetview?size=640x360&location=${mapsQuery}&fov=80&key=${gmapsKey}`
+      ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
       : undefined,
     googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
   };
@@ -5031,24 +5031,24 @@ export function registerPropertyPathwayRoutes(app: Express) {
         const newRunId = run.id;
         (async () => {
           const chainCap = 10;
-          let cur = 1;
-          while (cur < chainCap) {
+          // Run the whole pathway end-to-end. We deliberately DON'T halt on a
+          // failed stage: downstream stages have fallbacks (e.g. Stage 7 uses
+          // the AI draft plan) and the user wants a complete first draft to work
+          // with — the stop/start of a chain that bails mid-way is the pain.
+          for (let cur = 1; cur < chainCap; cur++) {
             console.log(`[pathway start auto-chain] running stage ${cur} for ${newRunId}`);
             try {
               await runStage(newRunId, cur, req);
             } catch (err: any) {
-              console.error(`[pathway start auto-chain] stage ${cur} threw:`, err?.message);
-              break;
+              console.error(`[pathway start auto-chain] stage ${cur} threw (continuing):`, err?.message);
             }
             const updatedRun = await getRun(newRunId).catch(() => null);
             const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
             if (status !== "completed" && status !== "skipped") {
-              console.warn(`[pathway start auto-chain] halting at stage ${cur}, status=${status}`);
-              break;
+              console.warn(`[pathway start auto-chain] stage ${cur} status=${status} — continuing to next stage anyway`);
             }
-            cur++;
           }
-          console.log(`[pathway start auto-chain] ${newRunId} ended at stage ${cur - 1}`);
+          console.log(`[pathway start auto-chain] ${newRunId} finished full run`);
         })().catch((err: any) => {
           console.error(`[pathway start auto-chain] outer error:`, err?.message);
         });
@@ -5223,35 +5223,28 @@ export function registerPropertyPathwayRoutes(app: Express) {
       //
       // autoChainTo (optional): after the target stage completes, keep
       // running stage+1, stage+2 ... until we hit `autoChainTo` exclusive
-      // (so autoChainTo=6 chains through 1,2,3,4,5 then stops). Stops on
-      // the first stage that doesn't end "completed" or "skipped".
-      // The chain runs entirely in the background — client polls currentStage
-      // to watch progress.
+      // (so autoChainTo=10 chains through 1..9 then stops). The chain runs
+      // entirely in the background — client polls currentStage to watch
+      // progress. We push through failed stages rather than halting: the user
+      // wants the whole pathway to produce a full draft to work with, and
+      // downstream stages fall back gracefully (e.g. Stage 7 uses the AI draft).
       if (asyncMode || targetStage === 1 || autoChainTo) {
         (async () => {
           const chainCap = typeof autoChainTo === "number" ? autoChainTo : (targetStage + 1);
-          let cur = targetStage;
-          while (cur < chainCap) {
+          for (let cur = targetStage; cur < chainCap; cur++) {
             console.log(`[pathway advance auto-chain] running stage ${cur} (chain to <${chainCap})`);
             try {
               await runStage(runId, cur, req);
             } catch (err: any) {
-              console.error(`[pathway advance auto-chain] stage ${cur} threw:`, err?.message);
-              break;
+              console.error(`[pathway advance auto-chain] stage ${cur} threw (continuing):`, err?.message);
             }
-            // Inspect the saved status — only chain forward if the stage
-            // genuinely completed/was skipped. Halt on failure so the user
-            // can intervene rather than blindly running downstream stages on
-            // bad data.
             const updatedRun = await getRun(runId).catch(() => null);
             const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
             if (status !== "completed" && status !== "skipped") {
-              console.warn(`[pathway advance auto-chain] halting at stage ${cur}, status=${status}`);
-              break;
+              console.warn(`[pathway advance auto-chain] stage ${cur} status=${status} — continuing to next stage anyway`);
             }
-            cur++;
           }
-          console.log(`[pathway advance auto-chain] chain ended at stage ${cur - 1}`);
+          console.log(`[pathway advance auto-chain] chain finished (<${chainCap})`);
         })().catch((err: any) => {
           console.error(`[pathway advance auto-chain] outer error:`, err?.message);
         });

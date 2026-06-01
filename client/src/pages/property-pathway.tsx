@@ -245,12 +245,11 @@ export default function PropertyPathway() {
     try {
       const currentRun = selectedRun?.id === runId ? selectedRun : null;
       const targetStage = stage ?? (currentRun?.currentStage ?? 1);
-      // Auto-chain end-to-end through to Excel Model. Stage 6 (Business Plan)
-      // auto-drafts; Stage 7 (Excel Model) now uses that draft if no agreed
-      // version exists, marking the model as autoPiloted so the user can
-      // review and lock before exporting Why Buy. Stops before Stage 8
-      // (Image Studio) so the user sees the model and can decide.
-      const autoChainTo = targetStage < 8 ? 8 : undefined;
+      // Auto-chain end-to-end through the whole pathway (Stage 9, Why Buy).
+      // Stage 6 auto-drafts the business plan; Stage 7 uses that draft if no
+      // agreed version exists; Stage 8 sweeps images; Stage 9 builds the deck.
+      // The run produces a complete first draft to work with — no stop/start.
+      const autoChainTo = targetStage < 10 ? 10 : undefined;
       const res = await fetch(`/api/property-pathway/${runId}/advance`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -283,17 +282,16 @@ export default function PropertyPathway() {
         const stageKey = `stage${targetStageResp}`;
 
         if (chainEnd) {
-          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "End-to-end through to Excel Model. Stage 6 auto-drafts the business plan; the model is generated from that draft (review + agree to lock before Why Buy)." });
+          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "Running the whole pathway end-to-end in the background. It keeps going even if a stage stumbles, so you get a complete first draft to refine." });
         } else {
           toast({ title: `Stage ${targetStageResp} running in background`, description: "Usually 30–90 seconds. Watching for completion…" });
         }
 
         const pollStart = Date.now();
-        // Chains of 5 stages can take 5–10 minutes; single stage caps at 5.
-        const POLL_TIMEOUT_MS = chainEnd ? 15 * 60 * 1000 : 5 * 60 * 1000;
+        // Full end-to-end runs (1→9) can take 10–15 minutes; single stage caps at 5.
+        const POLL_TIMEOUT_MS = chainEnd ? 20 * 60 * 1000 : 5 * 60 * 1000;
         let lastPolled: any = null;
         let lastStatus: string | undefined;
-        let failedStage: number | null = null;
 
         while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
           await new Promise((r) => setTimeout(r, 6000));
@@ -304,16 +302,17 @@ export default function PropertyPathway() {
             setSelectedRun(polled);
             lastPolled = polled;
 
-            // Check for failure on any stage in the chain range — abort if so
+            // Don't abort on a failed stage — the server pushes through to the
+            // end so we get a full draft. Just wait until the chain reaches the
+            // final stage (or every stage has a terminal status).
             if (chainEnd) {
-              for (let s = targetStageResp; s < chainEnd; s++) {
-                if (polled.stageStatus?.[`stage${s}`] === "failed") {
-                  failedStage = s;
-                  break;
-                }
-              }
-              if (failedStage) break;
               if (polled.currentStage >= chainEnd) break;
+              let allSettled = true;
+              for (let s = targetStageResp; s < chainEnd; s++) {
+                const st = polled.stageStatus?.[`stage${s}`];
+                if (st !== "completed" && st !== "skipped" && st !== "failed") { allSettled = false; break; }
+              }
+              if (allSettled) break;
             } else {
               lastStatus = polled.stageStatus?.[stageKey];
               if (lastStatus === "completed" || lastStatus === "failed" || lastStatus === "skipped") break;
@@ -322,12 +321,16 @@ export default function PropertyPathway() {
         }
 
         loadRuns();
-        if (failedStage) {
-          const fr = lastPolled?.stageResults?.[`stage${failedStage}`];
-          toast({ title: `Stage ${failedStage} failed`, description: fr?.reason || fr?.summary || "Chain halted — see server logs.", variant: "destructive" });
-        } else if (chainEnd) {
-          const reached = lastPolled?.currentStage ?? targetStageResp;
-          toast({ title: `Stages ${targetStageResp}–${Math.min(reached - 1, chainEnd - 1)} complete`, description: "Ready for the Business Plan when you are." });
+        if (chainEnd) {
+          const failed: number[] = [];
+          for (let s = targetStageResp; s < chainEnd; s++) {
+            if (lastPolled?.stageStatus?.[`stage${s}`] === "failed") failed.push(s);
+          }
+          if (failed.length) {
+            toast({ title: "Pathway draft ready (with gaps)", description: `Ran the full pathway. Stage${failed.length > 1 ? "s" : ""} ${failed.join(", ")} couldn't complete — everything else is on the board to work with.`, variant: "destructive" });
+          } else {
+            toast({ title: "Pathway complete", description: "Ran end-to-end through Why Buy. Full draft is on the board — refine the business plan from here." });
+          }
         } else {
           const finalResults = lastPolled?.stageResults?.[stageKey] || {};
           if (lastStatus === "skipped") {

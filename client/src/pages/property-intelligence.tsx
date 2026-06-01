@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, ImageIcon, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,6 +37,15 @@ function readTabFromUrl(): TabId {
   return "pathway";
 }
 
+function readSearchFromUrl(): { address: string; postcode: string | null } | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const address = params.get("address") || "";
+  const postcode = params.get("postcode") || "";
+  if (!address && !postcode) return null;
+  return { address, postcode: postcode || null };
+}
+
 const TabLoader = () => (
   <div className="flex items-center justify-center h-64">
     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -45,6 +54,9 @@ const TabLoader = () => (
 
 export default function PropertyIntelligence() {
   const [, navigate] = useLocation();
+  // wouter's search string updates on every query-string change (including the
+  // 'Open in Map' links from the Pathway tab, which only change ?tab/?address).
+  const search = useSearch();
   const [tab, setTab] = useState<TabId>(readTabFromUrl());
 
   const handleTabChange = (next: string) => {
@@ -56,25 +68,21 @@ export default function PropertyIntelligence() {
     navigate(`/property-intelligence?${params.toString()}`);
   };
 
-  useEffect(() => {
-    const handler = () => setTab(readTabFromUrl());
-    window.addEventListener("popstate", handler);
-    return () => window.removeEventListener("popstate", handler);
-  }, []);
-
   // Pre-load a pendingSearch when we arrive via ?address=&postcode= URL params
   // (e.g. the 'Open in Map' button from the Pathway page). This makes the
   // Pathway map the canonical Goad/street-plan view across the app — no more
   // separate Retail Context Plan modal flow.
-  const initialPendingSearch = (() => {
-    if (typeof window === "undefined") return null;
-    const params = new URLSearchParams(window.location.search);
-    const address = params.get("address") || "";
-    const postcode = params.get("postcode") || "";
-    if (!address && !postcode) return null;
-    return { address, postcode: postcode || null };
-  })();
-  const [pendingSearch, setPendingSearch] = useState<{ address: string; postcode: string | null } | null>(initialPendingSearch);
+  const [pendingSearch, setPendingSearch] = useState<{ address: string; postcode: string | null } | null>(readSearchFromUrl());
+
+  // Re-sync the active tab and the map's pending search whenever the URL query
+  // changes. This is what makes 'Open in Map' work even when we're already on
+  // the page (the link only changes ?tab=map&address=… — no remount), instead
+  // of silently staying on the current tab.
+  useEffect(() => {
+    setTab(readTabFromUrl());
+    const next = readSearchFromUrl();
+    if (next) setPendingSearch(next);
+  }, [search]);
   // Canonical property identity for the whole page — once resolved, every tab
   // can read this and stop doing its own ad-hoc lookups. v1: state only;
   // v2 will pass propertyId into the lazy tab components as a prop.
