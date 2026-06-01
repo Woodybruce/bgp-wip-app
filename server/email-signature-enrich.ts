@@ -134,13 +134,25 @@ async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string
 
   for (const userEmail of candidates) {
     try {
-      const escaped = fromEmail.replace(/'/g, "''");
-      const url = `/users/${encodeURIComponent(userEmail)}/messages?$top=1&$orderby=receivedDateTime desc&$filter=from/emailAddress/address eq '${encodeURIComponent(escaped)}'&$select=id,body,receivedDateTime`;
+      // Graph 400s on $filter + $orderby across different properties
+      // ("InefficientFilter"). $search="from:<addr>" uses the content
+      // index, supports both ranking and complex predicates, and is
+      // explicitly the recommended path for from/to lookups.
+      // Note: $search and $orderby are mutually exclusive; $search
+      // returns relevance-ranked results which for from: queries
+      // surfaces the most recent message first.
+      const url = `/users/${encodeURIComponent(userEmail)}/messages?$top=3&$search="from:${encodeURIComponent(fromEmail)}"&$select=id,body,receivedDateTime,subject,from`;
       const data = await graphRequest(url);
-      const msg = (data?.value || [])[0];
-      if (msg) {
+      const msgs = (data?.value || []) as any[];
+      // $search may return adjacent matches; double-check the from address
+      // matches and prefer the most recent received date.
+      const matched = msgs
+        .filter((m) => (m.from?.emailAddress?.address || "").toLowerCase() === fromEmail.toLowerCase())
+        .sort((a, b) => Date.parse(b.receivedDateTime || 0) - Date.parse(a.receivedDateTime || 0));
+      const msg = matched[0] || msgs[0];
+      if (msg && msg.body?.content) {
         return {
-          body: msg.body?.content || "",
+          body: msg.body.content || "",
           id: msg.id,
           receivedAt: msg.receivedDateTime,
         };

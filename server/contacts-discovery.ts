@@ -638,11 +638,16 @@ router.get("/api/admin/email-signatures/debug/:email", requireAuth, async (req: 
     let foundMailbox: string | null = null;
     for (const u of bgpUsers) {
       try {
-        const escaped = email.replace(/'/g, "''");
-        const url = `/users/${encodeURIComponent(u.bgp_user)}/messages?$top=1&$orderby=receivedDateTime desc&$filter=from/emailAddress/address eq '${encodeURIComponent(escaped)}'&$select=id,body,receivedDateTime,subject`;
+        // $search="from:<addr>" instead of $filter+$orderby — Graph
+        // rejects the latter combination as InefficientFilter.
+        const url = `/users/${encodeURIComponent(u.bgp_user)}/messages?$top=3&$search="from:${encodeURIComponent(email)}"&$select=id,body,receivedDateTime,subject,from`;
         const data = await graphRequest(url);
-        const msg = (data?.value || [])[0];
-        trace.steps.push({ step: "graph_fetch", mailbox: u.bgp_user, found: !!msg, subject: msg?.subject || null });
+        const msgs = (data?.value || []) as any[];
+        const matched = msgs
+          .filter((m: any) => (m.from?.emailAddress?.address || "").toLowerCase() === email.toLowerCase())
+          .sort((a: any, b: any) => Date.parse(b.receivedDateTime || 0) - Date.parse(a.receivedDateTime || 0));
+        const msg = matched[0] || msgs[0];
+        trace.steps.push({ step: "graph_fetch", mailbox: u.bgp_user, found: !!msg, subject: msg?.subject || null, totalReturned: msgs.length });
         if (msg) { foundMsg = msg; foundMailbox = u.bgp_user; break; }
       } catch (e: any) {
         trace.steps.push({ step: "graph_fetch", mailbox: u.bgp_user, error: e?.message });
