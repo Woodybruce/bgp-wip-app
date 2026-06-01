@@ -97,7 +97,7 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
 
   return (
     <span
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block max-w-full align-bottom min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
       <span
@@ -263,7 +263,7 @@ export function InlineSelect({ value, options, onSave, placeholder = "—", clas
   return (
     <span
       onClick={() => setEditing(true)}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block max-w-full align-bottom min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
       {value || placeholder}
