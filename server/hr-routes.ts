@@ -259,7 +259,28 @@ export function setupHrRoutes(app: Express) {
       res.json(rows);
     } catch (e: any) {
       console.error("[hr] GET /staff error:", e.message);
-      res.status(500).json({ error: e.message });
+      // Fallback: if the heavy query fails (missing column, broken
+      // subquery, etc.) return a minimal staff list so the UI doesn't
+      // dead-end on a 500. The team cards, drill-in fallback fetch,
+      // and most directory views only need id + name + role + team.
+      try {
+        const { rows: basic } = await pool.query(`
+          SELECT u.id, u.name, u.email, u.phone, u.role, u.department, u.team,
+                 u.is_admin, u.is_active, u.profile_pic_url,
+                 sp.id AS profile_id, sp.title, sp.manager_id, sp.start_date,
+                 sp.status AS hr_status,
+                 m.name AS manager_name
+            FROM users u
+            LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+            LEFT JOIN users m ON m.id = sp.manager_id
+           WHERE u.is_active = true
+           ORDER BY u.name ASC
+        `);
+        res.json(basic);
+      } catch (fallbackErr: any) {
+        console.error("[hr] GET /staff fallback also failed:", fallbackErr.message);
+        res.status(500).json({ error: e.message, fallbackError: fallbackErr.message });
+      }
     }
   });
 
@@ -321,7 +342,29 @@ export function setupHrRoutes(app: Express) {
       if (!rows[0]) return res.status(404).json({ error: "User not found" });
       res.json(rows[0]);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      console.error("[hr] GET /staff/:userId error:", e.message);
+      // Fallback: minimal SELECT so the drill-in opens with at least
+      // basic name + role + photo + bio + manager. Heavy fields stay
+      // null; client masks them gracefully via the existing isAdmin
+      // / isOwn gates on each panel.
+      try {
+        const { rows: basic } = await pool.query(`
+          SELECT u.id, u.name, u.email, u.phone, u.role, u.department, u.team,
+                 u.is_admin, u.is_active, u.profile_pic_url,
+                 sp.id AS profile_id, sp.title, sp.manager_id, sp.start_date,
+                 sp.status AS hr_status, sp.bio, sp.cv_summary, sp.linkedin_url,
+                 m.name AS manager_name
+            FROM users u
+            LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+            LEFT JOIN users m ON m.id = sp.manager_id
+           WHERE u.id = $1
+        `, [userId]);
+        if (!basic[0]) return res.status(404).json({ error: "User not found" });
+        res.json(basic[0]);
+      } catch (fallbackErr: any) {
+        console.error("[hr] GET /staff/:userId fallback also failed:", fallbackErr.message);
+        res.status(500).json({ error: e.message, fallbackError: fallbackErr.message });
+      }
     }
   });
 
