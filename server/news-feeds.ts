@@ -17,6 +17,11 @@ import * as os from "os";
 import * as path from "path";
 
 const DEFAULT_SOURCES = [
+  // Green Street News via its WordPress RSS feed, authenticated by the
+  // subscriber cookie (GREENSTREET_AUTH_COOKIE / Paywall logins panel) — an
+  // alternative to the GREEN_STREET_API_TOKEN integration. Named "(RSS)" so it
+  // doesn't collide with the API-fed "Green Street News" source.
+  { name: "Green Street News (RSS)", url: "https://greenstreetnews.com", feedUrl: "https://greenstreetnews.com/feed/", type: "rss", category: "Property" },
   { name: "Property Week", url: "https://www.propertyweek.com", feedUrl: "https://www.propertyweek.com/rss", type: "rss", category: "Property" },
   { name: "Commercial News Media", url: "https://www.commercialnewsmedia.com", feedUrl: "https://www.commercialnewsmedia.com/feed", type: "rss", category: "Property" },
   { name: "Propel Hospitality", url: "https://www.propelhospitality.com", feedUrl: "https://www.propelhospitality.com/rss", type: "rss", category: "Hospitality" },
