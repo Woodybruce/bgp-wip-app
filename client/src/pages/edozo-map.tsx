@@ -757,6 +757,93 @@ async function generatePropertyPDF(data: PropertyData, postcode: string) {
 // official register (£3–4, cached server-side) — its property section names
 // the lessor / superior freehold title. One click, reuses the existing
 // purchase-title endpoint.
+// HMLR fallback picker — shown in the polygon-context drawer when no
+// titles matched the clicked unit's address. Hits the OS Places postcode
+// endpoint (returns every UPRN-keyed building in the postcode), lets the
+// user pick the right one, and bubbles the choice back so the parent
+// re-fetches polygon-context against the corrected address.
+function HmlrFallbackPicker({ postcode, onPick }: { postcode: string; onPick: (addr: { uprn: string; number: string | null; street: string | null; postcode: string }) => void }) {
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<Array<{ uprn: string; address: string; postcode: string }> | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const load = async () => {
+    if (!postcode) { setErr("No postcode known for this polygon."); return; }
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/os/places/postcode/${encodeURIComponent(postcode)}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`OS Places returned ${r.status}`);
+      const j: any = await r.json();
+      setResults(j.results || []);
+      setOpen(true);
+    } catch (e: any) {
+      setErr(e?.message || "OS Places lookup failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Heuristic: split "43 Curzon Street, Mayfair, London, W1J 7UF" into
+  // number + street so the picked row can re-key polygon-context.
+  const splitAddress = (addr: string): { number: string | null; street: string | null } => {
+    const m = addr.match(/^(\d+[a-z\-]*)\s+([^,]+?)(?:,|$)/i);
+    if (m) return { number: m[1], street: m[2].toUpperCase().trim() };
+    return { number: null, street: addr.split(",")[0]?.toUpperCase().trim() || null };
+  };
+
+  return (
+    <div className="rounded border border-gray-200 bg-gray-50 p-2 text-[11px]">
+      {!open ? (
+        <button
+          type="button"
+          onClick={load}
+          disabled={loading || !postcode}
+          className="text-[11px] font-medium text-blue-700 hover:underline disabled:opacity-40"
+          data-testid="button-hmlr-fallback-picker"
+        >
+          {loading ? "Loading addresses…" : `Try a different address in ${postcode || "this postcode"} →`}
+        </button>
+      ) : (
+        <>
+          <div className="text-[10px] text-gray-600 mb-1">
+            Pick the right building in {postcode} ({results?.length || 0} found):
+          </div>
+          <div className="max-h-48 overflow-y-auto space-y-0.5">
+            {(results || []).map((r) => {
+              const split = splitAddress(r.address);
+              return (
+                <button
+                  key={r.uprn}
+                  type="button"
+                  onClick={() => { onPick({ uprn: r.uprn, number: split.number, street: split.street, postcode: r.postcode }); setOpen(false); }}
+                  className="w-full text-left px-1.5 py-1 rounded hover:bg-white border border-transparent hover:border-gray-200 text-[10px]"
+                  data-testid={`button-hmlr-fallback-pick-${r.uprn}`}
+                >
+                  <div className="text-gray-900 truncate">{r.address}</div>
+                  <div className="text-gray-400 font-mono text-[9px]">UPRN {r.uprn}</div>
+                </button>
+              );
+            })}
+            {(results || []).length === 0 && (
+              <p className="text-[10px] text-gray-500 italic">OS Places returned no addresses for {postcode}.</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="text-[10px] text-gray-500 hover:text-gray-700 mt-1"
+          >
+            Cancel
+          </button>
+        </>
+      )}
+      {err && <p className="text-[10px] text-red-600 mt-1">{err}</p>}
+    </div>
+  );
+}
+
 function LeaseholdFreeholdFinder({ titleNumber }: { titleNumber?: string | null }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -6004,7 +6091,34 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                       // where the freehold is a blanket Grosvenor estate title).
                       const ctxFhs = (lr.context?.freeholds || []);
                       if (fhs.length === 0 && lhs.length === 0 && ctxFhs.length === 0) {
-                        return <p className="text-[11px] text-gray-500 italic">No titles matched this building. Resolver source: {lr.source || "n/a"}.</p>;
+                        // Fallback: HMLR doesn't have a registered title against
+                        // this exact address (could be unregistered land, an
+                        // individual-owned residence, a sublet that never had
+                        // its own title, or the address resolved to the wrong
+                        // building). Offer an OS Places picker of every
+                        // building in the postcode — clicking one re-fires
+                        // the polygon-context lookup against that address.
+                        return (
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] text-gray-600 italic">No HMLR title matched this exact building. Resolver source: {lr.source || "n/a"}.</p>
+                            <HmlrFallbackPicker
+                              postcode={goadPanelUnit?.postcode || ""}
+                              onPick={(addr) => {
+                                // Re-key the polygon drawer to the picked
+                                // address: update the unit's number + street
+                                // + postcode and the parent effect will re-
+                                // fetch polygon-context with the new keys.
+                                setGoadPanelUnit((prev: any) => prev ? {
+                                  ...prev,
+                                  num: addr.number || prev.num,
+                                  street: addr.street || prev.street,
+                                  postcode: addr.postcode || prev.postcode,
+                                  uprn: addr.uprn,
+                                } : prev);
+                              }}
+                            />
+                          </div>
+                        );
                       }
                       // Click a proprietor → jump to the Investigator (KYC Clouseau)
                       // tab pre-loaded with that company name. We push the URL and
@@ -6026,6 +6140,24 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                       const chain = (lr as any).chain;
                       const renderChainRow = (label: string, accent: string, c: any) => {
                         if (!c) return null;
+                        // ChatBGP narrative-research deep-link. Clouseau (the
+                        // openInvestigator click) gives the structured CH +
+                        // PSC + UBO chain. ChatBGP fills the gap by walking
+                        // news/Perplexity/BGP CRM for the "who is this
+                        // really" narrative — fund, family office, investor
+                        // cluster, BGP relationship history.
+                        const askChatBGP = () => {
+                          const prompt =
+                            `Investigate the ultimate ownership and BGP history of "${c.proprietorName}"` +
+                            (c.companyRegistrationNo ? ` (Companies House #${c.companyRegistrationNo})` : ``) +
+                            `, the ${label.toLowerCase()} of ${goadPanelUnit?.num || ""} ${goadPanelUnit?.street || ""} ${goadPanelUnit?.postcode || ""}.\n\n` +
+                            `Walk the PSC + corporate chain via Companies House, then find the fund / family office / investor cluster behind it via Perplexity and BGP CRM. Output:\n` +
+                            `- Who really controls this entity (1-2 sentences)\n` +
+                            `- BGP relationship status (any deals, properties, contacts)\n` +
+                            `- Other notable UK properties they hold\n` +
+                            `- Risk flags`;
+                          window.location.href = `/chatbgp?message=${encodeURIComponent(prompt)}`;
+                        };
                         return (
                           <div className={`rounded p-2 mb-1.5 text-[11px] border ${accent}`}>
                             <div className="flex items-center justify-between gap-2">
@@ -6041,6 +6173,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                             {c.reasons?.length > 0 && (
                               <div className="text-[10px] text-gray-500 mt-0.5 italic">{c.reasons.slice(0, 3).join(" · ")}</div>
                             )}
+                            <button
+                              type="button"
+                              onClick={askChatBGP}
+                              className="text-[10px] text-gray-700 hover:text-gray-900 hover:underline mt-1 inline-flex items-center gap-0.5"
+                              data-testid={`button-chatbgp-${c.titleNumber}`}
+                            >
+                              💬 Ask ChatBGP who they really are
+                            </button>
                           </div>
                         );
                       };
