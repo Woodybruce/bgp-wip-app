@@ -100,28 +100,57 @@ export async function getCachedSignatures(emails: string[]): Promise<Map<string,
 }
 
 // Search the system mailbox for the most recent INBOUND message from
-// `fromEmail`. Returns null if nothing found in the last 2 years or
-// Graph errored.
+// `fromEmail`. Inbound means someone at the external company sent it
+// TO a BGP user — so the body carries their signature.
+//
+// CRITICAL: the BGP user who corresponds with this contact varies per
+// contact (Luke emails the Outlets people, Rob emails Bluewater, Tom
+// emails Leisure Parks). Hardcoding one mailbox misses 90% of the
+// signatures. We resolve the right mailbox from crm_interactions:
+// the bgp_user on the most recent interaction touching this address.
 async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string; id: string; receivedAt: string } | null> {
-  try {
-    // Graph $search clause requires a body filter we can't reliably
-    // restrict to a sender. Use $filter on from/emailAddress/address
-    // instead — exact match, indexed, fast. Need to URL-encode the
-    // address; quotes around the value.
-    const escaped = fromEmail.replace(/'/g, "''");
-    const url = `/users/woody@brucegillinghampollard.com/messages?$top=1&$orderby=receivedDateTime desc&$filter=from/emailAddress/address eq '${encodeURIComponent(escaped)}'&$select=id,body,receivedDateTime`;
-    const data = await graphRequest(url);
-    const msg = (data?.value || [])[0];
-    if (!msg) return null;
-    return {
-      body: msg.body?.content || "",
-      id: msg.id,
-      receivedAt: msg.receivedDateTime,
-    };
-  } catch (e: any) {
-    // Per-user mailbox not accessible / Graph error — skip silently.
-    return null;
+  // Find the BGP user(s) who've corresponded with this external address
+  // most often — try each mailbox until Graph returns an inbound match.
+  const { rows: bgpUsers } = await pool.query<{ bgp_user: string }>(
+    `SELECT bgp_user
+       FROM crm_interactions
+      WHERE bgp_user IS NOT NULL
+        AND participants IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(participants) AS p(addr)
+          WHERE lower(addr) = $1
+        )
+      GROUP BY bgp_user
+      ORDER BY COUNT(*) DESC
+      LIMIT 4`,
+    [fromEmail.toLowerCase()],
+  );
+
+  // Fall back to a known senior mailbox if no candidates — shouldn't
+  // happen in practice but keeps the function safe.
+  const candidates = bgpUsers.length > 0
+    ? bgpUsers.map((r) => r.bgp_user)
+    : ["woody@brucegillinghampollard.com"];
+
+  for (const userEmail of candidates) {
+    try {
+      const escaped = fromEmail.replace(/'/g, "''");
+      const url = `/users/${encodeURIComponent(userEmail)}/messages?$top=1&$orderby=receivedDateTime desc&$filter=from/emailAddress/address eq '${encodeURIComponent(escaped)}'&$select=id,body,receivedDateTime`;
+      const data = await graphRequest(url);
+      const msg = (data?.value || [])[0];
+      if (msg) {
+        return {
+          body: msg.body?.content || "",
+          id: msg.id,
+          receivedAt: msg.receivedDateTime,
+        };
+      }
+    } catch (e: any) {
+      // This user's mailbox isn't accessible / Graph errored — try the next.
+      continue;
+    }
   }
+  return null;
 }
 
 // Strip HTML, isolate the signature block. Heuristic: signatures sit
@@ -237,11 +266,21 @@ export async function enrichSignaturesForDomain(domain: string, emails: string[]
       if (existing[0]) continue;
 
       const msg = await fetchLatestInboundFrom(email);
-      if (!msg) continue;
+      if (!msg) {
+        console.log(`[email-signature] no inbound found for ${email}`);
+        continue;
+      }
       const sigText = isolateSignatureText(msg.body);
-      if (sigText.length < 30) continue;
+      if (sigText.length < 30) {
+        console.log(`[email-signature] signature too short for ${email} (${sigText.length} chars)`);
+        continue;
+      }
       const fields = await extractFieldsFromSignature(sigText, email);
-      if (!fields) continue;
+      if (!fields) {
+        console.log(`[email-signature] Haiku extract failed for ${email}`);
+        continue;
+      }
+      console.log(`[email-signature] enriched ${email} → ${fields.title || "no title"} · ${fields.phone || fields.mobile || "no phone"}`);
 
       await pool.query(
         `INSERT INTO email_signatures (email, full_name, title, phone, mobile, address, linkedin, last_seen_at, enriched_at, raw_signature, source_message_id)

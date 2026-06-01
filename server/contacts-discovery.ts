@@ -586,4 +586,23 @@ router.get("/api/brand/by-name/:name/contacts-cascade", requireAuth, async (req:
   await handleContactsCascade(id, res);
 });
 
+// Diagnostic — show how many signatures are cached for a domain, plus
+// the most recent 10 raw rows. Lets us see whether the enrichment job
+// is actually firing (look for the console.log lines in Railway too).
+router.get("/api/admin/email-signatures/by-domain/:domain", requireAuth, async (req: Request, res: Response) => {
+  const dom = cleanDomain(String(req.params.domain || ""));
+  if (!dom) return res.status(400).json({ error: "domain required" });
+  const { rows } = await pool.query(
+    `SELECT email, full_name, title, phone, mobile, linkedin,
+            to_char(last_seen_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS last_seen_at,
+            to_char(enriched_at,  'YYYY-MM-DD"T"HH24:MI:SS') AS enriched_at
+       FROM email_signatures
+      WHERE lower(email) LIKE $1
+      ORDER BY enriched_at DESC
+      LIMIT 50`,
+    [`%@${dom}`],
+  );
+  res.json({ domain: dom, count: rows.length, signatures: rows });
+});
+
 export default router;
