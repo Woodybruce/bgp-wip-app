@@ -1,8 +1,9 @@
 import { lazy, Suspense, useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BarChart3, Store, TrendingUp, Building2 } from "lucide-react";
+import { BarChart3, Store, TrendingUp, Building2, FileText } from "lucide-react";
 import { useTeam } from "@/lib/team-context";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const Deals = lazy(() => import("@/pages/deals"));
 const AvailableUnits = lazy(() => import("@/pages/available-units"));
@@ -32,9 +33,9 @@ function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
   if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
   if (loc.startsWith("/deals/list")) return "deals";
-  // Bare /deals lands on the Deals schedule. (WIP Report retired from the
-  // hub tabs, but /wip-report + /deals/report still render it for old links.)
-  if (loc === "/deals") return "deals";
+  // Bare /deals → null so the component picks the landing tab by device:
+  // WIP Report on desktop (the financial roll-up), Deals on mobile (WIP is
+  // hidden there). The Deals schedule lives at /deals/list.
   return null;
 }
 
@@ -47,7 +48,10 @@ function isDealProfile(loc: string): boolean {
 export default function DealsHub() {
   const [location, setLocation] = useLocation();
   const { activeTeam } = useTeam();
-  const [tab, setTab] = useState<TabKey>(() => getTabFromLocation(location) || "deals");
+  const isMobile = useIsMobile();
+  const [tab, setTab] = useState<TabKey>(() =>
+    getTabFromLocation(location) || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report")
+  );
   const isProfile = isDealProfile(location);
 
   useEffect(() => {
@@ -56,14 +60,16 @@ export default function DealsHub() {
     if (t) setTab(t);
   }, [location, isProfile]);
 
-  // WIP Report leads — it's the financial roll-up every agent wants on
-  // landing. Then it's what we own → what's transacting.
+  // WIP Report leads on desktop — it's the financial roll-up every agent
+  // wants. It's hidden from the mobile hub tabs (phone-unfriendly) but still
+  // reachable by URL.
   const allTabs = useMemo(() => [
+    ...(isMobile ? [] : [{ key: "wip-report" as const, label: "WIP Report", icon: FileText }]),
     { key: "properties" as const, label: "Properties", icon: Building2 },
     { key: "deals" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
-  ], []);
+  ], [isMobile]);
 
   const tabs = useMemo(() => {
     if (activeTeam === "Investment") return allTabs.filter(t => t.key !== "letting");
