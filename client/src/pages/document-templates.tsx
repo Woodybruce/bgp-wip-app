@@ -53,6 +53,14 @@ import {
   Image,
   RefreshCw,
   Bell,
+  Bold,
+  Italic,
+  List,
+  ListOrdered,
+  Heading1,
+  Heading2,
+  Heading3,
+  Minus,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -2912,6 +2920,146 @@ function MarkdownPreview({ content }: { content: string }) {
   return <div className="space-y-1 px-1">{elements}</div>;
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function mdInlineToHtml(text: string): string {
+  let t = escapeHtml(text);
+  t = t.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
+  t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  t = t.replace(/`(.+?)`/g, "<code>$1</code>");
+  return t;
+}
+
+// Render the same Markdown subset as MarkdownPreview, but as an HTML string for a contenteditable surface.
+function markdownToEditableHtml(content: string): string {
+  const lines = content.split("\n");
+  const blocks: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) { i++; continue; }
+    if (trimmed.startsWith("# ")) { blocks.push(`<h1>${mdInlineToHtml(trimmed.slice(2))}</h1>`); i++; continue; }
+    if (trimmed.startsWith("## ")) { blocks.push(`<h2>${mdInlineToHtml(trimmed.slice(3))}</h2>`); i++; continue; }
+    if (trimmed.startsWith("### ")) { blocks.push(`<h3>${mdInlineToHtml(trimmed.slice(4))}</h3>`); i++; continue; }
+    if (trimmed === "---" || trimmed === "***") { blocks.push("<hr>"); i++; continue; }
+    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      const items: string[] = [];
+      while (i < lines.length && (lines[i].trim().startsWith("- ") || lines[i].trim().startsWith("* "))) {
+        items.push(`<li>${mdInlineToHtml(lines[i].trim().slice(2))}</li>`); i++;
+      }
+      blocks.push(`<ul>${items.join("")}</ul>`); continue;
+    }
+    if (/^\d+\.\s/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+        items.push(`<li>${mdInlineToHtml(lines[i].trim().replace(/^\d+\.\s/, ""))}</li>`); i++;
+      }
+      blocks.push(`<ol>${items.join("")}</ol>`); continue;
+    }
+    blocks.push(`<p>${mdInlineToHtml(trimmed)}</p>`); i++;
+  }
+  return blocks.join("") || "<p><br></p>";
+}
+
+const BLOCK_TAGS = new Set(["H1", "H2", "H3", "P", "DIV", "UL", "OL", "HR", "LI"]);
+
+// Serialize inline DOM (text + strong/em/code) back to Markdown markers.
+function serializeInline(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+  const el = node as HTMLElement;
+  const tag = el.nodeName;
+  if (tag === "BR") return "\n";
+  const inner = Array.from(el.childNodes).map(serializeInline).join("");
+  if (!inner.trim() && tag !== "BR") return inner;
+  if (tag === "STRONG" || tag === "B") return `**${inner}**`;
+  if (tag === "EM" || tag === "I") return `*${inner}*`;
+  if (tag === "CODE") return `\`${inner}\``;
+  return inner;
+}
+
+// Serialize the contenteditable DOM back into the Markdown subset.
+function htmlToMarkdown(root: HTMLElement): string {
+  const blocks: string[] = [];
+  const walk = (parent: Node) => {
+    parent.childNodes.forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const txt = (node.textContent || "").trim();
+        if (txt) blocks.push(txt);
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      const el = node as HTMLElement;
+      const tag = el.nodeName;
+      switch (tag) {
+        case "H1": blocks.push(`# ${serializeInline(el).trim()}`); break;
+        case "H2": blocks.push(`## ${serializeInline(el).trim()}`); break;
+        case "H3": blocks.push(`### ${serializeInline(el).trim()}`); break;
+        case "HR": blocks.push("---"); break;
+        case "UL": blocks.push(Array.from(el.querySelectorAll(":scope > li")).map(li => `- ${serializeInline(li).trim()}`).join("\n")); break;
+        case "OL": blocks.push(Array.from(el.querySelectorAll(":scope > li")).map((li, n) => `${n + 1}. ${serializeInline(li).trim()}`).join("\n")); break;
+        case "DIV": {
+          const hasBlockChild = Array.from(el.childNodes).some(c => c.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((c as HTMLElement).nodeName));
+          if (hasBlockChild) { walk(el); } else { const t = serializeInline(el).trim(); if (t) blocks.push(t); }
+          break;
+        }
+        default: { const t = serializeInline(el).trim(); if (t) blocks.push(t); }
+      }
+    });
+  };
+  walk(root);
+  return blocks.filter(b => b.length > 0).join("\n\n");
+}
+
+function MarkdownEditor({ initialMarkdown, onChange }: { initialMarkdown: string; onChange: (md: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (ref.current) ref.current.innerHTML = markdownToEditableHtml(initialMarkdown);
+    // initialMarkdown intentionally read once on mount — editor is uncontrolled to preserve the caret.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const emit = () => { if (ref.current) onChange(htmlToMarkdown(ref.current)); };
+
+  const exec = (command: string, value?: string) => {
+    ref.current?.focus();
+    document.execCommand(command, false, value);
+    emit();
+  };
+
+  const btn = "h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors";
+
+  return (
+    <div className="border rounded-md overflow-hidden">
+      <div className="flex items-center gap-0.5 border-b bg-muted/40 px-2 py-1 flex-wrap">
+        <button type="button" className={btn} title="Bold" onMouseDown={e => e.preventDefault()} onClick={() => exec("bold")} data-testid="wysiwyg-bold"><Bold className="w-3.5 h-3.5" /></button>
+        <button type="button" className={btn} title="Italic" onMouseDown={e => e.preventDefault()} onClick={() => exec("italic")} data-testid="wysiwyg-italic"><Italic className="w-3.5 h-3.5" /></button>
+        <div className="w-px h-4 bg-border mx-1" />
+        <button type="button" className={btn} title="Heading 1" onMouseDown={e => e.preventDefault()} onClick={() => exec("formatBlock", "h1")} data-testid="wysiwyg-h1"><Heading1 className="w-3.5 h-3.5" /></button>
+        <button type="button" className={btn} title="Heading 2" onMouseDown={e => e.preventDefault()} onClick={() => exec("formatBlock", "h2")} data-testid="wysiwyg-h2"><Heading2 className="w-3.5 h-3.5" /></button>
+        <button type="button" className={btn} title="Heading 3" onMouseDown={e => e.preventDefault()} onClick={() => exec("formatBlock", "h3")} data-testid="wysiwyg-h3"><Heading3 className="w-3.5 h-3.5" /></button>
+        <button type="button" className={btn} title="Normal text" onMouseDown={e => e.preventDefault()} onClick={() => exec("formatBlock", "p")} data-testid="wysiwyg-p"><Type className="w-3.5 h-3.5" /></button>
+        <div className="w-px h-4 bg-border mx-1" />
+        <button type="button" className={btn} title="Bullet list" onMouseDown={e => e.preventDefault()} onClick={() => exec("insertUnorderedList")} data-testid="wysiwyg-ul"><List className="w-3.5 h-3.5" /></button>
+        <button type="button" className={btn} title="Numbered list" onMouseDown={e => e.preventDefault()} onClick={() => exec("insertOrderedList")} data-testid="wysiwyg-ol"><ListOrdered className="w-3.5 h-3.5" /></button>
+        <button type="button" className={btn} title="Divider" onMouseDown={e => e.preventDefault()} onClick={() => exec("insertHorizontalRule")} data-testid="wysiwyg-hr"><Minus className="w-3.5 h-3.5" /></button>
+      </div>
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={emit}
+        className="prose-doc min-h-[560px] max-h-[600px] overflow-y-auto px-5 py-4 text-sm leading-relaxed focus:outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-5 [&_h1]:mb-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2 [&_p]:my-2 [&_hr]:my-4 [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_code]:text-xs [&_code]:font-mono"
+        data-testid="wysiwyg-editor"
+      />
+    </div>
+  );
+}
+
 function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void }) {
   const { toast } = useToast();
   const [previewRun, setPreviewRun] = useState<string | null>(null);
@@ -2920,12 +3068,31 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
   const [refineInput, setRefineInput] = useState("");
   const [refining, setRefining] = useState(false);
   const refineEndRef = useRef<HTMLDivElement>(null);
+  const [editingText, setEditingText] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [savingText, setSavingText] = useState(false);
 
-  // Reset refine chat when switching documents
+  // Reset refine chat + text editor when switching documents
   useEffect(() => {
     setRefineMessages([]);
     setRefineInput("");
+    setEditingText(false);
+    setEditContent("");
   }, [previewRun]);
+
+  const saveText = async (runId: string) => {
+    setSavingText(true);
+    try {
+      await apiRequest("PATCH", `/api/doc-runs/${runId}`, { content: editContent });
+      await queryClient.invalidateQueries({ queryKey: ["/api/doc-runs"] });
+      toast({ title: "Document saved" });
+      setEditingText(false);
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err?.message || "Something went wrong", variant: "destructive" });
+    } finally {
+      setSavingText(false);
+    }
+  };
 
   const { data: runs, isLoading } = useQuery<DocumentRun[]>({
     queryKey: ["/api/doc-runs"],
@@ -3057,22 +3224,40 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
               Back to Library
             </Button>
             <div className="flex-1" />
-            {onEditRun && (
-              <Button variant="default" size="sm" onClick={() => onEditRun(run)} data-testid={`button-edit-preview-${run.id}`}>
-                <Edit3 className="w-3.5 h-3.5 mr-1" />
-                Edit in Designer
-              </Button>
+            {editingText ? (
+              <>
+                <Button variant="ghost" size="sm" onClick={() => setEditingText(false)} disabled={savingText} data-testid={`button-cancel-edit-text-${run.id}`}>
+                  <X className="w-3.5 h-3.5 mr-1" /> Cancel
+                </Button>
+                <Button variant="default" size="sm" onClick={() => saveText(run.id)} disabled={savingText} data-testid={`button-save-edit-text-${run.id}`}>
+                  {savingText ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1" />}
+                  Save
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" size="sm" onClick={() => { setEditContent(run.content); setEditingText(true); }} data-testid={`button-edit-text-${run.id}`}>
+                  <PenTool className="w-3.5 h-3.5 mr-1" />
+                  Edit text
+                </Button>
+                {onEditRun && (
+                  <Button variant="default" size="sm" onClick={() => onEditRun(run)} data-testid={`button-edit-preview-${run.id}`}>
+                    <Edit3 className="w-3.5 h-3.5 mr-1" />
+                    Edit in Designer
+                  </Button>
+                )}
+                <DownloadButtons content={run.content} title={run.name} documentType={run.document_type || undefined} size="sm" />
+                <Button variant="ghost" size="sm" onClick={() => copyToClipboard(run.content)} data-testid={`button-copy-preview-${run.id}`}>
+                  <Copy className="w-3.5 h-3.5 mr-1" /> Copy
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Delete"
+                  onClick={() => { deleteMutation.mutate(run.id); setPreviewRun(null); }}
+                  data-testid={`button-delete-preview-${run.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </>
             )}
-            <DownloadButtons content={run.content} title={run.name} documentType={run.document_type || undefined} size="sm" />
-            <Button variant="ghost" size="sm" onClick={() => copyToClipboard(run.content)} data-testid={`button-copy-preview-${run.id}`}>
-              <Copy className="w-3.5 h-3.5 mr-1" /> Copy
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Delete"
-              onClick={() => { deleteMutation.mutate(run.id); setPreviewRun(null); }}
-              data-testid={`button-delete-preview-${run.id}`}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
           </div>
           <div className="text-center">
             <h3 className="font-semibold text-lg">{run.name}</h3>
@@ -3081,7 +3266,14 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
               {run.document_type && <> · {run.document_type}</>}
             </p>
           </div>
-          {run.design ? (
+          {editingText ? (
+            <div className="space-y-2">
+              <MarkdownEditor initialMarkdown={editContent} onChange={setEditContent} />
+              <p className="text-[10px] text-muted-foreground">
+                Type directly in the document. Use the toolbar for headings, bold, lists and dividers. Click Save to keep your changes.
+              </p>
+            </div>
+          ) : run.design ? (
             <div className="flex justify-center" style={{ maxHeight: "600px", overflowY: "auto" }}>
               <DesignPreview design={run.design} scale={0.75} allPages />
             </div>
@@ -3098,6 +3290,7 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
           )}
 
           {/* Refinement chat panel */}
+          {!editingText && (
           <Card className="border-primary/20 bg-gradient-to-br from-background to-muted/20">
             <CardHeader className="pb-3 pt-4">
               <div className="flex items-center gap-2">
@@ -3162,6 +3355,7 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
               </p>
             </CardContent>
           </Card>
+          )}
         </div>
       );
     }
