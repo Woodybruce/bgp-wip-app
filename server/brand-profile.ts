@@ -863,7 +863,61 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           last_interaction_at: statsByContact.get(c.id)?.last_touch || null,
         }));
       })(),
-      stores: stores.rows,
+      stores: await (async () => {
+        // Tag each brand store with the nearest BGP-instructed property
+        // within 150m. Lets the brand map render gold dots where BGP is
+        // active rather than the generic open/closed colouring.
+        const raw = stores.rows;
+        const withCoords = raw.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
+        if (withCoords.length === 0) return raw;
+        try {
+          // Pull every BGP-instructed property with coords. "Instructed"
+          // = has at least one active deal OR an internal-agent allocation.
+          // Cheap (<1k rows in practice) so we do the haversine in JS.
+          const { rows: props } = await pool.query<{ id: string; name: string; lat: number; lng: number; active_deals: string }>(
+            `SELECT p.id, p.name,
+                    NULLIF(p.latitude, '')::float8 AS lat,
+                    NULLIF(p.longitude, '')::float8 AS lng,
+                    (SELECT COUNT(*)::text FROM crm_deals d
+                       WHERE d.property_id = p.id
+                         AND d.status NOT IN ('ARCH', 'WIT', 'INV')) AS active_deals
+               FROM crm_properties p
+              WHERE NULLIF(p.latitude, '') IS NOT NULL
+                AND NULLIF(p.longitude, '') IS NOT NULL`
+          );
+          const properties = props.filter((p: any) =>
+            Number.isFinite(p.lat) && Number.isFinite(p.lng)
+          );
+          if (properties.length === 0) return raw;
+
+          const toRad = (d: number) => (d * Math.PI) / 180;
+          const distM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+            const R = 6371000;
+            const dLat = toRad(lat2 - lat1);
+            const dLng = toRad(lng2 - lng1);
+            const a = Math.sin(dLat / 2) ** 2
+              + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(a));
+          };
+
+          const THRESHOLD_M = 150;
+          return raw.map((s: any) => {
+            if (typeof s.lat !== "number" || typeof s.lng !== "number") return s;
+            let best: { id: string; name: string; distance_m: number; active_deals: number } | null = null;
+            for (const p of properties) {
+              const d = distM(s.lat, s.lng, p.lat, p.lng);
+              if (d > THRESHOLD_M) continue;
+              if (!best || d < best.distance_m) {
+                best = { id: p.id, name: p.name, distance_m: Math.round(d), active_deals: Number(p.active_deals) || 0 };
+              }
+            }
+            return best ? { ...s, bgpProperty: best } : s;
+          });
+        } catch (e: any) {
+          console.warn(`[brand-profile] BGP-property proximity tagging failed for ${companyId}:`, e?.message);
+          return raw;
+        }
+      })(),
       ownedProperties: ownedProperties.rows,
       landRegistryTitles: landRegistry.rows,
       landlordWebsiteFindings: landlordFindings.rows[0] || null,

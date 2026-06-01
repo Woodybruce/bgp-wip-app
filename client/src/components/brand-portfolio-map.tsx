@@ -15,6 +15,16 @@ interface Store {
   // fall back to the legacy `status`-based colouring used on brand maps.
   tone?: "linked" | "unlinked";
   href?: string;            // optional deep-link on marker click
+  // Server-attached BGP-property proximity (within 150m of a crm_property
+  // with at least one active deal). When present, the dot turns gold and
+  // is drawn slightly larger so the user can see at a glance which of a
+  // brand's UK stores BGP is currently active at.
+  bgpProperty?: {
+    id: string;
+    name: string;
+    distance_m: number;
+    active_deals: number;
+  };
 }
 
 // Small read-only Leaflet map showing a portfolio footprint. Used both
@@ -63,26 +73,49 @@ export function BrandPortfolioMap({
 
     const bounds = L.latLngBounds([]);
     for (const s of geocoded) {
-      // Two-tone landlord colouring, with status-based fallback for brand stores.
+      // Marker colour priority:
+      //   1. bgpProperty — BGP is instructed at this address (gold, bigger)
+      //   2. tone=linked   — already in CRM (landlord profile)
+      //   3. tone=unlinked — scraped / Land Registry only
+      //   4. status=closed — store permanently closed (red)
+      //   5. status=open   — store operational (green)
+      //   6. default       — status unknown (grey)
       let colour: string;
-      if (s.tone === "linked") colour = "#0f766e";        // teal-700 — already in CRM
-      else if (s.tone === "unlinked") colour = "#94a3b8"; // slate-400 — scraped / Land Registry
+      let radius = 5;
+      let outline = "#fff";
+      let outlineWeight = 1;
+      if (s.bgpProperty) {
+        colour = "#f59e0b";          // amber-500 — BGP gold
+        radius = 8;
+        outline = "#1f2937";          // gray-800 ring so gold pops
+        outlineWeight = 2;
+      } else if (s.tone === "linked") { colour = "#0f766e"; radius = 6; }
+      else if (s.tone === "unlinked") colour = "#94a3b8";
       else if (s.status === "closed") colour = "#ef4444";
-      else if (s.status === "open") colour = "#10b981";
-      else colour = "#6b7280";
+      else if (s.status === "open")   colour = "#10b981";
+      else                            colour = "#6b7280";
 
       const marker = L.circleMarker([s.lat!, s.lng!], {
-        radius: s.tone === "linked" ? 6 : 5,
-        weight: 1,
-        color: "#fff",
+        radius,
+        weight: outlineWeight,
+        color: outline,
         fillColor: colour,
         fillOpacity: 0.9,
       }).addTo(mapInstance.current);
-      const tip = s.address ? `${s.name}<br/><span style="font-size:10px;opacity:0.7">${s.address}</span>` : s.name;
+
+      // Tooltip — surface the BGP property link when applicable so the
+      // user understands WHY this dot is gold (e.g. "BGP active here:
+      // Bluewater · 3 deals in flight").
+      let tip = s.address ? `${s.name}<br/><span style="font-size:10px;opacity:0.7">${s.address}</span>` : s.name;
+      if (s.bgpProperty) {
+        tip += `<br/><span style="color:#f59e0b;font-size:10px;font-weight:600">★ BGP active: ${s.bgpProperty.name}${s.bgpProperty.active_deals > 0 ? ` · ${s.bgpProperty.active_deals} deal${s.bgpProperty.active_deals === 1 ? "" : "s"}` : ""}</span>`;
+      }
       marker.bindTooltip(tip, { direction: "top", offset: [0, -4] });
-      if (onSelect || s.href) {
+
+      if (onSelect || s.href || s.bgpProperty) {
         marker.on("click", () => {
           if (onSelect) onSelect(s);
+          else if (s.bgpProperty) window.location.href = `/properties/${s.bgpProperty.id}`;
           else if (s.href) window.location.href = s.href;
         });
         const el = (marker as any)._path;
