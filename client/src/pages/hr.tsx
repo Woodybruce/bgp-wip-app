@@ -2049,7 +2049,12 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
           </div>
 
           <div className="border-t pt-3">
-            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Benefits & entitlements</div>
+            {/* Renamed from "Benefits & entitlements" — the Benefits hub
+                isn't live yet and "Benefits" suggested perks that don't
+                exist. These two fields (holiday + pension) ARE real and
+                stay in the admin form under the cleaner "Entitlements"
+                label. */}
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Entitlements</div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5"><Label>Holiday entitlement (days)</Label><Input type="number" value={form.holidayEntitlement} onChange={f("holidayEntitlement")} /></div>
               <div className="space-y-1.5"><Label>Employee pension rate (%)</Label><Input type="number" step="0.5" value={form.pensionRate} onChange={f("pensionRate")} /></div>
@@ -2437,10 +2442,16 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> Kit</h3>
                 <KitCard person={person} isAdmin={isAdmin} isOwn={isOwn} />
               </section>
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Heart className="w-3.5 h-3.5" /> My benefits</h3>
-                <MyBenefitsCard userId={person.id} />
-              </section>
+              {/* "My benefits" section hidden — matches the Benefits tab
+                  hide above. No benefits are wired up yet; showing this
+                  section on every staff profile suggested perks existed.
+                  Component stays in the file; uncomment to re-enable. */}
+              {false && (
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Heart className="w-3.5 h-3.5" /> My benefits</h3>
+                  <MyBenefitsCard userId={person.id} />
+                </section>
+              )}
             </TabsContent>
           )}
 
@@ -6047,7 +6058,12 @@ export default function HRPage() {
           {[
             { value: "overview", label: "Overview" },
             { value: "my-tasks", label: "My Tasks" },
-            { value: "benefits", label: "Benefits" },
+            // Benefits tab hidden — no benefits are actually wired up yet
+            // and showing the tab made staff think there were perks to
+            // enrol in. Re-enable by un-commenting once the benefits hub
+            // is real. Component (BenefitsTab + MyBenefitsCard) stays in
+            // the file so re-enable is one-line.
+            // { value: "benefits", label: "Benefits" },
             { value: "marketing", label: "Marketing" },
             ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
             { value: "policies", label: "Policies" },
@@ -6072,7 +6088,8 @@ export default function HRPage() {
           </Suspense>
         </TabsContent>
 
-        <TabsContent value="benefits">
+        <TabsContent value="benefits" className="hidden">
+          {/* Benefits panel hidden until the hub is real — see Tabs list above */}
           <BenefitsTab />
         </TabsContent>
 
