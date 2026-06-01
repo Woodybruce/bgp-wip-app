@@ -582,21 +582,21 @@ export function PropertyDetail({ id }: { id: string }) {
                       Two columns gives each pill ~140px which fits
                       every label comfortably. */}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
                       <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
                       <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
                       <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate" />
+                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />
                     </div>
                   </div>
 
