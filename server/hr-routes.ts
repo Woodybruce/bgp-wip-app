@@ -266,10 +266,14 @@ export function setupHrRoutes(app: Express) {
   app.get("/api/hr/staff/:userId", requireAuth, async (req: any, res) => {
     const { userId } = req.params;
     const actor = await getActor(req);
-    // Non-admins can only view their own profile
-    if (!actor.isAdmin && actor.userId !== userId) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
+    // Anyone signed in can pull the basic record (name, role, team, bio,
+    // public CV, photo). Sensitive fields below are masked at the SQL
+    // layer for everyone except admins and the person themselves —
+    // mirrors the pattern the bulk /api/hr/staff endpoint already uses
+    // for dob + address. Old behaviour (blanket 403 for non-admin viewing
+    // anyone else) blocked a click-through that should always work; the
+    // confidentiality is in the FIELDS not the existence of the row.
+    const canSeeSensitive = actor.isAdmin || actor.userId === userId;
     try {
       const { rows } = await pool.query(`
         SELECT
@@ -277,31 +281,43 @@ export function setupHrRoutes(app: Express) {
           u.is_admin, u.is_active, u.profile_pic_url,
           sp.id AS profile_id,
           sp.title, sp.start_date, sp.end_date, sp.status AS hr_status,
-          sp.salary_current, sp.manager_id, sp.department AS hr_department,
+          CASE WHEN $2::boolean THEN sp.salary_current ELSE NULL END AS salary_current,
+          sp.manager_id, sp.department AS hr_department,
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.apc_planned_sitting, sp.apc_submission_deadline,
           sp.apc_intent_to_submit_date, sp.apc_submission_date,
           sp.apc_counsellor_name, sp.apc_counsellor_email,
           sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history,
           sp.education, sp.bio,
-          sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
-          sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
-          sp.contract_sharepoint_url, sp.passport_sharepoint_url,
+          CASE WHEN $2::boolean THEN sp.emergency_contact_name ELSE NULL END AS emergency_contact_name,
+          CASE WHEN $2::boolean THEN sp.emergency_contact_phone ELSE NULL END AS emergency_contact_phone,
+          CASE WHEN $2::boolean THEN sp.emergency_contact_relation ELSE NULL END AS emergency_contact_relation,
+          CASE WHEN $2::boolean THEN sp.holiday_entitlement ELSE NULL END AS holiday_entitlement,
+          CASE WHEN $2::boolean THEN sp.pension_opt_in ELSE NULL END AS pension_opt_in,
+          CASE WHEN $2::boolean THEN sp.pension_rate ELSE NULL END AS pension_rate,
+          CASE WHEN $2::boolean THEN sp.contract_sharepoint_url ELSE NULL END AS contract_sharepoint_url,
+          CASE WHEN $2::boolean THEN sp.passport_sharepoint_url ELSE NULL END AS passport_sharepoint_url,
           sp.linkedin_url, sp.xero_tracking_name,
-          sp.dob, sp.address, sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
+          CASE WHEN $2::boolean THEN sp.dob ELSE NULL END AS dob,
+          CASE WHEN $2::boolean THEN sp.address ELSE NULL END AS address,
+          sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
           sp.board_member, sp.management_team,
           m.name AS manager_name,
-          (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
-           WHERE user_id = u.id AND status = 'approved'
-             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_used,
-          (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
-           WHERE user_id = u.id AND status = 'pending'
-             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_pending
+          CASE WHEN $2::boolean THEN
+            (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
+              WHERE user_id = u.id AND status = 'approved'
+                AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now()))
+          ELSE NULL END AS holiday_used,
+          CASE WHEN $2::boolean THEN
+            (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
+              WHERE user_id = u.id AND status = 'pending'
+                AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now()))
+          ELSE NULL END AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users m ON m.id = sp.manager_id
         WHERE u.id = $1
-      `, [userId]);
+      `, [userId, canSeeSensitive]);
       if (!rows[0]) return res.status(404).json({ error: "User not found" });
       res.json(rows[0]);
     } catch (e: any) {
