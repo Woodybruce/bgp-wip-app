@@ -605,4 +605,121 @@ router.get("/api/admin/email-signatures/by-domain/:domain", requireAuth, async (
   res.json({ domain: dom, count: rows.length, signatures: rows });
 });
 
+// Single-email synchronous test. Runs the full pipeline (find BGP user
+// who corresponds with this address → Graph fetch → signature isolation
+// → Haiku extract → cache write) and returns the entire trace so we can
+// see exactly where it fails for a given contact.
+router.get("/api/admin/email-signatures/debug/:email", requireAuth, async (req: Request, res: Response) => {
+  const email = String(req.params.email || "").trim().toLowerCase();
+  if (!email || !email.includes("@")) return res.status(400).json({ error: "valid email required" });
+  const trace: any = { email, steps: [] };
+
+  try {
+    // Step 1: which BGP users have corresponded with this address?
+    const { rows: bgpUsers } = await pool.query<{ bgp_user: string; n: string }>(
+      `SELECT bgp_user, COUNT(*)::text AS n
+         FROM crm_interactions
+        WHERE bgp_user IS NOT NULL
+          AND participants IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(participants) AS p(addr)
+            WHERE lower(addr) = $1
+          )
+        GROUP BY bgp_user
+        ORDER BY COUNT(*) DESC
+        LIMIT 4`,
+      [email],
+    );
+    trace.steps.push({ step: "bgp_user_lookup", candidates: bgpUsers });
+
+    // Step 2: Graph fetch — try each candidate mailbox.
+    const { graphRequest } = await import("./shared-mailbox");
+    let foundMsg: any = null;
+    let foundMailbox: string | null = null;
+    for (const u of bgpUsers) {
+      try {
+        const escaped = email.replace(/'/g, "''");
+        const url = `/users/${encodeURIComponent(u.bgp_user)}/messages?$top=1&$orderby=receivedDateTime desc&$filter=from/emailAddress/address eq '${encodeURIComponent(escaped)}'&$select=id,body,receivedDateTime,subject`;
+        const data = await graphRequest(url);
+        const msg = (data?.value || [])[0];
+        trace.steps.push({ step: "graph_fetch", mailbox: u.bgp_user, found: !!msg, subject: msg?.subject || null });
+        if (msg) { foundMsg = msg; foundMailbox = u.bgp_user; break; }
+      } catch (e: any) {
+        trace.steps.push({ step: "graph_fetch", mailbox: u.bgp_user, error: e?.message });
+      }
+    }
+    if (!foundMsg) {
+      trace.outcome = "no_inbound_found";
+      return res.json(trace);
+    }
+
+    // Step 3: isolate signature block.
+    const { isolateSignatureText } = await import("./email-signature-enrich") as any;
+    // isolateSignatureText is not exported — inline a minimal version here.
+    const plain = (foundMsg.body?.content || "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    const sigText = plain.slice(-600).trim();
+    trace.steps.push({ step: "isolate_signature", plainLen: plain.length, sigLen: sigText.length, sample: sigText.slice(0, 300) });
+
+    // Step 4: Haiku extract.
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) {
+      trace.outcome = "no_anthropic_key";
+      return res.json(trace);
+    }
+    const client = new Anthropic({ apiKey: key });
+    const resp = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 400,
+      temperature: 0,
+      system:
+        `You extract contact details from email signature blocks. Output ONLY a JSON object with these keys: ` +
+        `fullName (string or null), title (string or null), phone (string or null), mobile (string or null), ` +
+        `address (string or null), linkedin (URL or null). No prose, no markdown.`,
+      messages: [{ role: "user", content: `Email: ${email}\n\nSignature:\n${sigText}` }],
+    });
+    const text = resp.content?.[0]?.type === "text" ? resp.content[0].text : "";
+    trace.steps.push({ step: "haiku_extract", rawResponse: text });
+
+    const js = text.indexOf("{");
+    const je = text.lastIndexOf("}");
+    if (js < 0 || je <= js) {
+      trace.outcome = "haiku_response_not_json";
+      return res.json(trace);
+    }
+    const parsed = JSON.parse(text.slice(js, je + 1));
+    trace.parsed = parsed;
+
+    // Step 5: write to cache.
+    await pool.query(
+      `INSERT INTO email_signatures (email, full_name, title, phone, mobile, address, linkedin, last_seen_at, enriched_at, raw_signature, source_message_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9, $10)
+       ON CONFLICT (email) DO UPDATE
+         SET full_name = EXCLUDED.full_name, title = EXCLUDED.title,
+             phone = EXCLUDED.phone, mobile = EXCLUDED.mobile,
+             address = EXCLUDED.address, linkedin = EXCLUDED.linkedin,
+             last_seen_at = EXCLUDED.last_seen_at, enriched_at = now(),
+             raw_signature = EXCLUDED.raw_signature, source_message_id = EXCLUDED.source_message_id`,
+      [email, parsed.fullName || null, parsed.title || null, parsed.phone || null, parsed.mobile || null, parsed.address || null, parsed.linkedin || null, foundMsg.receivedDateTime, sigText, foundMsg.id],
+    );
+    trace.outcome = "cached";
+    return res.json(trace);
+  } catch (e: any) {
+    trace.outcome = "error";
+    trace.error = e?.message || String(e);
+    trace.stack = e?.stack;
+    return res.status(500).json(trace);
+  }
+});
+
 export default router;
