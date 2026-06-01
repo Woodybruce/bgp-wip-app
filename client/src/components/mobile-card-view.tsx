@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Eye, Pencil, Inbox } from "lucide-react";
+import { Eye, Pencil, Inbox, Trash2 } from "lucide-react";
 import { Link } from "wouter";
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -22,6 +22,7 @@ export type MobileCardItem = {
   statusColor?: string;
   fields: MobileCardField[];
   onEdit?: () => void;
+  onDelete?: () => void;
   /** Optional extra control rendered in the action row (e.g. a download). */
   footer?: ReactNode;
 };
@@ -114,7 +115,7 @@ export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: Mobi
           </div>
 
           {/* Action buttons */}
-          {(item.href || item.onEdit || item.footer) && (
+          {(item.href || item.onEdit || item.onDelete || item.footer) && (
             <div className="flex items-center gap-2 pt-1 border-t">
               {item.href && (
                 <Link href={item.href}>
@@ -139,6 +140,18 @@ export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: Mobi
                 >
                   <Pencil className="w-3.5 h-3.5" />
                   Edit
+                </Button>
+              )}
+              {item.onDelete && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-3 text-xs gap-1.5 text-red-600 hover:text-red-700"
+                  onClick={item.onDelete}
+                  data-testid={`button-delete-card-${item.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete
                 </Button>
               )}
               {item.footer && <div className="ml-auto">{item.footer}</div>}

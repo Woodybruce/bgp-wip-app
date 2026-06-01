@@ -1032,8 +1032,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   };
 
   return (
-    <div className="flex flex-col md:flex-row gap-3 items-start">
-    <Card data-testid="brand-profile-panel" className="flex-1 min-w-0">
+    <div className="flex flex-col md:flex-row gap-3 items-start w-full min-w-0">
+    <Card data-testid="brand-profile-panel" className="flex-1 min-w-0 max-w-full overflow-hidden">
       <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
@@ -1568,7 +1568,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                  Intel (more logical home for AI-generated expansion narrative). */}
             {c.description && (
               <div className="space-y-2">
-                <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
+                <p className="text-sm leading-snug text-foreground/85 break-words">{c.description}</p>
               </div>
             )}
 

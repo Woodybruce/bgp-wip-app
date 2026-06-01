@@ -837,6 +837,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
             ],
             onEdit: () => setEditItem(item),
+            onDelete: () => setDeleteItem(item),
             footer: (() => {
               let pack: { url?: string; name?: string } | null = null;
               if (item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
@@ -3250,6 +3251,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
               { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
             ],
             onEdit: () => setEditItem(item),
+            onDelete: () => setDeleteItem(item),
           }))}
         />
       ) : (
