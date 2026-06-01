@@ -27,8 +27,34 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { enrichSignaturesForDomain, getCachedSignatures, type EmailSignature } from "./email-signature-enrich";
 
 const router = Router();
+
+// CRM data is messy — some rows have "hammerson.com - https:" or
+// "https://www.foo.co.uk/contact/" in the domain field. Strip protocol,
+// paths, www., trailing junk after a space, hyphen-suffixes.
+function cleanDomain(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const stripped = String(raw)
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split(/[\s/?#]/)[0]
+    .replace(/[^a-z0-9.\-]+$/, "");
+  return stripped || null;
+}
+
+// Distribution lists and role mailboxes are noise — drop them from the
+// archaeology output. Pattern is: no dot before @ (most personal emails
+// have firstname.lastname), or a role-word in the local part.
+const DIST_LIST_PATTERNS = /^(info|admin|hello|contact|sales|marketing|press|enquir|enquiries|enquiry|leasing|investor|investors|reception|team|office|support|noreply|no-reply|finance|accounts|outlet|outlets|shoppingcentres|shopping-centres|regional|hr|jobs|careers|legal|compliance|aml|kyc|customer|service|properties|estates)(@|[-_\.])/i;
+function isDistributionList(email: string): boolean {
+  const local = email.split("@")[0] || "";
+  if (!local.includes(".")) return true;
+  if (DIST_LIST_PATTERNS.test(local + "@")) return true;
+  return false;
+}
 
 // ─── Apollo ↔ RocketReach side-by-side ──────────────────────────────────
 // Returns counts + a sample of the first 10 from each so the team can
@@ -131,19 +157,6 @@ async function handleCompareForCompanyId(companyId: string, res: Response) {
   );
   const company = rows[0];
   if (!company) return res.status(404).json({ error: "Company not found" });
-  // CRM data is messy — some rows have "hammerson.com - https:" or
-  // "https://www.foo.co.uk/contact/" in the domain field. Strip
-  // protocol, paths, www., trailing junk after a space, hyphen-suffixes.
-  const cleanDomain = (raw: string | null | undefined): string | null => {
-    if (!raw) return null;
-    const stripped = String(raw)
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .replace(/^www\./, "")
-      .split(/[\s/?#]/)[0]
-      .replace(/[^a-z0-9.\-]+$/, "");
-    return stripped || null;
-  };
   const domain = cleanDomain(company.domain || company.domain_url);
   const ct = (company.company_type || "").toLowerCase();
   const scope: "tenant" | "landlord" = /landlord|freeholder|investor|developer|reit|fund|estate/.test(ct) ? "landlord" : "tenant";
@@ -197,11 +210,7 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
   const company = companyRows[0];
   if (!company) return res.status(404).json({ error: "Company not found" });
 
-  const domain = (company.domain || company.domain_url || "")
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "")
-    .replace(/^www\./, "")
-    .toLowerCase();
+  const domain = cleanDomain(company.domain || company.domain_url);
   if (!domain) {
     return res.json({ company: { id: companyId, name: company.name }, contacts: [], note: "Company has no domain — set one to enable BGP email archaeology." });
   }
@@ -248,6 +257,9 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
     for (const raw of i.participants) {
       const addr = String(raw || "").toLowerCase().trim();
       if (!addr.endsWith(`@${domain}`)) continue;
+      // Drop info@/leasing@/regionalshoppingcentres@ etc. — distribution
+      // lists and role mailboxes that aren't actual people.
+      if (isDistributionList(addr)) continue;
       const existing = byEmail.get(addr);
       if (existing) {
         existing.threadCount += 1;
@@ -296,14 +308,29 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
     return cleaned.split(/\s+/).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
   };
 
+  // Pull cached email signatures for this domain — populated by the
+  // background enrichment job below. When we have a signature it
+  // overrides the email-local-part name guess and adds role / phone /
+  // mobile / linkedin so the contact card is actually useful.
+  const sigCache = await getCachedSignatures(Array.from(byEmail.keys()));
+
   const contacts = Array.from(byEmail.values())
     .sort((a, b) => b.threadCount - a.threadCount || (b.lastEmailed > a.lastEmailed ? 1 : -1))
     .map((agg) => {
       const existing = inCrmByEmail.get(agg.email);
+      const sig = sigCache.get(agg.email);
       return {
         email: agg.email,
-        name: existing?.name || guessNameFromEmail(agg.email),
-        role: existing?.role || null,
+        // Priority: CRM display name → signature-parsed name → email-local guess.
+        name: existing?.name || sig?.fullName || guessNameFromEmail(agg.email),
+        // Role: CRM > signature.
+        role: existing?.role || sig?.title || null,
+        // New signature-sourced fields. Empty when not yet enriched.
+        phone: sig?.phone || null,
+        mobile: sig?.mobile || null,
+        linkedin: sig?.linkedin || null,
+        signatureAddress: sig?.address || null,
+        signatureLastSeenAt: sig?.lastSeenAt || null,
         lastEmailed: agg.lastEmailed,
         threadCount: agg.threadCount,
         bgpSenders: Array.from(agg.bgpSenders),
@@ -311,8 +338,20 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
         inCrm: !!existing,
         crmContactId: existing?.id || null,
         crmContactCompanyId: existing?.company_id || null,
+        enriched: !!sig,
       };
     });
+
+  // Fire-and-forget enrichment for any unenriched contacts. First call
+  // for a brand returns the basic data fast; subsequent calls (within
+  // ~minutes, on the same brand) hit the cache and surface signatures.
+  // Capped at 20 per request to keep Graph quota in check.
+  const toEnrich = contacts.filter((c) => !c.enriched).slice(0, 20).map((c) => c.email);
+  if (toEnrich.length > 0) {
+    enrichSignaturesForDomain(domain, toEnrich).catch((e: any) =>
+      console.warn(`[archaeology] signature enrichment failed for ${domain}:`, e?.message),
+    );
+  }
 
   return res.json({
     company: { id: companyId, name: company.name, domain },
@@ -322,6 +361,8 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
       total: contacts.length,
       inCrm: contacts.filter((c) => c.inCrm).length,
       notInCrm: contacts.filter((c) => !c.inCrm).length,
+      enriched: contacts.filter((c) => c.enriched).length,
+      enrichmentQueued: toEnrich.length,
     },
   });
 }
@@ -376,6 +417,170 @@ router.get("/api/brand/by-name/:name/bgp-known-contacts", requireAuth, async (re
   if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
   const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
   await handleBgpKnownContactsForCompanyId(id, monthsBack, res);
+});
+
+// ─── Cascade endpoint ───────────────────────────────────────────────────
+// One call, unified contact list. Order of priority:
+//   1. BGP email archaeology (real relationships we have on file)
+//   2. RocketReach (covers the people we haven't emailed yet)
+//   3. Apollo (fallback for landlords where RR is thin)
+//
+// Returns a merged, de-duplicated list with provenance per row so the
+// UI shows "via BGP emails · 249 threads · Lucy" or "via RocketReach".
+// Brand profile fires this on every load — completely automatic, no
+// buttons. Apollo is only consulted for landlord-scope companies; for
+// tenant brands the team turned it off (too noisy).
+
+async function handleContactsCascade(companyId: string, res: Response) {
+  const { rows } = await pool.query(
+    `SELECT id, name, domain, domain_url, company_type FROM crm_companies WHERE id = $1`,
+    [companyId],
+  );
+  const company = rows[0];
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const domain = cleanDomain(company.domain || company.domain_url);
+  const ct = (company.company_type || "").toLowerCase();
+  const scope: "tenant" | "landlord" = /landlord|freeholder|investor|developer|reit|fund|estate/.test(ct) ? "landlord" : "tenant";
+
+  // Run BGP archaeology + RocketReach in parallel (Apollo only fires
+  // when RR is thin AND we're in landlord scope).
+  const [bgpRes, rrRes] = await Promise.all([
+    (async () => {
+      // Re-use the archaeology pipeline. We need its contacts array
+      // so we materialise the response into a synthetic res object.
+      const stub: any = { json: (b: any) => { stub._body = b; return stub; }, status: () => stub };
+      await handleBgpKnownContactsForCompanyId(companyId, 24, stub);
+      return stub._body?.contacts || [];
+    })(),
+    runRocketReachSearch(domain, company.name, scope).catch((e) => ({ ok: false, total: 0, sample: [], error: e?.message })),
+  ]);
+
+  // Build the unified contact list keyed by email (lowercased), with
+  // BGP-sourced entries taking precedence (they carry signature data +
+  // touch history). RR fills the gaps for people we haven't emailed.
+  type Merged = {
+    email: string | null;
+    name: string;
+    title: string | null;
+    phone: string | null;
+    mobile: string | null;
+    linkedin: string | null;
+    sources: string[];
+    bgp?: {
+      threadCount: number;
+      lastEmailed: string;
+      bgpSenders: string[];
+      inCrm: boolean;
+      crmContactId: string | null;
+    };
+    rocketreach?: { sample: boolean };
+  };
+  const byKey = new Map<string, Merged>();
+
+  for (const c of bgpRes) {
+    const key = (c.email || "").toLowerCase();
+    if (!key) continue;
+    byKey.set(key, {
+      email: c.email,
+      name: c.name,
+      title: c.role || null,
+      phone: c.phone || null,
+      mobile: c.mobile || null,
+      linkedin: c.linkedin || null,
+      sources: ["bgp_email"],
+      bgp: {
+        threadCount: c.threadCount,
+        lastEmailed: c.lastEmailed,
+        bgpSenders: c.bgpSenders,
+        inCrm: c.inCrm,
+        crmContactId: c.crmContactId,
+      },
+    });
+  }
+
+  if (rrRes.ok) {
+    for (const p of rrRes.sample) {
+      const key = (p.email || "").toLowerCase();
+      if (!key) continue;
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.sources.push("rocketreach");
+        existing.title = existing.title || p.title;
+        existing.rocketreach = { sample: true };
+      } else {
+        byKey.set(key, {
+          email: p.email,
+          name: p.name,
+          title: p.title,
+          phone: null,
+          mobile: null,
+          linkedin: null,
+          sources: ["rocketreach"],
+          rocketreach: { sample: true },
+        });
+      }
+    }
+  }
+
+  // Apollo fallback — only for landlords where BGP+RR didn't cover.
+  let apolloRes: any = null;
+  if (scope === "landlord" && byKey.size < 15) {
+    apolloRes = await runApolloSearch(domain, company.name).catch((e) => ({ ok: false, total: 0, sample: [], error: e?.message }));
+    if (apolloRes.ok) {
+      for (const p of apolloRes.sample) {
+        const key = (p.email || "").toLowerCase();
+        if (!key) continue;
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.sources.push("apollo");
+        } else {
+          byKey.set(key, {
+            email: p.email,
+            name: p.name,
+            title: p.title,
+            phone: null,
+            mobile: null,
+            linkedin: null,
+            sources: ["apollo"],
+          });
+        }
+      }
+    }
+  }
+
+  // Rank: BGP-touched first (sorted by threadCount), then RR/Apollo-only.
+  const merged = Array.from(byKey.values()).sort((a, b) => {
+    const aBgp = a.bgp?.threadCount ?? -1;
+    const bBgp = b.bgp?.threadCount ?? -1;
+    return bBgp - aBgp;
+  });
+
+  return res.json({
+    company: { id: companyId, name: company.name, domain, companyType: company.company_type, scope },
+    contacts: merged,
+    sources: {
+      bgp_email: { total: bgpRes.length },
+      rocketreach: rrRes.ok ? { total: rrRes.total, sampleCount: rrRes.sample.length } : { ok: false, error: rrRes.error },
+      apollo: apolloRes ? (apolloRes.ok ? { total: apolloRes.total, sampleCount: apolloRes.sample.length } : { ok: false, error: apolloRes.error }) : { skipped: true, reason: scope === "landlord" ? "BGP+RR coverage sufficient" : "apollo disabled for tenant scope" },
+    },
+    summary: {
+      total: merged.length,
+      bgpTouched: merged.filter((m) => !!m.bgp).length,
+      rocketreachOnly: merged.filter((m) => m.sources.includes("rocketreach") && !m.bgp).length,
+      apolloOnly: merged.filter((m) => m.sources.includes("apollo") && !m.bgp).length,
+    },
+  });
+}
+
+router.get("/api/brand/:companyId/contacts-cascade", requireAuth, async (req: Request, res: Response) => {
+  await handleContactsCascade(String(req.params.companyId), res);
+});
+
+router.get("/api/brand/by-name/:name/contacts-cascade", requireAuth, async (req: Request, res: Response) => {
+  const id = await resolveCompanyIdByName(String(req.params.name || ""));
+  if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
+  await handleContactsCascade(id, res);
 });
 
 export default router;
