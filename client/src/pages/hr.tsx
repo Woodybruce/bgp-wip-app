@@ -5938,7 +5938,26 @@ export default function HRPage() {
     queryKey: ["/api/hr/staff"],
   });
 
-  const selectedPerson = allStaff.find(s => s.id === selectedUserId) || null;
+  // Resolve the selected person: prefer the cached allStaff row (fast,
+  // already includes manager_name + denormalised fields), fall back to a
+  // direct fetch when allStaff hasn't loaded yet OR the clicked person
+  // isn't on the list (e.g. clicked from a team-summary card with newer
+  // data than /api/hr/staff returned). Without this fallback the
+  // drill-in silently does nothing if allStaff is empty.
+  const { data: fetchedPerson } = useQuery<StaffMember | null>({
+    queryKey: [`/api/hr/staff/${selectedUserId}`],
+    enabled: !!selectedUserId && !allStaff.some(s => s.id === selectedUserId),
+    queryFn: async () => {
+      const r = await fetch(`/api/hr/staff/${selectedUserId}`, { credentials: "include" });
+      if (!r.ok) return null;
+      return r.json();
+    },
+  });
+
+  const selectedPerson =
+    (selectedUserId && allStaff.find(s => s.id === selectedUserId)) ||
+    fetchedPerson ||
+    null;
 
   // If non-admin, auto-select own profile
   const displayId = isAdmin ? selectedUserId : currentUser?.id || null;
