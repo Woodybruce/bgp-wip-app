@@ -118,15 +118,13 @@ async function runRocketReachSearch(domain: string | null, companyName: string, 
   }
 }
 
-router.post("/api/admin/contacts-discovery-compare/:companyId", requireAuth, async (req: Request, res: Response) => {
-  const companyId = String(req.params.companyId);
+async function handleCompareForCompanyId(companyId: string, res: Response) {
   const { rows } = await pool.query(
     `SELECT name, domain, domain_url, company_type FROM crm_companies WHERE id = $1`,
     [companyId],
   );
   const company = rows[0];
   if (!company) return res.status(404).json({ error: "Company not found" });
-
   const domain = (company.domain || company.domain_url || "")
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "")
@@ -140,7 +138,7 @@ router.post("/api/admin/contacts-discovery-compare/:companyId", requireAuth, asy
     runRocketReachSearch(domain, company.name, scope),
   ]);
 
-  res.json({
+  return res.json({
     company: { id: companyId, name: company.name, domain, companyType: company.company_type, scope },
     apollo,
     rocketreach,
@@ -152,6 +150,16 @@ router.post("/api/admin/contacts-discovery-compare/:companyId", requireAuth, asy
       winner: !apollo.ok ? "rocketreach" : !rocketreach.ok ? "apollo" : apollo.total > rocketreach.total * 1.5 ? "apollo" : rocketreach.total > apollo.total * 1.5 ? "rocketreach" : "tie",
     },
   });
+}
+
+router.post("/api/admin/contacts-discovery-compare/:companyId", requireAuth, async (req: Request, res: Response) => {
+  await handleCompareForCompanyId(String(req.params.companyId), res);
+});
+
+// GET alias for the same compare endpoint — convenience for testing from
+// a browser address bar (POST requires DevTools/curl, GET doesn't).
+router.get("/api/admin/contacts-discovery-compare/:companyId", requireAuth, async (req: Request, res: Response) => {
+  await handleCompareForCompanyId(String(req.params.companyId), res);
 });
 
 // ─── BGP email archaeology ──────────────────────────────────────────────
@@ -165,9 +173,7 @@ router.post("/api/admin/contacts-discovery-compare/:companyId", requireAuth, asy
 // brand profile UI can offer one-click "Add as contact" alongside
 // the RocketReach import.
 
-router.get("/api/brand/:companyId/bgp-known-contacts", requireAuth, async (req: Request, res: Response) => {
-  const companyId = String(req.params.companyId);
-  const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
+async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack: number, res: Response) {
 
   const { rows: companyRows } = await pool.query(
     `SELECT id, name, domain, domain_url FROM crm_companies WHERE id = $1`,
@@ -293,7 +299,7 @@ router.get("/api/brand/:companyId/bgp-known-contacts", requireAuth, async (req: 
       };
     });
 
-  res.json({
+  return res.json({
     company: { id: companyId, name: company.name, domain },
     lookbackMonths: monthsBack,
     contacts,
@@ -303,6 +309,58 @@ router.get("/api/brand/:companyId/bgp-known-contacts", requireAuth, async (req: 
       notInCrm: contacts.filter((c) => !c.inCrm).length,
     },
   });
+}
+
+router.get("/api/brand/:companyId/bgp-known-contacts", requireAuth, async (req: Request, res: Response) => {
+  const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
+  await handleBgpKnownContactsForCompanyId(String(req.params.companyId), monthsBack, res);
+});
+
+// ─── Name-based shortcuts ───────────────────────────────────────────────
+// Both diagnostic endpoints are also addressable by company name (case-
+// insensitive) so you don't have to grab UUIDs to run a quick test.
+// Resolves the first exact match, then the first ILIKE match. Returns
+// 404 only if nothing matched.
+
+async function resolveCompanyIdByName(name: string): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT id FROM crm_companies
+      WHERE lower(name) = lower($1)
+      LIMIT 1`,
+    [trimmed],
+  );
+  if (rows[0]?.id) return rows[0].id;
+  const { rows: fuzzy } = await pool.query<{ id: string }>(
+    `SELECT id FROM crm_companies
+      WHERE lower(name) LIKE lower($1)
+      ORDER BY length(name) ASC
+      LIMIT 1`,
+    [`%${trimmed}%`],
+  );
+  return fuzzy[0]?.id || null;
+}
+
+// All three name-based shortcuts accept GET so you can paste the URL
+// straight into a browser address bar — no curl or DevTools needed.
+router.get("/api/admin/contacts-discovery-compare-by-name/:name", requireAuth, async (req: Request, res: Response) => {
+  const id = await resolveCompanyIdByName(String(req.params.name || ""));
+  if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
+  await handleCompareForCompanyId(id, res);
+});
+
+router.post("/api/admin/contacts-discovery-compare-by-name/:name", requireAuth, async (req: Request, res: Response) => {
+  const id = await resolveCompanyIdByName(String(req.params.name || ""));
+  if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
+  await handleCompareForCompanyId(id, res);
+});
+
+router.get("/api/brand/by-name/:name/bgp-known-contacts", requireAuth, async (req: Request, res: Response) => {
+  const id = await resolveCompanyIdByName(String(req.params.name || ""));
+  if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
+  const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
+  await handleBgpKnownContactsForCompanyId(id, monthsBack, res);
 });
 
 export default router;
