@@ -139,3 +139,67 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
     console.warn(`[unit-mirror] fanOutTenancyStatus(${tenancyId}) failed:`, e?.message);
   }
 }
+
+// Reverse direction, CREATION-TIME ONLY: when a unit first appears on the
+// Letting Tracker (or via a deal), make sure it exists on the tenancy spine
+// (the god of truth) so it shows as a normal editable row rather than a
+// read-only "vacant" orphan banner. Deduped by the same normalised unit-name
+// match the schedule GET uses, so it never creates a duplicate. Idempotent:
+// if the available unit is already linked, it no-ops. This is creation-only
+// (not on every edit) to avoid surprising agents mid-edit.
+function mapMarketingToTenancyStatus(s: string | null | undefined): string {
+  switch ((s || "").trim().toUpperCase()) {
+    case "SOL": case "EXC": return "Under Offer";
+    case "COM": case "INV": return "Occupied";
+    case "WIT": case "ARCH": return "Archived";
+    default: return "Marketing"; // AVA / LIVE / NEG / unknown → being marketed
+  }
+}
+
+export async function ensureTenancyRowForAvailableUnit(pool: Pool, availableUnitId: string): Promise<void> {
+  try {
+    const r = await pool.query(
+      `SELECT id, property_id, unit_name, sqft, asking_rent, marketing_status, deal_id, tenancy_unit_id
+         FROM available_units WHERE id = $1`,
+      [availableUnitId]
+    );
+    const au = r.rows[0];
+    if (!au || !au.property_id || au.tenancy_unit_id) return;       // missing or already linked
+    const name = (au.unit_name || "").trim();
+    if (!name) return;                                              // nothing to dedup on
+
+    // Confident dedupe: exact normalised name match on the same property.
+    const match = await pool.query(
+      `SELECT id FROM tenancy_schedule_units
+        WHERE property_id = $1
+          AND lower(trim(coalesce(unit_number, premises, ''))) = lower(trim($2))
+        LIMIT 1`,
+      [au.property_id, name]
+    );
+
+    let tenancyId: string;
+    if (match.rows.length > 0) {
+      tenancyId = match.rows[0].id;                                 // link to existing spine row
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO tenancy_schedule_units
+           (property_id, unit_number, premises, nia_sqft, gia_sqft, erv_pa, status, deal_id, letting_tracker_unit_id)
+         VALUES ($1, $2, $2, $3, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [au.property_id, name, au.sqft || null, au.asking_rent || null,
+         mapMarketingToTenancyStatus(au.marketing_status), au.deal_id || null, availableUnitId]
+      );
+      tenancyId = ins.rows[0].id;
+    }
+
+    // Link both ways so future fan-outs/edits stay in sync.
+    await pool.query(`UPDATE available_units SET tenancy_unit_id = $1 WHERE id = $2`, [tenancyId, availableUnitId]);
+    await pool.query(
+      `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2 AND letting_tracker_unit_id IS NULL`,
+      [availableUnitId, tenancyId]
+    );
+  } catch (e: any) {
+    // Best-effort — never break unit creation because the spine sync failed.
+    console.warn(`[unit-mirror] ensureTenancyRowForAvailableUnit(${availableUnitId}) failed:`, e?.message);
+  }
+}

@@ -3356,6 +3356,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
       }
 
+      // Mirror onto the tenancy spine (the source of truth): create-or-link a
+      // standard, editable tenancy row, deduped by normalised unit name. Means
+      // a unit/deal created here shows as a normal row, not a read-only orphan.
+      try {
+        const { ensureTenancyRowForAvailableUnit } = await import("./unit-mirror");
+        await ensureTenancyRowForAvailableUnit(pool, (unit as any).id);
+      } catch (e: any) {
+        console.warn("[available-units POST] tenancy-spine sync failed:", e.message);
+      }
+
       // Auto-create a backing CRM deal so every tracker row has a source of
       // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
       // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
