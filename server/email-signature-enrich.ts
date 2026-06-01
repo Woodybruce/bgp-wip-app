@@ -136,20 +136,35 @@ async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string
     try {
       // Graph 400s on $filter + $orderby across different properties
       // ("InefficientFilter"). $search="from:<addr>" uses the content
-      // index, supports both ranking and complex predicates, and is
-      // explicitly the recommended path for from/to lookups.
-      // Note: $search and $orderby are mutually exclusive; $search
-      // returns relevance-ranked results which for from: queries
-      // surfaces the most recent message first.
-      const url = `/users/${encodeURIComponent(userEmail)}/messages?$top=3&$search="from:${encodeURIComponent(fromEmail)}"&$select=id,body,receivedDateTime,subject,from`;
+      // index and handles complex predicates.
+      // We pull 25 so we can skip meeting invites + accept/decline
+      // replies (which carry zero signature) and find a real personal
+      // email further down the list.
+      const url = `/users/${encodeURIComponent(userEmail)}/messages?$top=25&$search="from:${encodeURIComponent(fromEmail)}"&$select=id,body,receivedDateTime,subject,from`;
       const data = await graphRequest(url);
       const msgs = (data?.value || []) as any[];
-      // $search may return adjacent matches; double-check the from address
-      // matches and prefer the most recent received date.
-      const matched = msgs
+
+      // Filter:
+      //  1. From address must actually match (defensive — $search can leak).
+      //  2. Skip auto-generated meeting items: Outlook calendar messages
+      //     start with "Accepted:" / "Declined:" / "Tentative:" /
+      //     "Cancelled:" / "Updated:". Their bodies are calendar metadata.
+      //  3. Skip Teams meeting invites: body contains "Microsoft Teams
+      //     meeting" or "Join the meeting" or the dial-in stub.
+      //  4. Require a body of >300 chars — any genuine personal email
+      //     with a signature exceeds this. Stubs and "FYI" forwards
+      //     wouldn't carry one.
+      const calendarRe = /^(accepted|declined|tentative|cancelled|updated|fw:\s*(accepted|declined)|re:\s*(accepted|declined)):/i;
+      const teamsBodyRe = /microsoft teams meeting|join the meeting|dial in by phone|phone conference id|find a local number/i;
+
+      const personal = msgs
         .filter((m) => (m.from?.emailAddress?.address || "").toLowerCase() === fromEmail.toLowerCase())
+        .filter((m) => !calendarRe.test(m.subject || ""))
+        .filter((m) => !teamsBodyRe.test(String(m.body?.content || "").slice(0, 2000)))
+        .filter((m) => String(m.body?.content || "").length > 300)
         .sort((a, b) => Date.parse(b.receivedDateTime || 0) - Date.parse(a.receivedDateTime || 0));
-      const msg = matched[0] || msgs[0];
+
+      const msg = personal[0];
       if (msg && msg.body?.content) {
         return {
           body: msg.body.content || "",

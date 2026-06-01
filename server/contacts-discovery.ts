@@ -636,18 +636,32 @@ router.get("/api/admin/email-signatures/debug/:email", requireAuth, async (req: 
     const { graphRequest } = await import("./shared-mailbox");
     let foundMsg: any = null;
     let foundMailbox: string | null = null;
+    const calendarRe = /^(accepted|declined|tentative|cancelled|updated|fw:\s*(accepted|declined)|re:\s*(accepted|declined)):/i;
+    const teamsBodyRe = /microsoft teams meeting|join the meeting|dial in by phone|phone conference id|find a local number/i;
+
     for (const u of bgpUsers) {
       try {
         // $search="from:<addr>" instead of $filter+$orderby — Graph
         // rejects the latter combination as InefficientFilter.
-        const url = `/users/${encodeURIComponent(u.bgp_user)}/messages?$top=3&$search="from:${encodeURIComponent(email)}"&$select=id,body,receivedDateTime,subject,from`;
+        // Pull 25 so we can skip meeting invites + auto-replies.
+        const url = `/users/${encodeURIComponent(u.bgp_user)}/messages?$top=25&$search="from:${encodeURIComponent(email)}"&$select=id,body,receivedDateTime,subject,from`;
         const data = await graphRequest(url);
         const msgs = (data?.value || []) as any[];
-        const matched = msgs
+        const personal = msgs
           .filter((m: any) => (m.from?.emailAddress?.address || "").toLowerCase() === email.toLowerCase())
+          .filter((m: any) => !calendarRe.test(m.subject || ""))
+          .filter((m: any) => !teamsBodyRe.test(String(m.body?.content || "").slice(0, 2000)))
+          .filter((m: any) => String(m.body?.content || "").length > 300)
           .sort((a: any, b: any) => Date.parse(b.receivedDateTime || 0) - Date.parse(a.receivedDateTime || 0));
-        const msg = matched[0] || msgs[0];
-        trace.steps.push({ step: "graph_fetch", mailbox: u.bgp_user, found: !!msg, subject: msg?.subject || null, totalReturned: msgs.length });
+        const msg = personal[0];
+        trace.steps.push({
+          step: "graph_fetch",
+          mailbox: u.bgp_user,
+          found: !!msg,
+          subject: msg?.subject || null,
+          totalReturned: msgs.length,
+          afterFilter: personal.length,
+        });
         if (msg) { foundMsg = msg; foundMailbox = u.bgp_user; break; }
       } catch (e: any) {
         trace.steps.push({ step: "graph_fetch", mailbox: u.bgp_user, error: e?.message });
