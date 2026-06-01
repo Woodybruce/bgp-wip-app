@@ -6019,8 +6019,39 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                         window.history.pushState({}, "", url.toString());
                         window.dispatchEvent(new PopStateEvent("popstate"));
                       };
+                      // Ranked chain — freeholder + head-leaseholder picked
+                      // from postcode-wide titles. Rendered above the raw
+                      // freehold/leasehold lists so the user sees a clear
+                      // answer first, with the detail still browsable below.
+                      const chain = (lr as any).chain;
+                      const renderChainRow = (label: string, accent: string, c: any) => {
+                        if (!c) return null;
+                        return (
+                          <div className={`rounded p-2 mb-1.5 text-[11px] border ${accent}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-[9px] uppercase tracking-wide text-gray-600 font-semibold">{label}</div>
+                              <div className="text-[9px] text-gray-500">score {c.score}</div>
+                            </div>
+                            {c.crmCompanyId ? (
+                              <a href={`/companies/${c.crmCompanyId}`} className="font-medium text-blue-700 hover:underline block mt-0.5">{c.proprietorName}</a>
+                            ) : (
+                              <button type="button" onClick={() => openInvestigator(c.proprietorName)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{c.proprietorName}</button>
+                            )}
+                            <div className="text-[10px] text-gray-600 mt-0.5 font-mono">{c.titleNumber}{c.companyRegistrationNo ? ` · CH ${c.companyRegistrationNo}` : ""}</div>
+                            {c.reasons?.length > 0 && (
+                              <div className="text-[10px] text-gray-500 mt-0.5 italic">{c.reasons.slice(0, 3).join(" · ")}</div>
+                            )}
+                          </div>
+                        );
+                      };
                       return (
                         <>
+                          {chain && (chain.freeholder || chain.headLeaseholder) && (
+                            <div className="mb-2 space-y-0.5">
+                              {renderChainRow("Likely freeholder", "bg-amber-50 border-amber-300", chain.freeholder)}
+                              {renderChainRow("Likely head-leaseholder", "bg-violet-50 border-violet-300", chain.headLeaseholder)}
+                            </div>
+                          )}
                           {fhs.length > 0 && (
                             <div className="mb-2">
                               <div className="text-[10px] text-gray-600 mb-0.5">Freehold ({fhs.length})</div>

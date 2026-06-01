@@ -850,6 +850,35 @@ export async function registerRoutes(
         }
       }
 
+      // Freeholder + head-leaseholder chain. resolveBuildingTitles already
+      // returns the unit-level leaseholds (Mayfair Spirit Ltd at 43 Curzon
+      // Street). This widens the search to the whole postcode and ranks
+      // candidates by likely role: freeholder = block-level (multiple titles
+      // by same proprietor, estate-style name, long-held), head-leaseholder
+      // = older long-dated leasehold with multiple_address_indicator='Y'.
+      let chain: any = null;
+      if (postcode) {
+        try {
+          const { findFreeholderChain } = await import("./hmlr-direct");
+          // Exclude unit-level title numbers from the chain search so we
+          // don't surface the unit lease as its own "head-leaseholder".
+          const matchedTitleNums: string[] = [];
+          if (landRegistry) {
+            for (const t of (landRegistry.matched?.freeholds || [])) if (t.title_number || t.titleNumber) matchedTitleNums.push(t.title_number || t.titleNumber);
+            for (const t of (landRegistry.matched?.leaseholds || [])) if (t.title_number || t.titleNumber) matchedTitleNums.push(t.title_number || t.titleNumber);
+          }
+          // Use the unit lease's date as the reference for "significantly older"
+          // when scoring head-leasehold candidates.
+          const unitLeaseDate = landRegistry?.matched?.leaseholds?.[0]?.dateProprietorAdded
+                             || landRegistry?.matched?.leaseholds?.[0]?.date_proprietor_added
+                             || null;
+          chain = await findFreeholderChain(postcode, street || null, matchedTitleNums, unitLeaseDate);
+        } catch (e: any) {
+          console.warn("[polygon-context] freeholder chain lookup failed:", e?.message);
+        }
+      }
+      if (landRegistry && chain) landRegistry.chain = chain;
+
       res.json({
         crmProperties: crmPropertiesOut,
         deals: dealRows.rows,
