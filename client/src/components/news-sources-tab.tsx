@@ -36,6 +36,7 @@ interface NewsSource {
   category: string | null;
   active: boolean;
   lastFetchedAt: string | null;
+  recentCount?: number;
 }
 
 const CATEGORIES = ["Retail", "Hospitality", "Property", "Investment", "Development", "general"];
@@ -329,6 +330,13 @@ export function NewsSourcesTab() {
                     onCheckedChange={(v) => toggleMutation.mutate({ id: s.id, active: v })}
                   />
                   <span className="font-medium truncate flex-1">{s.name}</span>
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] ${(s.recentCount ?? 0) > 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}
+                    title="Articles produced in the last 30 days"
+                  >
+                    {(s.recentCount ?? 0) > 0 ? `${s.recentCount} / 30d` : "0 — silent"}
+                  </Badge>
                   <Badge variant="outline" className="text-[10px]">{s.type}</Badge>
                   <Badge variant="outline" className="text-[10px]">{s.category || "general"}</Badge>
                   {s.feedUrl && (

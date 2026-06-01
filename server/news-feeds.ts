@@ -1283,7 +1283,14 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.get("/api/news-feed/sources", requireAuth, async (_req: Request, res: Response) => {
     const sources = await db.select().from(newsSources).orderBy(newsSources.name);
-    res.json(sources);
+    // Health: how many articles each source has produced in the last 30 days,
+    // so dead/silent feeds are obvious in the Sources tab.
+    let countMap = new Map<string, number>();
+    try {
+      const counts = await db.execute(sql`SELECT source_id, COUNT(*)::int AS n FROM news_articles WHERE published_at > now() - interval '30 days' AND source_id IS NOT NULL GROUP BY source_id`);
+      countMap = new Map((counts.rows as any[]).map((r) => [r.source_id, Number(r.n)]));
+    } catch {}
+    res.json(sources.map((s) => ({ ...s, recentCount: countMap.get(s.id) || 0 })));
   });
 
   app.post("/api/news-feed/sources", requireAuth, async (req: Request, res: Response) => {
@@ -1557,14 +1564,14 @@ export function setupNewsFeedRoutes(app: Express) {
       // then filtered — which let off-topic items survive simply by being
       // the newest, and shrank the list). Slice to `limit` at the very end.
       const pool = Math.max(limit * 5, 80);
-      // Exclude per-brand Google News articles from the GENERAL feed. Those
-      // feeds (category 'brand:<id>', ~one per tracked brand) exist to power
-      // the Brand Intelligence pages — left in here they flood the feed and
-      // bury the trade-press RSS. The curated topical Google News queries
-      // (category 'Retail' etc.) are NOT brand-tagged, so they stay.
+      // Google News is intentionally OFF for the general feed — it's not
+      // specific enough and floods out the curated trade-press RSS. We exclude
+      // every google_news-typed source (both the per-brand 'brand:<id>' feeds
+      // that power Brand Intelligence and the topical query feeds). The feed is
+      // now driven by direct RSS + RSS.app sources only.
       let articles = await db.select()
         .from(newsArticles)
-        .where(sql`${newsArticles.sourceId} IS NULL OR ${newsArticles.sourceId} NOT IN (SELECT id FROM news_sources WHERE category LIKE 'brand:%')`)
+        .where(sql`${newsArticles.sourceId} IS NULL OR ${newsArticles.sourceId} NOT IN (SELECT id FROM news_sources WHERE type = 'google_news')`)
         .orderBy(desc(newsArticles.publishedAt))
         .limit(pool);
 
