@@ -15,9 +15,15 @@ import { pool } from "./db";
 
 const router = Router();
 
-// Tight filter — only C-suite and property/acquisitions decision makers.
-// Without this the result set explodes with marketing/retail-ops people
-// who aren't relevant to a property pitch.
+// TENANT scope — tight filter for retail brands. Only C-suite and property/
+// acquisitions decision-makers. Without this the result set explodes with
+// marketing/retail-ops people who aren't relevant to a property pitch.
+//
+// LANDLORD scope — no filter. For landlord-side companies (Landsec,
+// Grosvenor, Capco etc.) we want every contactable person and their role
+// because the surveying team negotiates across many functions: asset
+// managers, leasing reps, development directors, FM, finance, legal.
+// Filtering to just C-suite gives Landsec ~5 names; the team needs 50+.
 const ROLE_TITLES = [
   // C-suite
   "founder", "co-founder", "ceo", "chief executive",
@@ -32,9 +38,22 @@ const ROLE_TITLES = [
   "director of real estate", "director of property",
 ];
 
-// Belt-and-braces post-filter: even with the title query, RocketReach can
-// surface fuzzy matches (e.g. "head of marketing" leaks through). Drop
-// anything whose title doesn't actually look C-suite or property.
+// Resolve provider scope from a CRM company_type. Landlord-side companies
+// pull every role; tenants stay tight. Anything we can't classify defaults
+// to "tenant" — safer to under-fetch than to spam noise.
+export type DiscoveryScope = "tenant" | "landlord";
+export function scopeForCompanyType(companyType: string | null | undefined): DiscoveryScope {
+  const t = (companyType || "").toLowerCase();
+  if (!t) return "tenant";
+  return /landlord|freeholder|investor|developer|reit|fund|landsec|estate/.test(t)
+    ? "landlord"
+    : "tenant";
+}
+
+// Belt-and-braces post-filter for TENANT scope. Even with the title query,
+// RocketReach can surface fuzzy matches (e.g. "head of marketing" leaks
+// through). Drop anything whose title doesn't look C-suite or property.
+// LANDLORD scope skips this filter entirely.
 function isRelevantTitle(title: string | null | undefined): boolean {
   if (!title) return false;
   const t = title.toLowerCase();
@@ -120,15 +139,18 @@ async function searchRocketReach(opts: {
   companyName?: string;
   domain?: string;
   country?: string[];
+  scope?: DiscoveryScope;
 }): Promise<RocketReachPerson[]> {
   const auth = rrAuthHeader();
   if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
 
+  const scope = opts.scope || "tenant";
+  // Tenant scope sends the title whitelist; landlord scope omits it so
+  // RocketReach returns every person at the company. Page size also goes
+  // up for landlords because we want broader coverage.
   const body: Record<string, any> = {
-    query: {
-      current_title: ROLE_TITLES,
-    },
-    page_size: 25,
+    query: scope === "landlord" ? {} : { current_title: ROLE_TITLES },
+    page_size: scope === "landlord" ? 100 : 25,
     start: 1,
   };
   // Field names per RocketReach v2 search API. They renamed
@@ -254,7 +276,7 @@ function mapPerson(p: RocketReachPerson, source: DiscoveredPerson["source"], sou
 
 async function fetchCompany(companyId: string) {
   const { rows } = await pool.query(
-    `SELECT id, name, domain, domain_url, brand_group_id, parent_company_id FROM crm_companies WHERE id = $1`,
+    `SELECT id, name, domain, domain_url, brand_group_id, parent_company_id, company_type FROM crm_companies WHERE id = $1`,
     [companyId],
   );
   return rows[0] || null;
@@ -277,13 +299,16 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
     if (!company) return res.status(404).json({ error: "Company not found" });
 
     const domain = extractDomain(company);
+    const scope = scopeForCompanyType((company as any).companyType ?? (company as any).company_type);
     const seenIds = new Set<string>();
     const people: DiscoveredPerson[] = [];
 
+    // Tenant scope keeps the post-filter; landlord scope accepts every
+    // returned person so we surface the full org chart.
     const addIfRelevant = (p: RocketReachPerson, src: DiscoveredPerson["source"], parentName?: string) => {
       const key = String(p.id || p.linkedin_url || p.name || "");
       if (!key || seenIds.has(key)) return;
-      if (!isRelevantTitle(p.current_title)) return;
+      if (scope === "tenant" && !isRelevantTitle(p.current_title)) return;
       seenIds.add(key);
       people.push(mapPerson(p, src, parentName));
     };
@@ -292,16 +317,20 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
 
     if (domain) {
       try {
-        const byDomain = await searchRocketReach({ domain, country: ukOnly });
+        const byDomain = await searchRocketReach({ domain, country: ukOnly, scope });
         for (const p of byDomain) addIfRelevant(p, "direct");
       } catch (err: any) {
         console.warn(`[rocketreach] domain search failed: ${err?.message}`);
       }
     }
 
-    if (people.length < 3) {
+    // Landlord scope wants broad coverage, so we always do the secondary
+    // name search; tenant scope only widens when the primary thin out.
+    const wantMoreCandidates = scope === "landlord" || people.length < 3;
+
+    if (wantMoreCandidates) {
       try {
-        const byName = await searchRocketReach({ companyName: company.name, country: ukOnly });
+        const byName = await searchRocketReach({ companyName: company.name, country: ukOnly, scope });
         for (const p of byName) addIfRelevant(p, "name_search");
       } catch {
         // non-fatal
@@ -312,7 +341,7 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
     // set to their passport country rather than work country.
     if (people.length < 2 && domain) {
       try {
-        const byDomainGlobal = await searchRocketReach({ domain });
+        const byDomainGlobal = await searchRocketReach({ domain, scope });
         for (const p of byDomainGlobal) addIfRelevant(p, "direct");
       } catch {
         // non-fatal
@@ -329,6 +358,7 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
             domain: parentDomain,
             companyName: parentDomain ? undefined : parentCompany.name,
             country: ukOnly,
+            scope,
           });
           for (const p of byParent) addIfRelevant(p, "parent_group", parentCompany.name);
         } catch {
