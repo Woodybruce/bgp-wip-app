@@ -12,7 +12,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import {
   Search,
   X,
@@ -5407,25 +5406,6 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
           <p className="text-xs text-gray-500 mb-2.5">
             Current area: <span className="font-semibold text-gray-900">{currentArea}</span>
           </p>
-
-          <p className="text-[11px] font-semibold mb-1.5 text-gray-700">Search new plan</p>
-          {/* New resolver — same engine the Property Intelligence page-level
-              bar used to call (Address Resolver: autocomplete → resolve →
-              canonical crm_property). Replaces the legacy /api/address-search
-              dropdown that fed loadPropertyData with stale postcode-only
-              hits. When a property resolves we both navigate the map AND
-              bubble the resolution up so other Property Intelligence tabs
-              prefill via PropertyContext. */}
-          <PropertyResolverBar
-            placeholder="Address, postcode, UPRN, or title number…"
-            onResolve={(id, prop) => {
-              if (prop.postcode) {
-                setSelectedPostcode(prop.postcode);
-                loadPropertyData(prop.postcode, undefined, prop.name || undefined, null);
-              }
-              onResolveProperty?.({ id, name: prop.name, postcode: prop.postcode });
-            }}
-          />
         </div>
 
         <div className="border-t" />
