@@ -148,6 +148,36 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiApplied, setAiApplied] = useState(false);
 
+  const runClassify = (expenseId: string) => {
+    setAiSuggestion(null);
+    setAiError(null);
+    setAiApplied(false);
+    setAiLoading(true);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
+    return fetch(`/api/expenses/${expenseId}/auto-classify`, {
+      method: "POST",
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then((r) => r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b?.error || `HTTP ${r.status}`))))
+      .then((s: AutoClassifyResult) => {
+        setAiSuggestion(s);
+        if (s.confidence === "high") {
+          if (s.category) setCategory(s.category);
+          if (s.businessPurpose) setBusinessPurpose(s.businessPurpose);
+          if (s.attendeeContactIds.length > 0) setAttendeeIds(s.attendeeContactIds);
+          if (s.proposedAttendees.length > 0) setAttendeesText(s.proposedAttendees.map((p) => p.name).join(", "));
+          setAiApplied(true);
+        }
+      })
+      .catch((e) => setAiError(e?.name === "AbortError" ? "AI took too long — try again" : (e?.message || "AI classify failed")))
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+        setAiLoading(false);
+      });
+  };
+
   useEffect(() => {
     if (!expense) return;
     setMerchant(expense.merchant || "");
@@ -161,40 +191,10 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAiSuggestion(null);
     setAiError(null);
     setAiApplied(false);
-
-    // Auto-fire AI classify whenever the sheet opens for an uncategorised
-    // expense that isn't already locked in Xero. We don't gate on
-    // receiptFilename being set client-side — the local cache may still
-    // hold the pre-receipt row from before the upload — the server will
-    // happily classify from merchant/date/amount even if it can't find a
-    // receipt blob.
-    if (expense.category || expense.xeroExpenseId) return;
-    setAiLoading(true);
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
-    fetch(`/api/expenses/${expense.id}/auto-classify`, {
-      method: "POST",
-      credentials: "include",
-      signal: controller.signal,
-    })
-      .then((r) => r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b?.error || `HTTP ${r.status}`))))
-      .then((s: AutoClassifyResult) => {
-        setAiSuggestion(s);
-        // Auto-apply on high confidence — user can still override every
-        // field before tapping Save. Medium/low → user has to accept.
-        if (s.confidence === "high") {
-          if (s.category) setCategory(s.category);
-          if (s.businessPurpose) setBusinessPurpose(s.businessPurpose);
-          if (s.attendeeContactIds.length > 0) setAttendeeIds(s.attendeeContactIds);
-          if (s.proposedAttendees.length > 0) setAttendeesText(s.proposedAttendees.map((p) => p.name).join(", "));
-          setAiApplied(true);
-        }
-      })
-      .catch((e) => setAiError(e?.name === "AbortError" ? "AI took too long — categorise manually" : (e?.message || "AI classify failed")))
-      .finally(() => {
-        window.clearTimeout(timeoutId);
-        setAiLoading(false);
-      });
+    // Always fire on sheet open unless already locked in Xero.
+    if (expense.xeroExpenseId) return;
+    runClassify(expense.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expense?.id]);
 
   const applySuggestion = () => {
@@ -387,11 +387,27 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                     {aiSuggestion.confidence}
                   </span>
                 )}
+                {(aiError || (!aiLoading && !aiSuggestion)) && expense && (
+                  <button
+                    type="button"
+                    onClick={() => runClassify(expense.id)}
+                    className="text-[11px] px-2 py-1 rounded-full bg-violet-600 text-white font-semibold active:scale-95 transition-transform"
+                    data-testid="m-ai-rerun"
+                  >
+                    Re-run
+                  </button>
+                )}
               </div>
 
               {aiSuggestion?.reasoning && (
                 <p className="text-[12px] text-violet-800 dark:text-violet-200 leading-relaxed">
                   {aiSuggestion.reasoning}
+                </p>
+              )}
+
+              {aiError && (
+                <p className="text-[12px] text-red-700 leading-relaxed">
+                  {aiError}
                 </p>
               )}
 
