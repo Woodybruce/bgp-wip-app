@@ -762,11 +762,14 @@ export default function MobileExpenses() {
 
   return (
     <div className="pb-24" data-testid="mobile-expenses">
-      <div className="px-4 pt-3 pb-2 flex items-center gap-2">
-        <Link href="/" className="p-1.5 -ml-1.5 rounded-full active:bg-gray-100">
-          <ChevronLeft className="w-5 h-5" />
+      <div
+        className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+      >
+        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-gray-100">
+          <ChevronLeft className="w-6 h-6" />
         </Link>
-        <h1 className="text-lg font-semibold flex-1">Expenses</h1>
+        <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
         {data?.card && (
           <span className="text-[11px] text-muted-foreground">···· {data.card.last4}</span>
         )}
