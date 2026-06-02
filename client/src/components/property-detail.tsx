@@ -829,8 +829,13 @@ export function PropertyDetail({ id }: { id: string }) {
                 to the unified view; once verified we flip the default for
                 everyone. Component (PropertyLeasingSchedule + PropertyTenancySchedule)
                 stays imported so the toggle is just a render switch, not
-                a remount lifecycle. */}
-            {(property as any).unifiedSchedule ? (
+                a remount lifecycle.
+                Belt-and-braces: also fall back to a name match for
+                Bluewater so the unified view shows even if migration 0030
+                hasn't run on this deploy yet (e.g. a column-missing
+                error blocking the ALTER TABLE). Remove the name check
+                once we flip the firm-wide default. */}
+            {((property as any).unifiedSchedule || /bluewater/i.test(property.name || "")) ? (
               <ErrorBoundary compact name="Schedule">
                 <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Schedule" testId="toggle-schedule">
                   <div className="max-h-[640px] overflow-y-auto pr-1">
