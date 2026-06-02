@@ -8,7 +8,7 @@
 // more chrome (bulk select, collections, tagging, stock import); on
 // mobile the focus is purely: pick one, tell the AI what to change,
 // apply, look again.
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
-  Camera, Download, Link2, Building2, Tag, Briefcase,
+  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -52,8 +52,13 @@ export default function MobileImages() {
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
+  // Poll the gallery while ANY image is mid-edit so the Processing chip
+  // disappears (and the new thumbnail appears) without the user having
+  // to refresh. Once everything's settled, drop back to no polling.
+  const [anyPending, setAnyPending] = useState(false);
   const { data: images = [], isLoading } = useQuery<StudioImage[]>({
     queryKey: ["/api/image-studio"],
+    refetchInterval: anyPending ? 4000 : false,
   });
 
   // Upload a photo from camera or library. Tags it so we can filter
@@ -96,10 +101,21 @@ export default function MobileImages() {
     uploadMutation.mutate(file);
   };
 
+  // Keep the polling flag in sync with the current list.
+  useEffect(() => {
+    const hasPending = images.some((i) => (i.tags || []).includes("ai-pending"));
+    setAnyPending(hasPending);
+  }, [images]);
+
+  // Mobile gallery is intentionally scoped to photos that came off the
+  // phone — keeps the grid tight and focused on Woody's own captures
+  // instead of the 6k+ brand library. Everything is still saved to the
+  // central Image Studio (just filtered on the way out).
   const filtered = useMemo(() => {
+    const own = images.filter((i) => (i.tags || []).includes("phone-upload") || i.category === "Phone Uploads");
     const q = search.trim().toLowerCase();
-    if (!q) return images;
-    return images.filter((i) => {
+    if (!q) return own;
+    return own.filter((i) => {
       const hay = [
         i.fileName, i.description, i.category, i.brandName,
         ...(i.tags || []),
@@ -164,8 +180,13 @@ export default function MobileImages() {
         <div className="px-4 mt-8 text-center">
           <ImageIcon className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
           <p className="text-sm text-muted-foreground">
-            {search ? "No images match that search" : "No images in the studio yet"}
+            {search ? "No phone photos match that search" : "No photos uploaded from your phone yet"}
           </p>
+          {!search && (
+            <p className="text-[11px] text-muted-foreground/70 mt-1">
+              Tap Add photo to take or pick one — AI edits land here too.
+            </p>
+          )}
         </div>
       ) : (
         <div className="px-3 grid grid-cols-2 gap-2">
@@ -183,7 +204,23 @@ export default function MobileImages() {
                 className="w-full h-full object-cover"
                 loading="lazy"
               />
-              {img.source === "ai-edited" && (
+              {(img.tags || []).includes("ai-pending") ? (
+                <>
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-1.5">
+                      <Loader2 className="w-6 h-6 animate-spin text-white" />
+                      <span className="text-[10px] font-semibold text-white">AI editing…</span>
+                    </div>
+                  </div>
+                  <span className="absolute top-1.5 left-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-600 text-white text-[9px] font-semibold">
+                    <Sparkles className="w-2.5 h-2.5" /> Working
+                  </span>
+                </>
+              ) : (img.tags || []).includes("ai-failed") ? (
+                <span className="absolute top-1.5 left-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-600 text-white text-[9px] font-semibold">
+                  AI failed
+                </span>
+              ) : img.source === "ai-edited" && (
                 <span className="absolute top-1.5 left-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-600 text-white text-[9px] font-semibold">
                   <Sparkles className="w-2.5 h-2.5" /> AI
                 </span>
@@ -202,6 +239,7 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
   const { toast } = useToast();
   const [prompt, setPrompt] = useState("");
   const [attachOpen, setAttachOpen] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
 
   const editMutation = useMutation({
@@ -209,7 +247,9 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
       if (!image) throw new Error("No image");
       const trimmed = prompt.trim();
       if (!trimmed) throw new Error("Tell the AI what to change");
-      const r = await fetch("/api/image-studio/ai-edit", {
+      // Fire-and-forget — the server runs the edit in the background so
+      // we don't lose the result when iOS suspends the app.
+      const r = await fetch("/api/image-studio/ai-edit-async", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -217,11 +257,14 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
       });
       const body = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(body?.error || `AI edit failed (${r.status})`);
-      return body as { provider: string };
+      return body as { ok: true; status: string };
     },
-    onSuccess: (body) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
-      toast({ title: "AI edit applied", description: `via ${body.provider}` });
+      toast({
+        title: "AI is editing in the background",
+        description: "You can close this and check back — it'll appear in the gallery when done.",
+      });
       setPrompt("");
     },
     onError: (e: any) => {
@@ -317,13 +360,22 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              <div className="bg-muted">
+              <button
+                type="button"
+                onClick={() => setZoomOpen(true)}
+                className="block w-full bg-muted relative active:opacity-90"
+                aria-label="Zoom in"
+                data-testid="mobile-image-zoom-trigger"
+              >
                 <img
                   src={previewSrc}
                   alt={image.description || image.fileName}
                   className="w-full max-h-[55dvh] object-contain"
                 />
-              </div>
+                <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-full bg-black/60 text-white text-[10px] font-semibold backdrop-blur-sm">
+                  <ZoomIn className="w-3 h-3" /> Tap to zoom
+                </span>
+              </button>
 
               <div className="p-4 space-y-3">
                 {(image.tags && image.tags.length > 0) && (
