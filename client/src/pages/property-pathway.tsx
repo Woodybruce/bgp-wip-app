@@ -1670,21 +1670,37 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
   async function openInExcel() {
     if (!stage7?.modelRunId) return;
     setOpening(true);
+    // Open the tab synchronously inside the click gesture so it isn't popup-
+    // blocked after the await below.
+    const win = window.open("about:blank", "_blank");
+    const downloadUrl = `/api/models/runs/${stage7.modelRunId}/download`;
+    const fallback = () => { if (win) win.location.href = downloadUrl; else window.open(downloadUrl, "_blank"); };
     try {
-      // Same route Model Studio uses — syncs the run to SharePoint and returns
-      // an Excel Online webUrl, where the BGP add-in attaches so edits save
-      // back to this model run (and flow into the pathway). NOT a raw download.
-      const res = await fetch(`/api/models/runs/${stage7.modelRunId}/open-in-excel`, {
+      // embed-excel syncs the run to SharePoint and returns an editable Excel
+      // Online webUrl (where the BGP add-in attaches so edits save back). If
+      // Microsoft 365 isn't connected it errors — fall back to downloading the
+      // workbook so the model always opens.
+      const res = await fetch(`/api/models/runs/${stage7.modelRunId}/embed-excel`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        fallback();
+        const e = await res.json().catch(() => null);
+        toast({ title: "Downloaded the workbook", description: e?.message || "Editable Excel needs Microsoft 365 connected — downloaded a copy instead." });
+        return;
+      }
       const data = await res.json();
-      if (!data.webUrl) throw new Error("No Excel URL returned");
-      window.open(data.webUrl, "_blank");
-      toast({ title: "Opening in Excel", description: "Amend in Excel, then Save in the BGP add-in — your changes flow back into this pathway model." });
+      const target = data.webUrl || data.embedUrl;
+      if (target) {
+        if (win) win.location.href = target; else window.open(target, "_blank");
+        toast({ title: "Opening in Excel", description: "Amend in Excel, then Save in the BGP add-in — your changes flow back into this pathway model." });
+      } else {
+        fallback();
+      }
     } catch (e: any) {
-      toast({ title: "Couldn't open in Excel", description: e?.message || "SharePoint connection required", variant: "destructive" });
+      fallback();
+      toast({ title: "Downloaded the workbook", description: "Couldn't reach Excel Online — downloaded a copy instead.", variant: "destructive" });
     } finally {
       setOpening(false);
     }
