@@ -12251,12 +12251,45 @@ export function setupChatBGPRoutes(app: Express) {
       const trimmedMessages = result.data.messages.length > MAX_AI_MESSAGES
         ? result.data.messages.slice(-MAX_AI_MESSAGES)
         : result.data.messages;
+      const { readDocumentForAI } = await import("./document-reader");
+      const DOC_LINK_IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
       const processedMessages = await Promise.all(trimmedMessages.map(async (msg: any) => {
         if (msg.role !== "user" || typeof msg.content !== "string") return msg;
+
+        // Resolve attached DOCUMENT links — [name](/api/chat-media/foo.xlsx) —
+        // into extracted text. The full-page ChatBGP attaches non-image files
+        // (Excel, PDF, Word) as plain markdown links, but Claude only ever saw
+        // the bare link and replied "I can't see any attachment". Image links
+        // use the ![..](..) form and are handled by the image pass below; the
+        // (?<!!) guard keeps them out of this one.
+        let docContent: string = msg.content;
+        const docLinkPattern = /(?<!!)\[([^\]]*)\]\((\/api\/chat-media\/[^)]+)\)/g;
+        const docMatches = [...docContent.matchAll(docLinkPattern)];
+        const docTexts: string[] = [];
+        for (const m of docMatches) {
+          const filename = m[2].replace("/api/chat-media/", "");
+          if (DOC_LINK_IMAGE_EXTS.includes(path.extname(filename).toLowerCase())) continue;
+          const label = m[1] || filename;
+          try {
+            const doc = await readDocumentForAI({ chatMediaFilename: filename, includePageImages: false, maxTextChars: 40000 });
+            if (doc.ok && doc.text && doc.text.trim()) {
+              docTexts.push(`=== FILE: ${label} ===\n${doc.text}${doc.textTruncated ? "\n\n[...truncated]" : ""}`);
+            } else {
+              docTexts.push(`=== FILE: ${label} ===\n(Could not read this file: ${doc.ok ? "no extractable text found" : doc.error})`);
+            }
+          } catch (err: any) {
+            console.error(`[ChatBGP] Failed to read attached document ${filename}:`, err?.message);
+            docTexts.push(`=== FILE: ${label} ===\n(Could not read this file: ${err?.message || "error"})`);
+          }
+        }
+        if (docTexts.length > 0) {
+          docContent = `${docContent}\n\n--- ATTACHED DOCUMENTS ---\n${docTexts.join("\n\n")}`;
+        }
+
         const imageUrlPattern = /!\[([^\]]*)\]\((\/api\/chat-media\/[^)]+)\)/g;
-        const matches = [...msg.content.matchAll(imageUrlPattern)];
-        if (matches.length === 0) return msg;
-        const textContent = msg.content.replace(imageUrlPattern, "").trim() || "What do you see in this image?";
+        const matches = [...docContent.matchAll(imageUrlPattern)];
+        if (matches.length === 0) return docTexts.length > 0 ? { ...msg, content: docContent } : msg;
+        const textContent = docContent.replace(imageUrlPattern, "").trim() || "What do you see in this image?";
         const contentParts: any[] = [{ type: "text", text: textContent }];
         for (const match of matches) {
           const mediaPath = match[2];
@@ -12288,7 +12321,10 @@ export function setupChatBGPRoutes(app: Express) {
             console.error(`[ChatBGP] Failed to load pasted image ${filename}:`, err?.message);
           }
         }
-        if (contentParts.length === 1) return msg;
+        // No images actually loaded — keep docContent so any extracted
+        // document text still reaches Claude (falls back to original msg
+        // when there were no attachments at all).
+        if (contentParts.length === 1) return { ...msg, content: docContent };
         return { ...msg, content: contentParts };
       }));
 
