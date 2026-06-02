@@ -42,13 +42,17 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+interface CalendarAttendee {
+  email: string;
+  name: string | null;        // Graph "emailAddress.name" — usually the display name
+}
 interface CalendarEvent {
   subject: string;
   start: string;
   end: string;
   bodyPreview: string;
   organizerEmail: string | null;
-  attendeeEmails: string[];
+  attendees: CalendarAttendee[];
 }
 
 interface AutoClassifyResult {
@@ -56,6 +60,11 @@ interface AutoClassifyResult {
   category: string | null;
   businessPurpose: string | null;
   attendeeContactIds: string[];
+  // Attendees from the matched calendar event that AREN'T in crm_contacts.
+  // The client drops these into the free-text `attendees` field so we
+  // still capture who was there (HMRC needs names for entertainment) even
+  // when the people haven't been added to the CRM yet.
+  proposedAttendeeNames: string[];
   relatedDealId: string | null;
   relatedPropertyId: string | null;
   followUpQuestion: string | null;
@@ -63,7 +72,11 @@ interface AutoClassifyResult {
   // Echo the source data back to the client so the UI can render the
   // reasoning ("matched to your 7pm dinner with Mark Warne at Quo Vadis")
   reasoning: string | null;
-  matchedCalendarEvent: { subject: string; start: string } | null;
+  matchedCalendarEvent: {
+    subject: string;
+    start: string;
+    attendees: { email: string; name: string | null }[];
+  } | null;
   matchedContactCount: number;
 }
 
@@ -92,7 +105,12 @@ async function fetchCalendarForDay(userEmail: string, date: Date): Promise<Calen
       end: e.end?.dateTime || "",
       bodyPreview: (e.bodyPreview || "").slice(0, 300),
       organizerEmail: e.organizer?.emailAddress?.address || null,
-      attendeeEmails: (e.attendees || []).map((a: any) => a.emailAddress?.address).filter(Boolean),
+      attendees: (e.attendees || [])
+        .map((a: any) => ({
+          email: (a.emailAddress?.address || "").toLowerCase(),
+          name: a.emailAddress?.name || null,
+        }))
+        .filter((a: CalendarAttendee) => a.email),
     }));
   } catch (err: any) {
     console.warn(`[expense-auto-classify] calendar fetch failed for ${userEmail}: ${err?.message}`);
@@ -137,7 +155,7 @@ export async function autoClassifyExpense(expenseId: string): Promise<AutoClassi
 
   // Pre-match attendees from the day's events against CRM contacts —
   // gives the model a short list of likely names rather than guessing.
-  const allAttendeeEmails = Array.from(new Set(calendar.flatMap((c) => c.attendeeEmails)));
+  const allAttendeeEmails = Array.from(new Set(calendar.flatMap((c) => c.attendees.map((a) => a.email))));
   const matchedContacts = await matchAttendeesToCrmContacts(allAttendeeEmails);
 
   // Build a compact prompt — Claude doesn't need every calendar entry,
@@ -147,7 +165,7 @@ export async function autoClassifyExpense(expenseId: string): Promise<AutoClassi
     start: c.start,
     end: c.end,
     bodyPreview: c.bodyPreview,
-    attendees: c.attendeeEmails,
+    attendees: c.attendees,            // {email,name}[] — gives Claude the display name
   }));
 
   const systemPrompt =
@@ -180,6 +198,7 @@ export async function autoClassifyExpense(expenseId: string): Promise<AutoClassi
     category: exp.category || null,
     businessPurpose: exp.businessPurpose || null,
     attendeeContactIds: [],
+    proposedAttendeeNames: [],
     relatedDealId: exp.relatedDealId || null,
     relatedPropertyId: exp.relatedPropertyId || null,
     followUpQuestion: null,
@@ -212,7 +231,27 @@ export async function autoClassifyExpense(expenseId: string): Promise<AutoClassi
     result.reasoning = parsed.reasoning || null;
     if (typeof parsed.matchedEventIndex === "number" && promptCalendar[parsed.matchedEventIndex]) {
       const ev = promptCalendar[parsed.matchedEventIndex];
-      result.matchedCalendarEvent = { subject: ev.subject, start: ev.start };
+      result.matchedCalendarEvent = {
+        subject: ev.subject,
+        start: ev.start,
+        attendees: ev.attendees,
+      };
+      // Free-text fallback for HMRC compliance — surface every attendee on
+      // the matched event who isn't already a CRM contact. Drop the user's
+      // own address (no point listing yourself) and dedupe by name.
+      const userEmailLower = (userEmail || "").toLowerCase();
+      const matchedCrmEmails = new Set(matchedContacts.map((c) => c.email.toLowerCase()));
+      const proposed = new Map<string, string>();          // key: lowercase name|email; value: display
+      for (const a of ev.attendees) {
+        if (!a.email || a.email === userEmailLower) continue;
+        if (matchedCrmEmails.has(a.email)) continue;
+        // Prefer the Outlook display name, otherwise the local-part of the email
+        // ("john.smith@x.com" → "John Smith").
+        const fallback = a.email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        const display = (a.name && a.name.trim()) || fallback;
+        proposed.set(display.toLowerCase(), display);
+      }
+      result.proposedAttendeeNames = Array.from(proposed.values());
     }
   } catch (err: any) {
     console.warn(`[expense-auto-classify] Claude call failed for ${expenseId}: ${err?.message}`);

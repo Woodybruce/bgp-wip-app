@@ -590,7 +590,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const allowed = ["merchant", "transactionDate", "category", "xeroAccountCode",
                        "businessPurpose", "attendees", "isPersonal", "isClientRechargeable",
-                       "relatedDealId", "notes", "status"];
+                       "relatedDealId", "relatedPropertyId", "notes", "status"];
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const k of allowed) {
         if (req.body[k] !== undefined) updates[k] = req.body[k];

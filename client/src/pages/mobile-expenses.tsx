@@ -95,12 +95,13 @@ interface AutoClassifyResult {
   category: string | null;
   businessPurpose: string | null;
   attendeeContactIds: string[];
+  proposedAttendeeNames: string[];
   relatedDealId: string | null;
   relatedPropertyId: string | null;
   followUpQuestion: string | null;
   confidence: "high" | "medium" | "low";
   reasoning: string | null;
-  matchedCalendarEvent: { subject: string; start: string } | null;
+  matchedCalendarEvent: { subject: string; start: string; attendees: { email: string; name: string | null }[] } | null;
   matchedContactCount: number;
 }
 
@@ -132,6 +133,9 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [category, setCategory] = useState("");
   const [businessPurpose, setBusinessPurpose] = useState("");
   const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
+  // Free-text attendee names — used when the diary attendees aren't in the
+  // CRM. Captures everyone for HMRC entertainment records.
+  const [attendeesText, setAttendeesText] = useState("");
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
 
@@ -151,6 +155,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setCategory(expense.category || "");
     setBusinessPurpose(expense.businessPurpose || "");
     setAttendeeIds((expense.attendeeContacts || []).map((c) => c.id));
+    setAttendeesText(expense.attendees || "");
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
     setAiSuggestion(null);
@@ -173,6 +178,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
           if (s.category) setCategory(s.category);
           if (s.businessPurpose) setBusinessPurpose(s.businessPurpose);
           if (s.attendeeContactIds.length > 0) setAttendeeIds(s.attendeeContactIds);
+          if (s.proposedAttendeeNames.length > 0) setAttendeesText(s.proposedAttendeeNames.join(", "));
           setAiApplied(true);
         }
       })
@@ -185,6 +191,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     if (aiSuggestion.category) setCategory(aiSuggestion.category);
     if (aiSuggestion.businessPurpose) setBusinessPurpose(aiSuggestion.businessPurpose);
     if (aiSuggestion.attendeeContactIds.length > 0) setAttendeeIds(aiSuggestion.attendeeContactIds);
+    if (aiSuggestion.proposedAttendeeNames.length > 0) setAttendeesText(aiSuggestion.proposedAttendeeNames.join(", "));
     if (aiSuggestion.relatedDealId) setRelatedDealId(aiSuggestion.relatedDealId);
     if (aiSuggestion.relatedPropertyId) setRelatedPropertyId(aiSuggestion.relatedPropertyId);
     setAiApplied(true);
@@ -202,6 +209,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         transactionDate: transactionDate ? new Date(transactionDate).toISOString() : null,
         category: category || null,
         businessPurpose: businessPurpose || null,
+        attendees: attendeesText || null,
         relatedPropertyId: relatedPropertyId || null,
         relatedDealId: relatedDealId || null,
       };
@@ -307,6 +315,11 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                   {aiSuggestion?.matchedCalendarEvent && (
                     <div className="text-[11px] text-violet-700 dark:text-violet-300 truncate">
                       Matched to: {aiSuggestion.matchedCalendarEvent.subject}
+                    </div>
+                  )}
+                  {aiSuggestion && aiSuggestion.proposedAttendeeNames.length > 0 && (
+                    <div className="text-[11px] text-violet-700 dark:text-violet-300 truncate">
+                      Attendees from diary: {aiSuggestion.proposedAttendeeNames.join(", ")}
                     </div>
                   )}
                 </div>
@@ -494,6 +507,17 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                   )}
                 </div>
               )}
+              {/* Free-text fallback — anyone not in the CRM yet. Auto-filled
+                  from the matched diary entry's attendee list. */}
+              <Textarea
+                value={attendeesText}
+                onChange={(e) => setAttendeesText(e.target.value)}
+                disabled={isPosted}
+                placeholder="Other attendees not in the CRM (comma separated)"
+                rows={2}
+                className="text-sm"
+                data-testid="m-input-attendees-text"
+              />
             </div>
           )}
 
