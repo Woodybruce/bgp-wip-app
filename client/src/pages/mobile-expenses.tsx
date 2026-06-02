@@ -34,7 +34,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
-  X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2,
+  X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -95,7 +95,7 @@ interface AutoClassifyResult {
   category: string | null;
   businessPurpose: string | null;
   attendeeContactIds: string[];
-  proposedAttendeeNames: string[];
+  proposedAttendees: { email: string; name: string }[];
   relatedDealId: string | null;
   relatedPropertyId: string | null;
   followUpQuestion: string | null;
@@ -178,7 +178,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
           if (s.category) setCategory(s.category);
           if (s.businessPurpose) setBusinessPurpose(s.businessPurpose);
           if (s.attendeeContactIds.length > 0) setAttendeeIds(s.attendeeContactIds);
-          if (s.proposedAttendeeNames.length > 0) setAttendeesText(s.proposedAttendeeNames.join(", "));
+          if (s.proposedAttendees.length > 0) setAttendeesText(s.proposedAttendees.map((p) => p.name).join(", "));
           setAiApplied(true);
         }
       })
@@ -191,7 +191,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     if (aiSuggestion.category) setCategory(aiSuggestion.category);
     if (aiSuggestion.businessPurpose) setBusinessPurpose(aiSuggestion.businessPurpose);
     if (aiSuggestion.attendeeContactIds.length > 0) setAttendeeIds(aiSuggestion.attendeeContactIds);
-    if (aiSuggestion.proposedAttendeeNames.length > 0) setAttendeesText(aiSuggestion.proposedAttendeeNames.join(", "));
+    if (aiSuggestion.proposedAttendees.length > 0) setAttendeesText(aiSuggestion.proposedAttendees.map((p) => p.name).join(", "));
     if (aiSuggestion.relatedDealId) setRelatedDealId(aiSuggestion.relatedDealId);
     if (aiSuggestion.relatedPropertyId) setRelatedPropertyId(aiSuggestion.relatedPropertyId);
     setAiApplied(true);
@@ -225,6 +225,50 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
       toast({ title: "Save failed", description: e?.message || "Try again", variant: "destructive" });
     },
   });
+
+  // Add a calendar attendee to crm_contacts via Apollo / RocketReach
+  // enrichment. On success we drop them into the attendeeIds chip list,
+  // pull their name out of the free-text fallback field, and refresh the
+  // contacts query so subsequent typeahead picks them up.
+  const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
+  const addAttendeeMutation = useMutation({
+    mutationFn: async (args: { email: string; name: string }) => {
+      const r = await fetch("/api/contacts/from-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(args),
+      });
+      const body = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
+      return body as { contact: { id: string; name: string }; created: boolean; source: string };
+    },
+    onSuccess: (body, vars) => {
+      setAttendeeIds((prev) => prev.includes(body.contact.id) ? prev : [...prev, body.contact.id]);
+      setAttendeesText((prev) => prev
+        .split(/\s*,\s*/)
+        .filter((n) => n && n.toLowerCase() !== vars.name.toLowerCase())
+        .join(", "));
+      setAddedEmails((prev) => new Set(prev).add(vars.email));
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      toast({
+        title: body.created ? "Added to CRM" : "Already in CRM",
+        description: body.created && body.source !== "fallback"
+          ? `Enriched via ${body.source === "apollo" ? "Apollo" : "RocketReach"}`
+          : undefined,
+      });
+      setAddingEmail(null);
+    },
+    onError: (e: any, vars) => {
+      toast({ title: `Couldn't add ${vars.name}`, description: e?.message, variant: "destructive" });
+      setAddingEmail(null);
+    },
+  });
+  const addAttendee = (a: { email: string; name: string }) => {
+    setAddingEmail(a.email);
+    addAttendeeMutation.mutate(a);
+  };
 
   const personalMutation = useMutation({
     mutationFn: async () => {
@@ -317,9 +361,9 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                       Matched to: {aiSuggestion.matchedCalendarEvent.subject}
                     </div>
                   )}
-                  {aiSuggestion && aiSuggestion.proposedAttendeeNames.length > 0 && (
+                  {aiSuggestion && aiSuggestion.proposedAttendees.length > 0 && (
                     <div className="text-[11px] text-violet-700 dark:text-violet-300 truncate">
-                      Attendees from diary: {aiSuggestion.proposedAttendeeNames.join(", ")}
+                      Attendees from diary: {aiSuggestion.proposedAttendees.map((p) => p.name).join(", ")}
                     </div>
                   )}
                 </div>
@@ -505,6 +549,41 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                         </button>
                       ))
                   )}
+                </div>
+              )}
+              {/* Diary attendees who aren't in the CRM yet — offer one-tap
+                  Add (Apollo/RocketReach enrichment behind the scenes). */}
+              {aiSuggestion?.proposedAttendees && aiSuggestion.proposedAttendees
+                .filter((a) => !addedEmails.has(a.email))
+                .length > 0 && (
+                <div className="space-y-1.5 rounded-lg bg-violet-50/60 border border-violet-100 p-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">
+                    From your diary — not in CRM
+                  </div>
+                  {aiSuggestion.proposedAttendees
+                    .filter((a) => !addedEmails.has(a.email))
+                    .map((a) => (
+                      <div key={a.email} className="flex items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium truncate">{a.name}</div>
+                          <div className="text-[11px] text-muted-foreground truncate">{a.email}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => addAttendee(a)}
+                          disabled={addingEmail === a.email || isPosted}
+                          className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-full bg-violet-600 text-white text-[11px] font-semibold disabled:opacity-60 active:scale-95 transition-transform"
+                          data-testid={`m-attendee-add-${a.email}`}
+                        >
+                          {addingEmail === a.email ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <UserPlus className="w-3 h-3" />
+                          )}
+                          Add to CRM
+                        </button>
+                      </div>
+                    ))}
                 </div>
               )}
               {/* Free-text fallback — anyone not in the CRM yet. Auto-filled

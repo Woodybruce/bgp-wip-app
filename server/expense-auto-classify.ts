@@ -61,10 +61,10 @@ interface AutoClassifyResult {
   businessPurpose: string | null;
   attendeeContactIds: string[];
   // Attendees from the matched calendar event that AREN'T in crm_contacts.
-  // The client drops these into the free-text `attendees` field so we
-  // still capture who was there (HMRC needs names for entertainment) even
-  // when the people haven't been added to the CRM yet.
-  proposedAttendeeNames: string[];
+  // Email + display name so the client can offer "Add to CRM" buttons
+  // that enrich via Apollo/RocketReach. HMRC also needs the names for
+  // entertainment compliance even if we can't enrich.
+  proposedAttendees: { email: string; name: string }[];
   relatedDealId: string | null;
   relatedPropertyId: string | null;
   followUpQuestion: string | null;
@@ -198,7 +198,7 @@ export async function autoClassifyExpense(expenseId: string): Promise<AutoClassi
     category: exp.category || null,
     businessPurpose: exp.businessPurpose || null,
     attendeeContactIds: [],
-    proposedAttendeeNames: [],
+    proposedAttendees: [],
     relatedDealId: exp.relatedDealId || null,
     relatedPropertyId: exp.relatedPropertyId || null,
     followUpQuestion: null,
@@ -236,22 +236,21 @@ export async function autoClassifyExpense(expenseId: string): Promise<AutoClassi
         start: ev.start,
         attendees: ev.attendees,
       };
-      // Free-text fallback for HMRC compliance — surface every attendee on
-      // the matched event who isn't already a CRM contact. Drop the user's
-      // own address (no point listing yourself) and dedupe by name.
+      // Surface every attendee on the matched event who isn't already a
+      // CRM contact. Drop the user's own address (no point listing
+      // yourself) and dedupe by email. Client offers "Add to CRM" per row.
       const userEmailLower = (userEmail || "").toLowerCase();
       const matchedCrmEmails = new Set(matchedContacts.map((c) => c.email.toLowerCase()));
-      const proposed = new Map<string, string>();          // key: lowercase name|email; value: display
+      const proposed = new Map<string, { email: string; name: string }>();
       for (const a of ev.attendees) {
         if (!a.email || a.email === userEmailLower) continue;
         if (matchedCrmEmails.has(a.email)) continue;
-        // Prefer the Outlook display name, otherwise the local-part of the email
-        // ("john.smith@x.com" → "John Smith").
+        if (proposed.has(a.email)) continue;
         const fallback = a.email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
         const display = (a.name && a.name.trim()) || fallback;
-        proposed.set(display.toLowerCase(), display);
+        proposed.set(a.email, { email: a.email, name: display });
       }
-      result.proposedAttendeeNames = Array.from(proposed.values());
+      result.proposedAttendees = Array.from(proposed.values());
     }
   } catch (err: any) {
     console.warn(`[expense-auto-classify] Claude call failed for ${expenseId}: ${err?.message}`);
@@ -274,6 +273,77 @@ export function registerExpenseAutoClassifyRoutes(app: Express) {
     } catch (err: any) {
       console.error(`[expense-auto-classify] ${req.params.id}: ${err?.message}`);
       res.status(500).json({ error: err?.message || "Auto-classify failed" });
+    }
+  });
+
+  // Add a person to crm_contacts from an email + (optional) display name.
+  // Enriches via Apollo → RocketReach → fallback and links/creates the
+  // company by domain. Returns the new contact row so the caller can
+  // immediately attach them to an expense.
+  app.post("/api/contacts/from-email", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      if (!email || !/^.+@.+\..+/.test(email)) return res.status(400).json({ error: "Valid email required" });
+      const fallbackName = req.body?.name ? String(req.body.name) : undefined;
+
+      // Duplicate guard — never create a second row for the same email.
+      const existing = await pool.query<{ id: string; name: string }>(
+        "SELECT id, name FROM crm_contacts WHERE lower(email) = $1 LIMIT 1",
+        [email],
+      );
+      if (existing.rows[0]) {
+        return res.json({ contact: existing.rows[0], created: false, source: "existing" });
+      }
+
+      const { enrichPersonFromEmail } = await import("./enrich-person-from-email");
+      const enriched = await enrichPersonFromEmail(email, fallbackName);
+
+      // Look up the company by domain — match on website containing the
+      // domain. If nothing found and we have a company name, create a
+      // stub company so the contact has a parent.
+      let companyId: string | null = null;
+      if (enriched.companyDomain) {
+        const co = await pool.query<{ id: string; name: string }>(
+          "SELECT id, name FROM crm_companies WHERE website ILIKE $1 OR website ILIKE $2 LIMIT 1",
+          [`%${enriched.companyDomain}%`, `%${enriched.companyDomain.replace(/^www\./, "")}%`],
+        );
+        if (co.rows[0]) companyId = co.rows[0].id;
+      }
+      if (!companyId && enriched.companyName) {
+        const insertCo = await pool.query<{ id: string }>(
+          `INSERT INTO crm_companies (name, website, company_type)
+           VALUES ($1, $2, 'Contact')
+           RETURNING id`,
+          [enriched.companyName, enriched.companyDomain || null],
+        );
+        companyId = insertCo.rows[0]?.id || null;
+      }
+
+      const insert = await pool.query<{ id: string }>(
+        `INSERT INTO crm_contacts
+           (name, role, email, phone, phone_mobile, linkedin_url, company_id, company_name, enrichment_source, last_enriched_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+         RETURNING id`,
+        [
+          enriched.name,
+          enriched.role,
+          enriched.email,
+          enriched.phone,
+          enriched.mobile,
+          enriched.linkedin,
+          companyId,
+          enriched.companyName,
+          enriched.source === "fallback" ? "expense-attendee-fallback" : `expense-attendee-${enriched.source}`,
+        ],
+      );
+      res.json({
+        contact: { id: insert.rows[0].id, name: enriched.name, email: enriched.email, role: enriched.role, companyName: enriched.companyName },
+        created: true,
+        source: enriched.source,
+      });
+    } catch (err: any) {
+      console.error(`[contacts/from-email] ${req.body?.email}: ${err?.message}`);
+      res.status(500).json({ error: err?.message || "Failed to add contact" });
     }
   });
 }
