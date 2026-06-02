@@ -130,16 +130,25 @@ async function matchAttendeesToCrmContacts(
   return rows;
 }
 
-export async function autoClassifyExpense(expenseId: string): Promise<AutoClassifyResult> {
+export async function autoClassifyExpense(expenseId: string, fallbackUserId?: string | null): Promise<AutoClassifyResult> {
   const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
   if (!exp) throw new Error("Expense not found");
 
   // Resolve the cardholder → user → email so we know which calendar to query.
+  // Fall back to the createdBy / session user id when the cardholder
+  // isn't linked to a user (common for the card-less mobile flow).
   let userEmail: string | null = null;
   if (exp.cardholderId) {
     const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1);
     if (ch?.userId) {
       const [u] = await db.select().from(users).where(eq(users.id, ch.userId)).limit(1);
+      userEmail = u?.email || null;
+    }
+  }
+  if (!userEmail) {
+    const fallbackId = (exp as any).createdBy || fallbackUserId;
+    if (fallbackId) {
+      const [u] = await db.select().from(users).where(eq(users.id, fallbackId)).limit(1);
       userEmail = u?.email || null;
     }
   }
@@ -266,12 +275,16 @@ export function registerExpenseAutoClassifyRoutes(app: Express) {
   // merchant/total/category; this layers calendar + attendee suggestions
   // on top).
   app.post("/api/expenses/:id/auto-classify", requireAuth, async (req: Request, res: Response) => {
+    const t0 = Date.now();
     try {
       const expenseId = String(req.params.id);
-      const result = await autoClassifyExpense(expenseId);
+      const sessionUserId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      console.log(`[expense-auto-classify] start ${expenseId} sessionUser=${sessionUserId}`);
+      const result = await autoClassifyExpense(expenseId, sessionUserId);
+      console.log(`[expense-auto-classify] done ${expenseId} in ${Date.now() - t0}ms confidence=${result.confidence} matchedEvent=${result.matchedCalendarEvent?.subject || "none"}`);
       res.json(result);
     } catch (err: any) {
-      console.error(`[expense-auto-classify] ${req.params.id}: ${err?.message}`);
+      console.error(`[expense-auto-classify] ${req.params.id} crashed in ${Date.now() - t0}ms: ${err?.message}`);
       res.status(500).json({ error: err?.message || "Auto-classify failed" });
     }
   });

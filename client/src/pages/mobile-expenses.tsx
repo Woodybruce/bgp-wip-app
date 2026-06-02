@@ -162,14 +162,22 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAiError(null);
     setAiApplied(false);
 
-    // Auto-fire AI classify when the expense has a receipt but the user
-    // hasn't categorised it yet. Skip if already posted to Xero (locked)
-    // or already categorised (user has their own answer).
-    const needsClassify = expense.receiptFilename && !expense.category && !expense.xeroExpenseId;
-    if (!needsClassify) return;
+    // Auto-fire AI classify whenever the sheet opens for an uncategorised
+    // expense that isn't already locked in Xero. We don't gate on
+    // receiptFilename being set client-side — the local cache may still
+    // hold the pre-receipt row from before the upload — the server will
+    // happily classify from merchant/date/amount even if it can't find a
+    // receipt blob.
+    if (expense.category || expense.xeroExpenseId) return;
     setAiLoading(true);
-    fetch(`/api/expenses/${expense.id}/auto-classify`, { method: "POST", credentials: "include" })
-      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
+    fetch(`/api/expenses/${expense.id}/auto-classify`, {
+      method: "POST",
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then((r) => r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b?.error || `HTTP ${r.status}`))))
       .then((s: AutoClassifyResult) => {
         setAiSuggestion(s);
         // Auto-apply on high confidence — user can still override every
@@ -182,8 +190,11 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
           setAiApplied(true);
         }
       })
-      .catch((e) => setAiError(e?.message || "AI classify failed"))
-      .finally(() => setAiLoading(false));
+      .catch((e) => setAiError(e?.name === "AbortError" ? "AI took too long — categorise manually" : (e?.message || "AI classify failed")))
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+        setAiLoading(false);
+      });
   }, [expense?.id]);
 
   const applySuggestion = () => {
