@@ -1313,12 +1313,30 @@ router.delete("/api/aml/deal/:id/sof/:index", requireAuth, async (req: Request, 
 
 router.get("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res: Response) => {
   try {
+    // Core columns only — always present. The mlr_scope_* columns are newer and
+    // may be missing on some DBs, so read them separately and degrade
+    // gracefully rather than 500-ing the whole endpoint.
     const r = await pool.query(
-      `SELECT id, name, deal_type, fee, monthly_rent, annual_rent, mlr_scope, mlr_scope_reason, mlr_scope_assessed_at, mlr_scope_assessed_by FROM crm_deals WHERE id = $1`,
+      `SELECT id, name, deal_type, fee, monthly_rent, annual_rent FROM crm_deals WHERE id = $1`,
       [req.params.id],
     );
     const d = r.rows[0];
     if (!d) return res.status(404).json({ error: "deal not found" });
+
+    let current: any = null;
+    try {
+      const c = await pool.query(
+        `SELECT mlr_scope, mlr_scope_reason, mlr_scope_assessed_at, mlr_scope_assessed_by FROM crm_deals WHERE id = $1`,
+        [req.params.id],
+      );
+      const row = c.rows[0];
+      if (row?.mlr_scope) {
+        current = { scope: row.mlr_scope, reason: row.mlr_scope_reason, assessedAt: row.mlr_scope_assessed_at, assessedBy: row.mlr_scope_assessed_by };
+      }
+    } catch (colErr: any) {
+      console.warn("[mlr-scope] stored scope columns unavailable:", colErr?.message);
+    }
+
     const { assessMlrScope } = await import("./aml-ai");
     const suggestion = assessMlrScope({
       dealType: d.deal_type,
@@ -1326,11 +1344,9 @@ router.get("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res:
       monthlyRent: d.monthly_rent,
       annualRent: d.annual_rent,
     });
-    res.json({
-      current: d.mlr_scope ? { scope: d.mlr_scope, reason: d.mlr_scope_reason, assessedAt: d.mlr_scope_assessed_at, assessedBy: d.mlr_scope_assessed_by } : null,
-      suggestion,
-    });
+    res.json({ current, suggestion });
   } catch (err: any) {
+    console.error("[mlr-scope] error:", err?.message);
     res.status(500).json({ error: err?.message });
   }
 });

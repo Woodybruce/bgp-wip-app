@@ -691,6 +691,15 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
     }
   }
 
+  // Some Claude models (notably with extended thinking) reject a conversation
+  // that ends on an assistant message — "does not support assistant message
+  // prefill. The conversation must end with a user message." Drop any trailing
+  // assistant turn so we always end on a user message. (merged[0] is forced to
+  // user above, so this can never empty the array.)
+  while (merged.length > 1 && merged[merged.length - 1]?.role === "assistant") {
+    merged.pop();
+  }
+
   return { system, messages: merged };
 }
 
