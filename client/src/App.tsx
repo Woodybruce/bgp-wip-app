@@ -82,6 +82,7 @@ const ImageStudio = lazy(() => import("@/pages/image-studio"));
 const AddinsPage = lazy(() => import("@/pages/addins"));
 const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
 const MyExpenses = lazy(() => import("@/pages/my-expenses"));
+const MobileExpenses = lazy(() => import("@/pages/mobile-expenses"));
 const ExpensesApprovals = lazy(() => import("@/pages/expenses-approvals"));
 const ExpensesRevolut = lazy(() => import("@/pages/expenses-revolut"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
@@ -264,6 +265,7 @@ function Router() {
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
       <Route path="/expenses/revolut" component={ExpensesRevolut} />
       <Route path="/my-expenses" component={MyExpenses} />
+      <Route path="/m/expenses" component={MobileExpenses} />
       <Route path="/hr" component={HRPage} />
       <Route path="/hr/:userId">{(params) => <HRPage />}</Route>
       <Route path="/team" component={TeamPage} />
