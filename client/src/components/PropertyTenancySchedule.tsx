@@ -181,6 +181,33 @@ const BAND_COLOURS: Record<string, string> = {
   "Comments": "bg-zinc-700 text-white",
 };
 
+// Canonical lifecycle status vocab — matches what the four-way mirror in
+// shared/lease-status-mirror.ts expects. Superset of the simple Tenancy
+// Occupied/Vacant pair; the extra states (In Negotiation, Under Offer,
+// Trading, Lease Event, Archived) are needed for the Leasing lens and
+// the Letting Tracker to do their jobs. Editing any of these on a row
+// fans the change out to leasing_schedule_units, available_units, and
+// crm_deals via the existing mirror.
+const SCHEDULE_STATUSES = [
+  "Vacant",         // available, no marketing activity yet
+  "In Negotiation", // letting agent in talks
+  "Under Offer",    // offer accepted, pre-solicitors
+  "Occupied",       // tenant in possession, lease alive
+  "Trading",        // tenant in possession and trading (F&B / leisure)
+  "Lease Event",    // upcoming break / expiry — actively managed
+  "Archived",       // historical row, hidden from default filters
+] as const;
+const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
+  "Vacant":         "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+  "In Negotiation": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
+  "Under Offer":    "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
+  "Occupied":       "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  "Trading":        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
+  "Lease Event":    "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
+  "Archived":       "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-500",
+  "Held":           "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300", // legacy bucket — keeps colour consistent until migrated
+};
+
 const COLUMNS: Col[] = [
   { field: "grouping",         label: "Zone",           band: "Unit Details", width: 110, align: "left" },
   { field: "floor_level" as any, label: "Floor",        band: "Unit Details", width: 110, align: "left" },
@@ -617,8 +644,14 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
   });
 
   const zones = [...new Set(filtered.map(u => u.premises || "Unassigned"))];
-  const occupied = units.filter(u => u.status === "Occupied").length;
+  // Occupied + Trading both count as "in possession" for the headline
+  // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
+  // as "actionable" — surfaced as their own buckets below if non-zero.
+  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading").length;
   const vacant = units.filter(u => u.status === "Vacant").length;
+  const inNeg = units.filter(u => u.status === "In Negotiation").length;
+  const underOffer = units.filter(u => u.status === "Under Offer").length;
+  const leaseEvent = units.filter(u => u.status === "Lease Event").length;
   const totalNIA = units.reduce((s, u) => s + Number(u.nia_sqft || 0), 0);
   const totalRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
   const totalSC = units.reduce((s, u) => s + Number(u.service_charge || 0), 0);
@@ -767,6 +800,12 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
           { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null },
           { label: "Occupied", value: String(occupied), filter: "Occupied" },
           { label: "Vacant", value: String(vacant), filter: "Vacant" },
+          // Click-filterable buckets only show when there's actually rows
+          // in that state — keeps the strip uncluttered on properties
+          // where everything is occupied.
+          ...(inNeg > 0 ? [{ label: "In Negotiation", value: String(inNeg), filter: "In Negotiation" }] : []),
+          ...(underOffer > 0 ? [{ label: "Under Offer", value: String(underOffer), filter: "Under Offer" }] : []),
+          ...(leaseEvent > 0 ? [{ label: "Lease Event", value: String(leaseEvent), filter: "Lease Event" }] : []),
           { label: "Service Charge", value: fmtCurrency(totalSC), filter: null },
         ].map(s => (
           <div
@@ -1162,9 +1201,25 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
         );
       })}
       <td className="p-1 text-center">
-        <Badge variant={isVacant ? "destructive" : "default"} className="text-[10px] cursor-pointer" onClick={() => onUpdate(unit.id, "status", isVacant ? "Occupied" : "Vacant")} data-testid={`tenancy-status-${unit.id}`}>
-          {unit.status}
-        </Badge>
+        {/* Canonical lifecycle status — dropdown carries the full 7-state
+            vocab the four-way mirror expects. Changing here fans out to
+            leasing_schedule_units + available_units + crm_deals via the
+            existing mirror on the PUT endpoint, so the Letting Tracker
+            and the Leasing lens both reflect the change on next refresh. */}
+        <select
+          value={unit.status || ""}
+          onChange={(e) => onUpdate(unit.id, "status", e.target.value)}
+          className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[unit.status || ""] || "bg-gray-100 text-gray-700"}`}
+          data-testid={`tenancy-status-${unit.id}`}
+          aria-label="Status"
+        >
+          {!SCHEDULE_STATUSES.includes(unit.status as any) && unit.status && (
+            <option value={unit.status}>{unit.status}</option>
+          )}
+          {SCHEDULE_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
       </td>
       <td className="p-1 text-center">
         <div className="flex gap-1 justify-center">
@@ -1258,8 +1313,9 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
         <Input placeholder="NIA sq ft" value={form.nia_sqft} onChange={e => setForm({ ...form, nia_sqft: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-sqft" />
         <Input placeholder="Passing Rent" value={form.passing_rent_pa} onChange={e => setForm({ ...form, passing_rent_pa: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-rent" />
         <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="h-7 text-xs border rounded px-2 bg-white dark:bg-gray-700" data-testid="add-tenancy-status">
-          <option value="Occupied">Occupied</option>
-          <option value="Vacant">Vacant</option>
+          {SCHEDULE_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
         </select>
       </div>
       <div className="flex gap-2 justify-end">
