@@ -2032,6 +2032,33 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
+  // Name-lookup convenience — paste a property name in the URL instead
+  // of hunting its UUID. Case-insensitive partial match, returns the
+  // single best (shortest matching) row. Useful for diagnostics like
+  // "is Bluewater's unified_schedule flag actually set?".
+  app.get("/api/crm/properties/by-name/:name", async (req, res) => {
+    try {
+      const q = String(req.params.name || "").trim();
+      if (!q) return res.status(400).json({ error: "name required" });
+      const { rows } = await pool.query(
+        `SELECT * FROM crm_properties
+          WHERE lower(name) LIKE lower($1)
+          ORDER BY length(name) ASC
+          LIMIT 1`,
+        [`%${q}%`],
+      );
+      if (!rows[0]) return res.status(404).json({ error: `No property matched "${q}"` });
+      // Snake_case → camelCase the flag we care about for diagnostics
+      // (Drizzle's helper isn't in scope here; this raw row carries
+      // snake_case keys).
+      const r: any = rows[0];
+      r.unifiedSchedule = r.unified_schedule;
+      res.json(r);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Lookup failed" });
+    }
+  });
+
   app.get("/api/crm/properties/:id", async (req, res) => {
     try {
       const property = await storage.getCrmProperty(req.params.id);
