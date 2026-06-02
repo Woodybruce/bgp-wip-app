@@ -66,9 +66,9 @@ export default function MobileImages() {
   // "phone uploads" later, and drops the user straight into the edit
   // sheet for the freshly-uploaded image.
   const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (files: File[]) => {
       const fd = new FormData();
-      fd.append("images", file);
+      for (const f of files) fd.append("images", f);
       fd.append("category", "Phone Uploads");
       fd.append("tags", "phone-upload");
       const r = await fetch("/api/image-studio/upload", { method: "POST", credentials: "include", body: fd });
@@ -79,13 +79,16 @@ export default function MobileImages() {
     },
     onSuccess: async (body) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
-      const newId = body?.[0]?.id;
-      if (newId) {
+      // Only auto-open the edit sheet for single uploads — for batches
+      // the user is more likely to want to browse the grid first.
+      if (body.length === 1) {
         const fresh = queryClient.getQueryData<StudioImage[]>(["/api/image-studio"]) || [];
-        const img = fresh.find((i) => i.id === newId);
+        const img = fresh.find((i) => i.id === body[0].id);
         if (img) setSelected(img);
+        toast({ title: "Uploaded — ready to edit with AI" });
+      } else {
+        toast({ title: `${body.length} photos uploaded`, description: "Tap any one to edit with AI." });
       }
-      toast({ title: "Uploaded — ready to edit with AI" });
       setUploading(false);
     },
     onError: (e: any) => {
@@ -95,11 +98,12 @@ export default function MobileImages() {
   });
 
   const handleUploadChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const file = ev.target.files?.[0];
+    const files = ev.target.files;
     ev.target.value = "";
-    if (!file) return;
+    if (!files || files.length === 0) return;
+    const arr = Array.from(files).slice(0, 20);          // server cap is 20
     setUploading(true);
-    uploadMutation.mutate(file);
+    uploadMutation.mutate(arr);
   };
 
   // Keep the polling flag in sync with the current list.
@@ -135,6 +139,7 @@ export default function MobileImages() {
         ref={uploadInputRef}
         type="file"
         accept="image/*"
+        multiple
         className="hidden"
         onChange={handleUploadChange}
         data-testid="mobile-images-upload-input"
@@ -160,7 +165,7 @@ export default function MobileImages() {
           ) : (
             <Camera className="w-4 h-4" />
           )}
-          {uploading ? "Uploading…" : "Add photo"}
+          {uploading ? "Uploading…" : "Add photos"}
         </button>
       </div>
 
@@ -189,7 +194,7 @@ export default function MobileImages() {
           </p>
           {!search && (
             <p className="text-[11px] text-muted-foreground/70 mt-1">
-              Tap Add photo to take or pick one — AI edits land here too.
+              Tap Add photos to take one or pick several — AI edits land here too.
             </p>
           )}
         </div>
