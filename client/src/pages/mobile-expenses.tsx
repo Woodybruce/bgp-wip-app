@@ -34,7 +34,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
-  X, Search, Tag, Users, Building2, Briefcase, UserX, Save,
+  X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -92,6 +92,20 @@ function StatusBadge({ status }: { status: string }) {
 
 // ─── Edit sheet ─────────────────────────────────────────────────────────
 
+interface AutoClassifyResult {
+  merchant: string | null;
+  category: string | null;
+  businessPurpose: string | null;
+  attendeeContactIds: string[];
+  relatedDealId: string | null;
+  relatedPropertyId: string | null;
+  followUpQuestion: string | null;
+  confidence: "high" | "medium" | "low";
+  reasoning: string | null;
+  matchedCalendarEvent: { subject: string; start: string } | null;
+  matchedContactCount: number;
+}
+
 function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
   const open = !!expense;
   const { toast } = useToast();
@@ -123,6 +137,15 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
 
+  // AI suggestion state — populated on sheet open if the expense has a
+  // receipt but isn't yet categorised. Server cross-references the
+  // user's Outlook calendar + CRM contacts and proposes category +
+  // purpose + attendees the user can accept with one tap.
+  const [aiSuggestion, setAiSuggestion] = useState<AutoClassifyResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiApplied, setAiApplied] = useState(false);
+
   useEffect(() => {
     if (!expense) return;
     setMerchant(expense.merchant || "");
@@ -132,7 +155,42 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAttendeeIds((expense.attendeeContacts || []).map((c) => c.id));
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
+    setAiSuggestion(null);
+    setAiError(null);
+    setAiApplied(false);
+
+    // Auto-fire AI classify when the expense has a receipt but the user
+    // hasn't categorised it yet. Skip if already posted to Xero (locked)
+    // or already categorised (user has their own answer).
+    const needsClassify = expense.receiptFilename && !expense.category && !expense.xeroExpenseId;
+    if (!needsClassify) return;
+    setAiLoading(true);
+    fetch(`/api/expenses/${expense.id}/auto-classify`, { method: "POST", credentials: "include" })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then((s: AutoClassifyResult) => {
+        setAiSuggestion(s);
+        // Auto-apply on high confidence — user can still override every
+        // field before tapping Save. Medium/low → user has to accept.
+        if (s.confidence === "high") {
+          if (s.category) setCategory(s.category);
+          if (s.businessPurpose) setBusinessPurpose(s.businessPurpose);
+          if (s.attendeeContactIds.length > 0) setAttendeeIds(s.attendeeContactIds);
+          setAiApplied(true);
+        }
+      })
+      .catch((e) => setAiError(e?.message || "AI classify failed"))
+      .finally(() => setAiLoading(false));
   }, [expense?.id]);
+
+  const applySuggestion = () => {
+    if (!aiSuggestion) return;
+    if (aiSuggestion.category) setCategory(aiSuggestion.category);
+    if (aiSuggestion.businessPurpose) setBusinessPurpose(aiSuggestion.businessPurpose);
+    if (aiSuggestion.attendeeContactIds.length > 0) setAttendeeIds(aiSuggestion.attendeeContactIds);
+    if (aiSuggestion.relatedDealId) setRelatedDealId(aiSuggestion.relatedDealId);
+    if (aiSuggestion.relatedPropertyId) setRelatedPropertyId(aiSuggestion.relatedPropertyId);
+    setAiApplied(true);
+  };
 
   const isPosted = !!expense?.xeroExpenseId;
   const showEntertainmentFields = ENTERTAINMENT_CATEGORIES.has(category);
@@ -232,6 +290,69 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         </SheetHeader>
 
         <div className="px-4 py-4 space-y-5 pb-32">
+          {/* ─── AI suggestion banner ───────────────────────────────────
+              Fires when the sheet opens for a receipt that hasn't been
+              categorised yet. Server pulls the user's calendar + CRM
+              contacts + the parsed receipt and proposes a full set of
+              fields. High-confidence suggestions auto-apply; medium /
+              low need user confirmation. */}
+          {(aiLoading || aiSuggestion || aiError) && (
+            <div className="rounded-2xl border border-violet-200 bg-violet-50 dark:bg-violet-950/30 dark:border-violet-900 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-900 flex items-center justify-center shrink-0">
+                  {aiLoading ? <Loader2 className="w-4 h-4 text-violet-600 animate-spin" /> : <Sparkles className="w-4 h-4 text-violet-600" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-violet-900 dark:text-violet-100">
+                    {aiLoading ? "AI is checking your diary…" : aiError ? "AI couldn't classify" : aiApplied ? "AI suggestions applied" : "AI suggestion ready"}
+                  </div>
+                  {aiSuggestion?.matchedCalendarEvent && (
+                    <div className="text-[11px] text-violet-700 dark:text-violet-300 truncate">
+                      Matched to: {aiSuggestion.matchedCalendarEvent.subject}
+                    </div>
+                  )}
+                </div>
+                {aiSuggestion && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider ${
+                    aiSuggestion.confidence === "high" ? "bg-emerald-100 text-emerald-700" :
+                    aiSuggestion.confidence === "medium" ? "bg-amber-100 text-amber-700" :
+                    "bg-gray-100 text-gray-600"
+                  }`}>
+                    {aiSuggestion.confidence}
+                  </span>
+                )}
+              </div>
+
+              {aiSuggestion?.reasoning && (
+                <p className="text-[12px] text-violet-800 dark:text-violet-200 leading-relaxed">
+                  {aiSuggestion.reasoning}
+                </p>
+              )}
+
+              {aiSuggestion?.followUpQuestion && (
+                <div className="rounded-lg bg-white dark:bg-violet-950 border border-violet-200 dark:border-violet-800 p-2.5">
+                  <div className="text-[10px] uppercase tracking-wider font-semibold text-violet-600 mb-0.5">Question</div>
+                  <p className="text-[12px] text-foreground">{aiSuggestion.followUpQuestion}</p>
+                </div>
+              )}
+
+              {aiSuggestion && !aiApplied && (
+                <button
+                  type="button"
+                  onClick={applySuggestion}
+                  className="w-full py-2 rounded-lg bg-violet-600 text-white text-sm font-medium active:bg-violet-700"
+                  data-testid="m-apply-ai"
+                >
+                  Apply AI suggestion
+                </button>
+              )}
+
+              {aiError && (
+                <p className="text-[11px] text-violet-700 italic">{aiError}</p>
+              )}
+            </div>
+          )}
+
           {/* Merchant + date */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -555,9 +676,15 @@ export default function MobileExpenses() {
       if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
       return r.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      toast({ title: "Receipt uploaded" });
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      // Land the user straight in the edit sheet for the just-uploaded
+      // expense — the sheet auto-fires AI classify on mount, so the
+      // suggestion is ready (or loading) by the time they look at it.
+      const fresh = queryClient.getQueryData<MyData>(["/api/expenses/me"]);
+      const updated = fresh?.expenses.find((e) => e.id === variables.id) || null;
+      if (updated) setEditing(updated);
+      toast({ title: "Receipt uploaded — AI is checking your diary" });
       setUploadingFor(null);
     },
     onError: (e: any) => {
