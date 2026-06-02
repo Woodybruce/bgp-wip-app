@@ -404,6 +404,22 @@ function AuthenticatedApp() {
     );
   }
 
+  // /m/* routes own their own header & layout — skip the generic mobile shell
+  // (which otherwise stacks a "M" title on top of the page's own header).
+  if ((isMobile || nativeMobile) && location.startsWith("/m/")) {
+    return (
+      <div className="flex flex-col" style={{ height: "100dvh" }}>
+        <div
+          className="flex-1 overflow-y-auto overflow-x-hidden min-h-0"
+          style={{ paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom) + 0.5rem)" }}
+        >
+          <Router />
+        </div>
+        <MobileBottomNav />
+      </div>
+    );
+  }
+
   if (isMobile || nativeMobile) {
     const isBottomNavRoute = BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p));
     return (
