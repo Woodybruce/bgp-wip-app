@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
+  Camera, Download,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -48,10 +49,52 @@ export default function MobileImages() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<StudioImage | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   const { data: images = [], isLoading } = useQuery<StudioImage[]>({
     queryKey: ["/api/image-studio"],
   });
+
+  // Upload a photo from camera or library. Tags it so we can filter
+  // "phone uploads" later, and drops the user straight into the edit
+  // sheet for the freshly-uploaded image.
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("images", file);
+      fd.append("category", "Phone Uploads");
+      fd.append("tags", "phone-upload");
+      const r = await fetch("/api/image-studio/upload", { method: "POST", credentials: "include", body: fd });
+      const body = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
+      // Endpoint returns the inserted rows directly as an array.
+      return body as { id: string }[];
+    },
+    onSuccess: async (body) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      const newId = body?.[0]?.id;
+      if (newId) {
+        const fresh = queryClient.getQueryData<StudioImage[]>(["/api/image-studio"]) || [];
+        const img = fresh.find((i) => i.id === newId);
+        if (img) setSelected(img);
+      }
+      toast({ title: "Uploaded — ready to edit with AI" });
+      setUploading(false);
+    },
+    onError: (e: any) => {
+      toast({ title: "Upload failed", description: e?.message, variant: "destructive" });
+      setUploading(false);
+    },
+  });
+
+  const handleUploadChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    uploadMutation.mutate(file);
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -67,6 +110,15 @@ export default function MobileImages() {
 
   return (
     <div className="pb-24" data-testid="mobile-images">
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleUploadChange}
+        data-testid="mobile-images-upload-input"
+      />
+
       <div
         className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
@@ -75,6 +127,20 @@ export default function MobileImages() {
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Images</h1>
+        <button
+          type="button"
+          onClick={() => uploadInputRef.current?.click()}
+          disabled={uploading}
+          className="inline-flex items-center gap-1.5 h-10 px-3 rounded-full bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-60 active:scale-95 transition-transform"
+          data-testid="mobile-images-upload"
+        >
+          {uploading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Camera className="w-4 h-4" />
+          )}
+          {uploading ? "Uploading…" : "Add photo"}
+        </button>
       </div>
 
       <div className="px-4 mt-3 mb-3">
@@ -161,6 +227,43 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
       toast({ title: "Couldn't edit", description: e?.message, variant: "destructive" });
     },
   });
+
+  // Save to device — use Web Share API if available (iOS / Android),
+  // fall back to a download anchor. Web Share with files pulls up the
+  // native share sheet which includes "Save to Photos".
+  const [saving, setSaving] = useState(false);
+  const saveToDevice = async () => {
+    if (!image) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/image-studio/${image.id}/full`, { credentials: "include" });
+      if (!r.ok) throw new Error(`Couldn't fetch image (${r.status})`);
+      const blob = await r.blob();
+      const filename = `${(image.description || image.fileName || "image").replace(/[^a-z0-9-_]+/gi, "-")}.png`;
+      const file = new File([blob], filename, { type: blob.type || "image/png" });
+      const navAny = navigator as any;
+      if (navAny.canShare && navAny.canShare({ files: [file] })) {
+        await navAny.share({ files: [file], title: filename });
+        toast({ title: "Shared" });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast({ title: "Downloaded — check your camera roll / Files" });
+      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") {                  // user dismissed share sheet
+        toast({ title: "Save failed", description: e?.message, variant: "destructive" });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const revertMutation = useMutation({
     mutationFn: async () => {
@@ -266,6 +369,17 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
               className="border-t border-border/60 bg-background px-4 pt-3 flex items-center gap-2 shrink-0"
               style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
             >
+              <Button
+                type="button"
+                variant="outline"
+                onClick={saveToDevice}
+                disabled={saving}
+                className="h-12"
+                aria-label="Save to phone"
+                data-testid="mobile-image-save"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              </Button>
               {image.source === "ai-edited" && (
                 <Button
                   type="button"
