@@ -792,10 +792,12 @@ export function setupStripeIssuingRoutes(app: Express) {
   // automatically when confidence + category line up.
   const submitUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
   app.post("/api/expenses/submit", requireAuth, submitUpload.single("receipt"), async (req: Request, res: Response) => {
+    const t0 = Date.now();
     try {
       const file = req.file;
-      if (!file) return res.status(400).json({ error: "No receipt uploaded — attach the file as 'receipt'." });
       const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      console.log(`[expenses/submit] start userId=${userId} file=${file?.originalname} bytes=${file?.size} mime=${file?.mimetype}`);
+      if (!file) return res.status(400).json({ error: "No receipt uploaded — attach the file as 'receipt'." });
       if (!userId) return res.status(401).json({ error: "Not signed in" });
       const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
       if (!user) return res.status(401).json({ error: "User not found" });
@@ -818,11 +820,12 @@ export function setupStripeIssuingRoutes(app: Express) {
         attendees: typeof req.body?.attendees === "string" ? req.body.attendees : undefined,
         transactionDate: req.body?.transactionDate ? new Date(req.body.transactionDate) : undefined,
       });
+      console.log(`[expenses/submit] done in ${Date.now() - t0}ms ok=${result.ok} expenseId=${result.expenseId} error=${result.error || ""}`);
       if (!result.ok) return res.status(400).json(result);
       res.json(result);
     } catch (e: any) {
-      console.error("[expenses] submit route error:", e?.message, e?.stack);
-      res.status(500).json({ error: e?.message });
+      console.error(`[expenses/submit] crashed in ${Date.now() - t0}ms:`, e?.message, e?.stack);
+      res.status(500).json({ error: e?.message || "Receipt upload failed" });
     }
   });
 

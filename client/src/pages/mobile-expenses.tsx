@@ -663,6 +663,12 @@ export default function MobileExpenses() {
   const { toast } = useToast();
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<Expense | null>(null);
+  // Real DOM input refs — dynamically created <input>.click() doesn't
+  // open the iOS PWA file picker reliably. Hidden inputs that already
+  // exist in the tree do.
+  const newReceiptInputRef = useRef<HTMLInputElement>(null);
+  const expenseReceiptInputRef = useRef<HTMLInputElement>(null);
+  const targetExpenseIdRef = useRef<string | null>(null);
 
   const { data, isLoading } = useQuery<MyData>({
     queryKey: ["/api/expenses/me"],
@@ -673,8 +679,9 @@ export default function MobileExpenses() {
       const fd = new FormData();
       fd.append("receipt", file);
       const r = await fetch(`/api/expenses/${id}/receipt`, { method: "POST", credentials: "include", body: fd });
-      if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
-      return r.json();
+      const body = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
+      return body;
     },
     onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
@@ -723,33 +730,34 @@ export default function MobileExpenses() {
   const pending = expenses.filter((e) => e.status === "pending_receipt");
   const recent = expenses.filter((e) => e.status !== "pending_receipt").slice(0, 30);
 
-  // No `capture` attribute → iOS/Android show their native picker with
-  // both "Take Photo" and "Choose from Library" options. Forcing capture
-  // skipped library uploads which Woody needs for emailed PDF receipts.
+  // Hidden inputs already mounted below — clicking them directly from
+  // the user-initiated tap reliably opens iOS / Android's native picker
+  // (which then offers Take Photo / Photo Library / Browse Files).
   const snapForExpense = (expense: Expense) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*,application/pdf";
-    input.onchange = (ev) => {
-      const file = (ev.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      setUploadingFor(expense.id);
-      uploadMutation.mutate({ id: expense.id, file });
-    };
-    input.click();
+    targetExpenseIdRef.current = expense.id;
+    expenseReceiptInputRef.current?.click();
   };
 
   const snapNewReceipt = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*,application/pdf";
-    input.onchange = (ev) => {
-      const file = (ev.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      setUploadingFor("__new__");
-      submitMutation.mutate(file);
-    };
-    input.click();
+    newReceiptInputRef.current?.click();
+  };
+
+  const handleNewReceiptChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file) return;
+    setUploadingFor("__new__");
+    submitMutation.mutate(file);
+  };
+
+  const handleExpenseReceiptChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const file = ev.target.files?.[0];
+    const expenseId = targetExpenseIdRef.current;
+    ev.target.value = "";
+    targetExpenseIdRef.current = null;
+    if (!file || !expenseId) return;
+    setUploadingFor(expenseId);
+    uploadMutation.mutate({ id: expenseId, file });
   };
 
   if (isLoading) {
@@ -760,8 +768,39 @@ export default function MobileExpenses() {
     );
   }
 
+  const isUploading = uploadingFor !== null;
+
   return (
     <div className="pb-24" data-testid="mobile-expenses">
+      <input
+        ref={newReceiptInputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        className="hidden"
+        onChange={handleNewReceiptChange}
+        data-testid="mobile-expense-new-input"
+      />
+      <input
+        ref={expenseReceiptInputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        className="hidden"
+        onChange={handleExpenseReceiptChange}
+        data-testid="mobile-expense-existing-input"
+      />
+
+      {isUploading && (
+        <div className="fixed inset-0 z-50 bg-background/85 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+          <Loader2 className="w-10 h-10 animate-spin text-primary" />
+          <div className="text-center px-6">
+            <div className="text-base font-semibold">Reading your receipt…</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              AI is pulling the merchant, total and date. This takes 5–10 seconds.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div
         className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
