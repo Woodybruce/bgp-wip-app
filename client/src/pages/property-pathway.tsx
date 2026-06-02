@@ -1665,46 +1665,6 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
   const { toast } = useToast();
   const [agreeing, setAgreeing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
-  const [opening, setOpening] = useState(false);
-
-  async function openInExcel() {
-    if (!stage7?.modelRunId) return;
-    setOpening(true);
-    // Open the tab synchronously inside the click gesture so it isn't popup-
-    // blocked after the await below.
-    const win = window.open("about:blank", "_blank");
-    const downloadUrl = `/api/models/runs/${stage7.modelRunId}/download`;
-    const fallback = () => { if (win) win.location.href = downloadUrl; else window.open(downloadUrl, "_blank"); };
-    try {
-      // embed-excel syncs the run to SharePoint and returns an editable Excel
-      // Online webUrl (where the BGP add-in attaches so edits save back). If
-      // Microsoft 365 isn't connected it errors — fall back to downloading the
-      // workbook so the model always opens.
-      const res = await fetch(`/api/models/runs/${stage7.modelRunId}/embed-excel`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        fallback();
-        const e = await res.json().catch(() => null);
-        toast({ title: "Downloaded the workbook", description: e?.message || "Editable Excel needs Microsoft 365 connected — downloaded a copy instead." });
-        return;
-      }
-      const data = await res.json();
-      const target = data.webUrl || data.embedUrl;
-      if (target) {
-        if (win) win.location.href = target; else window.open(target, "_blank");
-        toast({ title: "Opening in Excel", description: "Amend in Excel, then Save in the BGP add-in — your changes flow back into this pathway model." });
-      } else {
-        fallback();
-      }
-    } catch (e: any) {
-      fallback();
-      toast({ title: "Downloaded the workbook", description: "Couldn't reach Excel Online — downloaded a copy instead.", variant: "destructive" });
-    } finally {
-      setOpening(false);
-    }
-  }
   const [areaInput, setAreaInput] = useState<string>(
     stage7?.overrideTotalAreaSqFt ? String(stage7.overrideTotalAreaSqFt) :
     stage7?.totalAreaSqFt ? String(stage7.totalAreaSqFt) : "",
@@ -1741,9 +1701,7 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
   }
 
   async function agree() {
-    if (!confirm(modelAgreed
-      ? "Re-agree the current model version? This rebuilds the Why Buy deck from your latest amends."
-      : "Agree this Excel model version? It locks it as the version Why Buy uses and rebuilds the deck from it.")) return;
+    if (!confirm("Agree this Excel model version? It will lock this version as the one Why Buy uses.")) return;
     setAgreeing(true);
     try {
       const res = await fetch(`/api/property-pathway/${runId}/excel-model/agree`, {
@@ -1752,7 +1710,7 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
         body: JSON.stringify({ modelVersionId: stage7?.modelVersionId }),
       });
       if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Model agreed", description: "Rebuilding the Why Buy deck from it — refresh Stage 9 shortly." });
+      toast({ title: "Model agreed", description: "Unlocked Stage 8 — Studio Time." });
       onReload();
     } catch (e: any) {
       toast({ title: "Couldn't agree model", description: e?.message, variant: "destructive" });
@@ -1769,14 +1727,14 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
           {modelAgreed && <Badge className="ml-1 bg-emerald-100 text-emerald-900">Agreed</Badge>}
         </CardTitle>
         <div className="flex items-center gap-2">
-          {stage7?.modelRunId && (
-            <Button size="sm" variant="outline" onClick={openInExcel} disabled={opening} className="gap-1.5">
-              {opening ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open in Excel
-            </Button>
+          {stage7?.workbookUrl && (
+            <a href={stage7.workbookUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+              <ExternalLink className="w-3 h-3" /> Open in Excel
+            </a>
           )}
-          {stage7?.modelRunId && (
-            <Button size="sm" onClick={agree} disabled={agreeing} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
-              {agreeing ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {modelAgreed ? "Re-agree & rebuild deck" : "Agree model"}
+          {!modelAgreed && (
+            <Button size="sm" onClick={agree} disabled={agreeing || !stage7?.modelRunId} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+              {agreeing ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Agree model
             </Button>
           )}
         </div>
@@ -1799,10 +1757,10 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
         {/* Area + passing rent — the two inputs that matter most. Show the
             value the model was built with (and its source) so you can sanity-
             check before agreeing. Override + regenerate if wrong. */}
-        {stage7?.modelRunId && (
+        {stage7?.modelRunId && !modelAgreed && (
           <div className="mt-3 border rounded-lg p-3 bg-muted/30">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-medium">Area & passing rent{modelAgreed ? " — amend & re-agree to refresh the deck" : ""}</p>
+              <p className="text-xs font-medium">Area & passing rent</p>
               <span className={`text-[10px] px-1.5 py-0.5 rounded ${stage7.totalAreaSource === "default" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
                 Area source: {stage7.totalAreaSource || "default"}
                 {stage7.totalAreaSource === "default" && " — please override"}

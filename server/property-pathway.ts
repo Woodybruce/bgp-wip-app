@@ -5676,12 +5676,6 @@ export function registerPropertyPathwayRoutes(app: Express) {
         stageStatus: nextStatus,
         currentStage: Math.max(run.currentStage, 8),
       });
-
-      // Rebuild the Why Buy deck from the just-agreed model (Stage 9). Async —
-      // deck generation is slow and the card polls stage9 status. Re-agreeing
-      // after an amend regenerates it again from the latest version.
-      runStage9(runId, req).catch((e: any) => console.error("[excel-model/agree] Why Buy rebuild error:", e?.message));
-
       res.json({ ok: true, stage7: nextStage7 });
     } catch (err: any) {
       console.error("[excel-model/agree] error:", err?.message);
