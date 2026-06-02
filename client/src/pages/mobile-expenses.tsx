@@ -59,8 +59,6 @@ interface CrmContact { id: string; name: string; email?: string | null; companyI
 interface CrmProperty { id: string; name: string; postcode?: string | null; }
 interface CrmDeal { id: string; name: string; status?: string | null; }
 interface MyData {
-  cardholder: { id: string; userName: string } | null;
-  card: { id: string; last4: string } | null;
   expenses: Expense[];
 }
 
@@ -809,9 +807,6 @@ export default function MobileExpenses() {
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
-        {data?.card && (
-          <span className="text-[11px] text-muted-foreground">···· {data.card.last4}</span>
-        )}
       </div>
 
       <div className="px-4 mb-3">

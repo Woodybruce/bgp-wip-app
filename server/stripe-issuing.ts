@@ -510,9 +510,14 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Get single expense (owner or admin)
-  app.get("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
+  app.get("/api/expenses/:id", requireAuth, async (req: Request, res: Response, next) => {
     try {
       const id = String(req.params.id);
+      // Express matches the first registered route. The /me route is
+      // declared below this one, so without this skip Express would
+      // serve a 403 here ("you don't own expense 'me'"). Pass to the
+      // next matching handler instead.
+      if (id === "me") return next("route" as any);
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const [row] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!row) return res.status(404).json({ error: "Not found" });
