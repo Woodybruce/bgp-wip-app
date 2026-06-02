@@ -156,7 +156,7 @@ export async function autoClassifyExpense(expenseId: string, fallbackUserId?: st
   // Find the most recent receipt for this expense. We'll re-OCR if we
   // need fresh data, but for the demo flow the upload endpoint already
   // populated exp.merchant + exp.category from the parse — just trust those.
-  const [receipt] = await db.select().from(expenseReceipts).where(eq(expenseReceipts.expenseId, expenseId)).orderBy(desc(expenseReceipts.createdAt)).limit(1);
+  const [receipt] = await db.select().from(expenseReceipts).where(eq(expenseReceipts.expenseId, expenseId)).orderBy(desc(expenseReceipts.uploadedAt)).limit(1);
 
   // Calendar for the transaction date.
   const txDate = exp.transactionDate ? new Date(exp.transactionDate) : new Date();
