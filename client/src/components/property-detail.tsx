@@ -824,6 +824,18 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
+            {/* Temporary debug strip — prints the property's unified_schedule
+                state + name so we can see at a glance whether the flag is
+                set and whether the name-fallback regex would also trigger.
+                Remove once the rollout is verified. */}
+            <div className="text-[10px] font-mono px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 mb-2">
+              🐛 debug:
+              {" "}name=<b>{property.name || "(none)"}</b>
+              {" · "}unifiedSchedule=<b>{String((property as any).unifiedSchedule ?? "undefined")}</b>
+              {" · "}nameMatchBluewater=<b>{String(/bluewater/i.test(property.name || ""))}</b>
+              {" · "}willShowUnified=<b className="text-emerald-700">{String(!!((property as any).unifiedSchedule || /bluewater/i.test(property.name || "")))}</b>
+            </div>
+
             {/* Schedule(s) — per-property flag picks the unified view OR
                 the legacy two-panel layout. Bluewater is the first opt-in
                 to the unified view; once verified we flip the default for
