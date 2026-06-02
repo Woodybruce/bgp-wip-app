@@ -38,6 +38,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
+import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
@@ -823,19 +824,37 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
-            <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Leasing Schedule" testId="toggle-leasing-schedule">
-              <div className="max-h-[640px] overflow-y-auto pr-1">
-                <PropertyLeasingSchedule propertyId={property.id} />
-              </div>
-            </CollapsibleCard>
+            {/* Schedule(s) — per-property flag picks the unified view OR
+                the legacy two-panel layout. Bluewater is the first opt-in
+                to the unified view; once verified we flip the default for
+                everyone. Component (PropertyLeasingSchedule + PropertyTenancySchedule)
+                stays imported so the toggle is just a render switch, not
+                a remount lifecycle. */}
+            {(property as any).unifiedSchedule ? (
+              <ErrorBoundary compact name="Schedule">
+                <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Schedule" testId="toggle-schedule">
+                  <div className="max-h-[640px] overflow-y-auto pr-1">
+                    <PropertyUnifiedSchedule propertyId={property.id} />
+                  </div>
+                </CollapsibleCard>
+              </ErrorBoundary>
+            ) : (
+              <>
+                <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Leasing Schedule" testId="toggle-leasing-schedule">
+                  <div className="max-h-[640px] overflow-y-auto pr-1">
+                    <PropertyLeasingSchedule propertyId={property.id} />
+                  </div>
+                </CollapsibleCard>
 
-            <ErrorBoundary compact name="Tenancy schedule">
-              <CollapsibleCard open={mainSections.tenancy} onToggle={() => toggleMain("tenancy")} icon={Users} title="Tenancy Schedule" testId="toggle-tenancy">
-                <div className="max-h-[640px] overflow-y-auto pr-1">
-                  <PropertyTenancySchedule propertyId={property.id} />
-                </div>
-              </CollapsibleCard>
-            </ErrorBoundary>
+                <ErrorBoundary compact name="Tenancy schedule">
+                  <CollapsibleCard open={mainSections.tenancy} onToggle={() => toggleMain("tenancy")} icon={Users} title="Tenancy Schedule" testId="toggle-tenancy">
+                    <div className="max-h-[640px] overflow-y-auto pr-1">
+                      <PropertyTenancySchedule propertyId={property.id} />
+                    </div>
+                  </CollapsibleCard>
+                </ErrorBoundary>
+              </>
+            )}
 
             <ErrorBoundary compact name="Pathway intel strip">
               <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">

@@ -1055,6 +1055,12 @@ import { pool } from "./db";
     // display + back-compat with anything that reads it; we update
     // it from the company name on link.
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS competitor_agent_id VARCHAR`,
+    // Unified schedule rollout flag. When true on a property, the property
+    // detail page collapses the separate Leasing Schedule + Tenancy Schedule
+    // panels into one "Schedule" panel with a lens toggle (Lettings vs
+    // Tenancy). Bluewater is the first test property; once verified we'll
+    // flip the firm-wide default to true and retire the two old panels.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS unified_schedule BOOLEAN DEFAULT false`,
     // Backfill: existing landlord_id → freeholder_id (best default; user can correct)
     `UPDATE crm_properties SET freeholder_id = landlord_id WHERE freeholder_id IS NULL AND landlord_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_crm_properties_freeholder ON crm_properties(freeholder_id) WHERE freeholder_id IS NOT NULL`,
