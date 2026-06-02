@@ -13,7 +13,7 @@
 
 import { db, pool } from "./db";
 import { stripeCardholders, expenses, expenseReceipts, users } from "@shared/schema";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { saveFile } from "./file-storage";
 import { parseReceiptImage, type ParsedReceipt } from "./expense-receipt-parser";
 import { EXPENSE_CATEGORY_MAP } from "./stripe-issuing";
@@ -78,25 +78,34 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
       : undefined;
     const isPersonal = /\bpersonal\b/i.test(args.caption || "");
 
-    // 3. Dedupe — same cardholder + merchant + amount within 5 minutes is
-    //    almost certainly a re-send.
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const existing = await db
+    // 3. Dedupe — same cardholder + merchant + amount + same transaction
+    //    date is almost certainly the same receipt re-uploaded (retries,
+    //    accidental double-tap, AI flow trying again). The previous 5-min
+    //    createdAt window missed retries spread over a longer demo session.
+    //    Wider key, no time window — duplicate receipts always collapse.
+    const merchantNorm = (parsed.merchant || "").trim().toLowerCase();
+    const txnDateOnly = txnDate.toISOString().slice(0, 10);
+    const candidates = await db
       .select()
       .from(expenses)
       .where(and(
         eq(expenses.cardholderId, cardholderId),
         eq(expenses.amountPence, parsed.totalPence),
-        gte(expenses.createdAt, fiveMinAgo),
-      ))
-      .limit(1);
-    if (existing[0]) {
+      ));
+    const dupe = candidates.find((e) => {
+      const eDate = e.transactionDate ? new Date(e.transactionDate).toISOString().slice(0, 10) : "";
+      const eMerchant = (e.merchant || "").trim().toLowerCase();
+      if (eDate !== txnDateOnly) return false;
+      if (!merchantNorm || !eMerchant) return true;          // missing merchant → still treat as dupe on amount+date
+      return eMerchant === merchantNorm;
+    });
+    if (dupe) {
       return {
         ok: true,
-        expenseId: existing[0].id,
+        expenseId: dupe.id,
         cardholderId,
         parsed,
-        duplicateOf: existing[0].id,
+        duplicateOf: dupe.id,
       };
     }
 

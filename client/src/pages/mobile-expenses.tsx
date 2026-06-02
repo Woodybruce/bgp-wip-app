@@ -34,7 +34,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
-  X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles,
+  X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -708,14 +708,18 @@ export default function MobileExpenses() {
       const r = await fetch(`/api/expenses/submit`, { method: "POST", credentials: "include", body: fd });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body?.ok) throw new Error(body?.error || `Upload failed: ${r.status}`);
-      return body as { ok: true; expenseId: string };
+      return body as { ok: true; expenseId: string; duplicateOf?: string };
     },
     onSuccess: async (body) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
       const fresh = queryClient.getQueryData<MyData>(["/api/expenses/me"]);
       const created = fresh?.expenses.find((e) => e.id === body.expenseId) || null;
       if (created) setEditing(created);
-      toast({ title: "Receipt uploaded — AI is checking your diary" });
+      if (body.duplicateOf) {
+        toast({ title: "Already on file", description: "Same merchant, amount and date — opened the existing one." });
+      } else {
+        toast({ title: "Receipt uploaded — AI is checking your diary" });
+      }
       setUploadingFor(null);
     },
     onError: (e: any) => {
@@ -723,6 +727,27 @@ export default function MobileExpenses() {
       setUploadingFor(null);
     },
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/expenses/${id}`, { method: "DELETE", credentials: "include" });
+      const body = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(body?.error || `Delete failed (${r.status})`);
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Expense deleted" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const askDelete = (e: Expense) => {
+    if (!window.confirm(`Delete this ${fmtPence(e.amountPence)} expense at ${e.merchant || "unknown merchant"}?`)) return;
+    deleteMutation.mutate(e.id);
+  };
 
   const expenses = data?.expenses || [];
   const pending = expenses.filter((e) => e.status === "pending_receipt");
@@ -898,27 +923,41 @@ export default function MobileExpenses() {
         ) : (
           <div className="space-y-1.5">
             {recent.map((e) => (
-              <button
+              <div
                 key={e.id}
-                type="button"
-                onClick={() => setEditing(e)}
-                className="w-full text-left rounded-xl bg-white dark:bg-card border border-border/60 p-2.5 flex items-center gap-3 active:bg-muted/40"
+                className="rounded-xl bg-white dark:bg-card border border-border/60 flex items-center gap-1"
                 data-testid={`mobile-expense-recent-${e.id}`}
               >
-                <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-[13px] truncate">{e.merchant || "Unknown merchant"}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
-                    <span>{fmtDate(e.transactionDate)}</span>
-                    <span>·</span>
-                    <span className="font-medium">{fmtPence(e.amountPence)}</span>
-                    {e.category && <><span>·</span><span className="truncate">{e.category}</span></>}
+                <button
+                  type="button"
+                  onClick={() => setEditing(e)}
+                  className="flex-1 min-w-0 text-left p-2.5 flex items-center gap-3 active:bg-muted/40 rounded-l-xl"
+                >
+                  <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   </div>
-                </div>
-                <StatusBadge status={e.status} />
-              </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-[13px] truncate">{e.merchant || "Unknown merchant"}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
+                      <span>{fmtDate(e.transactionDate)}</span>
+                      <span>·</span>
+                      <span className="font-medium">{fmtPence(e.amountPence)}</span>
+                      {e.category && <><span>·</span><span className="truncate">{e.category}</span></>}
+                    </div>
+                  </div>
+                  <StatusBadge status={e.status} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => askDelete(e)}
+                  disabled={deleteMutation.isPending}
+                  className="shrink-0 p-3 text-muted-foreground active:text-red-600 active:bg-red-50 rounded-r-xl disabled:opacity-50"
+                  aria-label="Delete expense"
+                  data-testid={`mobile-expense-delete-${e.id}`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             ))}
           </div>
         )}

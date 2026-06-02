@@ -624,6 +624,21 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Delete an expense (and its receipt/attendee rows). Owner or admin only.
+  app.delete("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      await db.delete(expenseAttendees).where(eq(expenseAttendees.expenseId, id));
+      await db.delete(expenseReceipts).where(eq(expenseReceipts.expenseId, id));
+      await db.delete(expenses).where(eq(expenses.id, id));
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] delete error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Smoke test — creates a sandbox cardholder + card, returns details.
   app.post("/api/expenses/smoke-test", requireAdmin, async (req: Request, res: Response) => {
     try {
