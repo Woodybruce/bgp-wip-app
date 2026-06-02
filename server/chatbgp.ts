@@ -995,6 +995,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
 - **Property Pathways**: A pathway (start_property_pathway → advance_property_pathway) is a heavy, multi-stage investigation. Run ONE at a time, stage by stage — never try to batch several pathways into a single turn, you will run out of time and the request will time out. If the user asks for several at once (e.g. "do pathways for these 5 addresses"), do NOT fire them all off together: start the FIRST address, work through its stages as normal, then tell the user that's the first one underway and offer to start the next address when they're ready. Make it clear you're deliberately doing them one at a time so none of them time out — not refusing the rest.
+- **Pathway Land Registry gate (HARD RULE)**: Every pathway is pinned to a Land Registry title. The first call to start_property_pathway with just an address will return needsLandRegConfirmation: true and a list of candidate titles — that is NOT a failure, it's the gate working. Show the user the candidate titles (proprietor name + tenure + property address) and ask them to pick one. Only then call start_property_pathway again with confirmedTitleNumber set. If HMLR returned no matches, tell the user that and ask whether to proceed off-register — only set skipLandRegConfirmation: true after they explicitly agree. Never silently fall back to skipping the gate, never pick a title for the user.
 
 ## Auto-ingest any document the user shares
 When the user drops a file in chat — brochure, HoT, lease, tenancy schedule, KYC pack, comp evidence, planning portal doc, photo, anything — your default behaviour is **read it and file what's useful into the CRM, without being asked**. The flow:
@@ -2144,13 +2145,15 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "start_property_pathway",
-      description: "Start a new end-to-end Property Pathway investigation on an address. This orchestrates all BGP app modules — email + SharePoint search, CRM lookup, Land Registry, brand enrichment, property intelligence, image studio, model studio, and Why Buy document generation. Returns a runId to use with advance_property_pathway and get_property_pathway. Always use this instead of ad-hoc tool chaining when the user asks for a comprehensive property investigation, deal briefing, or Why Buy document.",
+      description: "Start a new end-to-end Property Pathway investigation on an address. This orchestrates all BGP app modules — email + SharePoint search, CRM lookup, Land Registry, brand enrichment, property intelligence, image studio, model studio, and Why Buy document generation. Returns a runId to use with advance_property_pathway and get_property_pathway. Always use this instead of ad-hoc tool chaining when the user asks for a comprehensive property investigation, deal briefing, or Why Buy document.\n\n**LAND REGISTRY GATE — DO NOT SKIP.** The whole pathway is built on a specific Land Registry title (freehold or leasehold). Picking the wrong title means every downstream stage — tenant schedule, owner, valuation, Why Buy — is wrong. The first call to this tool with just an address triggers a LandReg lookup and returns candidate titles WITHOUT creating the run. You MUST show those candidates to the user, ask them to pick the right one, and only then call this tool again with `confirmedTitleNumber` set. If LandReg returns nothing (no postcode match, off-register estate, big multi-title campus), you may pass `skipLandRegConfirmation: true` BUT you must first tell the user you couldn't find a clean title match and get them to explicitly agree to proceed without one.",
       parameters: {
         type: "object",
         properties: {
           address: { type: "string", description: "The property address, e.g. '18-22 Haymarket' or '17 Dover Street'" },
-          postcode: { type: "string", description: "UK postcode, e.g. 'SW1Y 4DG'" },
+          postcode: { type: "string", description: "UK postcode, e.g. 'SW1Y 4DG'. Strongly recommended — without it the LandReg lookup is much weaker." },
           propertyId: { type: "string", description: "Optional CRM property id if this already has a record" },
+          confirmedTitleNumber: { type: "string", description: "The Land Registry title number the USER has explicitly picked from the candidates returned by an earlier call. Only set this after the user has confirmed which title to base the pathway on." },
+          skipLandRegConfirmation: { type: "boolean", description: "Set true ONLY when (a) LandReg returned no candidates and the user explicitly said to proceed without a title, or (b) the user has explicitly said 'skip the land reg check'. Never set this on the first call." },
         },
         required: ["address"],
       },
@@ -11667,6 +11670,8 @@ export function setupChatBGPRoutes(app: Express) {
         const userId = req.session?.userId || (req as any).tokenUserId || null;
         const address = String(tcArgs.address || "").trim();
         const postcode = tcArgs.postcode ? String(tcArgs.postcode).trim() : null;
+        const confirmedTitleNumber = tcArgs.confirmedTitleNumber ? String(tcArgs.confirmedTitleNumber).trim().toUpperCase() : null;
+        const skipLandReg = !!tcArgs.skipLandRegConfirmation;
 
         // Dedupe (same logic as POST /api/property-pathway/start) — same postcode
         // or aggressively-normalised address wins. Prevents duplicate runs when
@@ -11689,17 +11694,89 @@ export function setupChatBGPRoutes(app: Express) {
           };
         }
 
+        // ── LAND REGISTRY GATE ──────────────────────────────────────────
+        // The pathway has to be pinned to a specific title. If the user
+        // hasn't confirmed one yet (and hasn't explicitly opted out), look
+        // up candidates and return them — do NOT create the run.
+        if (!confirmedTitleNumber && !skipLandReg) {
+          if (!postcode) {
+            return {
+              data: {
+                needsLandRegConfirmation: true,
+                reason: "missing_postcode",
+                nextStep: `Before I can start the pathway on "${address}" I need a postcode so I can look up the Land Registry title. Ask the user for the postcode, then call start_property_pathway again with both address and postcode set.`,
+              },
+            };
+          }
+          const { findProprietorsByAddress } = await import("./hmlr-direct");
+          // Pull a street-number-like token off the front of the address so
+          // findProprietorsByAddress can ILIKE-match on it. Falls back to
+          // "no number" (returns everything at the postcode).
+          const numMatch = address.match(/^(\d+(?:-\d+)?[a-z]?)\b/i);
+          const streetNumber = numMatch ? numMatch[1] : null;
+          let candidates: any[] = [];
+          try {
+            candidates = await findProprietorsByAddress(postcode, streetNumber);
+          } catch (e: any) {
+            console.warn(`[start_property_pathway] LandReg lookup failed: ${e?.message}`);
+          }
+          if (candidates.length === 0) {
+            return {
+              data: {
+                needsLandRegConfirmation: true,
+                reason: "no_matches",
+                postcode,
+                streetNumber,
+                nextStep: `No Land Registry titles found at postcode ${postcode}${streetNumber ? ` for "${streetNumber}"` : ""}. Tell the user we couldn't find a title from HMLR data and ASK whether to proceed without one (mixed-use estate, off-register property, etc.). If they agree, call start_property_pathway again with skipLandRegConfirmation: true.`,
+              },
+            };
+          }
+          // Compact the candidate list — proprietor name + tenure is all
+          // the user needs to pick. (Drop addresses and dates from the
+          // prompt to keep it short.)
+          const compact = candidates.map((c) => ({
+            titleNumber: c.titleNumber,
+            tenure: c.tenure || null,
+            propertyAddress: c.propertyAddress || null,
+            proprietors: (c.proprietors || []).map((p: any) => p.proprietorName).filter(Boolean),
+          }));
+          return {
+            data: {
+              needsLandRegConfirmation: true,
+              reason: "user_must_pick_title",
+              postcode,
+              streetNumber,
+              candidates: compact,
+              nextStep: `Show the user the ${compact.length} Land Registry candidate${compact.length === 1 ? "" : "s"} at ${address}. Ask which title to base the pathway on. Then call start_property_pathway again with confirmedTitleNumber set to their choice. Do NOT pick for them — the wrong title taints every later stage.`,
+            },
+          };
+        }
+
+        const initialStageResults: any = {};
+        if (confirmedTitleNumber) {
+          initialStageResults.confirmedLandReg = { titleNumber: confirmedTitleNumber, confirmedAt: new Date().toISOString(), confirmedBy: userId };
+        } else if (skipLandReg) {
+          initialStageResults.confirmedLandReg = { skipped: true, skippedAt: new Date().toISOString(), skippedBy: userId };
+        }
+
         const [runRow] = await db.insert(propertyPathwayRuns).values({
           address,
           postcode,
           propertyId: tcArgs.propertyId || null,
           currentStage: 1,
           stageStatus: {},
-          stageResults: {},
+          stageResults: initialStageResults,
           startedBy: userId,
         }).returning();
         return {
-          data: { runId: runRow.id, address: runRow.address, currentStage: runRow.currentStage, nextStep: "Call advance_property_pathway with stage 1 to run Initial Search" },
+          data: {
+            runId: runRow.id,
+            address: runRow.address,
+            currentStage: runRow.currentStage,
+            confirmedTitleNumber: confirmedTitleNumber || null,
+            landRegSkipped: skipLandReg,
+            nextStep: "Call advance_property_pathway with stage 1 to run Initial Search",
+          },
           action: { type: "navigate", path: `/property-pathway?runId=${runRow.id}` },
         };
       } catch (err: any) {
