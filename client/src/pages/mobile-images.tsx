@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
-  Camera, Download,
+  Camera, Download, Link2, Building2, Tag, Briefcase,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -201,6 +201,7 @@ export default function MobileImages() {
 function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose: () => void }) {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState("");
+  const [attachOpen, setAttachOpen] = useState(false);
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
 
   const editMutation = useMutation({
@@ -380,6 +381,16 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAttachOpen(true)}
+                className="h-12"
+                aria-label="Attach to property, brand or pathway"
+                data-testid="mobile-image-attach"
+              >
+                <Link2 className="w-4 h-4" />
+              </Button>
               {image.source === "ai-edited" && (
                 <Button
                   type="button"
@@ -410,8 +421,156 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
                 )}
               </Button>
             </div>
+            <AttachPickerSheet
+              open={attachOpen}
+              onClose={() => setAttachOpen(false)}
+              imageId={image.id}
+            />
           </>
         )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+interface AttachTarget {
+  id: string;
+  label: string;
+  sublabel?: string | null;
+}
+
+function AttachPickerSheet({ open, onClose, imageId }: { open: boolean; onClose: () => void; imageId: string }) {
+  const { toast } = useToast();
+  const [tab, setTab] = useState<"property" | "brand" | "pathway">("property");
+  const [search, setSearch] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Reset state on each open so the previous picker doesn't leak.
+  useMemo(() => { if (open) { setSearch(""); setTab("property"); } }, [open]);
+
+  const { data: properties = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/properties"],
+    enabled: open,
+  });
+  const { data: companies = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/companies"],
+    enabled: open,
+  });
+  const { data: pathways = [] } = useQuery<any[]>({
+    queryKey: ["/api/property-pathway"],
+    enabled: open,
+  });
+
+  const targets: AttachTarget[] = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filter = (rows: AttachTarget[]) =>
+      q ? rows.filter((r) => r.label.toLowerCase().includes(q) || (r.sublabel || "").toLowerCase().includes(q)) : rows;
+    if (tab === "property") {
+      return filter(properties.map((p: any) => ({ id: p.id, label: p.name || p.address || "Unnamed property", sublabel: p.postcode || p.area || null })));
+    }
+    if (tab === "brand") {
+      return filter(companies.map((c: any) => ({ id: c.id, label: c.name || "Unnamed company", sublabel: c.companyType || c.website || null })));
+    }
+    return filter((pathways as any[]).map((p: any) => ({ id: p.id, label: p.address || "Unnamed pathway", sublabel: p.currentStage ? `Stage ${p.currentStage}` : null })));
+  }, [tab, search, properties, companies, pathways]);
+
+  const attachMutation = useMutation({
+    mutationFn: async (args: { targetType: string; targetId: string }) => {
+      const r = await fetch(`/api/image-studio/${imageId}/attach`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(args),
+      });
+      const body = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(body?.error || `Attach failed (${r.status})`);
+      return body;
+    },
+    onSuccess: (body, vars) => {
+      const label = targets.find((t) => t.id === vars.targetId)?.label || "target";
+      toast({ title: `Attached to ${label}`, description: body.where === "pathway" ? "Filed under the pathway's property" : undefined });
+      setBusyId(null);
+      onClose();
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't attach", description: e?.message, variant: "destructive" });
+      setBusyId(null);
+    },
+  });
+
+  const pick = (t: AttachTarget) => {
+    setBusyId(t.id);
+    attachMutation.mutate({ targetType: tab, targetId: t.id });
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="bottom" className="h-[85dvh] p-0 rounded-t-3xl flex flex-col">
+        <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
+          <h2 className="text-base font-semibold flex-1">Attach to…</h2>
+          <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-gray-100" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="px-4 pt-3 flex gap-2 shrink-0">
+          {[
+            { id: "property", label: "Property", icon: Building2 },
+            { id: "brand", label: "Brand", icon: Tag },
+            { id: "pathway", label: "Pathway", icon: Briefcase },
+          ].map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id as any)}
+              className={`flex-1 h-10 rounded-full inline-flex items-center justify-center gap-1.5 text-sm font-medium ${
+                tab === id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+              }`}
+              data-testid={`mobile-image-attach-tab-${id}`}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="px-4 mt-3 mb-2 shrink-0">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={`Search ${tab === "property" ? "properties" : tab === "brand" ? "brands" : "pathways"}…`}
+              className="h-11 pl-9 text-sm rounded-xl"
+              data-testid="mobile-image-attach-search"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 pb-6">
+          {targets.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center mt-6">No matches</p>
+          ) : (
+            <div className="space-y-1.5">
+              {targets.slice(0, 100).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => pick(t)}
+                  disabled={busyId === t.id}
+                  className="w-full text-left rounded-xl bg-white dark:bg-card border border-border/60 px-3 py-2.5 active:bg-muted/40 flex items-center gap-3 disabled:opacity-60"
+                  data-testid={`mobile-image-attach-pick-${t.id}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{t.label}</div>
+                    {t.sublabel && <div className="text-[11px] text-muted-foreground truncate">{t.sublabel}</div>}
+                  </div>
+                  {busyId === t.id && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </SheetContent>
     </Sheet>
   );

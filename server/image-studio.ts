@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { db } from "./db";
-import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets } from "@shared/schema";
+import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets, propertyPathwayRuns } from "@shared/schema";
 
 // Image kinds accepted on the property_imagery_assets row when a capture
 // or upload is linked to a property. Mirrors ImageryKind in property-imagery.ts.
@@ -1742,6 +1742,67 @@ export function registerImageStudioRoutes(app: Express) {
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Unified attach — link an image_studio_images row to a property,
+  // brand/company, deal, or pathway run. Mobile gallery calls this so
+  // a phone-uploaded photo can be wired into the rest of the app without
+  // a separate flow per target. Returns { ok, where } describing what
+  // was written so the client can show the right toast.
+  app.post("/api/image-studio/:id/attach", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const targetType = String(req.body?.targetType || "").toLowerCase();
+      const targetId = String(req.body?.targetId || "").trim();
+      const caption = req.body?.caption ? String(req.body.caption).slice(0, 500) : null;
+      if (!id || !targetId) return res.status(400).json({ error: "id and targetId required" });
+
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+
+      if (targetType === "property") {
+        await db.insert(propertyImageryAssets).values({
+          propertyId: targetId,
+          kind: "secondary_external",
+          source: "image_studio",
+          imageStudioId: id,
+          width: image.width,
+          height: image.height,
+          caption,
+        });
+        return res.json({ ok: true, where: "property", targetId });
+      }
+
+      if (targetType === "brand" || targetType === "company") {
+        await db.update(imageStudioImages)
+          .set({ companyId: targetId } as any)
+          .where(eq(imageStudioImages.id, id));
+        return res.json({ ok: true, where: "brand", targetId });
+      }
+
+      if (targetType === "pathway" || targetType === "pathway_run") {
+        // Resolve the pathway's property — attach there so the image
+        // shows up in the pathway's imagery tab via the existing join.
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, targetId)).limit(1);
+        if (!run) return res.status(404).json({ error: "Pathway run not found" });
+        if (!run.propertyId) return res.status(400).json({ error: "Pathway has no property yet — pick the property first, then attach the image to that" });
+        await db.insert(propertyImageryAssets).values({
+          propertyId: run.propertyId,
+          kind: "secondary_external",
+          source: "image_studio",
+          imageStudioId: id,
+          width: image.width,
+          height: image.height,
+          caption: caption || `Attached from pathway ${run.address}`,
+        });
+        return res.json({ ok: true, where: "pathway", targetId, propertyId: run.propertyId });
+      }
+
+      return res.status(400).json({ error: `Unknown targetType "${targetType}" — try property, brand, or pathway` });
+    } catch (e: any) {
+      console.error("[image-studio/attach] failed:", e?.message);
+      res.status(500).json({ error: e?.message || "Attach failed" });
     }
   });
 
