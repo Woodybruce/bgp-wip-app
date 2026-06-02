@@ -1665,6 +1665,30 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
   const { toast } = useToast();
   const [agreeing, setAgreeing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [opening, setOpening] = useState(false);
+
+  async function openInExcel() {
+    if (!stage7?.modelRunId) return;
+    setOpening(true);
+    try {
+      // Same route Model Studio uses — syncs the run to SharePoint and returns
+      // an Excel Online webUrl, where the BGP add-in attaches so edits save
+      // back to this model run (and flow into the pathway). NOT a raw download.
+      const res = await fetch(`/api/models/runs/${stage7.modelRunId}/open-in-excel`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (!data.webUrl) throw new Error("No Excel URL returned");
+      window.open(data.webUrl, "_blank");
+      toast({ title: "Opening in Excel", description: "Amend in Excel, then Save in the BGP add-in — your changes flow back into this pathway model." });
+    } catch (e: any) {
+      toast({ title: "Couldn't open in Excel", description: e?.message || "SharePoint connection required", variant: "destructive" });
+    } finally {
+      setOpening(false);
+    }
+  }
   const [areaInput, setAreaInput] = useState<string>(
     stage7?.overrideTotalAreaSqFt ? String(stage7.overrideTotalAreaSqFt) :
     stage7?.totalAreaSqFt ? String(stage7.totalAreaSqFt) : "",
@@ -1701,7 +1725,9 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
   }
 
   async function agree() {
-    if (!confirm("Agree this Excel model version? It will lock this version as the one Why Buy uses.")) return;
+    if (!confirm(modelAgreed
+      ? "Re-agree the current model version? This rebuilds the Why Buy deck from your latest amends."
+      : "Agree this Excel model version? It locks it as the version Why Buy uses and rebuilds the deck from it.")) return;
     setAgreeing(true);
     try {
       const res = await fetch(`/api/property-pathway/${runId}/excel-model/agree`, {
@@ -1710,7 +1736,7 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
         body: JSON.stringify({ modelVersionId: stage7?.modelVersionId }),
       });
       if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Model agreed", description: "Unlocked Stage 8 — Studio Time." });
+      toast({ title: "Model agreed", description: "Rebuilding the Why Buy deck from it — refresh Stage 9 shortly." });
       onReload();
     } catch (e: any) {
       toast({ title: "Couldn't agree model", description: e?.message, variant: "destructive" });
@@ -1727,14 +1753,14 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
           {modelAgreed && <Badge className="ml-1 bg-emerald-100 text-emerald-900">Agreed</Badge>}
         </CardTitle>
         <div className="flex items-center gap-2">
-          {stage7?.workbookUrl && (
-            <a href={stage7.workbookUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-              <ExternalLink className="w-3 h-3" /> Open in Excel
-            </a>
+          {stage7?.modelRunId && (
+            <Button size="sm" variant="outline" onClick={openInExcel} disabled={opening} className="gap-1.5">
+              {opening ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open in Excel
+            </Button>
           )}
-          {!modelAgreed && (
-            <Button size="sm" onClick={agree} disabled={agreeing || !stage7?.modelRunId} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
-              {agreeing ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Agree model
+          {stage7?.modelRunId && (
+            <Button size="sm" onClick={agree} disabled={agreeing} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+              {agreeing ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {modelAgreed ? "Re-agree & rebuild deck" : "Agree model"}
             </Button>
           )}
         </div>
@@ -1757,10 +1783,10 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
         {/* Area + passing rent — the two inputs that matter most. Show the
             value the model was built with (and its source) so you can sanity-
             check before agreeing. Override + regenerate if wrong. */}
-        {stage7?.modelRunId && !modelAgreed && (
+        {stage7?.modelRunId && (
           <div className="mt-3 border rounded-lg p-3 bg-muted/30">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-medium">Area & passing rent</p>
+              <p className="text-xs font-medium">Area & passing rent{modelAgreed ? " — amend & re-agree to refresh the deck" : ""}</p>
               <span className={`text-[10px] px-1.5 py-0.5 rounded ${stage7.totalAreaSource === "default" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
                 Area source: {stage7.totalAreaSource || "default"}
                 {stage7.totalAreaSource === "default" && " — please override"}

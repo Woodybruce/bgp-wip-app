@@ -18,6 +18,31 @@ import { applyEdit, type EditType } from "./html-edit";
 
 const PREFERENCES_SCOPE = "why_buy";
 
+// BGP logo — embedded into the deck. We keep the STORED html using short
+// __BGP_LOGO_*__ placeholders (Claude reliably preserves a short token across
+// iterations, but mangles a ~50KB base64 string if asked to re-emit it), then
+// swap in the real base64 data URIs only when serving HTML / rendering the PDF.
+let _logoCache: { dark: string; light: string } | null = null;
+function logoDataUris(): { dark: string; light: string } {
+  if (_logoCache) return _logoCache;
+  const read = (file: string): string => {
+    const candidates = [
+      path.join(process.cwd(), "server", "assets", file),
+      path.join(process.cwd(), "dist", "server", "assets", file),
+    ];
+    for (const p of candidates) {
+      try { if (fs.existsSync(p)) return `data:image/png;base64,${fs.readFileSync(p).toString("base64")}`; } catch {}
+    }
+    return "";
+  };
+  _logoCache = { dark: read("BGP_BlackHolder.png"), light: read("BGP_WhiteHolder.png") };
+  return _logoCache;
+}
+function injectLogos(html: string): string {
+  const { dark, light } = logoDataUris();
+  return html.replaceAll("__BGP_LOGO_DARK__", dark).replaceAll("__BGP_LOGO_LIGHT__", light);
+}
+
 const BGP_BRAND = `
 BGP brand cues:
 - Primary teal: #15616D
@@ -51,6 +76,11 @@ Each slide:
 - Big hero number or chart-like data viz where relevant
 - Supporting data/text below
 - BGP footer band on every slide
+
+BGP LOGO — put the BGP logo on the cover slide (top) and in the footer band of EVERY slide. Use an <img> with the EXACT placeholder src below (do not invent or inline any other logo) and a data-edit-id:
+- On light / cream backgrounds: <img src="__BGP_LOGO_DARK__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
+- On dark backgrounds (teal / charcoal footer bands etc.): <img src="__BGP_LOGO_LIGHT__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
+Keep it small (height ~28-40px). The placeholders are swapped for the real logo when the deck is rendered — leave the src strings exactly as written.
 
 EDITABLE MARKERS — IMPORTANT:
 The user can click images and text in the rendered deck to edit them
@@ -114,7 +144,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("X-Frame-Options", "SAMEORIGIN");
       res.setHeader("Content-Security-Policy", "default-src 'unsafe-inline' data: blob:; img-src * data: blob:; font-src * data:; style-src 'unsafe-inline' *;");
-      res.send(rows[0].html);
+      res.send(injectLogos(rows[0].html));
     } catch (e: any) {
       res.status(500).send(`<pre>${e.message}</pre>`);
     }
@@ -190,7 +220,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
         max_tokens: 16000,
         messages: [{
           role: "user",
-          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
+          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. Also PRESERVE any \`__BGP_LOGO_DARK__\` / \`__BGP_LOGO_LIGHT__\` placeholder src values exactly as-is (they are swapped for the real BGP logo at render time). If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
         }],
       });
       const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
@@ -316,7 +346,7 @@ export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ doc
 
   // 4. HTML → PDF via the shared puppeteer helper
   const { htmlToPdfForWhyBuy } = await import("./document-briefs");
-  const pdfBuf = await htmlToPdfForWhyBuy(html);
+  const pdfBuf = await htmlToPdfForWhyBuy(injectLogos(html));
 
   // 5. Persist + upload
   const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy");

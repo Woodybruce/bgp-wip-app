@@ -1493,6 +1493,32 @@ export function setupModelsRoutes(app: Express) {
         ...(sharepointUrl ? { sharepointUrl, sharepointDriveItemId: sharepointDriveItemId || undefined } : {}),
       }).where(eq(excelModelRuns.id, runId));
 
+      // If this model is tied to a Property Pathway, push the new version onto
+      // the pathway's Stage 7 so the pathway reflects the amend. Marks it
+      // no-longer-agreed (the locked Why Buy deck is now stale) — the user
+      // re-agrees on the pathway card to rebuild the deck from this version.
+      try {
+        const inputs = JSON.parse(run.inputValues || "{}");
+        const pathwayRunId = inputs?.pathwayRunId;
+        if (pathwayRunId) {
+          const { propertyPathwayRuns } = await import("@shared/schema");
+          const [pwRun] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, pathwayRunId)).limit(1);
+          if (pwRun) {
+            const sr = (pwRun.stageResults as any) || {};
+            sr.stage7 = {
+              ...(sr.stage7 || {}),
+              modelRunId: runId,
+              modelVersionId: version.id,
+              modelVersionLabel: `v${nextVersion}`,
+              agreed: false,
+            };
+            await db.update(propertyPathwayRuns).set({ stageResults: sr, updatedAt: new Date() }).where(eq(propertyPathwayRuns.id, pathwayRunId));
+          }
+        }
+      } catch (err: any) {
+        console.warn("[save-version] pathway Stage 7 sync failed:", err?.message);
+      }
+
       res.json({ success: true, version, outputs: newOutputs });
     } catch (err: any) {
       console.error("[save-version] error:", err?.message);
