@@ -18,8 +18,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
-  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn,
+  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2,
 } from "lucide-react";
+import { ToastAction } from "@/components/ui/toast";
 import { Link } from "wouter";
 
 interface StudioImage {
@@ -110,9 +111,13 @@ export default function MobileImages() {
   // Mobile gallery is intentionally scoped to photos that came off the
   // phone — keeps the grid tight and focused on Woody's own captures
   // instead of the 6k+ brand library. Everything is still saved to the
-  // central Image Studio (just filtered on the way out).
+  // central Image Studio (just filtered on the way out). Trashed images
+  // are also filtered here so soft-deleted ones vanish immediately.
   const filtered = useMemo(() => {
-    const own = images.filter((i) => (i.tags || []).includes("phone-upload") || i.category === "Phone Uploads");
+    const own = images.filter((i) =>
+      ((i.tags || []).includes("phone-upload") || i.category === "Phone Uploads")
+      && !(i.tags || []).includes("trashed")
+    );
     const q = search.trim().toLowerCase();
     if (!q) return own;
     return own.filter((i) => {
@@ -326,6 +331,53 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
     },
   });
 
+  // Soft-delete with an Undo action on the toast. Trashed images are
+  // hidden from the gallery but keep their bytes in case the user taps
+  // Undo within the toast window (5s by default).
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!image) throw new Error("No image");
+      const r = await fetch(`/api/image-studio/${image.id}/trash`, { method: "POST", credentials: "include" });
+      const body = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(body?.error || `Delete failed (${r.status})`);
+      return body;
+    },
+    onSuccess: () => {
+      const deletedId = image?.id;
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      onClose();
+      toast({
+        title: "Photo deleted",
+        description: "Tap Undo to bring it back.",
+        action: deletedId ? (
+          <ToastAction
+            altText="Undo delete"
+            onClick={async () => {
+              try {
+                await fetch(`/api/image-studio/${deletedId}/restore`, { method: "POST", credentials: "include" });
+                queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                toast({ title: "Restored" });
+              } catch (e: any) {
+                toast({ title: "Couldn't restore", description: e?.message, variant: "destructive" });
+              }
+            }}
+          >
+            Undo
+          </ToastAction>
+        ) : undefined,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const askDelete = () => {
+    if (!image) return;
+    if (!window.confirm("Delete this photo? You'll have a few seconds to undo.")) return;
+    deleteMutation.mutate();
+  };
+
   const insertPrompt = (text: string) => {
     setPrompt((cur) => cur ? `${cur}. ${text}` : text);
     promptInputRef.current?.focus();
@@ -442,6 +494,17 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
                 data-testid="mobile-image-attach"
               >
                 <Link2 className="w-4 h-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={askDelete}
+                disabled={deleteMutation.isPending}
+                className="h-12 text-red-600 hover:text-red-700"
+                aria-label="Delete photo"
+                data-testid="mobile-image-delete"
+              >
+                {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
               </Button>
               {image.source === "ai-edited" && (
                 <Button
