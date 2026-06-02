@@ -693,6 +693,32 @@ export default function MobileExpenses() {
     },
   });
 
+  // Card-less flow: upload a receipt with no pre-existing expense. The
+  // server runs OCR, creates the expense row, and we drop the user into
+  // the edit sheet so AI classify can run.
+  const submitMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("receipt", file);
+      const r = await fetch(`/api/expenses/submit`, { method: "POST", credentials: "include", body: fd });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body?.ok) throw new Error(body?.error || `Upload failed: ${r.status}`);
+      return body as { ok: true; expenseId: string };
+    },
+    onSuccess: async (body) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      const fresh = queryClient.getQueryData<MyData>(["/api/expenses/me"]);
+      const created = fresh?.expenses.find((e) => e.id === body.expenseId) || null;
+      if (created) setEditing(created);
+      toast({ title: "Receipt uploaded — AI is checking your diary" });
+      setUploadingFor(null);
+    },
+    onError: (e: any) => {
+      toast({ title: "Upload failed", description: e?.message || "Try again", variant: "destructive" });
+      setUploadingFor(null);
+    },
+  });
+
   const expenses = data?.expenses || [];
   const pending = expenses.filter((e) => e.status === "pending_receipt");
   const recent = expenses.filter((e) => e.status !== "pending_receipt").slice(0, 30);
@@ -711,22 +737,24 @@ export default function MobileExpenses() {
     input.click();
   };
 
+  const snapNewReceipt = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*,application/pdf";
+    input.setAttribute("capture", "environment");
+    input.onchange = (ev) => {
+      const file = (ev.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      setUploadingFor("__new__");
+      submitMutation.mutate(file);
+    };
+    input.click();
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full pt-20">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (!data?.cardholder) {
-    return (
-      <div className="p-6 text-center pt-12">
-        <Receipt className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-        <h2 className="text-base font-semibold">No card on file</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Ask Finance to issue you a BGP expense card.
-        </p>
       </div>
     );
   }
@@ -738,9 +766,28 @@ export default function MobileExpenses() {
           <ChevronLeft className="w-5 h-5" />
         </Link>
         <h1 className="text-lg font-semibold flex-1">Expenses</h1>
-        {data.card && (
+        {data?.card && (
           <span className="text-[11px] text-muted-foreground">···· {data.card.last4}</span>
         )}
+      </div>
+
+      <div className="px-4 mb-3">
+        <button
+          type="button"
+          onClick={snapNewReceipt}
+          disabled={uploadingFor === "__new__"}
+          className="w-full h-14 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center gap-2 text-base font-semibold shadow-sm disabled:opacity-60 active:scale-[0.98] transition-transform"
+          data-testid="mobile-expense-snap-new"
+        >
+          {uploadingFor === "__new__" ? (
+            <><Loader2 className="w-5 h-5 animate-spin" /> Uploading…</>
+          ) : (
+            <><Camera className="w-5 h-5" /> Snap a receipt</>
+          )}
+        </button>
+        <p className="text-[11px] text-muted-foreground text-center mt-1.5">
+          AI reads the merchant, total and your diary to fill it in.
+        </p>
       </div>
 
       {pending.length > 0 && (
