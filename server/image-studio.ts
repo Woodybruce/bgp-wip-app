@@ -1035,8 +1035,14 @@ export function registerImageStudioRoutes(app: Express) {
         .from(imageStudioImages)
         .where(eq(imageStudioImages.id, String(req.params.id)));
       if (!row?.thumbnailData) return res.status(404).end();
-      const buf = Buffer.from(row.thumbnailData, "base64");
-      res.setHeader("Content-Type", row.mimeType || "image/jpeg");
+      // thumbnailData is stored as a full data URL ("data:image/jpeg;base64,…")
+      // by generateThumbnail(). Strip the prefix + pick up the real mime so
+      // the binary we send actually decodes in the browser.
+      const match = row.thumbnailData.match(/^data:([^;]+);base64,(.+)$/);
+      const base64 = match ? match[2] : row.thumbnailData;
+      const mime = match ? match[1] : "image/jpeg";
+      const buf = Buffer.from(base64, "base64");
+      res.setHeader("Content-Type", mime);
       res.setHeader("Cache-Control", "public, max-age=86400, immutable");
       res.end(buf);
     } catch (e: any) {
