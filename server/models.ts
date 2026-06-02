@@ -3556,7 +3556,19 @@ CRITICAL RULES:
               });
               return JSON.stringify({ success: true, action: "email_sent", to: input.to, subject: input.subject });
             } catch (err: any) {
-              return JSON.stringify({ error: `Failed to send email: ${err?.message}` });
+              const msg = err?.message || "unknown error";
+              console.error("[send_email] send failed:", msg);
+              // Surface the LITERAL error and forbid the model from inventing a
+              // cause. The repeated "mailbox is mid-migration, retry in 20 mins"
+              // story was a hallucination — the real error code never appears in
+              // our logs. Likely app-side causes (expired Azure client secret,
+              // missing AZURE_* env var, revoked Graph Mail.Send permission) are
+              // suggested only as possibilities, never asserted.
+              return JSON.stringify({
+                error: `Email send failed. Exact server error: ${msg}`,
+                retryable: false,
+                guidance: "Report this EXACT error text to the user, verbatim. Do NOT paraphrase it as a mailbox migration, do NOT invent any cause, and do NOT promise it will clear on its own or keep offering to retry. If the cause is not stated in the error itself, say you do not know the exact cause and that it most likely needs the app's Microsoft 365 / Azure configuration checked — e.g. an expired Azure client secret, a missing credential, or a revoked Graph Mail.Send permission. The user can send from their own Outlook in the meantime.",
+              });
             }
           }
 
