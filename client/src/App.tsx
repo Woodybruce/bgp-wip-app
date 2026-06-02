@@ -654,7 +654,9 @@ function AppContent() {
   return (
     <ChatBGPProvider>
       <ConnectionStatus />
-      <UpdatePrompt />
+      {/* Update banner disabled — was misfiring. Service worker still
+          refreshes the bundle on its own on next reload. */}
+      {/* <UpdatePrompt /> */}
       <AuthenticatedApp />
     </ChatBGPProvider>
   );

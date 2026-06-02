@@ -18,8 +18,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
-  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn,
+  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2,
 } from "lucide-react";
+import { ToastAction } from "@/components/ui/toast";
 import { Link } from "wouter";
 
 interface StudioImage {
@@ -65,9 +66,9 @@ export default function MobileImages() {
   // "phone uploads" later, and drops the user straight into the edit
   // sheet for the freshly-uploaded image.
   const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (files: File[]) => {
       const fd = new FormData();
-      fd.append("images", file);
+      for (const f of files) fd.append("images", f);
       fd.append("category", "Phone Uploads");
       fd.append("tags", "phone-upload");
       const r = await fetch("/api/image-studio/upload", { method: "POST", credentials: "include", body: fd });
@@ -78,13 +79,16 @@ export default function MobileImages() {
     },
     onSuccess: async (body) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
-      const newId = body?.[0]?.id;
-      if (newId) {
+      // Only auto-open the edit sheet for single uploads — for batches
+      // the user is more likely to want to browse the grid first.
+      if (body.length === 1) {
         const fresh = queryClient.getQueryData<StudioImage[]>(["/api/image-studio"]) || [];
-        const img = fresh.find((i) => i.id === newId);
+        const img = fresh.find((i) => i.id === body[0].id);
         if (img) setSelected(img);
+        toast({ title: "Uploaded — ready to edit with AI" });
+      } else {
+        toast({ title: `${body.length} photos uploaded`, description: "Tap any one to edit with AI." });
       }
-      toast({ title: "Uploaded — ready to edit with AI" });
       setUploading(false);
     },
     onError: (e: any) => {
@@ -94,11 +98,12 @@ export default function MobileImages() {
   });
 
   const handleUploadChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const file = ev.target.files?.[0];
+    const files = ev.target.files;
     ev.target.value = "";
-    if (!file) return;
+    if (!files || files.length === 0) return;
+    const arr = Array.from(files).slice(0, 20);          // server cap is 20
     setUploading(true);
-    uploadMutation.mutate(file);
+    uploadMutation.mutate(arr);
   };
 
   // Keep the polling flag in sync with the current list.
@@ -110,9 +115,13 @@ export default function MobileImages() {
   // Mobile gallery is intentionally scoped to photos that came off the
   // phone — keeps the grid tight and focused on Woody's own captures
   // instead of the 6k+ brand library. Everything is still saved to the
-  // central Image Studio (just filtered on the way out).
+  // central Image Studio (just filtered on the way out). Trashed images
+  // are also filtered here so soft-deleted ones vanish immediately.
   const filtered = useMemo(() => {
-    const own = images.filter((i) => (i.tags || []).includes("phone-upload") || i.category === "Phone Uploads");
+    const own = images.filter((i) =>
+      ((i.tags || []).includes("phone-upload") || i.category === "Phone Uploads")
+      && !(i.tags || []).includes("trashed")
+    );
     const q = search.trim().toLowerCase();
     if (!q) return own;
     return own.filter((i) => {
@@ -130,6 +139,7 @@ export default function MobileImages() {
         ref={uploadInputRef}
         type="file"
         accept="image/*"
+        multiple
         className="hidden"
         onChange={handleUploadChange}
         data-testid="mobile-images-upload-input"
@@ -155,7 +165,7 @@ export default function MobileImages() {
           ) : (
             <Camera className="w-4 h-4" />
           )}
-          {uploading ? "Uploading…" : "Add photo"}
+          {uploading ? "Uploading…" : "Add photos"}
         </button>
       </div>
 
@@ -184,7 +194,7 @@ export default function MobileImages() {
           </p>
           {!search && (
             <p className="text-[11px] text-muted-foreground/70 mt-1">
-              Tap Add photo to take or pick one — AI edits land here too.
+              Tap Add photos to take one or pick several — AI edits land here too.
             </p>
           )}
         </div>
@@ -326,6 +336,53 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
     },
   });
 
+  // Soft-delete with an Undo action on the toast. Trashed images are
+  // hidden from the gallery but keep their bytes in case the user taps
+  // Undo within the toast window (5s by default).
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!image) throw new Error("No image");
+      const r = await fetch(`/api/image-studio/${image.id}/trash`, { method: "POST", credentials: "include" });
+      const body = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(body?.error || `Delete failed (${r.status})`);
+      return body;
+    },
+    onSuccess: () => {
+      const deletedId = image?.id;
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      onClose();
+      toast({
+        title: "Photo deleted",
+        description: "Tap Undo to bring it back.",
+        action: deletedId ? (
+          <ToastAction
+            altText="Undo delete"
+            onClick={async () => {
+              try {
+                await fetch(`/api/image-studio/${deletedId}/restore`, { method: "POST", credentials: "include" });
+                queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                toast({ title: "Restored" });
+              } catch (e: any) {
+                toast({ title: "Couldn't restore", description: e?.message, variant: "destructive" });
+              }
+            }}
+          >
+            Undo
+          </ToastAction>
+        ) : undefined,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const askDelete = () => {
+    if (!image) return;
+    if (!window.confirm("Delete this photo? You'll have a few seconds to undo.")) return;
+    deleteMutation.mutate();
+  };
+
   const insertPrompt = (text: string) => {
     setPrompt((cur) => cur ? `${cur}. ${text}` : text);
     promptInputRef.current?.focus();
@@ -442,6 +499,17 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
                 data-testid="mobile-image-attach"
               >
                 <Link2 className="w-4 h-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={askDelete}
+                disabled={deleteMutation.isPending}
+                className="h-12 text-red-600 hover:text-red-700"
+                aria-label="Delete photo"
+                data-testid="mobile-image-delete"
+              >
+                {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
               </Button>
               {image.source === "ai-edited" && (
                 <Button
@@ -634,15 +702,20 @@ function AttachPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
   );
 }
 
-// Fullscreen image viewer with pinch-zoom (native via touch-action),
-// double-tap to toggle 2x, and a + / − button pair for non-touch.
-// Used by the edit sheet so Woody can inspect details before tweaking.
+// Fullscreen image viewer with one-finger drag-to-pan when zoomed,
+// double-tap to toggle 2.25× ↔ 1×, and +/− buttons. Pinch is a future
+// add — current iOS Safari fights with manual pan so we run a single
+// gesture model.
 function ImageZoomLightbox({ open, onClose, src, alt }: { open: boolean; onClose: () => void; src: string; alt: string }) {
   const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const lastTapRef = useRef(0);
+  const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number; pointerId: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
-    if (open) setScale(1);
+    if (open) { setScale(1); setPan({ x: 0, y: 0 }); }
   }, [open]);
 
   // Lock body scroll while open so background doesn't bounce on iOS.
@@ -653,16 +726,73 @@ function ImageZoomLightbox({ open, onClose, src, alt }: { open: boolean; onClose
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
-  if (!open) return null;
+  // Clamp pan so the image edges can't fly past the viewport centre —
+  // gives a natural "spring stop" feel without rubber-banding.
+  const clampPan = (x: number, y: number, s: number) => {
+    const container = containerRef.current;
+    const img = imgRef.current;
+    if (!container || !img || s <= 1) return { x: 0, y: 0 };
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const iw = img.clientWidth * s;
+    const ih = img.clientHeight * s;
+    const maxX = Math.max(0, (iw - cw) / 2);
+    const maxY = Math.max(0, (ih - ch) / 2);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, x)),
+      y: Math.max(-maxY, Math.min(maxY, y)),
+    };
+  };
 
-  const handleDoubleTap = (ev: React.MouseEvent | React.TouchEvent) => {
+  const onDoubleTapToggle = () => {
+    setScale((s) => {
+      const next = s > 1 ? 1 : 2.25;
+      if (next === 1) setPan({ x: 0, y: 0 });
+      return next;
+    });
+  };
+
+  const handleTap = (ev: React.MouseEvent | React.TouchEvent) => {
     const now = Date.now();
     if (now - lastTapRef.current < 300) {
       ev.preventDefault();
-      setScale((s) => (s > 1 ? 1 : 2.25));
+      onDoubleTapToggle();
     }
     lastTapRef.current = now;
   };
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (scale <= 1) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, baseX: pan.x, baseY: pan.y, pointerId: e.pointerId };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const nx = d.baseX + (e.clientX - d.startX);
+    const ny = d.baseY + (e.clientY - d.startY);
+    setPan(clampPan(nx, ny, scale));
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (dragRef.current?.pointerId === e.pointerId) {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      dragRef.current = null;
+    }
+  };
+
+  const zoomIn = () => setScale((s) => {
+    const next = Math.min(4, +(s + 0.5).toFixed(2));
+    setPan((p) => clampPan(p.x, p.y, next));
+    return next;
+  });
+  const zoomOut = () => setScale((s) => {
+    const next = Math.max(1, +(s - 0.5).toFixed(2));
+    if (next === 1) setPan({ x: 0, y: 0 });
+    else setPan((p) => clampPan(p.x, p.y, next));
+    return next;
+  });
+
+  if (!open) return null;
 
   return (
     <div
@@ -671,20 +801,11 @@ function ImageZoomLightbox({ open, onClose, src, alt }: { open: boolean; onClose
       style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <div className="flex items-center justify-between px-3 py-2 shrink-0">
-        <span className="text-white/80 text-xs truncate max-w-[60%]">{alt}</span>
+        <span className="text-white/80 text-xs truncate max-w-[55%]">{alt}</span>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setScale((s) => Math.max(1, +(s - 0.5).toFixed(2)))}
-            className="w-10 h-10 rounded-full bg-white/10 text-white text-lg active:bg-white/20"
-            aria-label="Zoom out"
-          >−</button>
-          <button
-            type="button"
-            onClick={() => setScale((s) => Math.min(4, +(s + 0.5).toFixed(2)))}
-            className="w-10 h-10 rounded-full bg-white/10 text-white text-lg active:bg-white/20"
-            aria-label="Zoom in"
-          >+</button>
+          <span className="text-white/60 text-[11px] mr-1 tabular-nums w-10 text-right">{Math.round(scale * 100)}%</span>
+          <button type="button" onClick={zoomOut} className="w-10 h-10 rounded-full bg-white/10 text-white text-lg active:bg-white/20" aria-label="Zoom out">−</button>
+          <button type="button" onClick={zoomIn} className="w-10 h-10 rounded-full bg-white/10 text-white text-lg active:bg-white/20" aria-label="Zoom in">+</button>
           <button
             type="button"
             onClick={onClose}
@@ -697,25 +818,31 @@ function ImageZoomLightbox({ open, onClose, src, alt }: { open: boolean; onClose
         </div>
       </div>
       <div
-        className="flex-1 overflow-auto flex items-center justify-center"
-        style={{ touchAction: "pinch-zoom" }}
-        onClick={handleDoubleTap}
-        onTouchEnd={handleDoubleTap}
+        ref={containerRef}
+        className="flex-1 overflow-hidden flex items-center justify-center select-none"
+        style={{ touchAction: "none", cursor: scale > 1 ? "grab" : "auto" }}
+        onClick={handleTap}
+        onTouchEnd={handleTap}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
       >
         <img
+          ref={imgRef}
           src={src}
           alt={alt}
-          className="select-none origin-center transition-transform duration-150"
+          className="origin-center transition-transform duration-100 max-w-full max-h-full"
           style={{
-            transform: `scale(${scale})`,
-            maxWidth: scale === 1 ? "100%" : "none",
-            maxHeight: scale === 1 ? "100%" : "none",
+            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`,
+            willChange: "transform",
+            pointerEvents: "none",
           }}
           draggable={false}
         />
       </div>
       <div className="text-center text-white/50 text-[11px] pb-2">
-        Pinch to zoom · double-tap to toggle · drag to pan
+        {scale > 1 ? "Drag to pan · double-tap to reset" : "Double-tap or + to zoom"}
       </div>
     </div>
   );

@@ -1652,6 +1652,34 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // Soft delete — tag with "trashed" so the mobile gallery can hide
+  // it but the bytes survive long enough to undo. Hard delete is the
+  // existing route below.
+  app.post("/api/image-studio/:id/trash", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [image] = await db.select({ tags: imageStudioImages.tags })
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      if (!image) return res.status(404).json({ error: "Not found" });
+      const tags = [...new Set([...(image.tags || []), "trashed"])];
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+  app.post("/api/image-studio/:id/restore", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [image] = await db.select({ tags: imageStudioImages.tags })
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      if (!image) return res.status(404).json({ error: "Not found" });
+      const tags = (image.tags || []).filter((t) => t !== "trashed");
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.delete("/api/image-studio/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
