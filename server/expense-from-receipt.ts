@@ -13,7 +13,7 @@
 
 import { db, pool } from "./db";
 import { stripeCardholders, expenses, expenseReceipts, users } from "@shared/schema";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { saveFile } from "./file-storage";
 import { parseReceiptImage, type ParsedReceipt } from "./expense-receipt-parser";
 import { EXPENSE_CATEGORY_MAP } from "./stripe-issuing";
@@ -69,8 +69,18 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
       return { ok: false, parsed, cardholderId, error: "Couldn't read a total off this receipt — try a clearer photo." };
     }
 
-    const txnDate = args.transactionDate
-      || (parsed.date ? new Date(parsed.date) : new Date());
+    // Combine the parsed date + time from the receipt into a single
+    // timestamp. Time turns the dedupe key into "amount + exact moment
+    // printed on the receipt" — physically impossible to collide unless
+    // it's the same receipt.
+    const txnDate = (() => {
+      if (args.transactionDate) return args.transactionDate;
+      if (!parsed.date) return new Date();
+      // parser returns "YYYY-MM-DD" for date and "HH:MM" for time
+      const t = (parsed.time || "").match(/^(\d{1,2}):(\d{2})$/);
+      if (t) return new Date(`${parsed.date}T${t[1].padStart(2, "0")}:${t[2]}:00`);
+      return new Date(parsed.date);
+    })();
     const category = args.category || parsed.category;
     const { getCategoryCode } = await import("./expense-categories");
     const xeroCode = category
@@ -78,25 +88,32 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
       : undefined;
     const isPersonal = /\bpersonal\b/i.test(args.caption || "");
 
-    // 3. Dedupe — same cardholder + merchant + amount within 5 minutes is
-    //    almost certainly a re-send.
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const existing = await db
+    // 3. Dedupe — same cardholder + same amount + same receipt timestamp
+    //    (date AND time off the receipt itself). That combination is the
+    //    same physical receipt. We allow ±2 min tolerance to absorb any
+    //    OCR drift on the printed time (e.g. "13:47" vs "13:48" on a
+    //    second pass of the same image).
+    const txnMs = txnDate.getTime();
+    const TWO_MIN = 2 * 60 * 1000;
+    const candidates = await db
       .select()
       .from(expenses)
       .where(and(
         eq(expenses.cardholderId, cardholderId),
         eq(expenses.amountPence, parsed.totalPence),
-        gte(expenses.createdAt, fiveMinAgo),
-      ))
-      .limit(1);
-    if (existing[0]) {
+      ));
+    const dupe = candidates.find((e) => {
+      if (!e.transactionDate) return false;
+      const eMs = new Date(e.transactionDate).getTime();
+      return Math.abs(eMs - txnMs) <= TWO_MIN;
+    });
+    if (dupe) {
       return {
         ok: true,
-        expenseId: existing[0].id,
+        expenseId: dupe.id,
         cardholderId,
         parsed,
-        duplicateOf: existing[0].id,
+        duplicateOf: dupe.id,
       };
     }
 

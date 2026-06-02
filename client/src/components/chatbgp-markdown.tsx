@@ -130,11 +130,15 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
   // download 404'd. `(?:[^()\s]|\([^()\s]*\))+` consumes non-paren chars
   // plus any "(...)" group, so one level of nested parens survives.
   const URL_CORE = String.raw`(?:[^()\s]|\([^()\s]*\))+`;
+  // GAP = optional whitespace/newlines between "]" and "(" — Claude sometimes
+  // word-wraps long [text](url) links across a line break which previously
+  // killed the match and left the raw markdown visible in chat.
+  const GAP = String.raw`\s*`;
   const tokenRegex = new RegExp(
-    String.raw`!\[([^\]]*)\]\((` + URL_CORE + String.raw`)\)` +                  // ![alt](url)
-    String.raw`|\[([^\]]+)\]\((\/api\/chat-media\/` + URL_CORE + String.raw`)\)` + // [t](/api/chat-media/…)
-    String.raw`|\[([^\]]+)\]\((https?:\/\/` + URL_CORE + String.raw`)\)` +        // [t](https://…)
-    String.raw`|\[([^\]]+)\]\((\/` + URL_CORE + String.raw`)\)` +                 // [t](/path)
+    String.raw`!\[([^\]]*)\]` + GAP + String.raw`\((` + URL_CORE + String.raw`)\)` +                  // ![alt](url)
+    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/api\/chat-media\/` + URL_CORE + String.raw`)\)` + // [t](/api/chat-media/…)
+    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((https?:\/\/` + URL_CORE + String.raw`)\)` +        // [t](https://…)
+    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/` + URL_CORE + String.raw`)\)` +                 // [t](/path)
     String.raw`|\*\*(.+?)\*\*` +                                                  // **bold**
     "|`([^`]+)`" +                                                                // `code`
     String.raw`|(https?:\/\/[^\s<>)\]]+)`,                                        // bare url

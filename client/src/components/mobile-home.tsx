@@ -5,6 +5,7 @@ import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
+  Receipt, Image as ImageIcon,
 } from "lucide-react";
 
 type BriefingData = { briefing: string; generatedAt: string };
@@ -94,9 +95,9 @@ function fmtMoney(pence: number | undefined | null): string {
 
 const QUICK_LINKS = [
   { label: "Deals", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
-  { label: "Requirements", icon: FileText, to: "/requirements", tint: "bg-blue-100 text-blue-700" },
+  { label: "Expenses", icon: Receipt, to: "/m/expenses", tint: "bg-rose-100 text-rose-700" },
+  { label: "Images", icon: ImageIcon, to: "/m/images", tint: "bg-sky-100 text-sky-700" },
   { label: "CRM", icon: Handshake, to: "/contacts", tint: "bg-emerald-100 text-emerald-700" },
-  { label: "Calendar", icon: CalendarIcon, to: "/calendar", tint: "bg-amber-100 text-amber-700" },
 ];
 
 const SEV: Record<string, { cls: string; icon: any }> = {

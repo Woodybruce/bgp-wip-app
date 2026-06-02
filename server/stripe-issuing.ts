@@ -510,9 +510,14 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Get single expense (owner or admin)
-  app.get("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
+  app.get("/api/expenses/:id", requireAuth, async (req: Request, res: Response, next) => {
     try {
       const id = String(req.params.id);
+      // Express matches the first registered route. The /me route is
+      // declared below this one, so without this skip Express would
+      // serve a 403 here ("you don't own expense 'me'"). Pass to the
+      // next matching handler instead.
+      if (id === "me") return next("route" as any);
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const [row] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!row) return res.status(404).json({ error: "Not found" });
@@ -585,7 +590,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const allowed = ["merchant", "transactionDate", "category", "xeroAccountCode",
                        "businessPurpose", "attendees", "isPersonal", "isClientRechargeable",
-                       "relatedDealId", "notes", "status"];
+                       "relatedDealId", "relatedPropertyId", "notes", "status"];
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const k of allowed) {
         if (req.body[k] !== undefined) updates[k] = req.body[k];
@@ -615,6 +620,21 @@ export function setupStripeIssuingRoutes(app: Express) {
       res.json({ success: true });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Delete an expense (and its receipt/attendee rows). Owner or admin only.
+  app.delete("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      await db.delete(expenseAttendees).where(eq(expenseAttendees.expenseId, id));
+      await db.delete(expenseReceipts).where(eq(expenseReceipts.expenseId, id));
+      await db.delete(expenses).where(eq(expenses.id, id));
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] delete error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -792,10 +812,12 @@ export function setupStripeIssuingRoutes(app: Express) {
   // automatically when confidence + category line up.
   const submitUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
   app.post("/api/expenses/submit", requireAuth, submitUpload.single("receipt"), async (req: Request, res: Response) => {
+    const t0 = Date.now();
     try {
       const file = req.file;
-      if (!file) return res.status(400).json({ error: "No receipt uploaded — attach the file as 'receipt'." });
       const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      console.log(`[expenses/submit] start userId=${userId} file=${file?.originalname} bytes=${file?.size} mime=${file?.mimetype}`);
+      if (!file) return res.status(400).json({ error: "No receipt uploaded — attach the file as 'receipt'." });
       if (!userId) return res.status(401).json({ error: "Not signed in" });
       const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
       if (!user) return res.status(401).json({ error: "User not found" });
@@ -818,11 +840,12 @@ export function setupStripeIssuingRoutes(app: Express) {
         attendees: typeof req.body?.attendees === "string" ? req.body.attendees : undefined,
         transactionDate: req.body?.transactionDate ? new Date(req.body.transactionDate) : undefined,
       });
+      console.log(`[expenses/submit] done in ${Date.now() - t0}ms ok=${result.ok} expenseId=${result.expenseId} error=${result.error || ""}`);
       if (!result.ok) return res.status(400).json(result);
       res.json(result);
     } catch (e: any) {
-      console.error("[expenses] submit route error:", e?.message, e?.stack);
-      res.status(500).json({ error: e?.message });
+      console.error(`[expenses/submit] crashed in ${Date.now() - t0}ms:`, e?.message, e?.stack);
+      res.status(500).json({ error: e?.message || "Receipt upload failed" });
     }
   });
 

@@ -42,6 +42,7 @@ import { newsArticles } from "@shared/schema";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
+import { registerExpenseAutoClassifyRoutes } from "./expense-auto-classify";
 import { setupRevolutRoutes } from "./revolut";
 import { setupRefreshImageRoutes } from "./refresh-website-images";
 import { setupHrRoutes } from "./hr-routes";
@@ -7035,6 +7036,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   registerIngestRoutes(app);
   registerGenericCrmRoutes(app);
   setupStripeIssuingRoutes(app);
+  registerExpenseAutoClassifyRoutes(app);
   setupRevolutRoutes(app);
   setupRefreshImageRoutes(app);
   setupHrRoutes(app);

@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { db } from "./db";
-import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets } from "@shared/schema";
+import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets, propertyPathwayRuns } from "@shared/schema";
 
 // Image kinds accepted on the property_imagery_assets row when a capture
 // or upload is linked to a property. Mirrors ImageryKind in property-imagery.ts.
@@ -372,6 +372,108 @@ async function generateThumbnail(buffer: Buffer): Promise<{ thumbnail: string; w
     width: metadata.width || 0,
     height: metadata.height || 0,
   };
+}
+
+// Background AI edit worker — same pipeline as the /ai-edit endpoint
+// but with no Express response. Used by /ai-edit-async so the mobile
+// app can fire an edit and walk away. Always clears the "ai-pending"
+// tag at the end (success or failure) so the gallery isn't stuck on
+// the Processing chip.
+async function runAiEditInBackground(
+  imageId: string,
+  editPrompt: string,
+  preferProvider?: string,
+): Promise<void> {
+  const t0 = Date.now();
+  let didSucceed = false;
+  try {
+    const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
+    if (!image) throw new Error("Image not found");
+    const sourceBuffer = await readPersistedImage(image.localPath);
+    if (!sourceBuffer) throw new Error("Image file not found on disk");
+
+    const isAtmospheric = /\b(lighting|lit|dusk|dawn|night|evening|morning|sunset|sunrise|golden hour|mood|moody|weather|rain|snow|fog|cloud(y|s)?|sunny|overcast|colour\s*grade|color\s*grade|warmth|tone|bright(er|en)?|darken|saturat\w*|contrast|hdr|polish|enhance|sharpen|filter)\b/i.test(editPrompt);
+    const preferred = (typeof preferProvider === "string" && preferProvider
+      ? preferProvider
+      : isAtmospheric ? "gemini" : "openai"
+    ).toLowerCase();
+
+    // Undo snapshot (PNG) — keeps the Revert button working even when
+    // the edit ran without a connected client.
+    const undoPath = path.join(IMAGE_DIR, `undo-${imageId}.png`);
+    const undoBuffer = (image.mimeType === "image/png") ? sourceBuffer : await sharp(sourceBuffer).png().toBuffer();
+    fs.writeFileSync(undoPath, undoBuffer);
+
+    const base64 = sourceBuffer.toString("base64");
+    const inputMime = image.mimeType || "image/jpeg";
+    const fullPrompt = `Edit this specific photograph: ${editPrompt}. PRESERVE the exact building, composition, and architectural details — only apply the requested edit. Professional property photography standard.`;
+
+    let resultBuffer: Buffer | null = null;
+    let provider = "unknown";
+    const tryGemini = async () => {
+      const r = await editWithGemini(fullPrompt, base64, inputMime);
+      if (r) provider = "gemini";
+      return r;
+    };
+    const tryOpenAI = async () => {
+      const r = await editWithOpenAI(fullPrompt, sourceBuffer, inputMime);
+      if (r) provider = "openai";
+      return r;
+    };
+    if (preferred === "openai") {
+      resultBuffer = await tryOpenAI();
+      if (!resultBuffer) resultBuffer = await tryGemini();
+    } else {
+      resultBuffer = await tryGemini();
+      if (!resultBuffer) resultBuffer = await tryOpenAI();
+    }
+    if (!resultBuffer) {
+      const isPolish = /\b(enhance|brighten|sharpen|clean\s*up|remove\s+watermark|marketing|professional)\b/i.test(editPrompt);
+      if (isPolish) {
+        try { resultBuffer = await enhanceLocally(sourceBuffer); provider = "local"; } catch {}
+      }
+    }
+    if (!resultBuffer) throw new Error("No provider returned a result");
+
+    const filename = `edited-${crypto.randomUUID()}.png`;
+    const filePath = path.join(IMAGE_DIR, filename);
+    await persistImage(filePath, resultBuffer, "image/png");
+    const { thumbnail, width, height } = await generateThumbnail(resultBuffer);
+
+    const oldPath = image.localPath;
+    const baseTags = (image.tags || []).filter((t) => t !== "ai-pending" && t !== "ai-failed");
+    await db.update(imageStudioImages).set({
+      mimeType: "image/png",
+      fileSize: resultBuffer.length,
+      width,
+      height,
+      thumbnailData: thumbnail,
+      localPath: filePath,
+      tags: [...new Set([...baseTags, "AI Edited", provider])],
+      source: "ai-edited",
+    } as any).where(eq(imageStudioImages.id, imageId));
+
+    if (oldPath && oldPath !== filePath) {
+      try { fs.unlinkSync(oldPath); } catch {}
+    }
+    didSucceed = true;
+    console.log(`[image-studio] background edit ${imageId} done via ${provider} in ${Date.now() - t0}ms`);
+  } catch (e: any) {
+    console.error(`[image-studio] background edit ${imageId} failed in ${Date.now() - t0}ms: ${e?.message}`);
+  } finally {
+    if (!didSucceed) {
+      // Clear pending tag + add failed marker so the client can show an
+      // error chip and the user can retry.
+      try {
+        const [img] = await db.select({ tags: imageStudioImages.tags })
+          .from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
+        const tags = (img?.tags || []).filter((t) => t !== "ai-pending");
+        await db.update(imageStudioImages)
+          .set({ tags: [...new Set([...tags, "ai-failed"])] } as any)
+          .where(eq(imageStudioImages.id, imageId));
+      } catch {}
+    }
+  }
 }
 
 async function requireAdmin(req: Request, res: Response, next: Function) {
@@ -1035,8 +1137,14 @@ export function registerImageStudioRoutes(app: Express) {
         .from(imageStudioImages)
         .where(eq(imageStudioImages.id, String(req.params.id)));
       if (!row?.thumbnailData) return res.status(404).end();
-      const buf = Buffer.from(row.thumbnailData, "base64");
-      res.setHeader("Content-Type", row.mimeType || "image/jpeg");
+      // thumbnailData is stored as a full data URL ("data:image/jpeg;base64,…")
+      // by generateThumbnail(). Strip the prefix + pick up the real mime so
+      // the binary we send actually decodes in the browser.
+      const match = row.thumbnailData.match(/^data:([^;]+);base64,(.+)$/);
+      const base64 = match ? match[2] : row.thumbnailData;
+      const mime = match ? match[1] : "image/jpeg";
+      const buf = Buffer.from(base64, "base64");
+      res.setHeader("Content-Type", mime);
       res.setHeader("Cache-Control", "public, max-age=86400, immutable");
       res.end(buf);
     } catch (e: any) {
@@ -1742,6 +1850,104 @@ export function registerImageStudioRoutes(app: Express) {
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Fire-and-forget version of /ai-edit — kicks off the AI work in the
+  // background so the mobile client doesn't need to keep the sheet open
+  // (iOS aggressively kills network requests when the app backgrounds).
+  // The image is tagged "ai-pending" while running; the gallery polls
+  // and removes the chip when the tag drops or "AI Edited" appears.
+  app.post("/api/image-studio/ai-edit-async", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { imageId, editPrompt, preferProvider } = req.body;
+      const trimmedEdit = (editPrompt || "").trim();
+      if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
+      if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
+
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+      const existingTags = image.tags || [];
+      if (existingTags.includes("ai-pending")) {
+        return res.json({ ok: true, imageId, status: "already_running" });
+      }
+      // Mark as pending so the gallery shows a Processing chip. The
+      // background worker clears the tag whether it succeeds or fails.
+      await db.update(imageStudioImages)
+        .set({ tags: [...new Set([...existingTags, "ai-pending"])] } as any)
+        .where(eq(imageStudioImages.id, imageId));
+
+      // Fire-and-forget — don't await. Any thrown error is logged + the
+      // pending tag is removed so the gallery doesn't get stuck.
+      runAiEditInBackground(imageId, trimmedEdit, preferProvider).catch((e) =>
+        console.error(`[image-studio] background edit ${imageId} threw: ${e?.message}`),
+      );
+
+      res.status(202).json({ ok: true, imageId, status: "queued" });
+    } catch (e: any) {
+      console.error("[image-studio] ai-edit-async error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Unified attach — link an image_studio_images row to a property,
+  // brand/company, deal, or pathway run. Mobile gallery calls this so
+  // a phone-uploaded photo can be wired into the rest of the app without
+  // a separate flow per target. Returns { ok, where } describing what
+  // was written so the client can show the right toast.
+  app.post("/api/image-studio/:id/attach", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const targetType = String(req.body?.targetType || "").toLowerCase();
+      const targetId = String(req.body?.targetId || "").trim();
+      const caption = req.body?.caption ? String(req.body.caption).slice(0, 500) : null;
+      if (!id || !targetId) return res.status(400).json({ error: "id and targetId required" });
+
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+
+      if (targetType === "property") {
+        await db.insert(propertyImageryAssets).values({
+          propertyId: targetId,
+          kind: "secondary_external",
+          source: "image_studio",
+          imageStudioId: id,
+          width: image.width,
+          height: image.height,
+          caption,
+        });
+        return res.json({ ok: true, where: "property", targetId });
+      }
+
+      if (targetType === "brand" || targetType === "company") {
+        await db.update(imageStudioImages)
+          .set({ companyId: targetId } as any)
+          .where(eq(imageStudioImages.id, id));
+        return res.json({ ok: true, where: "brand", targetId });
+      }
+
+      if (targetType === "pathway" || targetType === "pathway_run") {
+        // Resolve the pathway's property — attach there so the image
+        // shows up in the pathway's imagery tab via the existing join.
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, targetId)).limit(1);
+        if (!run) return res.status(404).json({ error: "Pathway run not found" });
+        if (!run.propertyId) return res.status(400).json({ error: "Pathway has no property yet — pick the property first, then attach the image to that" });
+        await db.insert(propertyImageryAssets).values({
+          propertyId: run.propertyId,
+          kind: "secondary_external",
+          source: "image_studio",
+          imageStudioId: id,
+          width: image.width,
+          height: image.height,
+          caption: caption || `Attached from pathway ${run.address}`,
+        });
+        return res.json({ ok: true, where: "pathway", targetId, propertyId: run.propertyId });
+      }
+
+      return res.status(400).json({ error: `Unknown targetType "${targetType}" — try property, brand, or pathway` });
+    } catch (e: any) {
+      console.error("[image-studio/attach] failed:", e?.message);
+      res.status(500).json({ error: e?.message || "Attach failed" });
     }
   });
 
