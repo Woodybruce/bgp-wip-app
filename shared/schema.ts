@@ -781,6 +781,11 @@ export const crmProperties = pgTable("crm_properties", {
   competitorAgentId: varchar("competitor_agent_id"), // FK to crm_companies (company_type='Agent')
   competitorAgentInstructedAt: timestamp("competitor_agent_instructed_at"),
   competitorAgentStatus: text("competitor_agent_status"), // active | won_by_bgp | lost
+  // ── Schedule UI flag ─────────────────────────────────────────────────────
+  // When true, the property detail page collapses Leasing Schedule + Tenancy
+  // Schedule into a single Schedule panel with a lens toggle. Per-property
+  // rollout flag so we can test on Bluewater before flipping the firm.
+  unifiedSchedule: boolean("unified_schedule").default(false),
   // ── Ownership stack ──────────────────────────────────────────────────────
   freeholderId: varchar("freeholder_id"),       // → crm_companies
   longLeaseholderId: varchar("long_leaseholder_id"), // → crm_companies

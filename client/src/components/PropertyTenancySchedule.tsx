@@ -390,7 +390,28 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", options, clas
   );
 }
 
-export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) {
+// Bands hidden by default in "lettings" lens — leasing-team focus, voids
+// + marketing emphasis. Institutional fields (Lease dates, NOI, Shortfalls,
+// detailed Areas breakdown) drop out to match what the old standalone
+// Leasing Schedule used to show. User can still toggle any column back on
+// from the column-visibility picker.
+const LETTINGS_HIDDEN_BANDS = new Set([
+  "Lease Details",
+  "Areas — GIA",
+  "Areas — NIA",
+  "Shortfalls",
+  "NOI",
+]);
+const LETTINGS_HIDDEN_FIELDS = new Set([
+  "passing_rent_pa",         // tenancy view
+  "turnover_rent_payable",   // tenancy view
+  "rent_free_value",         // tenancy view
+  "capex_value",             // tenancy view
+  "comments",                // generic; leasing_comments is the lettings version
+  "underwriting_comments",   // tenancy view
+]);
+
+export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: string; lens?: "lettings" | "tenancy" }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [location] = useLocation();
@@ -405,12 +426,26 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
   // redundant — hide it. The route is /tenancy-schedule/:propertyId.
   const onFullBoard = location === `/tenancy-schedule/${propertyId}`;
 
-  // Column visibility — Set of hidden field names, persisted per property.
-  const hiddenStorageKey = `tenancy-hidden-cols:${propertyId}`;
+  // Column visibility — Set of hidden field names, persisted per property
+  // AND per lens. Two lenses on the same data: "lettings" pre-hides
+  // institutional fields (lease dates, NOI, shortfalls, full areas
+  // breakdown) so the board looks like the old standalone Leasing
+  // Schedule; "tenancy" shows everything. Each lens has its own
+  // localStorage so toggling individual cols in one doesn't disturb
+  // the other.
+  const lensKey = lens || "tenancy";
+  const hiddenStorageKey = `tenancy-hidden-cols:${propertyId}:${lensKey}`;
   const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(hiddenStorageKey);
-      return raw ? new Set(JSON.parse(raw)) : new Set();
+      if (raw) return new Set(JSON.parse(raw));
+      // First-time load for this property+lens — apply the lens defaults.
+      if (lensKey === "lettings") {
+        const def = new Set<string>(LETTINGS_HIDDEN_FIELDS);
+        for (const c of COLUMNS) if (LETTINGS_HIDDEN_BANDS.has(c.band)) def.add(c.field as string);
+        return def;
+      }
+      return new Set();
     } catch { return new Set(); }
   });
   useEffect(() => {
