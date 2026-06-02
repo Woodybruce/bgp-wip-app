@@ -1117,6 +1117,27 @@ function parseExcelActions(content: string): ExcelAction[] {
   return actions;
 }
 
+// Strip the machine-readable action blocks (```json {action…}``` and
+// ```excel =FORMULA```) from the message so the chat shows ONLY the
+// human prose. The blocks are rendered separately as Apply buttons by
+// parseExcelActions — without this strip they'd appear twice: once as
+// raw JSON the user shouldn't see, once as the clean button. Only
+// strips json blocks that actually parse to a supported action, so a
+// legitimate ```json``` snippet the user asked for stays visible.
+function stripExcelActionBlocks(content: string): string {
+  let out = content.replace(/```json\s*\n?([\s\S]*?)```/g, (full, body) => {
+    try {
+      const parsed = JSON.parse(String(body).trim());
+      if (parsed.action && SUPPORTED_EXCEL_ACTIONS.has(parsed.action)) return "";
+    } catch {}
+    return full; // not an action block — leave it
+  });
+  // Excel formula blocks always become buttons — strip them all.
+  out = out.replace(/```excel\s*\n?[\s\S]*?```/g, "");
+  // Collapse the blank-line gaps left behind so the prose stays tight.
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 interface WorkbookInfo {
   fileName: string;
   activeSheetName: string;
@@ -2329,7 +2350,7 @@ function AddinExcel() {
                       </div>
                     ) : (
                       <div className="text-[13px] text-foreground leading-relaxed">
-                        <ChatBGPMarkdown content={msg.content} />
+                        <ChatBGPMarkdown content={stripExcelActionBlocks(msg.content)} />
                         {(() => {
                           const actions = parseExcelActions(msg.content);
                           if (actions.length === 0) return null;

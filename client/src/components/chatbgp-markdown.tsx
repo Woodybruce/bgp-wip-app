@@ -123,7 +123,23 @@ function isSafeUrl(url: string) {
 }
 
 function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] {
-  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((\/api\/chat-media\/[^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\[([^\]]+)\]\((\/[^)]+)\)|\*\*(.+?)\*\*|`([^`]+)`|(https?:\/\/[^\s<>)\]]+)/g;
+  // URL sub-pattern that tolerates balanced parens INSIDE the url — e.g.
+  // SharePoint download links like ".../Documents/file(1).xlsx" or
+  // ".../Folder(2)/report.pdf". The old `[^)]+` truncated the href at the
+  // first ")" so those links arrived with brackets clipped off and the
+  // download 404'd. `(?:[^()\s]|\([^()\s]*\))+` consumes non-paren chars
+  // plus any "(...)" group, so one level of nested parens survives.
+  const URL_CORE = String.raw`(?:[^()\s]|\([^()\s]*\))+`;
+  const tokenRegex = new RegExp(
+    String.raw`!\[([^\]]*)\]\((` + URL_CORE + String.raw`)\)` +                  // ![alt](url)
+    String.raw`|\[([^\]]+)\]\((\/api\/chat-media\/` + URL_CORE + String.raw`)\)` + // [t](/api/chat-media/…)
+    String.raw`|\[([^\]]+)\]\((https?:\/\/` + URL_CORE + String.raw`)\)` +        // [t](https://…)
+    String.raw`|\[([^\]]+)\]\((\/` + URL_CORE + String.raw`)\)` +                 // [t](/path)
+    String.raw`|\*\*(.+?)\*\*` +                                                  // **bold**
+    "|`([^`]+)`" +                                                                // `code`
+    String.raw`|(https?:\/\/[^\s<>)\]]+)`,                                        // bare url
+    "g",
+  );
   const result: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
