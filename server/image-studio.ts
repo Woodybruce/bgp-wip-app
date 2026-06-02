@@ -242,6 +242,20 @@ async function persistImage(filePath: string, buffer: Buffer, mimeType: string, 
   }
 }
 
+// Load an Image Studio image as a base64 data URI for embedding in
+// server-rendered PDFs (puppeteer can't fetch the auth-protected /full route).
+export async function imageStudioDataUri(id: string): Promise<string | null> {
+  try {
+    const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+    if (!image) return null;
+    const buf = await readPersistedImage(image.localPath);
+    if (!buf) return null;
+    return `data:${image.mimeType || "image/jpeg"};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function readPersistedImage(localPath: string | null | undefined): Promise<Buffer | null> {
   if (!localPath) return null;
   try {

@@ -4672,6 +4672,127 @@ export async function runStage(runId: string, stageNumber: number, req: Request)
 // Routes
 // ============================================================================
 
+// Build the internal 2-page property summary HTML rendered to PDF by the
+// /summary-pdf route. Pulls from the run's stageResults — fast + deterministic.
+async function buildPathwaySummaryHtml(run: any): Promise<string> {
+  const sr: any = run.stageResults || {};
+  const s1 = sr.stage1 || {}, s4 = sr.stage4 || {}, s7 = sr.stage7 || {}, s8 = sr.stage8 || {};
+  const esc = (s: any) => String(s ?? "").replace(/[&<>"]/g, (c: string) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" } as any)[c]));
+  const enc = encodeURIComponent;
+  const address = run.formattedAddress || run.address || "Property";
+  const postcode = run.postcode || s1.propertyImage?.postcode || "";
+
+  // ---- Clickable source links ----
+  const planningDocs: any[] = Array.isArray(s4.planningDocs) ? s4.planningDocs : [];
+  const planningApps: any[] = Array.isArray(s4.planningApplications) ? s4.planningApplications : [];
+  const planningUrl = planningDocs[0]?.docsUrl
+    || planningApps.find((p: any) => p.documentUrl)?.documentUrl
+    || `https://www.google.com/search?q=${enc(`${address} planning applications`)}`;
+  const landRegUrl = (s4.titleRegisters || []).find((t: any) => t.documentUrl)?.documentUrl
+    || "https://search-property-information.service.gov.uk/";
+  const ratesUrl = postcode
+    ? `https://www.tax.service.gov.uk/business-rates-find/search?postcode=${enc(postcode)}`
+    : "https://www.tax.service.gov.uk/business-rates-find/search";
+  const titleNums = Array.from(new Set([
+    ...(s4.titleRegisters || []).map((t: any) => t.titleNumber),
+    ...(s4.candidateTitles || []).map((t: any) => t.titleNumber),
+  ].filter(Boolean)));
+  const companies: Array<{ num: string; name: string }> = [];
+  const addCo = (num?: any, name?: any) => {
+    const n = String(num ?? "").trim();
+    if (!n || companies.some(c => c.num === n)) return;
+    companies.push({ num: n, name: name ? String(name) : "" });
+  };
+  for (const k of (s4.companyKyc || [])) addCo(k.companyNumber, k.companyName);
+  if (sr.stage2?.company) addCo(sr.stage2.company.companiesHouseNumber, sr.stage2.company.name);
+  for (const t of (s4.candidateTitles || [])) for (const p of (t.proprietors || [])) addCo(p.companyRegistrationNo, p.proprietorName);
+  const chUrl = (num: string) => `https://find-and-update.company-information.service.gov.uk/company/${enc(num)}`;
+
+  // ---- Imagery (Stage 8 saved images embedded as base64; hero is a public Google URL) ----
+  const { imageStudioDataUri } = await import("./image-studio");
+  const heroUrl = s1.propertyImage?.streetViewUrl || s1.propertyImage?.aerialUrl || "";
+  const locationPlan = s8.retailContextImageId ? await imageStudioDataUri(s8.retailContextImageId) : null;
+  const savedIds: string[] = [s8.streetViewImageId, ...(s8.additionalImageIds || [])].filter(Boolean);
+  const savedImgs: string[] = [];
+  for (const id of savedIds.slice(0, 6)) { const u = await imageStudioDataUri(id); if (u) savedImgs.push(u); }
+
+  // ---- Facts ----
+  const fmt = (n: any) => (typeof n === "number" && isFinite(n)) ? n.toLocaleString("en-GB") : null;
+  const area = fmt(s7.overrideTotalAreaSqFt || s7.totalAreaSqFt);
+  const rent = fmt(s7.overrideCurrentRentPA || s7.currentRentPA);
+  const tenure = s4.candidateTitles?.[0]?.tenure || "";
+  const owner = s4.candidateTitles?.[0]?.proprietors?.[0]?.proprietorName || "";
+  const briefing = s1.aiBriefing || {};
+  const bullets: string[] = Array.isArray(briefing.bullets) ? briefing.bullets : [];
+  const questions: string[] = Array.isArray(briefing.keyQuestions) ? briefing.keyQuestions : [];
+  const rateEntries: any[] = Array.isArray(s1.rates?.entries) ? s1.rates.entries : [];
+  const comps: any[] = Array.isArray(sr.marketIntel?.comparables) ? sr.marketIntel.comparables
+    : (Array.isArray(s1.retailComps) ? s1.retailComps : []);
+
+  let logo = "";
+  try {
+    for (const p of [`${process.cwd()}/dist/server/assets/BGP_BlackHolder.png`, `${process.cwd()}/server/assets/BGP_BlackHolder.png`]) {
+      if (fs.existsSync(p)) { logo = `data:image/png;base64,${fs.readFileSync(p).toString("base64")}`; break; }
+    }
+  } catch {}
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page { size: A4 portrait; margin: 14mm; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#001524; font-size:11px; line-height:1.4; margin:0; }
+.page { page-break-after: always; } .page:last-child { page-break-after: auto; }
+h1 { font-size:20px; margin:0 0 2px; } h2 { font-size:13px; color:#15616D; border-bottom:2px solid #15616D; padding-bottom:3px; margin:16px 0 8px; }
+.head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #15616D; padding-bottom:8px; }
+.head img { height:34px; }
+.muted { color:#5b6b72; font-size:10px; }
+.hero { width:100%; height:230px; object-fit:cover; border-radius:6px; margin-top:10px; }
+.facts { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:10px; }
+.fact { border:1px solid #d8e0e2; border-radius:6px; padding:8px; }
+.fact .l { font-size:8.5px; text-transform:uppercase; letter-spacing:.04em; color:#5b6b72; } .fact .v { font-size:13px; font-weight:600; margin-top:2px; }
+ul { margin:4px 0; padding-left:16px; } li { margin:2px 0; }
+.links a { color:#15616D; text-decoration:none; font-weight:600; } .links div { margin:3px 0; }
+table { width:100%; border-collapse:collapse; font-size:10px; } th,td { text-align:left; padding:4px 6px; border-bottom:1px solid #e4e9ea; } th { color:#15616D; font-size:9px; text-transform:uppercase; }
+.imgs { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; } .imgs img { width:100%; height:150px; object-fit:cover; border-radius:6px; }
+.locplan { width:100%; max-height:300px; object-fit:contain; border:1px solid #d8e0e2; border-radius:6px; }
+.foot { margin-top:14px; border-top:1px solid #d8e0e2; padding-top:6px; color:#5b6b72; font-size:9px; }
+</style></head><body>
+<div class="page">
+  <div class="head">
+    <div><h1>${esc(address)}</h1><div class="muted">${esc(postcode)} &middot; Internal property summary &middot; ${today}</div></div>
+    ${logo ? `<img src="${logo}" alt="BGP">` : `<div style="font-weight:700;color:#15616D;font-size:18px">BGP</div>`}
+  </div>
+  ${heroUrl ? `<img class="hero" src="${esc(heroUrl)}" alt="">` : ""}
+  <div class="facts">
+    <div class="fact"><div class="l">Approx area</div><div class="v">${area ? area + " sq ft" : "&mdash;"}</div></div>
+    <div class="fact"><div class="l">Passing rent</div><div class="v">${rent ? "&pound;" + rent + " pa" : "&mdash;"}</div></div>
+    <div class="fact"><div class="l">Tenure</div><div class="v">${esc(tenure) || "&mdash;"}</div></div>
+    <div class="fact"><div class="l">Title(s)</div><div class="v">${titleNums.length ? esc(titleNums.join(", ")) : "&mdash;"}</div></div>
+    <div class="fact"><div class="l">Owner</div><div class="v">${esc(owner) || "&mdash;"}</div></div>
+    <div class="fact"><div class="l">Pathway stage</div><div class="v">${esc(run.currentStage || "&mdash;")}/9</div></div>
+  </div>
+  ${bullets.length ? `<h2>Why it&rsquo;s interesting</h2><ul>${bullets.map(b => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
+  ${questions.length ? `<h2>Key questions</h2><ul>${questions.slice(0, 5).map(q => `<li>${esc(q)}</li>`).join("")}</ul>` : ""}
+  <h2>Sources</h2>
+  <div class="links">
+    <div>Planning: <a href="${esc(planningUrl)}">${planningDocs.length ? esc((planningDocs[0].lpa || "View planning") + " — " + planningDocs.length + " app(s)") : "Search planning applications"}</a></div>
+    <div>Land Registry: <a href="${esc(landRegUrl)}">Find property information</a>${titleNums.length ? " &mdash; " + esc(titleNums.join(", ")) : ""}</div>
+    <div>Companies House: ${companies.length ? companies.slice(0, 6).map(c => `<a href="${esc(chUrl(c.num))}">${esc(c.name || c.num)}</a>`).join(" &middot; ") : `<a href="https://find-and-update.company-information.service.gov.uk/">Search</a>`}</div>
+    <div>Business rates (VOA): <a href="${esc(ratesUrl)}">Find a business rates valuation</a></div>
+  </div>
+  <div class="foot">Bruce Gillingham Pollard &mdash; internal use. Generated ${today}.</div>
+</div>
+<div class="page">
+  ${locationPlan ? `<h2>Location plan</h2><img class="locplan" src="${locationPlan}" alt="Location plan">` : ""}
+  ${rateEntries.length ? `<h2>Rating (VOA)</h2><table><tr><th>Description</th><th>Rateable value</th><th>Period</th></tr>${rateEntries.slice(0, 8).map((r: any) => `<tr><td>${esc(r.description || r.desc || r.address || "")}</td><td>${esc(r.rateableValue || r.rv || r.value || "")}</td><td>${esc(r.period || r.listYear || r.effectiveDate || "")}</td></tr>`).join("")}</table>` : ""}
+  ${comps.length ? `<h2>Comparable evidence</h2><table><tr><th>Address / tenant</th><th>Rent</th><th>Area</th><th>Date</th></tr>${comps.slice(0, 8).map((c: any) => `<tr><td>${esc(c.address || c.tenant || c.name || "")}</td><td>${esc(c.rent || c.headlineRent || "")}</td><td>${esc(c.area || c.areaSqft || "")}</td><td>${esc(c.date || c.completionDate || "")}</td></tr>`).join("")}</table>` : ""}
+  ${savedImgs.length ? `<h2>Images</h2><div class="imgs">${savedImgs.map(u => `<img src="${u}" alt="">`).join("")}</div>` : ""}
+  ${!locationPlan && !rateEntries.length && !comps.length && !savedImgs.length ? `<p class="muted">No location plan, rating, comps or saved images captured yet on this pathway.</p>` : ""}
+  <div class="foot">Sources: local planning portal, HM Land Registry, Companies House, VOA business rates.</div>
+</div>
+</body></html>`;
+}
+
 export function registerPropertyPathwayRoutes(app: Express) {
   // Bootstrap the retail_leasing_comps table (curated store, separate from CRM).
   (async () => {
@@ -5679,6 +5800,27 @@ export function registerPropertyPathwayRoutes(app: Express) {
       res.json({ ok: true, stage7: nextStage7 });
     } catch (err: any) {
       console.error("[excel-model/agree] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Internal 2-page property summary PDF — broadly mirrors the pathway screen
+  // (hero image, key facts, AI briefing, comps, saved imagery + location plan)
+  // with clickable Planning / Land Registry / Companies House / Rates links so
+  // it's a one-send fact sheet. Fixed template — fast + deterministic.
+  app.get("/api/property-pathway/:runId/summary-pdf", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const html = await buildPathwaySummaryHtml(run);
+      const { htmlToPdfPortrait } = await import("./document-briefs");
+      const pdf = await htmlToPdfPortrait(html);
+      const addr = (run.formattedAddress || run.address || "Property").replace(/[^a-zA-Z0-9 _-]/g, "").trim().slice(0, 60) || "Property";
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${addr} - Summary.pdf"`);
+      res.end(pdf);
+    } catch (err: any) {
+      console.error("[summary-pdf] error:", err?.message);
       res.status(500).json({ error: err?.message });
     }
   });

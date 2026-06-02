@@ -1194,6 +1194,10 @@ export async function htmlToPdfForWhyBuy(html: string): Promise<Buffer> {
   return htmlToPdfBuffer(html, { format: "A4", landscape: true });
 }
 
+export async function htmlToPdfPortrait(html: string): Promise<Buffer> {
+  return htmlToPdfBuffer(html, { format: "A4", landscape: false });
+}
+
 async function htmlToPdfBuffer(html: string, options?: { format?: "A4" | "Letter"; landscape?: boolean }): Promise<Buffer> {
   let puppeteer: any;
   let executablePath: string | undefined;

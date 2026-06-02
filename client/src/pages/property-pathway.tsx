@@ -548,6 +548,24 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {advancing ? <Clock className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
             Refresh
           </Button>
+          <Button variant="ghost" size="sm" title="Download a 2-page internal property summary PDF (with Planning / Land Registry / Companies House / Rates links)"
+            onClick={async () => {
+              try {
+                const res = await fetch(`/api/property-pathway/${run.id}/summary-pdf`, { headers: getAuthHeaders(), credentials: "include" });
+                if (!res.ok) throw new Error(String(res.status));
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                window.open(url, "_blank");
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+              } catch {
+                window.open(`/api/property-pathway/${run.id}/summary-pdf`, "_blank");
+              }
+            }}
+            data-testid="button-pathway-summary-pdf"
+          >
+            <FileText className="w-4 h-4 mr-1" />
+            Summary PDF
+          </Button>
           <Button variant="ghost" size="sm" onClick={onDelete} className="text-muted-foreground hover:text-destructive" title="Delete investigation">
             <Trash2 className="w-4 h-4" />
           </Button>
