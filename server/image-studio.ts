@@ -2919,7 +2919,7 @@ async function browseForImages(
   }
 }
 
-async function runImageSync(opts: { forceReimport?: boolean } = {}) {
+export async function runImageSync(opts: { forceReimport?: boolean } = {}) {
   if (imageSyncRunning) return;
   imageSyncRunning = true;
   imageSyncProgress = "Starting...";

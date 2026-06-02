@@ -2493,7 +2493,7 @@ import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
 import { registerHealthCheckRoutes, startHealthCheck } from "./health-check";
-import { setupArchivistRoutes, startArchivist } from "./archivist";
+import { setupArchivistRoutes, runArchivistCrawl } from "./archivist";
 import { registerAIIntelligenceRoutes } from "./ai-intelligence";
 import { setupLeadsRoutes } from "./leads";
 import { registerMcpRoutes } from "./mcp-server";
@@ -3174,15 +3174,43 @@ app.use("/api/branding/assets", express.static(
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
         setTimeout(() => startAutoTurnoverResearch(), 30000);
-        setTimeout(async () => {
-          try {
-            const { startImageSync } = await import("./image-studio");
-            startImageSync();
-          } catch (e: any) {
-            console.error("[image-sync] Failed to start:", e.message);
-          }
-        }, 60000);
-        setTimeout(() => startArchivist(), 300000);
+        // Heavy crawls (image-sync + archivist) block the event loop and
+        // were starving ChatBGP after every redeploy — a single chat turn
+        // would hit the 10-min deadline because the box was saturated. They
+        // do near-zero useful work most of the time (everything's already
+        // indexed), so run them ONCE a day at ~midnight UK, when no one is
+        // using the app — not on boot, and not every 6 hours. Chained so the
+        // two never spike CPU/memory simultaneously.
+        {
+          let lastNightlyCrawlDay = "";
+          const ukNow = () =>
+            new Intl.DateTimeFormat("en-GB", {
+              timeZone: "Europe/London",
+              hourCycle: "h23",
+              year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+            })
+              .formatToParts(new Date())
+              .reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {} as Record<string, string>);
+          const checkNightlyCrawls = async () => {
+            const p = ukNow();
+            const day = `${p.year}-${p.month}-${p.day}`;
+            if (p.hour !== "00" || lastNightlyCrawlDay === day) return;
+            lastNightlyCrawlDay = day;
+            console.log(`[nightly-crawl] Midnight UK (${day}) — running image-sync then archivist`);
+            try {
+              const { runImageSync } = await import("./image-studio");
+              await runImageSync();
+            } catch (e: any) {
+              console.error("[image-sync] Nightly sync error:", e?.message);
+            }
+            try {
+              await runArchivistCrawl();
+            } catch (e: any) {
+              console.error("[archivist] Nightly crawl error:", e?.message);
+            }
+          };
+          setInterval(() => { checkNightlyCrawls().catch(() => {}); }, 5 * 60 * 1000);
+        }
         setTimeout(async () => {
           try {
             const { startLeaseEventMonitoring } = await import("./lease-events");
