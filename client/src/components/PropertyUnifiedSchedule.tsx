@@ -41,7 +41,14 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1 text-[11px]">
+      <div className="flex items-center gap-1 text-[11px] flex-wrap">
+        {/* Visible build marker — if the user sees this badge the unified
+            schedule deploy is live. If they don't, the build hasn't
+            landed yet (Railway in flight) or the service worker is
+            still serving an old bundle (hard-refresh fixes it). */}
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[9px] font-semibold uppercase tracking-wider mr-2">
+          ✦ Unified Schedule
+        </span>
         <span className="text-muted-foreground mr-2">View:</span>
         <button
           type="button"
