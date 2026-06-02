@@ -723,11 +723,13 @@ export default function MobileExpenses() {
   const pending = expenses.filter((e) => e.status === "pending_receipt");
   const recent = expenses.filter((e) => e.status !== "pending_receipt").slice(0, 30);
 
+  // No `capture` attribute → iOS/Android show their native picker with
+  // both "Take Photo" and "Choose from Library" options. Forcing capture
+  // skipped library uploads which Woody needs for emailed PDF receipts.
   const snapForExpense = (expense: Expense) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*,application/pdf";
-    input.setAttribute("capture", "environment");
     input.onchange = (ev) => {
       const file = (ev.target as HTMLInputElement).files?.[0];
       if (!file) return;
@@ -741,7 +743,6 @@ export default function MobileExpenses() {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*,application/pdf";
-    input.setAttribute("capture", "environment");
     input.onchange = (ev) => {
       const file = (ev.target as HTMLInputElement).files?.[0];
       if (!file) return;
@@ -782,11 +783,11 @@ export default function MobileExpenses() {
           {uploadingFor === "__new__" ? (
             <><Loader2 className="w-5 h-5 animate-spin" /> Uploading…</>
           ) : (
-            <><Camera className="w-5 h-5" /> Snap a receipt</>
+            <><Camera className="w-5 h-5" /> Add a receipt</>
           )}
         </button>
         <p className="text-[11px] text-muted-foreground text-center mt-1.5">
-          AI reads the merchant, total and your diary to fill it in.
+          Take a photo or pick one from your library — AI fills the rest.
         </p>
       </div>
 
