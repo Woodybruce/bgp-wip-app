@@ -1376,7 +1376,7 @@ router.post("/api/admin/resync-mirror-all", requireAuth, async (_req, res) => {
     const rows = await pool.query(
       `SELECT tsu.id, p.name AS property_name
          FROM tenancy_schedule_units tsu
-         LEFT JOIN properties p ON p.id = tsu.property_id`
+         LEFT JOIN crm_properties p ON p.id = tsu.property_id`
     );
     let synced = 0;
     let failed = 0;
