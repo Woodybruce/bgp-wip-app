@@ -31,6 +31,7 @@ const LPA_REGISTRY: Array<{ prefixes: string[]; name: string; host: string }> = 
   { prefixes: ["SE1", "SE11", "SW2", "SW4", "SW8", "SW9"], name: "Lambeth", host: "planning.lambeth.gov.uk" },
   { prefixes: ["W6", "SW6", "W12"], name: "Hammersmith & Fulham", host: "public-access.lbhf.gov.uk" },
   { prefixes: ["E5", "E8", "E9", "N16"], name: "Hackney", host: "developmentandhousing.hackney.gov.uk" },
+  { prefixes: ["CV1", "CV2", "CV3", "CV4", "CV5", "CV6"], name: "Coventry", host: "eplanning.coventry.gov.uk" },
 ];
 
 export interface IdoxPlanningApp {
@@ -52,9 +53,18 @@ function resolveLpa(postcode: string): { name: string; host: string } | null {
   const m = pc.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/);
   if (!m) return null;
   const outward = m[1];
+  // A registry prefix matches the outward only on a clean district boundary:
+  // exact, or the prefix is followed by a LETTER (e.g. "SW1" → "SW1A"), never a
+  // DIGIT — so "CV2" must not swallow "CV21" (Rugby) and "CV1" must not swallow
+  // "CV10" (Nuneaton). Longest prefix still wins for genuine overlaps.
+  const matches = (prefix: string) => {
+    if (outward === prefix) return true;
+    if (!outward.startsWith(prefix)) return false;
+    return !/\d/.test(outward.charAt(prefix.length));
+  };
   const hit = LPA_REGISTRY
     .flatMap((lpa) => lpa.prefixes.map((p) => ({ ...lpa, prefix: p })))
-    .filter((e) => outward.startsWith(e.prefix))
+    .filter((e) => matches(e.prefix))
     .sort((a, b) => b.prefix.length - a.prefix.length)[0];
   return hit ? { name: hit.name, host: hit.host } : null;
 }
