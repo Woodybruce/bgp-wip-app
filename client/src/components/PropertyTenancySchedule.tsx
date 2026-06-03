@@ -564,10 +564,21 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
   // the current canonical status onto each projection. Heals drift in one
   // tap (the Bluewater "no linkage" fix).
   const resyncMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/properties/${propertyId}/resync-mirror`, {}),
+    mutationFn: () => apiRequest("POST", `/api/admin/resync-mirror-all`, {}),
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
-      toast({ title: "Boards re-synced", description: `${res?.synced ?? 0} units mirrored to Letting Tracker + leasing.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule"] });
+      const byProp = res?.byProperty || {};
+      const topProps = Object.entries(byProp)
+        .sort((a: any, b: any) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([name, n]) => `${name} (${n})`)
+        .join(", ");
+      toast({
+        title: "Boards re-synced (whole app)",
+        description: `${res?.synced ?? 0} units mirrored across ${Object.keys(byProp).length} properties.${topProps ? ` Top: ${topProps}` : ""}`,
+      });
     },
     onError: (err: any) => { toast({ title: "Re-sync failed", description: err.message, variant: "destructive" }); },
   });
@@ -754,10 +765,10 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
             className="h-7 text-xs"
             onClick={() => resyncMutation.mutate()}
             disabled={resyncMutation.isPending}
-            title="Re-link Letting Tracker + Tenancy rows by unit name and push the current canonical status onto both. One-tap fix for boards that have drifted out of sync."
+            title="Sweep every tenancy unit in the app: re-link Letting Tracker + leasing rows by unit name and push the current canonical status onto both. Heals any board drift across all properties, not just this one."
             data-testid="btn-resync-mirror"
           >
-            {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync boards
+            {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync (all)
           </Button>
           <Popover>
             <PopoverTrigger asChild>
