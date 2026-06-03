@@ -43,6 +43,38 @@ function injectLogos(html: string): string {
   return html.replaceAll("__BGP_LOGO_DARK__", dark).replaceAll("__BGP_LOGO_LIGHT__", light);
 }
 
+// Load the run's saved hero + location-plan images as base64 data URIs so the
+// deck embeds the curated Why Buy imagery directly — not admin-only
+// /api/image-studio URLs (which break for viewers) or Claude-invented srcs.
+async function deckImageDataUris(runId: string): Promise<{ hero: string; locationPlan: string }> {
+  try {
+    const { rows } = await pool.query(`SELECT stage_results FROM property_pathway_runs WHERE id = $1`, [runId]);
+    const sr: any = rows[0]?.stage_results || {};
+    const s8 = sr.stage8 || {};
+    const { imageStudioDataUri } = await import("./image-studio");
+    const heroId = s8.streetViewImageId || (Array.isArray(s8.additionalImageIds) ? s8.additionalImageIds[0] : undefined);
+    const hero = heroId ? (await imageStudioDataUri(heroId)) || "" : "";
+    const locationPlan = s8.retailContextImageId ? (await imageStudioDataUri(s8.retailContextImageId)) || "" : "";
+    return { hero, locationPlan };
+  } catch {
+    return { hero: "", locationPlan: "" };
+  }
+}
+
+// Inject logos + the run's curated imagery, then strip any <img> still pointing
+// at an unfilled __BGP_*__ placeholder (or empty src) so the deck never shows a
+// broken / 404 image. Used at render (iframe) + PDF time.
+async function injectDeckAssets(html: string, runId: string): Promise<string> {
+  let out = injectLogos(html);
+  try {
+    const { hero, locationPlan } = await deckImageDataUris(runId);
+    out = out.replaceAll("__BGP_HERO_IMAGE__", hero).replaceAll("__BGP_LOCATION_PLAN__", locationPlan);
+  } catch { /* ignore */ }
+  // Remove imgs whose src is still a bare placeholder token or empty (logos too).
+  out = out.replace(/<img\b[^>]*\bsrc=["'](?:__BGP_[A-Z_]*__)?["'][^>]*>/gi, "");
+  return out;
+}
+
 const BGP_BRAND = `
 BGP brand cues:
 - Primary teal: #15616D
@@ -81,6 +113,11 @@ BGP LOGO — put the BGP logo on the cover slide (top) and in the footer band of
 - On light / cream backgrounds: <img src="__BGP_LOGO_DARK__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
 - On dark backgrounds (teal / charcoal footer bands etc.): <img src="__BGP_LOGO_LIGHT__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
 Keep it small (height ~28-40px). The placeholders are swapped for the real logo when the deck is rendered — leave the src strings exactly as written.
+
+PROPERTY IMAGERY — for real photos use ONLY these exact placeholder srcs (swapped for the run's saved images at render time; if no image exists the <img> is removed cleanly, so they're always safe to include):
+- Cover hero / building shot: <img src="__BGP_HERO_IMAGE__" class="hero" alt="" data-edit-id="image-cover-hero">
+- Location / context plan: <img src="__BGP_LOCATION_PLAN__" alt="" data-edit-id="image-6-locationplan">
+Do NOT invent any other image src, and NEVER reference /api/image-studio/ URLs — only these placeholders plus the logo placeholders above.
 
 EDITABLE MARKERS — IMPORTANT:
 The user can click images and text in the rendered deck to edit them
@@ -144,7 +181,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("X-Frame-Options", "SAMEORIGIN");
       res.setHeader("Content-Security-Policy", "default-src 'unsafe-inline' data: blob:; img-src * data: blob:; font-src * data:; style-src 'unsafe-inline' *;");
-      res.send(injectLogos(rows[0].html));
+      res.send(await injectDeckAssets(rows[0].html, req.params.runId));
     } catch (e: any) {
       res.status(500).send(`<pre>${e.message}</pre>`);
     }
@@ -220,7 +257,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
         max_tokens: 16000,
         messages: [{
           role: "user",
-          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. Also PRESERVE any \`__BGP_LOGO_DARK__\` / \`__BGP_LOGO_LIGHT__\` placeholder src values exactly as-is (they are swapped for the real BGP logo at render time). If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
+          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. Also PRESERVE any \`__BGP_LOGO_DARK__\` / \`__BGP_LOGO_LIGHT__\` / \`__BGP_HERO_IMAGE__\` / \`__BGP_LOCATION_PLAN__\` placeholder src values exactly as-is (they are swapped for the real BGP logo + saved imagery at render time). If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
         }],
       });
       const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
@@ -346,7 +383,7 @@ export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ doc
 
   // 4. HTML → PDF via the shared puppeteer helper
   const { htmlToPdfForWhyBuy } = await import("./document-briefs");
-  const pdfBuf = await htmlToPdfForWhyBuy(injectLogos(html));
+  const pdfBuf = await htmlToPdfForWhyBuy(await injectDeckAssets(html, runId));
 
   // 5. Persist + upload
   const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy");
