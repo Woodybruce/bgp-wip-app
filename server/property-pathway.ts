@@ -371,6 +371,14 @@ interface StageResults {
     generatedAt?: string;
     error?: string;
   };
+  // Curated comps for the Why Buy deck — AI-matched from the comps board
+  // (investment_comps + crm_comps), then editable in the Why Buy. Each entry
+  // carries the normalised comp fields + an id + a "why relevant" note.
+  whyBuyComps?: {
+    investment: Array<Record<string, any>>;
+    leasing: Array<Record<string, any>>;
+    matchedAt?: string;
+  };
 }
 
 interface StageStatusMap {
@@ -5828,6 +5836,91 @@ export function registerPropertyPathwayRoutes(app: Express) {
       res.end(pdf);
     } catch (err: any) {
       console.error("[summary-pdf] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Comps — AI-match the most relevant from the comps board (investment_comps +
+  // crm_comps, already pulled into stage1.comps) and store as the run's curated set.
+  app.post("/api/property-pathway/:runId/comps/match", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const sr = (run.stageResults as StageResults) || {};
+      const s1: any = sr.stage1 || {};
+      const all: any[] = Array.isArray(s1.comps) ? s1.comps : [];
+      const investment = all.filter((c) => c.kind === "investment");
+      const leasing = all.filter((c) => c.kind === "letting" || c.kind === "leasing");
+      if (investment.length === 0 && leasing.length === 0) {
+        return res.json({ investment: [], leasing: [], note: "No candidate comps on the board for this area yet." });
+      }
+      const propCtx = [
+        `Address: ${run.formattedAddress || run.address || ""}`,
+        s1.aiFacts?.currentUse ? `Use: ${s1.aiFacts.currentUse}` : "",
+        sr.stage7?.totalAreaSqFt ? `Area: ${sr.stage7.totalAreaSqFt} sq ft` : "",
+        s1.aiFacts?.passingRent ? `Passing rent: ${s1.aiFacts.passingRent}` : "",
+      ].filter(Boolean).join("\n");
+      const fmt = (arr: any[]) => arr.map((c, i) =>
+        `[${i}] ${c.address || c.tenant || "?"}${c.tenant ? ` — ${c.tenant}` : ""}${c.rent ? ` — rent ${c.rent}` : ""}${c.price ? ` — £${c.price}` : ""}${c.yield ? ` — ${c.yield}% yield` : ""}${c.area ? ` — ${c.area} sqft` : ""}${c.date ? ` — ${c.date}` : ""}${c.type ? ` (${c.type})` : ""}`,
+      ).join("\n");
+      const prompt = `You are a BGP property analyst picking the most RELEVANT comparables for this property's Why Buy deck.
+
+PROPERTY:
+${propCtx}
+
+INVESTMENT (SALE) COMPS — candidates:
+${fmt(investment) || "(none)"}
+
+LEASING (RENT) COMPS — candidates:
+${fmt(leasing) || "(none)"}
+
+Pick up to 5 of EACH that are genuinely comparable (same use/sector, similar size, nearby, recent). Give a one-line reason per pick. Return ONLY JSON, no prose:
+{"investment":[{"i":0,"note":"..."}],"leasing":[{"i":2,"note":"..."}]}`;
+      let picked: any = { investment: [], leasing: [] };
+      try {
+        const resp = await callClaude({ messages: [{ role: "user", content: prompt }], max_completion_tokens: 1500, temperature: 0.2 });
+        const txt = resp?.choices?.[0]?.message?.content || "";
+        picked = JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1));
+      } catch (e: any) {
+        // Fallback: most recent 5 of each (stage1.comps is already date-sorted).
+        picked = {
+          investment: investment.slice(0, 5).map((_: any, i: number) => ({ i, note: "" })),
+          leasing: leasing.slice(0, 5).map((_: any, i: number) => ({ i, note: "" })),
+        };
+      }
+      const { v4: uuid } = await import("uuid");
+      const build = (arr: any[], picks: any) => (Array.isArray(picks) ? picks : [])
+        .map((p: any) => { const c = arr[p.i]; return c ? { ...c, id: uuid(), note: p.note || "" } : null; })
+        .filter(Boolean);
+      const whyBuyComps = {
+        investment: build(investment, picked.investment),
+        leasing: build(leasing, picked.leasing),
+        matchedAt: new Date().toISOString(),
+      };
+      await updateRun(String(req.params.runId), { stageResults: { ...sr, whyBuyComps } });
+      res.json(whyBuyComps);
+    } catch (err: any) {
+      console.error("[comps/match] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Save the curated comps (full edit — UI sends the edited investment/leasing arrays).
+  app.patch("/api/property-pathway/:runId/comps", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const sr = (run.stageResults as StageResults) || {};
+      const body = req.body || {};
+      const whyBuyComps = {
+        investment: Array.isArray(body.investment) ? body.investment : (sr.whyBuyComps?.investment || []),
+        leasing: Array.isArray(body.leasing) ? body.leasing : (sr.whyBuyComps?.leasing || []),
+        matchedAt: sr.whyBuyComps?.matchedAt,
+      };
+      await updateRun(String(req.params.runId), { stageResults: { ...sr, whyBuyComps } });
+      res.json(whyBuyComps);
+    } catch (err: any) {
+      console.error("[comps PATCH] error:", err?.message);
       res.status(500).json({ error: err?.message });
     }
   });
