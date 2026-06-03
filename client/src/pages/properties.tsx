@@ -146,7 +146,15 @@ const GROUP_TABS = [
   { id: "Investment Comps", label: "Investment Comps" },
 ];
 
-const HIDDEN_FROM_ALL = new Set(["Investment Comps", "Investment Comp"]);
+// Comp groups never belong on the main Properties board — they're reference
+// pricing data, not properties we're acting on. Mirrors the server-side
+// excludeComps definition (storage.getCrmProperties) so the board and the
+// API agree on what counts as a comp. Covers both investment + leasing comps,
+// singular and plural, since imports have stamped all four spellings.
+const HIDDEN_FROM_ALL = new Set([
+  "Investment Comps", "Investment Comp",
+  "Leasing Comps", "Leasing Comp",
+]);
 
 export const STATUS_OPTIONS = ["BGP Active", "BGP Targeting", "Leasing Instruction", "Lease Advisory Instruction", "Sales Instruction", "Archive"];
 
@@ -5019,9 +5027,17 @@ function PropertiesList({
           const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
           if (assignedIds.length > 0 && !assignedIds.some(id => teamUserIds.has(id))) return false;
         }
-        if (activeGroup === "all" && HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
-        if (activeGroup === "Investment Comps" && !HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
-        if (activeGroup !== "all" && activeGroup !== "Investment Comps" && item.groupName !== activeGroup) return false;
+        const isComp = HIDDEN_FROM_ALL.has(item.groupName || "");
+        // The main board ("Properties") and the legacy "all" view both show
+        // EVERY non-comp property — regardless of whether its group_name is
+        // the literal string "Properties", NULL, or some legacy/imported
+        // value. Comps are the only thing held back, and only surface under
+        // their own tab. (Previously "Properties" was an exact group_name
+        // match, which hid the ~300 properties tagged with anything else.)
+        if ((activeGroup === "all" || activeGroup === "Properties") && isComp) return false;
+        if (activeGroup === "Investment Comps" && !isComp) return false;
+        // Pipeline / Archived / Development remain exact-match sub-lenses.
+        if (activeGroup !== "all" && activeGroup !== "Properties" && activeGroup !== "Investment Comps" && item.groupName !== activeGroup) return false;
 
         const statusFilters = columnFilters["status"] || [];
         if (statusFilters.length > 0 && (!item.status || !statusFilters.includes(item.status))) return false;
@@ -5083,6 +5099,10 @@ function PropertiesList({
       ...g,
       count: g.id === "Investment Comps"
         ? items.filter((i) => HIDDEN_FROM_ALL.has(i.groupName || "")).length
+        : g.id === "Properties"
+        // "Properties" is the catch-all: every non-comp property, matching
+        // what the board actually shows now.
+        ? items.filter((i) => !HIDDEN_FROM_ALL.has(i.groupName || "")).length
         : items.filter((i) => i.groupName === g.id).length,
     }));
   }, [items]);
