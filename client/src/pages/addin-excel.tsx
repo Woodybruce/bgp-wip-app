@@ -16,6 +16,7 @@ import {
 import bgpLogoBlack from "@assets/BGP_BlackHolder_1771853582461.png";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { AddinHeader } from "@/components/addin-header";
+import { useToast } from "@/hooks/use-toast";
 
 interface Message {
   id: string;
@@ -1343,6 +1344,32 @@ async function readExcelSelection(): Promise<string> {
   }
 }
 
+// Return the currently selected cell as { sheet, cell } so Apply
+// buttons can default to it when the AI didn't name a target. Returns
+// null if Excel isn't available or nothing's selected.
+async function getActiveCellRef(): Promise<{ sheet: string; cell: string } | null> {
+  try {
+    if (!window.Excel) return null;
+    return await window.Excel.run(async (context: any) => {
+      const range = context.workbook.getSelectedRange();
+      const sheet = context.workbook.worksheets.getActiveWorksheet();
+      range.load(["address"]);
+      sheet.load(["name"]);
+      await context.sync();
+      // range.address is like "Sheet1!A1" or "'Royal Exchange'!A1:B3" —
+      // peel off the sheet and take the top-left cell of the selection.
+      const addr: string = range.address || "";
+      const parts = addr.split("!");
+      const cellPart = parts.length > 1 ? parts[1] : parts[0];
+      const cell = cellPart.split(":")[0].replace(/\$/g, "");
+      return { sheet: sheet.name, cell };
+    });
+  } catch (err) {
+    console.error("[Excel] Failed to read active cell:", err);
+    return null;
+  }
+}
+
 // ─── Model Builder Component ──────────────────────────────────────────────
 
 function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string> }) {
@@ -1634,31 +1661,59 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
 
 // ─── Excel Action Button Component ────────────────────────────────────────
 
-function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: (a: ExcelAction) => void }) {
+// Friendly button label — "Set D24 to 5.5%" or "Add formula to D24" —
+// instead of the machine-y "Write to Sheet1!D24". Falls back to "the
+// selected cell" when no target is set yet.
+function describeAction(a: ExcelAction): string {
+  const where = a.cell
+    ? (a.sheet ? `${a.sheet}!${a.cell}` : a.cell)
+    : "the selected cell";
+  if (a.formula) {
+    return `Add formula to ${where}`;
+  }
+  if (a.value !== undefined && a.value !== null) {
+    let v = typeof a.value === "number"
+      ? a.value.toLocaleString("en-GB", { maximumFractionDigits: 2 })
+      : String(a.value);
+    if (v.length > 24) v = v.slice(0, 22) + "…";
+    return `Set ${where} to ${v}`;
+  }
+  return `Update ${where}`;
+}
+
+function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: (a: ExcelAction) => Promise<void> | void }) {
   const [applied, setApplied] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleApply = async () => {
     setApplying(true);
-    onApply(action);
-    setApplied(true);
-    setApplying(false);
+    setError(null);
+    try {
+      await onApply(action);
+      setApplied(true);
+    } catch (e: any) {
+      setError(e?.message || "Couldn't apply");
+    } finally {
+      setApplying(false);
+    }
   };
 
-  const label = action.formula
-    ? `Apply formula to ${action.sheet ? `${action.sheet}!` : ""}${action.cell || "..."}`
-    : `Write to ${action.sheet}!${action.cell}`;
+  const label = describeAction(action);
 
   return (
     <button
       onClick={handleApply}
       disabled={applying || applied}
-      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-all ${
+      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
         applied
           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-          : "bg-primary/10 text-primary hover:bg-primary/20"
+          : error
+            ? "bg-red-50 text-red-700 hover:bg-red-100"
+            : "bg-primary/10 text-primary hover:bg-primary/20"
       }`}
       data-testid="button-excel-action"
+      title={error || (action.formula ? `Formula: ${action.formula}` : action.value !== undefined ? `Value: ${action.value}` : "")}
     >
       {applied ? (
         <Check className="w-3 h-3" />
@@ -1667,7 +1722,7 @@ function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: 
       ) : (
         <Zap className="w-3 h-3" />
       )}
-      {applied ? "Applied" : label}
+      {applied ? "Done" : error ? `Failed — ${error}` : label}
     </button>
   );
 }
@@ -1858,6 +1913,7 @@ function SharePointAttachPicker({
 }
 
 function AddinExcel() {
+  const { toast } = useToast();
   const [token, setToken] = useState<string | null>(() => {
     try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
   });
@@ -2150,8 +2206,14 @@ function AddinExcel() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Match by both key and code — Excel's task-pane webview occasionally
+    // reports a localised key (e.g. "Send" via a stylus shortcut) instead
+    // of the plain "Enter". Also stop propagation so the host Excel
+    // doesn't grab the keystroke and re-fire it into the active cell.
+    const isEnter = e.key === "Enter" || (e as any).code === "Enter" || (e as any).code === "NumpadEnter";
+    if (isEnter && !e.shiftKey) {
       e.preventDefault();
+      e.stopPropagation();
       sendMessage();
     }
   };
@@ -2354,20 +2416,30 @@ function AddinExcel() {
                         {(() => {
                           const actions = parseExcelActions(msg.content);
                           if (actions.length === 0) return null;
+                          // Default to the active sheet + currently selected cell when
+                          // the model didn't name a target. Previously a `prompt()` dialog
+                          // ran here — but iframe prompts don't render in Excel's task
+                          // pane, so the click silently bailed out. Now we read the
+                          // selection from Office.js and apply against that, or fail loudly.
                           const applyOne = async (a: ExcelAction) => {
                             let sheet = a.sheet;
                             let cell = a.cell;
                             if (!sheet || !cell) {
-                              const cellRef = prompt("Enter cell reference (e.g. Sheet1!A1):");
-                              if (!cellRef) return;
-                              const parts = cellRef.split("!");
-                              sheet = parts.length > 1 ? parts[0] : (workbookInfo?.activeSheetName || "Sheet1");
-                              cell = parts.length > 1 ? parts[1] : parts[0];
+                              const active = await getActiveCellRef();
+                              if (active) {
+                                sheet = sheet || active.sheet;
+                                cell = cell || active.cell;
+                              }
+                            }
+                            if (!sheet || !cell) {
+                              throw new Error("No target cell — click a cell in Excel first, then tap apply.");
                             }
                             if (a.formula) {
                               await setFormulaInCell(sheet, cell, a.formula);
                             } else if (a.value !== undefined) {
                               await writeToCell(sheet, cell, a.value);
+                            } else {
+                              throw new Error("Action has no value or formula");
                             }
                           };
                           return (
@@ -2375,17 +2447,22 @@ function AddinExcel() {
                               {actions.length > 1 && (
                                 <button
                                   onClick={async () => {
-                                    let ok = 0, fail = 0;
+                                    let ok = 0, fail = 0; let lastError = "";
                                     for (const a of actions) {
-                                      try { await applyOne(a); ok++; } catch { fail++; }
+                                      try { await applyOne(a); ok++; } catch (e: any) { fail++; lastError = e?.message || String(e); }
                                     }
                                     console.log(`[excel-apply-all] applied=${ok} failed=${fail} total=${actions.length}`);
+                                    toast({
+                                      title: fail === 0 ? `Applied all ${ok} changes` : `${ok} of ${actions.length} applied`,
+                                      description: fail > 0 ? lastError : undefined,
+                                      variant: fail > 0 && ok === 0 ? "destructive" : undefined,
+                                    });
                                   }}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-primary text-primary-foreground hover:opacity-90"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-primary text-primary-foreground hover:opacity-90"
                                   data-testid="button-apply-all"
                                   title={`Apply all ${actions.length} changes to the workbook`}
                                 >
-                                  <Zap className="w-3 h-3" /> Apply all ({actions.length})
+                                  <Zap className="w-3 h-3" /> Apply all {actions.length} changes
                                 </button>
                               )}
                               {actions.map((act, idx) => (
