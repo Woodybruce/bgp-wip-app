@@ -201,6 +201,7 @@ export default function ImageStudio() {
   const [brandSectorFilter, setBrandSectorFilter] = useState("All");
   const [propertyTypeFilter, setPropertyTypeFilter] = useState("All");
   const [areaFilter, setAreaFilter] = useState("");
+  const [propertyFilter, setPropertyFilter] = useState("");
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [uploadBrandSector, setUploadBrandSector] = useState("");
 
@@ -645,6 +646,10 @@ export default function ImageStudio() {
       const af = areaFilter.toLowerCase();
       if (!img.area?.toLowerCase().includes(af) && !(img as any).address?.toLowerCase().includes(af)) return false;
     }
+    if (propertyFilter) {
+      const pf = propertyFilter.toLowerCase();
+      if (!((img as any).address?.toLowerCase().includes(pf))) return false;
+    }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return (
@@ -658,6 +663,17 @@ export default function ImageStudio() {
     }
     return true;
   });
+
+  // Distinct properties (by the address/name on each image) → the per-property
+  // "folders" for the sidebar filter, most-images-first.
+  const propertyCounts: Array<[string, number]> = (() => {
+    const m = new Map<string, number>();
+    for (const img of images) {
+      const a = String((img as any).address || "").trim();
+      if (a) m.set(a, (m.get(a) || 0) + 1);
+    }
+    return [...m.entries()].sort((x, y) => y[1] - x[1]);
+  })();
 
   const brandImages = images.filter((img) => {
     if (img.category !== "Brands") return false;
@@ -1047,6 +1063,48 @@ export default function ImageStudio() {
                     onClick={() => setAreaFilter("")}
                     className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-muted-foreground hover:bg-muted/80"
                     data-testid="chip-area-clear"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              <Separator className="my-3" />
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Property</h3>
+              <Input
+                placeholder="Filter by property..."
+                value={propertyFilter}
+                onChange={(e) => setPropertyFilter(e.target.value)}
+                className="h-8 text-sm"
+                list="property-name-suggestions"
+                data-testid="input-property-filter"
+              />
+              <datalist id="property-name-suggestions">
+                {propertyCounts.map(([name]) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </datalist>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {propertyCounts.slice(0, 8).map(([name, count]) => (
+                  <button
+                    key={name}
+                    onClick={() => setPropertyFilter(propertyFilter === name ? "" : name)}
+                    title={`${name} (${count})`}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors ${
+                      propertyFilter === name
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                    data-testid={`chip-property-${name.toLowerCase().replace(/\s/g, "-").slice(0, 24)}`}
+                  >
+                    {name.length > 22 ? name.slice(0, 22) + "…" : name} ({count})
+                  </button>
+                ))}
+                {propertyFilter && (
+                  <button
+                    onClick={() => setPropertyFilter("")}
+                    className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-muted-foreground hover:bg-muted/80"
+                    data-testid="chip-property-clear"
                   >
                     Clear
                   </button>
