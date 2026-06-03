@@ -735,6 +735,33 @@ export async function maybeAddToPropertyCollection(args: {
   return { collectionId, created: wasNew };
 }
 
+// One-shot backfill: ensure a "Property · <name>" folder exists for every
+// property that has images, and link ALL of that property's images into it.
+// Idempotent (ON CONFLICT DO NOTHING) so it's safe to re-run.
+export async function backfillAllPropertyCollections(userId?: string): Promise<{ properties: number; linked: number }> {
+  const props = await pool.query<{ property_id: string }>(
+    `SELECT DISTINCT property_id FROM image_studio_images WHERE property_id IS NOT NULL AND property_id <> ''`,
+  );
+  let linked = 0;
+  for (const row of props.rows) {
+    const pid = row.property_id;
+    try {
+      const collectionId = await ensurePropertyCollection({ propertyId: pid, userId });
+      if (!collectionId) continue;
+      const r = await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id)
+         SELECT $1, id FROM image_studio_images WHERE property_id = $2
+         ON CONFLICT DO NOTHING`,
+        [collectionId, pid],
+      );
+      linked += r.rowCount ?? 0;
+    } catch (e: any) {
+      console.warn(`[image-studio] property-collection backfill failed for ${pid}:`, e?.message);
+    }
+  }
+  return { properties: props.rows.length, linked };
+}
+
 // Wrapper: when an image is saved with companyId set, ensure the brand
 // folder exists (only once the company has 2+ images — single-logo
 // companies don't need a folder yet) and add this image to it.
@@ -2775,9 +2802,35 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         }
       }
 
+      // Auto-file the assigned images into the property's umbrella folder.
+      try {
+        const collectionId = await ensurePropertyCollection({ propertyId, userId });
+        if (collectionId) {
+          await pool.query(
+            `INSERT INTO image_studio_collection_images (collection_id, image_id)
+             SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`,
+            [collectionId, ids],
+          );
+        }
+      } catch (colErr: any) {
+        console.warn("[bulk-assign-property] property-collection link failed:", colErr?.message);
+      }
+
       res.json({ success: true, updated: ids.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Backfill: create/refresh a "Property · <name>" folder for every property
+  // that has images, and link all their images. The "do the whole thing" button.
+  app.post("/api/image-studio/collections/rebuild-properties", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const result = await backfillAllPropertyCollections(userId);
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
     }
   });
 

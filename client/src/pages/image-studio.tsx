@@ -258,6 +258,12 @@ export default function ImageStudio() {
 
   // Collections state
   const [collectionsTab, setCollectionsTab] = useState<"grid" | "collections">("grid");
+  // Cap how many tiles render at once — without this the grid mounts all ~7k
+  // images and each fires a /thumb request, which hammers the browser. Reset
+  // whenever the filters change so a fresh filter starts from the top.
+  const [visibleCount, setVisibleCount] = useState(150);
+  const [rebuilding, setRebuilding] = useState(false);
+  useEffect(() => { setVisibleCount(150); }, [selectedCategory, propertyTypeFilter, areaFilter, propertyFilter, searchQuery]);
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
   const [newCollectionDesc, setNewCollectionDesc] = useState("");
@@ -1447,9 +1453,25 @@ export default function ImageStudio() {
                     <h3 className="text-lg font-semibold" data-testid="text-collections-title">Collections</h3>
                     <p className="text-sm text-muted-foreground">{collections.length} {collections.length === 1 ? "collection" : "collections"}</p>
                   </div>
-                  <Button size="sm" onClick={() => setCreateCollectionOpen(true)} data-testid="button-create-collection">
-                    <Plus className="h-4 w-4 mr-1" /> New Collection
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" disabled={rebuilding} data-testid="button-rebuild-property-folders"
+                      onClick={async () => {
+                        setRebuilding(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/collections/rebuild-properties", {});
+                          const d = await r.json();
+                          toast({ title: "Property folders rebuilt", description: `${d.properties} properties · ${d.linked?.toLocaleString?.() ?? d.linked} images filed.` });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+                        } catch (e: any) {
+                          toast({ title: "Rebuild failed", description: e?.message || "", variant: "destructive" });
+                        } finally { setRebuilding(false); }
+                      }}>
+                      {rebuilding ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />} Rebuild property folders
+                    </Button>
+                    <Button size="sm" onClick={() => setCreateCollectionOpen(true)} data-testid="button-create-collection">
+                      <Plus className="h-4 w-4 mr-1" /> New Collection
+                    </Button>
+                  </div>
                 </div>
                 {collectionsLoading ? (
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -1641,7 +1663,7 @@ export default function ImageStudio() {
               </div>
             ) : viewMode === "grid" ? (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {filteredImages.map((img) => (
+                {filteredImages.slice(0, visibleCount).map((img) => (
                   <ImageCard
                     key={img.id}
                     image={img}
@@ -1670,7 +1692,7 @@ export default function ImageStudio() {
               </div>
             ) : (
               <div className="space-y-1">
-                {filteredImages.map((img) => (
+                {filteredImages.slice(0, visibleCount).map((img) => (
                   <ImageListRow
                     key={img.id}
                     image={img}
@@ -1695,6 +1717,13 @@ export default function ImageStudio() {
                     crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
                   />
                 ))}
+              </div>
+            )}
+            {filteredImages.length > visibleCount && (
+              <div className="flex justify-center py-4">
+                <Button variant="outline" size="sm" onClick={() => setVisibleCount((v) => v + 200)} data-testid="button-load-more-images">
+                  Load more ({(filteredImages.length - visibleCount).toLocaleString()} more)
+                </Button>
               </div>
             )}
           </ScrollArea>
