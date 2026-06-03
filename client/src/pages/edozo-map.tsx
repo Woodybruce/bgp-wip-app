@@ -3519,14 +3519,26 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [annotations, setAnnotations] = useState<any[]>([]);
   const annotationsLayerRef = useRef<L.LayerGroup | null>(null);
-  const [annotateMode, setAnnotateMode] = useState<null | "pin" | "label">(null);
+  type AnnotMode = null | "pin" | "label" | "polygon" | "drive_time";
+  const [annotateMode, setAnnotateMode] = useState<AnnotMode>(null);
   const [annotateColor, setAnnotateColor] = useState<string>("#ef4444");
-  const annotateModeRef = useRef<{ mode: null | "pin" | "label"; color: string }>({ mode: null, color: "#ef4444" });
+  const annotateModeRef = useRef<{ mode: AnnotMode; color: string }>({ mode: null, color: "#ef4444" });
   useEffect(() => { annotateModeRef.current = { mode: annotateMode, color: annotateColor }; }, [annotateMode, annotateColor]);
+  // In-progress polygon vertices + drive-time waypoint. Cleared when
+  // mode changes or the user double-clicks to finalise.
+  const polygonPointsRef = useRef<L.LatLng[]>([]);
+  const polygonGhostRef = useRef<L.Polyline | null>(null);
+  const driveOriginRef = useRef<L.LatLng | null>(null);
+  const driveOriginMarkerRef = useRef<L.CircleMarker | null>(null);
 
   const [postcodeQuery, setPostcodeQuery] = useState("");
   const [postcodeBoundary, setPostcodeBoundary] = useState<any>(null);
   const postcodeLayerRef = useRef<L.LayerGroup | null>(null);
+
+  // HMLR title polygons overlay — fetched per viewport.
+  const [showHmlrTitles, setShowHmlrTitles] = useState(false);
+  const [hmlrPolygons, setHmlrPolygons] = useState<any>(null);
+  const hmlrLayerRef = useRef<L.LayerGroup | null>(null);
 
   // ── Street View on-click ───────────────────────────────────────────────────
   // When toggled on, clicking the map opens an embedded Google Street View
@@ -4462,7 +4474,23 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   }, []);
   useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
 
-  // Bind a click handler for "drop a pin / label" when annotateMode is set.
+  // Reset in-progress polygon / drive-time when mode changes.
+  useEffect(() => {
+    polygonPointsRef.current = [];
+    if (polygonGhostRef.current && mapRef.current) {
+      mapRef.current.removeLayer(polygonGhostRef.current);
+      polygonGhostRef.current = null;
+    }
+    driveOriginRef.current = null;
+    if (driveOriginMarkerRef.current && mapRef.current) {
+      mapRef.current.removeLayer(driveOriginMarkerRef.current);
+      driveOriginMarkerRef.current = null;
+    }
+  }, [annotateMode]);
+
+  // Bind click handlers for every annotate mode. Pin/label = single
+  // click. Polygon = multiple clicks + double-click to finish. Drive
+  // time = two clicks (origin, destination).
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -4472,32 +4500,115 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       return;
     }
     container.style.cursor = "crosshair";
+
     const handler = async (e: L.LeafletMouseEvent) => {
       const { mode, color } = annotateModeRef.current;
       if (!mode) return;
       const { lat, lng } = e.latlng;
-      let label: string | null = null;
-      if (mode === "label") {
-        label = window.prompt("Label text:") || null;
-        if (!label) return;
-      } else {
-        label = window.prompt("Note for this pin (optional):") || null;
-      }
-      try {
+
+      if (mode === "pin" || mode === "label") {
+        let label: string | null = null;
+        if (mode === "label") {
+          label = window.prompt("Label text:") || null;
+          if (!label) return;
+        } else {
+          label = window.prompt("Note for this pin (optional):") || null;
+        }
         const resp = await fetch("/api/map-annotations", {
-          method: "POST",
-          credentials: "include",
+          method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind: mode, label, color, lat, lng }),
         });
-        if (resp.ok) {
-          await loadAnnotations();
-          setAnnotateMode(null);                          // one-shot — back to browse mode
+        if (resp.ok) { await loadAnnotations(); setAnnotateMode(null); }
+        return;
+      }
+
+      if (mode === "polygon") {
+        polygonPointsRef.current.push(e.latlng);
+        if (polygonGhostRef.current) map.removeLayer(polygonGhostRef.current);
+        polygonGhostRef.current = L.polyline(polygonPointsRef.current, {
+          color, weight: 3, dashArray: "6 4", opacity: 0.9,
+        }).addTo(map);
+        return;
+      }
+
+      if (mode === "drive_time") {
+        if (!driveOriginRef.current) {
+          driveOriginRef.current = e.latlng;
+          driveOriginMarkerRef.current = L.circleMarker(e.latlng, {
+            radius: 7, fillColor: color, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
+          }).addTo(map);
+          return;
         }
-      } catch {}
+        // Second click → request directions
+        const origin = driveOriginRef.current;
+        const destination = e.latlng;
+        if (driveOriginMarkerRef.current) map.removeLayer(driveOriginMarkerRef.current);
+        driveOriginRef.current = null;
+        driveOriginMarkerRef.current = null;
+        try {
+          const r = await fetch("/api/maps/directions", {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ origin: { lat: origin.lat, lng: origin.lng }, destination: { lat: destination.lat, lng: destination.lng } }),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.polyline) {
+            window.alert(`Directions failed: ${data?.error || r.status}`);
+            return;
+          }
+          // Save the drive-time as a polygon annotation with geometry
+          // = the decoded polyline (LineString GeoJSON), label = duration.
+          const coords = decodeGooglePolyline(data.polyline);
+          const geometry = {
+            type: "LineString",
+            coordinates: coords.map((p) => [p[1], p[0]]),     // [lng,lat]
+          };
+          const label = `${data.durationText || "?"} · ${data.distanceText || ""}`.trim();
+          const resp = await fetch("/api/map-annotations", {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "drive_time", label, color, lat: origin.lat, lng: origin.lng, geometry }),
+          });
+          if (resp.ok) { await loadAnnotations(); setAnnotateMode(null); }
+        } catch (err: any) {
+          window.alert(`Couldn't fetch route: ${err?.message}`);
+        }
+      }
     };
+
+    const dblHandler = async () => {
+      const { color } = annotateModeRef.current;
+      if (annotateModeRef.current.mode !== "polygon") return;
+      const pts = polygonPointsRef.current;
+      if (pts.length < 3) {
+        window.alert("Click at least 3 points before double-clicking to close the shape.");
+        return;
+      }
+      const geometry = {
+        type: "Polygon",
+        coordinates: [[...pts, pts[0]].map((p) => [p.lng, p.lat])],
+      };
+      const label = window.prompt("Name this redline (optional):") || null;
+      const resp = await fetch("/api/map-annotations", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "polygon", label, color, lat: pts[0].lat, lng: pts[0].lng, geometry }),
+      });
+      if (resp.ok) { await loadAnnotations(); setAnnotateMode(null); }
+    };
+
     map.on("click", handler);
-    return () => { map.off("click", handler); container.style.cursor = ""; };
+    map.on("dblclick", dblHandler);
+    // Disable Leaflet's default double-click-to-zoom while in polygon
+    // mode so it doesn't fight the finish gesture.
+    if (annotateMode === "polygon") map.doubleClickZoom.disable();
+    return () => {
+      map.off("click", handler);
+      map.off("dblclick", dblHandler);
+      map.doubleClickZoom.enable();
+      container.style.cursor = "";
+    };
   }, [annotateMode, loadAnnotations]);
 
   // Render annotations whenever the list or visibility changes.
@@ -4547,9 +4658,103 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
           }
         });
         layer.addLayer(marker);
+      } else if (a.kind === "polygon" && a.geometry?.type === "Polygon") {
+        const poly = L.geoJSON(a.geometry, {
+          style: { color, weight: 3, fillColor: color, fillOpacity: 0.18 },
+        } as any);
+        const safeLabel = (a.label || "Redline").replace(/</g, "&lt;");
+        const popup = `<div style="min-width:160px"><div style="font-weight:600;margin-bottom:4px">${safeLabel}</div><button id="del-${a.id}" style="font-size:11px;color:#dc2626;text-decoration:underline;cursor:pointer;background:none;border:0;padding:0">Delete redline</button></div>`;
+        poly.bindPopup(popup);
+        poly.on("popupopen", () => {
+          const btn = document.getElementById(`del-${a.id}`);
+          if (btn) btn.onclick = async () => {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            map.closePopup();
+            loadAnnotations();
+          };
+        });
+        layer.addLayer(poly);
+      } else if (a.kind === "drive_time" && a.geometry?.type === "LineString") {
+        const line = L.geoJSON(a.geometry, {
+          style: { color, weight: 4, opacity: 0.85 },
+        } as any);
+        const safeLabel = (a.label || "Drive time").replace(/</g, "&lt;");
+        const popup = `<div style="min-width:160px"><div style="font-weight:600;margin-bottom:4px">${safeLabel}</div><button id="del-${a.id}" style="font-size:11px;color:#dc2626;text-decoration:underline;cursor:pointer;background:none;border:0;padding:0">Delete route</button></div>`;
+        line.bindPopup(popup);
+        line.on("popupopen", () => {
+          const btn = document.getElementById(`del-${a.id}`);
+          if (btn) btn.onclick = async () => {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            map.closePopup();
+            loadAnnotations();
+          };
+        });
+        layer.addLayer(line);
+        // Duration label at the midpoint
+        const coords = a.geometry.coordinates as [number, number][];
+        if (coords.length > 1) {
+          const mid = coords[Math.floor(coords.length / 2)];
+          const icon = L.divIcon({
+            className: "",
+            html: `<div style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.2);transform:translate(-50%,-50%);">${safeLabel}</div>`,
+          });
+          layer.addLayer(L.marker([mid[1], mid[0]], { icon }));
+        }
       }
     }
   }, [annotations, showAnnotations, loadAnnotations]);
+
+  // ── HMLR title polygons overlay ─────────────────────────────────────────
+  // Fetches polygons in the current viewport when the layer is on; debounced
+  // so panning around doesn't hammer Postgres. Server caps at 500 polygons
+  // and returns nothing if the bbox is too wide (zoom-in nudge).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!showHmlrTitles) {
+      if (hmlrLayerRef.current) {
+        map.removeLayer(hmlrLayerRef.current);
+        hmlrLayerRef.current = null;
+      }
+      setHmlrPolygons(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchForBounds = async () => {
+      const b = map.getBounds();
+      try {
+        const url = `/api/hmlr-polygons-in-bbox?n=${b.getNorth()}&s=${b.getSouth()}&e=${b.getEast()}&w=${b.getWest()}`;
+        const r = await fetch(url, { credentials: "include" });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!cancelled) setHmlrPolygons(data);
+      } catch {}
+    };
+    fetchForBounds();
+    const onMove = () => { window.clearTimeout((map as any)._hmlrDebounce); (map as any)._hmlrDebounce = window.setTimeout(fetchForBounds, 600); };
+    map.on("moveend", onMove);
+    return () => { cancelled = true; map.off("moveend", onMove); };
+  }, [showHmlrTitles]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (hmlrLayerRef.current) {
+      map.removeLayer(hmlrLayerRef.current);
+      hmlrLayerRef.current = null;
+    }
+    if (!showHmlrTitles || !hmlrPolygons?.features?.length) return;
+    const group = L.layerGroup().addTo(map);
+    const gj = L.geoJSON(hmlrPolygons, {
+      style: { color: "#1e40af", weight: 1.5, fillColor: "#3b82f6", fillOpacity: 0.08 },
+      onEachFeature: (feat: any, lyr: any) => {
+        const title = feat?.properties?.titleNumber || "Title";
+        lyr.bindPopup(`<div style="font-weight:600">${title}</div><div style="font-size:11px;color:#6b7280">Region: ${feat?.properties?.region || "—"}</div>`);
+      },
+    } as any);
+    group.addLayer(gj);
+    hmlrLayerRef.current = group;
+  }, [hmlrPolygons, showHmlrTitles]);
 
   // ── Postcode boundary highlight ────────────────────────────────────────
   // Type a postcode → red rectangle on the map. Calls postcodes.io via
@@ -4579,6 +4784,24 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       { padding: [40, 40], duration: 0.8 } as any,
     );
   }, [postcodeBoundary]);
+
+  // Decode a Google Maps "overview_polyline" string into [lat,lng] pairs.
+  // Pure-JS implementation of the algorithm from Google's docs — no
+  // external dependency.
+  function decodeGooglePolyline(str: string): [number, number][] {
+    const out: [number, number][] = [];
+    let lat = 0, lng = 0, i = 0;
+    while (i < str.length) {
+      let b: number, shift = 0, result = 0;
+      do { b = str.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+      shift = 0; result = 0;
+      do { b = str.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+      out.push([lat * 1e-5, lng * 1e-5]);
+    }
+    return out;
+  }
 
   const highlightPostcode = useCallback(async () => {
     const q = postcodeQuery.trim();
@@ -5607,6 +5830,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               { key: "oss",    label: mapZoom < 14 && showOSSites ? "Named Sites (zoom 14+)" : "Named Sites", count: 0, dot: "#15616D", on: showOSSites,     set: setShowOSSites },
               { key: "tp",     label: "Tenancy Plans",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
               { key: "annot",  label: "Annotations",     count: annotations.length, dot: "#a855f7", on: showAnnotations, set: setShowAnnotations },
+              { key: "hmlr",   label: "HMLR Titles",     count: hmlrPolygons?.features?.length ?? 0, dot: "#1e40af", on: showHmlrTitles, set: setShowHmlrTitles },
             ].map((row) => (
               <button
                 key={row.key}
@@ -5714,9 +5938,29 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
             >
               {annotateMode === "label" ? "Click map to place…" : "Add label"}
             </button>
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "polygon" ? null : "polygon")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "polygon" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-polygon"
+            >
+              {annotateMode === "polygon" ? "Click vertices · dbl-click to close" : "Redline area"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "drive_time" ? null : "drive_time")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "drive_time" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-drive-time"
+            >
+              {annotateMode === "drive_time" ? (driveOriginRef.current ? "Click destination…" : "Click origin…") : "Drive time"}
+            </button>
           </div>
           <p className="text-[10px] text-gray-500 leading-snug">
-            Tap a pin or label on the map to delete it. Saved per user.
+            Tap any annotation on the map to delete it. Saved per user.
           </p>
         </div>
 

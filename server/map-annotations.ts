@@ -9,6 +9,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { isHmlrPolygonsAvailable } from "./hmlr-direct";
 
 interface AnnotationRow {
   id: string;
@@ -130,6 +131,97 @@ export function registerMapAnnotationsRoutes(app: Express) {
         },
       };
       res.json({ postcode: raw, lat, lng, north, south, east, west, geojson, isOutcode });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // HMLR title polygons in the current viewport. Returns a GeoJSON
+  // FeatureCollection so the map can render freehold / leasehold
+  // boundaries as an overlay layer. Capped at 500 polygons to keep
+  // rendering snappy when the user is zoomed out.
+  app.get("/api/hmlr-polygons-in-bbox", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!(await isHmlrPolygonsAvailable())) {
+        return res.json({ type: "FeatureCollection", features: [], available: false });
+      }
+      const north = Number(req.query.n);
+      const south = Number(req.query.s);
+      const east = Number(req.query.e);
+      const west = Number(req.query.w);
+      if (![north, south, east, west].every(Number.isFinite)) {
+        return res.status(400).json({ error: "Need n,s,e,w as numbers" });
+      }
+      // Bail on huge bboxes — at country level we'd return millions of
+      // polygons. Only render at street / area zoom.
+      const areaApprox = Math.abs((north - south) * (east - west));
+      if (areaApprox > 0.05) {
+        return res.json({ type: "FeatureCollection", features: [], reason: "Zoom in further to load title polygons" });
+      }
+      const r = await pool.query<any>(
+        `SELECT title_number, region, ST_AsGeoJSON(polygon) AS gj
+           FROM hmlr_title_polygons
+          WHERE polygon && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+          LIMIT 500`,
+        [west, south, east, north],
+      );
+      const features = r.rows.map((row) => {
+        // Tenure isn't on the polygon row directly — we colour by region
+        // for now and let the client click-through for full proprietor
+        // detail. The freehold/leasehold split comes from joining the
+        // CCOD/OCOD proprietor data which is heavier; defer to detail.
+        let geom: any = null;
+        try { geom = JSON.parse(row.gj); } catch {}
+        return {
+          type: "Feature",
+          properties: { titleNumber: row.title_number, region: row.region },
+          geometry: geom,
+        };
+      }).filter((f) => f.geometry);
+      res.json({ type: "FeatureCollection", features });
+    } catch (e: any) {
+      console.error("[hmlr-polygons-in-bbox]", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Drive-time + distance between two points via Google Directions API.
+  // The client draws the returned polyline as a coloured line with the
+  // duration label. driving mode is default; mode can be transit/walking.
+  app.post("/api/maps/directions", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+      if (!apiKey) return res.status(503).json({ error: "GOOGLE_API_KEY not configured" });
+      const origin = req.body?.origin;
+      const destination = req.body?.destination;
+      if (!origin?.lat || !origin?.lng || !destination?.lat || !destination?.lng) {
+        return res.status(400).json({ error: "origin and destination need {lat,lng}" });
+      }
+      const mode = ["driving", "walking", "bicycling", "transit"].includes(req.body?.mode)
+        ? req.body.mode : "driving";
+      const url = `https://maps.googleapis.com/maps/api/directions/json`
+        + `?origin=${origin.lat},${origin.lng}`
+        + `&destination=${destination.lat},${destination.lng}`
+        + `&mode=${mode}`
+        + `&key=${apiKey}`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      const data: any = await r.json();
+      if (data?.status !== "OK" || !data.routes?.[0]) {
+        return res.status(400).json({ error: data?.error_message || data?.status || "No route" });
+      }
+      const route = data.routes[0];
+      const leg = route.legs?.[0] || {};
+      res.json({
+        polyline: route.overview_polyline?.points || "",
+        durationText: leg.duration?.text || null,
+        durationSeconds: leg.duration?.value || null,
+        distanceText: leg.distance?.text || null,
+        distanceMeters: leg.distance?.value || null,
+        startLabel: leg.start_address || null,
+        endLabel: leg.end_address || null,
+        bounds: route.bounds || null,
+        mode,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
