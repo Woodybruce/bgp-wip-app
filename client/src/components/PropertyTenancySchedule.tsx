@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
   Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon,
-  Eye, Filter
+  Eye, Filter, RefreshCw
 } from "lucide-react";
 
 // Compact retail-tuned set of use labels we want the team to land on across
@@ -747,6 +747,17 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
           </Button>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => resyncMutation.mutate()}
+            disabled={resyncMutation.isPending}
+            title="Re-link Letting Tracker + Tenancy rows by unit name and push the current canonical status onto both. One-tap fix for boards that have drifted out of sync."
+            data-testid="btn-resync-mirror"
+          >
+            {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync boards
           </Button>
           <Popover>
             <PopoverTrigger asChild>
