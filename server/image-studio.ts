@@ -2146,6 +2146,88 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // Batch AI-tag the uncategorised pile — processes a chunk per call (vision is
+  // slow), returns how many remain so the UI can loop. Shrinks the rubbish into
+  // real categories instead of deleting blind.
+  app.post("/api/image-studio/ai-tag-uncategorised", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 25, 1), 40);
+      const idRows = await pool.query<{ id: string }>(
+        `SELECT id FROM image_studio_images
+         WHERE (category IS NULL OR category = 'Uncategorised') AND local_path IS NOT NULL
+         ORDER BY created_at ASC LIMIT $1`, [limit]);
+      const { default: Anthropic } = await import("@anthropic-ai/sdk");
+      const anthropic = new Anthropic();
+      let processed = 0;
+      for (const { id } of idRows.rows) {
+        try {
+          const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+          if (!image) continue;
+          const buf = await readPersistedImage(image.localPath);
+          if (!buf) continue;
+          const response = await anthropic.messages.create({
+            model: "claude-sonnet-4-6", max_tokens: 500,
+            messages: [{ role: "user", content: [
+              { type: "image", source: { type: "base64", media_type: (image.mimeType || "image/jpeg") as any, data: buf.toString("base64") } },
+              { type: "text", text: `Analyze this image for a London commercial property agency (BGP). Return JSON only:\n{"description": "one sentence", "tags": ["tag1","tag2"], "category": "one of: Properties, Areas, Marketing, Events, Headshots, Floor Plans, Interiors, Exteriors, Street Views, Generated, Other", "area": "London area or null"}` },
+            ] }],
+          });
+          const text = response.content[0].type === "text" ? response.content[0].text : "";
+          const m = text.match(/\{[\s\S]*\}/);
+          if (!m) continue;
+          const ai = JSON.parse(m[0]);
+          await db.update(imageStudioImages).set({
+            description: ai.description || image.description,
+            tags: ai.tags || image.tags,
+            category: ai.category || image.category,
+            area: ai.area || image.area,
+          }).where(eq(imageStudioImages.id, id));
+          processed++;
+        } catch (e: any) { console.warn("[ai-tag-uncategorised] failed for", id, e?.message); }
+      }
+      const remRes = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM image_studio_images WHERE category IS NULL OR category = 'Uncategorised'`);
+      res.json({ processed, remaining: remRes.rows[0]?.n ?? 0 });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Dedupe: find exact-duplicate images (same byte hash) and delete all but the
+  // oldest of each. Only hashes within (file_size,width,height) collision groups
+  // so it doesn't read every file.
+  app.post("/api/image-studio/dedupe", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const crypto = await import("crypto");
+      const groups = await pool.query<{ ids: string[] }>(
+        `SELECT array_agg(id ORDER BY created_at ASC) AS ids
+         FROM image_studio_images
+         WHERE file_size IS NOT NULL AND file_size > 0
+         GROUP BY file_size, width, height HAVING COUNT(*) > 1`);
+      const toDelete: string[] = [];
+      for (const g of groups.rows) {
+        const byHash = new Map<string, string[]>();
+        for (const id of g.ids) {
+          const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+          const buf = img?.localPath ? await readPersistedImage(img.localPath) : null;
+          if (!buf) continue;
+          const h = crypto.createHash("sha256").update(buf).digest("hex");
+          const arr = byHash.get(h) || []; arr.push(id); byHash.set(h, arr);
+        }
+        for (const ids of byHash.values()) {
+          if (ids.length > 1) toDelete.push(...ids.slice(1)); // keep the oldest
+        }
+      }
+      if (toDelete.length > 0) {
+        await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [toDelete]);
+        await pool.query(`DELETE FROM property_imagery_assets WHERE image_studio_id = ANY($1::text[])`, [toDelete]).catch(() => {});
+        await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [toDelete]);
+      }
+      res.json({ success: true, duplicatesRemoved: toDelete.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   app.post("/api/image-studio/stock-search", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { query, page = 1 } = req.body;

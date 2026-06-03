@@ -263,6 +263,8 @@ export default function ImageStudio() {
   // whenever the filters change so a fresh filter starts from the top.
   const [visibleCount, setVisibleCount] = useState(150);
   const [rebuilding, setRebuilding] = useState(false);
+  const [aiTagging, setAiTagging] = useState(false);
+  const [deduping, setDeduping] = useState(false);
   useEffect(() => { setVisibleCount(150); }, [selectedCategory, propertyTypeFilter, areaFilter, propertyFilter, searchQuery]);
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
@@ -1453,7 +1455,37 @@ export default function ImageStudio() {
                     <h3 className="text-lg font-semibold" data-testid="text-collections-title">Collections</h3>
                     <p className="text-sm text-muted-foreground">{collections.length} {collections.length === 1 ? "collection" : "collections"}</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button size="sm" variant="outline" disabled={aiTagging} data-testid="button-ai-tag-uncategorised"
+                      onClick={async () => {
+                        setAiTagging(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised", { limit: 25 });
+                          const d = await r.json();
+                          toast({ title: `AI-tagged ${d.processed}`, description: `${d.remaining?.toLocaleString?.() ?? d.remaining} uncategorised left — click again to keep going.` });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+                        } catch (e: any) {
+                          toast({ title: "AI-tag failed", description: e?.message || "", variant: "destructive" });
+                        } finally { setAiTagging(false); }
+                      }}>
+                      {aiTagging ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />} AI-tag uncategorised
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={deduping} data-testid="button-dedupe"
+                      onClick={async () => {
+                        if (!confirm("Scan for exact-duplicate images and delete all but the oldest of each? This can't be undone.")) return;
+                        setDeduping(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/dedupe", {});
+                          const d = await r.json();
+                          toast({ title: "Dedupe complete", description: `${d.duplicatesRemoved?.toLocaleString?.() ?? d.duplicatesRemoved} duplicate(s) removed.` });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                        } catch (e: any) {
+                          toast({ title: "Dedupe failed", description: e?.message || "", variant: "destructive" });
+                        } finally { setDeduping(false); }
+                      }}>
+                      {deduping ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />} Dedupe
+                    </Button>
                     <Button size="sm" variant="outline" disabled={rebuilding} data-testid="button-rebuild-property-folders"
                       onClick={async () => {
                         setRebuilding(true);
