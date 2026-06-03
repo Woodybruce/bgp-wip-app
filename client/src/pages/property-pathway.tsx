@@ -1576,19 +1576,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         <ExcelModelCard runId={run.id} stage7={s7} stage6={s6} onReload={onReload} />
       )}
 
-      {/* Stage 8 — Image Studio */}
-      {s8 && (
-        <ImageStudioCard
-          runId={run.id}
-          stage8={s8}
-          onReload={onReload}
-          propertyId={run.propertyId || null}
-          runAddress={run.address || ""}
-          runPostcode={run.postcode || ""}
-          runLat={(run as any).lat ?? (run as any).latitude}
-          runLng={(run as any).lng ?? (run as any).longitude}
-        />
-      )}
+      {/* Stage 8 Image Studio card retired — imagery is managed inside Why Buy now
+          (Manage images button + the deck's inline image edit). */}
 
       {/* Comps — AI-matched from the board, editable, feed the Why Buy deck + chart */}
       {(s7 || s8 || s9) && (
@@ -2704,10 +2693,14 @@ function WhyBuyCompsCard({ runId, propertyId, whyBuyComps, onReload }: { runId: 
 }
 
 function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; stage9: any; onReload: () => void; propertyId: string | null }) {
+  const [manageOpen, setManageOpen] = useState(false);
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
         <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
+        <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setManageOpen(true)} title="Upload, AI-edit, delete and capture imagery for this property">
+          <ImageIcon className="w-3.5 h-3.5" /> Manage images
+        </Button>
       </CardHeader>
       <CardContent className="text-sm space-y-3">
         <p className="text-muted-foreground">In-app, Claude-designed pitch deck — generated from the agreed business plan + agreed Excel model. Iterate by prompt or click any image / headline to edit inline.</p>
@@ -2718,13 +2711,17 @@ function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; st
             <PropertyImageryPicker
               propertyId={propertyId}
               pathwayRunId={runId}
-              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card"]}
+              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "erv_walk", "covenant_card"]}
             />
           </div>
         )}
 
         <ClaudeDesignPane runId={runId} />
       </CardContent>
+
+      {manageOpen && (
+        <ImageStudioPicker runId={runId} onPick={() => setManageOpen(false)} onClose={() => setManageOpen(false)} />
+      )}
     </Card>
   );
 }
