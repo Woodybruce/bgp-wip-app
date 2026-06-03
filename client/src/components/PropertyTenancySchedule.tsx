@@ -637,7 +637,11 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
     }
     for (const [field, values] of Object.entries(colFilters)) {
       const raw = (u as any)[field];
-      const v = raw == null ? "" : String(raw);
+      // Normalise the SAME way the checkbox values are built (distinct uses
+      // String(raw).trim()) — otherwise a status like "Occupied " with stray
+      // whitespace never matches the ticked "Occupied" box and the filter
+      // silently hides everything.
+      const v = raw == null ? "" : String(raw).trim();
       if (!values.has(v)) return false;
     }
     return true;
