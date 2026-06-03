@@ -24,17 +24,99 @@ interface AnnotationRow {
 }
 
 export function registerMapAnnotationsRoutes(app: Express) {
-  // List all annotations visible to the caller. For now everyone sees
-  // everything — keeps the demo simple. Layer-per-user comes later.
-  app.get("/api/map-annotations", requireAuth, async (_req: Request, res: Response) => {
+  // ── Layers CRUD ────────────────────────────────────────────────────────
+  // List layers the caller can see — their own, plus anything marked
+  // shared_with_team. Includes annotation count for the sidebar.
+  app.get("/api/map-layers", requireAuth, async (req: Request, res: Response) => {
     try {
-      const r = await pool.query<AnnotationRow>(
-        `SELECT id, owner_id, kind, label, color, lat, lng, geometry, created_at
-         FROM map_annotations
-         ORDER BY created_at DESC
-         LIMIT 1000`,
+      const userId = (req.session as any)?.userId || null;
+      const r = await pool.query<any>(
+        `SELECT l.id, l.name, l.color, l.owner_id, l.shared_with_team, l.created_at,
+                (SELECT COUNT(*)::int FROM map_annotations a WHERE a.layer_id = l.id) AS annotation_count
+           FROM map_layers l
+          WHERE l.owner_id = $1 OR l.shared_with_team = TRUE
+          ORDER BY l.created_at DESC`,
+        [userId],
       );
       res.json(r.rows.map((row) => ({
+        id: row.id, name: row.name, color: row.color, ownerId: row.owner_id,
+        sharedWithTeam: row.shared_with_team, annotationCount: row.annotation_count,
+        createdAt: row.created_at, mine: row.owner_id === userId,
+      })));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  app.post("/api/map-layers", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId || null;
+      const name = String(req.body?.name || "").trim().slice(0, 120);
+      if (!name) return res.status(400).json({ error: "Name required" });
+      const color = req.body?.color ? String(req.body.color).slice(0, 32) : "#a855f7";
+      const sharedWithTeam = !!req.body?.sharedWithTeam;
+      const r = await pool.query<{ id: string }>(
+        `INSERT INTO map_layers (name, color, owner_id, shared_with_team)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [name, color, userId, sharedWithTeam],
+      );
+      res.json({ ok: true, id: r.rows[0].id });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  app.patch("/api/map-layers/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId || null;
+      const id = String(req.params.id);
+      // Only the owner can rename / re-colour / change share status. No
+      // admin override yet — simple ownership model.
+      const owned = await pool.query<{ owner_id: string }>(`SELECT owner_id FROM map_layers WHERE id = $1`, [id]);
+      if (!owned.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (owned.rows[0].owner_id !== userId) return res.status(403).json({ error: "Only the layer's owner can edit it" });
+      const patches: string[] = [];
+      const params: any[] = [];
+      if (typeof req.body?.name === "string") { patches.push(`name = $${params.length + 1}`); params.push(String(req.body.name).slice(0, 120)); }
+      if (typeof req.body?.color === "string") { patches.push(`color = $${params.length + 1}`); params.push(String(req.body.color).slice(0, 32)); }
+      if (typeof req.body?.sharedWithTeam === "boolean") { patches.push(`shared_with_team = $${params.length + 1}`); params.push(req.body.sharedWithTeam); }
+      if (patches.length === 0) return res.json({ ok: true });
+      params.push(id);
+      await pool.query(`UPDATE map_layers SET ${patches.join(", ")} WHERE id = $${params.length}`, params);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  app.delete("/api/map-layers/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId || null;
+      const id = String(req.params.id);
+      const owned = await pool.query<{ owner_id: string }>(`SELECT owner_id FROM map_layers WHERE id = $1`, [id]);
+      if (!owned.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (owned.rows[0].owner_id !== userId) return res.status(403).json({ error: "Only the layer's owner can delete it" });
+      // Cascade: delete every annotation tied to the layer.
+      await pool.query(`DELETE FROM map_annotations WHERE layer_id = $1`, [id]);
+      await pool.query(`DELETE FROM map_layers WHERE id = $1`, [id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // List annotations visible to the caller. Returns layer metadata so
+  // the client can colour-key by layer and toggle visibility per layer
+  // without a second round-trip.
+  app.get("/api/map-annotations", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const r = await pool.query<AnnotationRow & { layer_id: string | null }>(
+        `SELECT id, owner_id, kind, label, color, lat, lng, geometry, created_at, layer_id
+         FROM map_annotations
+         ORDER BY created_at DESC
+         LIMIT 2000`,
+      );
+      res.json(r.rows.map((row: any) => ({
         id: row.id,
         ownerId: row.owner_id,
         kind: row.kind,
@@ -43,6 +125,7 @@ export function registerMapAnnotationsRoutes(app: Express) {
         lat: row.lat,
         lng: row.lng,
         geometry: row.geometry,
+        layerId: row.layer_id,
         createdAt: row.created_at,
       })));
     } catch (e: any) {
@@ -62,10 +145,11 @@ export function registerMapAnnotationsRoutes(app: Express) {
       const lat = typeof req.body?.lat === "number" ? req.body.lat : null;
       const lng = typeof req.body?.lng === "number" ? req.body.lng : null;
       const geometry = req.body?.geometry || null;
+      const layerId = req.body?.layerId ? String(req.body.layerId) : null;
       const r = await pool.query<{ id: string }>(
-        `INSERT INTO map_annotations (owner_id, kind, label, color, lat, lng, geometry)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [ownerId, kind, label, color, lat, lng, geometry],
+        `INSERT INTO map_annotations (owner_id, kind, label, color, lat, lng, geometry, layer_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [ownerId, kind, label, color, lat, lng, geometry, layerId],
       );
       res.json({ ok: true, id: r.rows[0].id });
     } catch (e: any) {
@@ -158,23 +242,36 @@ export function registerMapAnnotationsRoutes(app: Express) {
       if (areaApprox > 0.05) {
         return res.json({ type: "FeatureCollection", features: [], reason: "Zoom in further to load title polygons" });
       }
+      // Pull polygons + LEFT JOIN proprietors to surface tenure for the
+      // freehold/leasehold colour split. Some polygons have no matching
+      // proprietor row (especially smaller estates) — those come back
+      // with tenure NULL and the client paints them grey.
       const r = await pool.query<any>(
-        `SELECT title_number, region, ST_AsGeoJSON(polygon) AS gj
-           FROM hmlr_title_polygons
-          WHERE polygon && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+        `SELECT p.title_number,
+                p.region,
+                ST_AsGeoJSON(p.polygon) AS gj,
+                (SELECT lower(pr.tenure)
+                   FROM hmlr_proprietors pr
+                  WHERE pr.title_number = p.title_number
+                  LIMIT 1) AS tenure
+           FROM hmlr_title_polygons p
+          WHERE p.polygon && ST_MakeEnvelope($1, $2, $3, $4, 4326)
           LIMIT 500`,
         [west, south, east, north],
       );
       const features = r.rows.map((row) => {
-        // Tenure isn't on the polygon row directly — we colour by region
-        // for now and let the client click-through for full proprietor
-        // detail. The freehold/leasehold split comes from joining the
-        // CCOD/OCOD proprietor data which is heavier; defer to detail.
         let geom: any = null;
         try { geom = JSON.parse(row.gj); } catch {}
+        // Normalise tenure — HMLR uses "Freehold" / "Leasehold" but
+        // the casing isn't always consistent. lower() above, then
+        // contains-check for safety.
+        const t = (row.tenure || "").toLowerCase();
+        let tenure: "freehold" | "leasehold" | "unknown" = "unknown";
+        if (t.includes("freehold")) tenure = "freehold";
+        else if (t.includes("leasehold")) tenure = "leasehold";
         return {
           type: "Feature",
-          properties: { titleNumber: row.title_number, region: row.region },
+          properties: { titleNumber: row.title_number, region: row.region, tenure },
           geometry: geom,
         };
       }).filter((f) => f.geometry);
