@@ -1590,6 +1590,11 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         />
       )}
 
+      {/* Comps — AI-matched from the board, editable, feed the Why Buy deck */}
+      {(s7 || s8 || s9) && (
+        <WhyBuyCompsCard runId={run.id} whyBuyComps={(run.stageResults as any)?.whyBuyComps} onReload={onReload} />
+      )}
+
       {/* Stage 9 — Why Buy */}
       {s9 && (
         <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} propertyId={run.propertyId || null} />
@@ -2516,6 +2521,154 @@ function RelatedLeaseAdvisoryMatters({ propertyId }: { propertyId: string }) {
           </a>
         ))}
       </CardContent>
+    </Card>
+  );
+}
+
+function WhyBuyCompsCard({ runId, whyBuyComps, onReload }: { runId: string; whyBuyComps: any; onReload: () => void }) {
+  const { toast } = useToast();
+  const [investment, setInvestment] = useState<any[]>(whyBuyComps?.investment || []);
+  const [leasing, setLeasing] = useState<any[]>(whyBuyComps?.leasing || []);
+  const [busy, setBusy] = useState<"match" | "save" | null>(null);
+  const [addFor, setAddFor] = useState<"investment" | "leasing" | null>(null);
+  const [board, setBoard] = useState<any[]>([]);
+  const [boardQ, setBoardQ] = useState("");
+  const [boardLoading, setBoardLoading] = useState(false);
+
+  useEffect(() => {
+    setInvestment(whyBuyComps?.investment || []);
+    setLeasing(whyBuyComps?.leasing || []);
+  }, [whyBuyComps]);
+
+  const match = async () => {
+    setBusy("match");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/comps/match`, { method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" } });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      setInvestment(data.investment || []);
+      setLeasing(data.leasing || []);
+      toast({ title: "Comps matched", description: `${(data.investment || []).length} investment, ${(data.leasing || []).length} leasing — review, edit, then Save.` });
+    } catch (e: any) { toast({ title: "Match failed", description: e?.message || "", variant: "destructive" }); }
+    finally { setBusy(null); }
+  };
+
+  const save = async () => {
+    setBusy("save");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/comps`, { method: "PATCH", headers: { ...getAuthHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ investment, leasing }) });
+      if (!r.ok) throw new Error(await r.text());
+      toast({ title: "Comps saved", description: "These now feed the Why Buy deck." });
+      onReload();
+    } catch (e: any) { toast({ title: "Save failed", description: e?.message || "", variant: "destructive" }); }
+    finally { setBusy(null); }
+  };
+
+  const openAdd = async (kind: "investment" | "leasing") => {
+    setAddFor(kind); setBoard([]); setBoardQ(""); setBoardLoading(true);
+    try {
+      const url = kind === "investment" ? "/api/investment-comps" : "/api/crm/comps";
+      const r = await fetch(url, { headers: getAuthHeaders(), credentials: "include" });
+      const data = await r.json();
+      setBoard(Array.isArray(data) ? data : (data.comps || data.rows || []));
+    } catch { setBoard([]); } finally { setBoardLoading(false); }
+  };
+
+  const addFromBoard = (row: any) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (addFor === "investment") {
+      setInvestment((p) => [...p, { id, kind: "investment", note: "", address: row.address || row.propertyName || "", price: row.price ? Number(row.price) : undefined, yield: row.capRate || row.cap_rate || undefined, date: row.transactionDate || row.transaction_date || "", type: row.subtype || "" }]);
+    } else {
+      const addr = typeof row.address === "object" ? [row.address?.line1, row.address?.postcode].filter(Boolean).join(", ") : row.address;
+      setLeasing((p) => [...p, { id, kind: "letting", note: "", address: addr || row.tenant || "", tenant: row.tenant || "", rent: row.headlineRent || row.headline_rent || row.zoneARate || row.zone_a_rate || "", area: row.areaSqft || row.area_sqft || "", date: row.completionDate || row.completion_date || "", type: row.compType || row.comp_type || "" }]);
+    }
+    setAddFor(null);
+  };
+
+  const upd = (kind: "investment" | "leasing", id: string, field: string, value: string) => {
+    const setter = kind === "investment" ? setInvestment : setLeasing;
+    setter((p) => p.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
+  };
+  const rm = (kind: "investment" | "leasing", id: string) => {
+    const setter = kind === "investment" ? setInvestment : setLeasing;
+    setter((p) => p.filter((c) => c.id !== id));
+  };
+
+  const renderList = (kind: "investment" | "leasing", list: any[]) => (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">{kind === "investment" ? "Investment (sales)" : "Leasing (rents)"} ({list.length})</p>
+        <Button size="sm" variant="ghost" className="h-6 text-[11px] gap-1" onClick={() => openAdd(kind)}><Plus className="w-3 h-3" />Add from board</Button>
+      </div>
+      {list.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground italic">None yet — hit AI match or add from the board.</p>
+      ) : list.map((c) => (
+        <div key={c.id} className="border rounded p-2 text-[11px] space-y-1 bg-muted/20">
+          <div className="flex items-center gap-1">
+            <input value={c.address || ""} onChange={(e) => upd(kind, c.id, "address", e.target.value)} className="flex-1 border rounded px-1.5 py-0.5 font-medium" placeholder="Address" />
+            <button onClick={() => rm(kind, c.id)} className="text-muted-foreground hover:text-destructive px-1" title="Remove">✕</button>
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            {kind === "investment" ? (<>
+              <input value={c.price ?? ""} onChange={(e) => upd(kind, c.id, "price", e.target.value)} className="border rounded px-1.5 py-0.5" placeholder="Price £" />
+              <input value={c.yield ?? ""} onChange={(e) => upd(kind, c.id, "yield", e.target.value)} className="border rounded px-1.5 py-0.5" placeholder="Yield %" />
+            </>) : (<>
+              <input value={c.rent ?? ""} onChange={(e) => upd(kind, c.id, "rent", e.target.value)} className="border rounded px-1.5 py-0.5" placeholder="Rent" />
+              <input value={c.area ?? ""} onChange={(e) => upd(kind, c.id, "area", e.target.value)} className="border rounded px-1.5 py-0.5" placeholder="Area sqft" />
+            </>)}
+            <input value={c.date ?? ""} onChange={(e) => upd(kind, c.id, "date", e.target.value)} className="border rounded px-1.5 py-0.5" placeholder="Date" />
+            <input value={(kind === "leasing" ? c.tenant : c.type) ?? ""} onChange={(e) => upd(kind, c.id, kind === "leasing" ? "tenant" : "type", e.target.value)} className="border rounded px-1.5 py-0.5" placeholder={kind === "leasing" ? "Tenant" : "Type"} />
+          </div>
+          <input value={c.note || ""} onChange={(e) => upd(kind, c.id, "note", e.target.value)} className="w-full border rounded px-1.5 py-0.5 text-muted-foreground" placeholder="Why relevant (note)" />
+        </div>
+      ))}
+    </div>
+  );
+
+  const boardFiltered = board.filter((row: any) => !boardQ.trim() || JSON.stringify(row).toLowerCase().includes(boardQ.toLowerCase())).slice(0, 30);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardTitle className="text-base flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" /> Comps</CardTitle>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={match} disabled={busy !== null} className="gap-1.5">
+            {busy === "match" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} AI match
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy !== null} className="gap-1.5">
+            {busy === "save" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm space-y-3">
+        <p className="text-[11px] text-muted-foreground">AI-matched from the comps board. Edit figures, remove, or add more — these feed the Why Buy deck. Hit <strong>Save</strong> when done.</p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {renderList("investment", investment)}
+          {renderList("leasing", leasing)}
+        </div>
+      </CardContent>
+
+      {addFor && (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4" onClick={() => setAddFor(null)}>
+          <div className="bg-background rounded-lg shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="p-3 border-b flex items-center justify-between">
+              <h4 className="text-sm font-semibold">Add {addFor === "investment" ? "investment" : "leasing"} comp from board</h4>
+              <button onClick={() => setAddFor(null)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+            </div>
+            <div className="p-3 border-b">
+              <Input value={boardQ} onChange={(e) => setBoardQ(e.target.value)} placeholder="Search the comps board…" />
+            </div>
+            <div className="p-2 overflow-y-auto flex-1">
+              {boardLoading ? <p className="text-xs text-muted-foreground p-3">Loading…</p> : boardFiltered.length === 0 ? <p className="text-xs text-muted-foreground p-3">No matches.</p> : boardFiltered.map((row: any, i: number) => {
+                const label = addFor === "investment"
+                  ? `${row.address || row.propertyName || "?"}${row.price ? ` — £${row.price}` : ""}${(row.transactionDate || row.transaction_date) ? ` — ${row.transactionDate || row.transaction_date}` : ""}`
+                  : `${(typeof row.address === "object" ? [row.address?.line1, row.address?.postcode].filter(Boolean).join(", ") : row.address) || row.tenant || "?"}${row.tenant ? ` — ${row.tenant}` : ""}${(row.headlineRent || row.headline_rent) ? ` — ${row.headlineRent || row.headline_rent}` : ""}`;
+                return <button key={row.id || i} onClick={() => addFromBoard(row)} className="w-full text-left text-[11px] p-2 hover:bg-muted/50 rounded border-b last:border-b-0">{label}</button>;
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

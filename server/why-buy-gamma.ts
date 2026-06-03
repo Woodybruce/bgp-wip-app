@@ -94,7 +94,13 @@ export async function buildBrief(runId: string): Promise<{ brief: string; title:
   const tenancy = s1.tenancy || {};
   const units: any[] = Array.isArray(tenancy.units) ? tenancy.units : [];
   const mainTenants: string[] = Array.isArray(aiFacts.mainTenants) ? aiFacts.mainTenants : [];
-  const comps: any[] = Array.isArray(r.marketIntel?.comparables) ? r.marketIntel.comparables
+  // Prefer the user-curated, AI-matched comps (whyBuyComps) when present.
+  const curated: any = (r as any).whyBuyComps;
+  const curatedInv: any[] = Array.isArray(curated?.investment) ? curated.investment : [];
+  const curatedLease: any[] = Array.isArray(curated?.leasing) ? curated.leasing : [];
+  const hasCurated = curatedInv.length > 0 || curatedLease.length > 0;
+  const comps: any[] = hasCurated ? [...curatedInv, ...curatedLease]
+    : Array.isArray(r.marketIntel?.comparables) ? r.marketIntel.comparables
     : Array.isArray(s4?.comparables) ? s4.comparables : [];
 
   const irr = modelOutputs.unleveredIRR ?? modelOutputs.irr;
@@ -175,8 +181,24 @@ export async function buildBrief(runId: string): Promise<{ brief: string; title:
     lines.push("");
   }
 
-  // Market / Comps
-  if (comps.length) {
+  // Market / Comps — prefer the user-curated, AI-matched set (split by type).
+  if (hasCurated) {
+    lines.push(`## Market Comparables`);
+    if (curatedInv.length) {
+      lines.push(`### Investment comparables`);
+      lines.push(`| Address | Price | Yield | Date | Why relevant |`);
+      lines.push(`|---|---|---|---|---|`);
+      for (const c of curatedInv.slice(0, 8)) lines.push(`| ${c.address || "—"} | ${c.price ? `£${c.price}` : "—"} | ${c.yield || "—"} | ${c.date || "—"} | ${c.note || ""} |`);
+      lines.push("");
+    }
+    if (curatedLease.length) {
+      lines.push(`### Leasing comparables`);
+      lines.push(`| Address | Tenant | Rent | Area | Date | Why relevant |`);
+      lines.push(`|---|---|---|---|---|---|`);
+      for (const c of curatedLease.slice(0, 8)) lines.push(`| ${c.address || "—"} | ${c.tenant || "—"} | ${c.rent || "—"} | ${c.area || "—"} | ${c.date || "—"} | ${c.note || ""} |`);
+      lines.push("");
+    }
+  } else if (comps.length) {
     lines.push(`## Market Comparables`);
     lines.push(`| Address | Tenant | Rent | Area | Date |`);
     lines.push(`|---|---|---|---|---|`);
