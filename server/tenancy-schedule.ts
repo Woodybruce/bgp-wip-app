@@ -1345,6 +1345,31 @@ router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAut
   }
 });
 
+// Re-sync the status mirror for every tenancy unit on a property. Runs
+// fanOutTenancyStatus per row, which (a) name-links any pre-existing
+// Letting Tracker / leasing rows that were never connected and (b)
+// pushes the current canonical status onto both projections. One-tap fix
+// for properties whose boards drifted out of sync (e.g. Bluewater after
+// the status-vocab fix). Idempotent + best-effort per row.
+router.post("/api/properties/:propertyId/resync-mirror", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId } = req.params;
+    const rows = await pool.query(
+      `SELECT id FROM tenancy_schedule_units WHERE property_id = $1`,
+      [propertyId]
+    );
+    let synced = 0;
+    for (const row of rows.rows) {
+      try { await fanOutTenancyStatus(pool, row.id); synced++; } catch {}
+    }
+    res.json({ ok: true, synced, total: rows.rows.length });
+  } catch (e: any) {
+    console.error("[resync-mirror]", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Re-point tenant FKs after a brand merge. When a brand is merged
 // into another (crm_companies.merged_into_id set), every tenancy /
 // leasing / available row that still points at the merged-away

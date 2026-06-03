@@ -21,29 +21,44 @@ export type TenancyStatus =
 
 // Deal status codes from shared/deal-status.ts — kept as plain strings so
 // this module doesn't drag the deal enum into the server graph.
+//
+// IMPORTANT: this MUST cover the full canonical vocab the unified schedule
+// emits (SCHEDULE_STATUSES in PropertyTenancySchedule.tsx) PLUS the legacy
+// values that live in imported data ("Held", "Marketing"). Anything the
+// switch doesn't recognise returns null and the fan-out silently no-ops —
+// which is exactly the bug that left Bluewater's Letting Tracker / leasing
+// lens unlinked when units were set to "In Negotiation" / "Trading" / "Held".
 function mapTenancyToMarketingStatus(s: string | null | undefined): string | null {
   switch ((s || "").trim()) {
-    case "Vacant":      return "AVA";
-    case "Marketing":   return "AVA";
-    case "Under Offer": return "SOL";
-    case "Occupied":    return "COM";
-    case "Archived":    return "WIT";
-    default:            return null; // unknown → don't touch
+    case "Vacant":          return "AVA";
+    case "Marketing":       return "AVA";
+    case "In Negotiation":  return "NEG";
+    case "Held":            return "NEG";   // reserved / under negotiation
+    case "Under Offer":     return "SOL";
+    case "Occupied":        return "COM";
+    case "Trading":         return "COM";   // occupied and trading
+    case "Lease Event":     return "COM";   // let — has an upcoming lease event
+    case "Archived":        return "WIT";
+    default:                return null;     // genuinely unknown → don't touch
   }
 }
 
 function mapTenancyToLeasingStatus(s: string | null | undefined): string | null {
   switch ((s || "").trim()) {
-    case "Vacant":      return "Vacant";
-    case "Marketing":   return "Marketing";
-    case "Under Offer": return "Under Offer";
-    // Occupied stays "Occupied" on the leasing schedule — it's the
-    // Landsec rent roll, not a marketing board. The previous mapping
-    // ("Archived") was clobbering the 4-way mirror on every COM
+    case "Vacant":          return "Vacant";
+    case "Marketing":       return "Marketing";
+    case "In Negotiation":  return "In Negotiation";
+    case "Held":            return "In Negotiation";
+    case "Under Offer":     return "Under Offer";
+    // Occupied / Trading / Lease Event all stay on the leasing schedule —
+    // it's the Landsec rent roll, not a marketing board. Mapping these to
+    // "Archived" previously clobbered the 4-way mirror on every COM
     // transition, making just-completed deals vanish off the schedule.
-    case "Occupied":    return "Occupied";
-    case "Archived":    return "Archived";
-    default:            return null;
+    case "Occupied":        return "Occupied";
+    case "Trading":         return "Occupied";
+    case "Lease Event":     return "Occupied";
+    case "Archived":        return "Archived";
+    default:                return null;
   }
 }
 
@@ -88,6 +103,30 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
     // partial data entry) get left alone — better silence than wrong
     // boards lighting up.
     if (!marketingStatus || !leasingStatus) return;
+
+    // Adopt pre-existing projection rows that match this unit by name but
+    // were never linked (imported separately, created before the mirror
+    // existed). Without this the fan-out below can't see them and would
+    // spawn a DUPLICATE letting-tracker / leasing row on every status
+    // edit — exactly the "no linkage" symptom on Bluewater. Idempotent:
+    // once linked, the WHERE clause stops matching.
+    const unitNorm = (t.unit_number || "").trim().toLowerCase();
+    if (unitNorm) {
+      await Promise.all([
+        pool.query(
+          `UPDATE available_units SET tenancy_unit_id = $1
+            WHERE property_id = $2 AND tenancy_unit_id IS NULL
+              AND lower(trim(coalesce(unit_name, ''))) = $3`,
+          [tenancyId, t.property_id, unitNorm]
+        ),
+        pool.query(
+          `UPDATE leasing_schedule_units SET tenancy_unit_id = $1
+            WHERE property_id = $2 AND tenancy_unit_id IS NULL
+              AND lower(trim(coalesce(unit_name, ''))) = $3`,
+          [tenancyId, t.property_id, unitNorm]
+        ),
+      ]).catch((e: any) => console.warn("[unit-mirror] name-link failed:", e?.message));
+    }
 
     // available_units: upsert keyed by tenancy_unit_id. Only updates the
     // marketing status field — never touches viewings, agent assignment,
