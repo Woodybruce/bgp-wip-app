@@ -264,7 +264,10 @@ export default function ImageStudio() {
   const [visibleCount, setVisibleCount] = useState(150);
   const [rebuilding, setRebuilding] = useState(false);
   const [aiTagging, setAiTagging] = useState(false);
+  const [aiTagProgress, setAiTagProgress] = useState<{ done: number; remaining: number } | null>(null);
+  const aiAutoRef = useRef(false);
   const [deduping, setDeduping] = useState(false);
+  const [nearDeduping, setNearDeduping] = useState(false);
   useEffect(() => { setVisibleCount(150); }, [selectedCategory, propertyTypeFilter, areaFilter, propertyFilter, searchQuery]);
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
@@ -1456,20 +1459,43 @@ export default function ImageStudio() {
                     <p className="text-sm text-muted-foreground">{collections.length} {collections.length === 1 ? "collection" : "collections"}</p>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Button size="sm" variant="outline" disabled={aiTagging} data-testid="button-ai-tag-uncategorised"
+                    <Button size="sm" variant="outline" data-testid="button-ai-tag-uncategorised"
                       onClick={async () => {
-                        setAiTagging(true);
+                        if (aiTagging) { aiAutoRef.current = false; return; } // clicking again stops the loop
+                        aiAutoRef.current = true; setAiTagging(true); let done = 0;
                         try {
-                          const r = await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised", { limit: 25 });
-                          const d = await r.json();
-                          toast({ title: `AI-tagged ${d.processed}`, description: `${d.remaining?.toLocaleString?.() ?? d.remaining} uncategorised left — click again to keep going.` });
+                          while (aiAutoRef.current) {
+                            const r = await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised", { limit: 25 });
+                            const d = await r.json();
+                            done += d.processed || 0;
+                            setAiTagProgress({ done, remaining: d.remaining ?? 0 });
+                            queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+                            if (!d.processed || (d.remaining ?? 0) <= 0) break; // done (or nothing left to do)
+                          }
                           queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
-                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+                          toast({ title: "AI-tagging finished", description: `${done.toLocaleString()} image(s) tagged.` });
                         } catch (e: any) {
-                          toast({ title: "AI-tag failed", description: e?.message || "", variant: "destructive" });
-                        } finally { setAiTagging(false); }
+                          toast({ title: "AI-tag stopped", description: e?.message || "", variant: "destructive" });
+                        } finally { aiAutoRef.current = false; setAiTagging(false); setAiTagProgress(null); }
                       }}>
-                      {aiTagging ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />} AI-tag uncategorised
+                      {aiTagging
+                        ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Stop ({aiTagProgress ? `${aiTagProgress.done} done · ${aiTagProgress.remaining} left` : "tagging…"})</>
+                        : <><Sparkles className="h-4 w-4 mr-1" /> AI-tag all uncategorised</>}
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={nearDeduping} data-testid="button-dedupe-near"
+                      onClick={async () => {
+                        if (!confirm("Find & remove NEAR-duplicate images (resized / re-saved copies of the same shot), keeping the highest-resolution of each? Scans the library; can't be undone.")) return;
+                        setNearDeduping(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/dedupe-perceptual", { apply: true });
+                          const d = await r.json();
+                          toast({ title: "Near-dupe cleanup done", description: `${(d.duplicatesRemoved ?? 0).toLocaleString()} removed across ${d.groups ?? 0} group(s) (scanned ${(d.scanned ?? 0).toLocaleString()}).` });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                        } catch (e: any) {
+                          toast({ title: "Near-dupe scan failed", description: e?.message || "", variant: "destructive" });
+                        } finally { setNearDeduping(false); }
+                      }}>
+                      {nearDeduping ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />} Near-dupes
                     </Button>
                     <Button size="sm" variant="outline" disabled={deduping} data-testid="button-dedupe"
                       onClick={async () => {

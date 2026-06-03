@@ -2228,6 +2228,57 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // Perceptual dedupe: catches NEAR-duplicates (resized / re-saved versions of
+  // the same shot) that exact-hash dedupe misses. Computes an 8x8 average-hash
+  // per image, groups by Hamming distance, keeps the highest-resolution of each
+  // group and deletes the rest. Heavy (reads each file) so capped + one-shot.
+  app.post("/api/image-studio/dedupe-perceptual", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const apply = req.body?.apply === true;
+      const threshold = Math.min(Math.max(Number(req.body?.threshold) || 6, 1), 16);
+      const cap = Math.min(Math.max(Number(req.body?.cap) || 4000, 1), 8000);
+      const rows = await pool.query<{ id: string; local_path: string | null; width: number | null; height: number | null; file_size: number | null }>(
+        `SELECT id, local_path, width, height, file_size FROM image_studio_images
+         WHERE local_path IS NOT NULL ORDER BY created_at ASC LIMIT $1`, [cap]);
+      const sharpMod = (await import("sharp")).default;
+      const items: Array<{ id: string; hash: bigint; px: number }> = [];
+      for (const r of rows.rows) {
+        try {
+          const buf = await readPersistedImage(r.local_path);
+          if (!buf) continue;
+          const raw = await sharpMod(buf).resize(8, 8, { fit: "fill" }).grayscale().raw().toBuffer();
+          let avg = 0; for (let i = 0; i < raw.length; i++) avg += raw[i]; avg /= raw.length;
+          let hash = 0n; for (let i = 0; i < raw.length; i++) hash = (hash << 1n) | (raw[i] >= avg ? 1n : 0n);
+          items.push({ id: r.id, hash, px: (r.width || 0) * (r.height || 0) || (r.file_size || 0) });
+        } catch { /* skip unreadable */ }
+      }
+      const popcount = (x: bigint) => { let c = 0; while (x > 0n) { c += Number(x & 1n); x >>= 1n; } return c; };
+      const used = new Set<number>();
+      let groups = 0; const toDelete: string[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (used.has(i)) continue;
+        const group = [i];
+        for (let j = i + 1; j < items.length; j++) {
+          if (used.has(j)) continue;
+          if (popcount(items[i].hash ^ items[j].hash) <= threshold) { group.push(j); used.add(j); }
+        }
+        if (group.length > 1) {
+          used.add(i); groups++;
+          group.sort((a, b) => items[b].px - items[a].px); // keep highest-res
+          for (let k = 1; k < group.length; k++) toDelete.push(items[group[k]].id);
+        }
+      }
+      if (apply && toDelete.length > 0) {
+        await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [toDelete]);
+        await pool.query(`DELETE FROM property_imagery_assets WHERE image_studio_id = ANY($1::text[])`, [toDelete]).catch(() => {});
+        await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [toDelete]);
+      }
+      res.json({ success: true, scanned: items.length, groups, duplicates: toDelete.length, duplicatesRemoved: apply ? toDelete.length : 0 });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   app.post("/api/image-studio/stock-search", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { query, page = 1 } = req.body;
