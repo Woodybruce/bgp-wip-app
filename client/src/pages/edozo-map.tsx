@@ -3511,6 +3511,23 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const [showAvailable, setShowAvailable] = useState(true);
   const [availableProps, setAvailableProps] = useState<any[]>([]);
   const availableMarkersRef = useRef<L.LayerGroup | null>(null);
+  // ── Annotations layer ───────────────────────────────────────────────────
+  // User-drawn pins + text labels saved to /api/map-annotations. When
+  // annotateMode is "pin" or "label" the next map click drops one.
+  // Postcode highlight is the orange/red rectangle for an outcode or
+  // unit postcode fetched from /api/postcode-boundary/:postcode.
+  const [showAnnotations, setShowAnnotations] = useState(true);
+  const [annotations, setAnnotations] = useState<any[]>([]);
+  const annotationsLayerRef = useRef<L.LayerGroup | null>(null);
+  const [annotateMode, setAnnotateMode] = useState<null | "pin" | "label">(null);
+  const [annotateColor, setAnnotateColor] = useState<string>("#ef4444");
+  const annotateModeRef = useRef<{ mode: null | "pin" | "label"; color: string }>({ mode: null, color: "#ef4444" });
+  useEffect(() => { annotateModeRef.current = { mode: annotateMode, color: annotateColor }; }, [annotateMode, annotateColor]);
+
+  const [postcodeQuery, setPostcodeQuery] = useState("");
+  const [postcodeBoundary, setPostcodeBoundary] = useState<any>(null);
+  const postcodeLayerRef = useRef<L.LayerGroup | null>(null);
+
   // ── Street View on-click ───────────────────────────────────────────────────
   // When toggled on, clicking the map opens an embedded Google Street View
   // panorama at that lat/lng in a popup. Reuses the GOOGLE_API_KEY already
@@ -4431,6 +4448,148 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       streetViewClickRef.current = null;
     };
   }, [showStreetView, googleMapsKey]);
+
+  // ── Annotations layer ──────────────────────────────────────────────────
+  // Fetch + render pins / labels stored in map_annotations. Click handler
+  // is bound when annotateMode is set; click drops a new pin or label.
+  const loadAnnotations = useCallback(async () => {
+    try {
+      const r = await fetch("/api/map-annotations", { credentials: "include" });
+      if (!r.ok) return;
+      const data = await r.json();
+      setAnnotations(Array.isArray(data) ? data : []);
+    } catch {}
+  }, []);
+  useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
+
+  // Bind a click handler for "drop a pin / label" when annotateMode is set.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const container = map.getContainer();
+    if (!annotateMode) {
+      container.style.cursor = "";
+      return;
+    }
+    container.style.cursor = "crosshair";
+    const handler = async (e: L.LeafletMouseEvent) => {
+      const { mode, color } = annotateModeRef.current;
+      if (!mode) return;
+      const { lat, lng } = e.latlng;
+      let label: string | null = null;
+      if (mode === "label") {
+        label = window.prompt("Label text:") || null;
+        if (!label) return;
+      } else {
+        label = window.prompt("Note for this pin (optional):") || null;
+      }
+      try {
+        const resp = await fetch("/api/map-annotations", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: mode, label, color, lat, lng }),
+        });
+        if (resp.ok) {
+          await loadAnnotations();
+          setAnnotateMode(null);                          // one-shot — back to browse mode
+        }
+      } catch {}
+    };
+    map.on("click", handler);
+    return () => { map.off("click", handler); container.style.cursor = ""; };
+  }, [annotateMode, loadAnnotations]);
+
+  // Render annotations whenever the list or visibility changes.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!annotationsLayerRef.current) {
+      annotationsLayerRef.current = L.layerGroup().addTo(map);
+    }
+    const layer = annotationsLayerRef.current;
+    layer.clearLayers();
+    if (!showAnnotations) return;
+    for (const a of annotations) {
+      if (a.lat == null || a.lng == null) continue;
+      const color = a.color || "#ef4444";
+      if (a.kind === "pin") {
+        const marker = L.circleMarker([a.lat, a.lng], {
+          radius: 8,
+          fillColor: color,
+          color: "#ffffff",
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.9,
+        });
+        const popup = `<div style="min-width:160px"><div style="font-weight:600;margin-bottom:4px">${(a.label || "Pin").replace(/</g, "&lt;")}</div><button id="del-${a.id}" style="font-size:11px;color:#dc2626;text-decoration:underline;cursor:pointer;background:none;border:0;padding:0">Delete pin</button></div>`;
+        marker.bindPopup(popup);
+        marker.on("popupopen", () => {
+          const btn = document.getElementById(`del-${a.id}`);
+          if (btn) btn.onclick = async () => {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            map.closePopup();
+            loadAnnotations();
+          };
+        });
+        layer.addLayer(marker);
+      } else if (a.kind === "label") {
+        const icon = L.divIcon({
+          className: "",
+          iconSize: undefined as any,
+          html: `<div style="background:${color};color:#ffffff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.2);transform:translate(-50%,-50%);" data-ann="${a.id}">${(a.label || "Label").replace(/</g, "&lt;")}</div>`,
+        });
+        const marker = L.marker([a.lat, a.lng], { icon });
+        marker.on("click", async () => {
+          if (window.confirm(`Delete label "${a.label}"?`)) {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            loadAnnotations();
+          }
+        });
+        layer.addLayer(marker);
+      }
+    }
+  }, [annotations, showAnnotations, loadAnnotations]);
+
+  // ── Postcode boundary highlight ────────────────────────────────────────
+  // Type a postcode → red rectangle on the map. Calls postcodes.io via
+  // /api/postcode-boundary/:postcode, which returns the centroid + bbox.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (postcodeLayerRef.current) {
+      map.removeLayer(postcodeLayerRef.current);
+      postcodeLayerRef.current = null;
+    }
+    if (!postcodeBoundary?.geojson) return;
+    const group = L.layerGroup().addTo(map);
+    const gj = L.geoJSON(postcodeBoundary.geojson, {
+      style: { color: "#dc2626", weight: 3, fillColor: "#dc2626", fillOpacity: 0.08, dashArray: "6 4" },
+    } as any);
+    group.addLayer(gj);
+    // Postcode label at the centroid
+    const labelIcon = L.divIcon({
+      className: "",
+      html: `<div style="background:#dc2626;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);transform:translate(-50%,-50%);">${postcodeBoundary.postcode}</div>`,
+    });
+    group.addLayer(L.marker([postcodeBoundary.lat, postcodeBoundary.lng], { icon: labelIcon }));
+    postcodeLayerRef.current = group;
+    map.flyToBounds(
+      [[postcodeBoundary.south, postcodeBoundary.west], [postcodeBoundary.north, postcodeBoundary.east]],
+      { padding: [40, 40], duration: 0.8 } as any,
+    );
+  }, [postcodeBoundary]);
+
+  const highlightPostcode = useCallback(async () => {
+    const q = postcodeQuery.trim();
+    if (!q) return;
+    try {
+      const r = await fetch(`/api/postcode-boundary/${encodeURIComponent(q)}`, { credentials: "include" });
+      if (!r.ok) { setPostcodeBoundary(null); return; }
+      const data = await r.json();
+      setPostcodeBoundary(data);
+    } catch {}
+  }, [postcodeQuery]);
 
   // Map Experian Goad `Category` strings onto the 6-band palette below.
   // Kept in this file (not goad-taxonomy.ts) because the server-side
@@ -5447,6 +5606,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               { key: "osb",    label: showOSBuildings && showRetailContext ? "OS Buildings (hidden — Goad on)" : (mapZoom < 16 && showOSBuildings ? "OS Buildings (zoom 16+)" : "OS Buildings"),     count: 0, dot: "#3b82f6", on: showOSBuildings, set: setShowOSBuildings },
               { key: "oss",    label: mapZoom < 14 && showOSSites ? "Named Sites (zoom 14+)" : "Named Sites", count: 0, dot: "#15616D", on: showOSSites,     set: setShowOSSites },
               { key: "tp",     label: "Tenancy Plans",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
+              { key: "annot",  label: "Annotations",     count: annotations.length, dot: "#a855f7", on: showAnnotations, set: setShowAnnotations },
             ].map((row) => (
               <button
                 key={row.key}
@@ -5512,6 +5672,87 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                 })}
               </div>
             </div>
+          )}
+        </div>
+
+        {/* Annotation tools — drop coloured pins / text labels, plus a
+            postcode-highlight box. Saves to map_annotations. */}
+        <div className="border-t" />
+        <div className="px-3 py-3 space-y-2.5">
+          <p className="text-[11px] font-semibold text-gray-700">Annotate</p>
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#111827"].map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setAnnotateColor(c)}
+                className={`w-5 h-5 rounded-full border-2 transition-transform ${annotateColor === c ? "border-gray-900 scale-110" : "border-white"}`}
+                style={{ background: c }}
+                aria-label={`Pick ${c}`}
+                data-testid={`annot-color-${c.slice(1)}`}
+              />
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "pin" ? null : "pin")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "pin" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-pin"
+            >
+              {annotateMode === "pin" ? "Click map to drop…" : "Drop pin"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "label" ? null : "label")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "label" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-label"
+            >
+              {annotateMode === "label" ? "Click map to place…" : "Add label"}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-500 leading-snug">
+            Tap a pin or label on the map to delete it. Saved per user.
+          </p>
+        </div>
+
+        {/* Postcode boundary highlight — quick red rectangle around an
+            outcode or unit postcode via postcodes.io. Outcodes get the
+            exact bounding box; unit postcodes synth a ~250m box. */}
+        <div className="border-t" />
+        <div className="px-3 py-3 space-y-2">
+          <p className="text-[11px] font-semibold text-gray-700">Highlight postcode</p>
+          <div className="flex gap-1.5">
+            <input
+              value={postcodeQuery}
+              onChange={(e) => setPostcodeQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); highlightPostcode(); } }}
+              placeholder="SW1Y or SW1Y 4DG"
+              className="flex-1 min-w-0 h-7 px-2 text-[11px] rounded border border-gray-200 focus:border-gray-400 outline-none"
+              data-testid="postcode-highlight-input"
+            />
+            <button
+              type="button"
+              onClick={highlightPostcode}
+              disabled={!postcodeQuery.trim()}
+              className="h-7 px-2.5 rounded bg-gray-900 text-white text-[11px] font-medium disabled:opacity-50"
+              data-testid="postcode-highlight-btn"
+            >
+              Show
+            </button>
+          </div>
+          {postcodeBoundary && (
+            <button
+              type="button"
+              onClick={() => { setPostcodeBoundary(null); setPostcodeQuery(""); }}
+              className="text-[11px] text-red-600 hover:underline"
+            >
+              Clear {postcodeBoundary.postcode} highlight
+            </button>
           )}
         </div>
 
