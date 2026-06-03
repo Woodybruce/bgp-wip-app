@@ -831,7 +831,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                       <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Tenancy</p>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                         <div className="min-w-0"><span className="text-muted-foreground">Tenant:</span> {tenantEl}</div>
-                        {tenant?.companyNumber && <div className="min-w-0"><span className="text-muted-foreground">Co#:</span> <span className="font-medium">{tenant.companyNumber}</span></div>}
+                        {tenant?.companyNumber && <div className={`min-w-0 ${String(tenant.companyNumber).length > 12 ? "col-span-2" : ""}`}><span className="text-muted-foreground">Co#:</span> <span className="font-medium break-words">{tenant.companyNumber}</span></div>}
                         {s1.aiFacts?.passingRent && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Rent passing:</span> <span className="font-medium break-words">{s1.aiFacts.passingRent}</span></div>}
                         {tenantCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{tenantCommentary}</div>}
                         {s1.aiFacts?.leaseStatus && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Status:</span> <span className="font-medium break-words">{s1.aiFacts.leaseStatus}</span></div>}
