@@ -33,7 +33,7 @@ type ResolverCandidate = {
   existingPropertyId: string | null;
 };
 
-type ResolvedProperty = { id: string; name: string; postcode: string | null; uprn: string | null };
+type ResolvedProperty = { id: string; name: string; postcode: string | null; uprn: string | null; latitude?: string | number | null; longitude?: string | number | null };
 
 type ResolveResult =
   | { kind: "resolved"; property: ResolvedProperty; source: string }
@@ -43,6 +43,9 @@ type ResolveResult =
 interface Props {
   /** Called when a property is canonically resolved. */
   onResolve: (propertyId: string, property: ResolvedProperty) => void;
+  /** Called when the input is too vague to resolve (e.g. just "Brentford")
+   *  but Google can still geocode it. Lets the map at least pan there. */
+  onPanTo?: (lat: number, lng: number, label: string) => void;
   /** Currently-selected property — shown as a badge. */
   current?: { id: string; name: string; postcode: string | null } | null;
   placeholder?: string;
@@ -56,7 +59,7 @@ type GoogleSuggestion = {
   types: string[];
 };
 
-export function PropertyResolverBar({ onResolve, current, placeholder }: Props) {
+export function PropertyResolverBar({ onResolve, onPanTo, current, placeholder }: Props) {
   const { toast } = useToast();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -196,7 +199,29 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
       } else if (result.kind === "candidates") {
         setCandidates(result.candidates);
       } else {
-        setError(result.reason || "Property not found");
+        // Resolver couldn't pin a UPRN (e.g. "Brentford" is a town, not an
+        // address). Fall back to a Google geocode pan so the map at least
+        // navigates to the area the user typed — better than the screen
+        // staying frozen in central London with no feedback.
+        if (onPanTo) {
+          try {
+            const geo = await fetch(
+              `/api/property-resolver/geocode?q=${encodeURIComponent(text)}`,
+              { credentials: "include", headers: getAuthHeaders() },
+            );
+            if (geo.ok) {
+              const data = await geo.json();
+              if (data?.lat && data?.lng) {
+                onPanTo(data.lat, data.lng, data.label || text);
+                toast({ title: "Moved map to area", description: data.label || text });
+                return;
+              }
+            }
+          } catch {
+            // Fall through to the explicit error
+          }
+        }
+        setError(result.reason || "Couldn't find that property — try a full address or postcode");
       }
     } catch (err: any) {
       setError(err?.message || "Resolver request failed");
