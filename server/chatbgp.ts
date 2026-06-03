@@ -12652,7 +12652,9 @@ export function setupChatBGPRoutes(app: Express) {
       return res.status(400).json({ message: "messages array required" });
     }
     if (messages.length > 40) {
-      return res.status(400).json({ message: "Too many messages (max 40)" });
+      // Don't hard-reject long sessions (Excel add-in model builds blow past 40).
+      // Keep the opening brief + the most recent turns so the chat keeps flowing.
+      messages = [messages[0], ...messages.slice(-39)];
     }
     for (const m of messages) {
       if (!m || !["user", "assistant"].includes(m.role)) {
