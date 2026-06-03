@@ -726,6 +726,21 @@ async function fetchCompMarkers(postcode: string | null | undefined): Promise<Ar
   }
 }
 
+// Parse a formatted accounts figure ("£84.2m", "462k", "1.2bn", "84,200,000")
+// into a plain number for the covenant card composer.
+function parseMoneyish(s?: string | null): number | null {
+  if (s == null) return null;
+  const m = String(s).replace(/[£$,\s]/g, "").match(/(-?\d+(?:\.\d+)?)\s*(bn|b|m|k)?/i);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (!isFinite(n)) return null;
+  const mult = (m[2] || "").toLowerCase();
+  if (mult === "bn" || mult === "b") n *= 1e9;
+  else if (mult === "m") n *= 1e6;
+  else if (mult === "k") n *= 1e3;
+  return Math.round(n);
+}
+
 function registerComposerExtras(app: Express): void {
   /**
    * Auto ERV walk: reads passingRent / quotingRent / agreedRent + key dates
@@ -840,16 +855,46 @@ function registerComposerExtras(app: Express): void {
         });
       }
 
+      // Auto-fill the latest filed accounts from Companies House when we have a
+      // CH number and the caller didn't pass figures. Uses the crm company's
+      // already-extracted accounts if present; otherwise warms the cache in the
+      // background (download + AI-extract) so the next generate has them.
+      let autoAcc: { latestAccountsYear?: number | null; revenuePa?: number | null; netIncome?: number | null; netCash?: number | null; numEmployees?: number | null } = {};
+      const effectiveCh = String(req.body?.companiesHouseNumber ?? chNumber ?? "").trim();
+      if (effectiveCh && req.body?.revenuePa == null) {
+        try {
+          const [crmCo] = await db.select().from(crmCompanies).where(eq(crmCompanies.companiesHouseNumber, effectiveCh)).limit(1);
+          if (crmCo) {
+            const { extractAccountsFigures, fetchLatestAccountsForCompany } = await import("./ch-accounts");
+            const figs = await extractAccountsFigures(crmCo.id).catch(() => null);
+            if (figs) {
+              autoAcc = {
+                latestAccountsYear: figs.period ? (Number(String(figs.period).slice(0, 4)) || null) : null,
+                revenuePa: parseMoneyish(figs.turnover),
+                netIncome: parseMoneyish(figs.profitBeforeTax),
+                netCash: parseMoneyish(figs.cash),
+                numEmployees: figs.employees ? parseMoneyish(figs.employees) : null,
+              };
+            } else {
+              // Not fetched yet — warm it for next time without blocking now.
+              fetchLatestAccountsForCompany(crmCo.id).then(() => extractAccountsFigures(crmCo.id)).catch(() => {});
+            }
+          }
+        } catch (accErr: any) {
+          console.warn("[covenant-card-auto] accounts enrichment failed:", accErr?.message);
+        }
+      }
+
       const result = await composeCovenantCard({
         propertyId,
         tenantName,
         companiesHouseNumber: req.body?.companiesHouseNumber ?? chNumber,
-        latestAccountsYear: req.body?.latestAccountsYear ?? latestAccountsYear,
-        revenuePa: req.body?.revenuePa ?? revenuePa,
+        latestAccountsYear: req.body?.latestAccountsYear ?? autoAcc.latestAccountsYear ?? latestAccountsYear,
+        revenuePa: req.body?.revenuePa ?? autoAcc.revenuePa ?? revenuePa,
         ebitda: req.body?.ebitda,
-        netIncome: req.body?.netIncome ?? netIncome,
-        netCash: req.body?.netCash ?? netCash,
-        numEmployees: req.body?.numEmployees ?? numEmployees,
+        netIncome: req.body?.netIncome ?? autoAcc.netIncome ?? netIncome,
+        netCash: req.body?.netCash ?? autoAcc.netCash ?? netCash,
+        numEmployees: req.body?.numEmployees ?? autoAcc.numEmployees ?? numEmployees,
         parentName: req.body?.parentName ?? parentName,
         sanctionsClean: req.body?.sanctionsClean ?? sanctionsClean,
         pepClean: req.body?.pepClean ?? pepClean,
