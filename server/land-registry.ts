@@ -578,20 +578,21 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
   ]);
 
   let contextFreeholds = ((postcodeFreeholds as any)?.data || []).filter((f: any) => !matchedTitleNumbers.has(f.title_number));
-  // On the HMLR-direct path the paid postcode-wide PropertyData pull is
-  // skipped (skipPostcodeWide), so contextFreeholds would be empty. Surface
-  // postcode-wide freeholds from our own free local HMLR data instead — this
-  // is what catches estate-level freeholds (e.g. Grosvenor's Mayfair title)
-  // that the unit street-number match structurally misses.
-  if (hmlrUsed && resolvedPostcode) {
+  // Prefer postcode-wide freeholds from our own free local CCOD/OCOD data
+  // whenever we have a postcode — not just on the HMLR-direct path. These rows
+  // carry the property ADDRESS and PROPRIETOR (owner), which PropertyData's
+  // postcode list omits, so the title-picker can show address + owner per
+  // candidate to help narrow down the right title. Falls back to PropertyData
+  // context only when our local data has nothing for the postcode.
+  if (resolvedPostcode) {
     try {
       const pcFreeholds = await findFreeholdsByPostcode(resolvedPostcode, Array.from(matchedTitleNumbers));
       if (pcFreeholds.length > 0) {
         contextFreeholds = pcFreeholds.map(formatHmlrTitle);
-        console.log(`[land-registry/resolve] HMLR postcode freeholds for ${resolvedPostcode} — ${pcFreeholds.length} estate-level titles`);
+        console.log(`[land-registry/resolve] local CCOD/OCOD postcode freeholds for ${resolvedPostcode} — ${pcFreeholds.length} titles (with address + owner)`);
       }
     } catch (err: any) {
-      console.warn("[land-registry/resolve] HMLR postcode-freehold lookup failed:", err?.message);
+      console.warn("[land-registry/resolve] postcode-freehold lookup failed:", err?.message);
     }
   }
   // PropertyData has no postcode-level leaseholds endpoint, so context
