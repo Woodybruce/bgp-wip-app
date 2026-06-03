@@ -2294,7 +2294,7 @@ export default function InvestmentTrackerPage() {
             </div>
             <div>
               <Label className="text-xs">Fee (£)</Label>
-              <Input type="number" value={form.fee} onChange={e => setForm({ ...form, fee: e.target.value })} className="h-9" data-testid="input-fee" />
+              <Input type="number" step="0.01" value={form.fee} onChange={e => setForm({ ...form, fee: e.target.value })} className="h-9" data-testid="input-fee" />
             </div>
             <div className="col-span-2">
               <Label className="text-xs">Agent(s)</Label>
