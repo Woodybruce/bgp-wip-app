@@ -2909,6 +2909,9 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
   const [planEditorOpen, setPlanEditorOpen] = useState(false);
   const [pov, setPov] = useState<{ heading: number; pitch: number; fov: number }>({ heading: 0, pitch: 0, fov: 90 });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [aiEditAsset, setAiEditAsset] = useState<Asset | null>(null);
+  const [aiPrompt, setAiPrompt] = useState("");
 
   const loadManifest = useCallback(async (pid: string) => {
     try {
@@ -3045,6 +3048,54 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
     } finally { setBusy(false); }
   };
 
+  const toggleSelect = (imageStudioId?: string) => {
+    if (!imageStudioId) return;
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(imageStudioId)) n.delete(imageStudioId); else n.add(imageStudioId);
+      return n;
+    });
+  };
+
+  const deleteSelected = async () => {
+    const ids = Array.from(selected).filter(Boolean);
+    if (ids.length === 0) return;
+    if (!confirm(`Permanently delete ${ids.length} image(s)? This can't be undone.`)) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/image-studio/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setSelected(new Set());
+      await refresh();
+      toast({ title: "Deleted", description: `${ids.length} image(s) removed` });
+    } catch (e: any) {
+      toast({ title: "Delete failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const applyAiEdit = async () => {
+    if (!aiEditAsset?.imageStudioId || !aiPrompt.trim()) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/image-studio/ai-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageId: aiEditAsset.imageStudioId, editPrompt: aiPrompt.trim() }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setAiEditAsset(null);
+      setAiPrompt("");
+      await refresh();
+      toast({ title: "AI edit applied", description: "Saved — Use it to swap into the deck." });
+    } catch (e: any) {
+      toast({ title: "AI edit failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
   const fullUrl = (a: Asset) => `/api/image-studio/${a.imageStudioId}/full`;
   const thumbSrc = (a: Asset) => a.thumbnail ? `data:image/jpeg;base64,${a.thumbnail}` : `/api/image-studio/${a.imageStudioId}/thumbnail`;
 
@@ -3055,8 +3106,8 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
           <div>
             <h3 className="font-semibold text-sm">Pick an image</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              All images linked to {propertyAddress || "this property"}. Click <strong>Use</strong> to swap into the deck.
-              Tag a different one as ⭐ to make it the hero. ✕ to hide. 📷 to edit in Image Studio.
+              All images linked to {propertyAddress || "this property"}. <strong>Use</strong> swaps it into the deck, ⭐ sets the hero,
+              ✨ AI-edits in place, ✕ hides. Tick images and <strong>Delete</strong> to remove them for good.
             </p>
           </div>
           <div className="flex items-center gap-1">
@@ -3085,8 +3136,8 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
           >
             🗺 Open in Map
           </Link>
-          <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busy || !propertyId} className="h-7 text-xs">
-            + Upload
+          <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={busy || !propertyId} className="h-7 text-xs gap-1">
+            <ImageIcon className="w-3.5 h-3.5" /> Upload images
           </Button>
           <input
             ref={fileInputRef}
@@ -3096,6 +3147,11 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
             className="hidden"
             onChange={(e) => { handleUpload(e.target.files); e.target.value = ""; }}
           />
+          {selected.size > 0 && (
+            <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={busy} className="h-7 text-xs gap-1">
+              <Trash2 className="w-3.5 h-3.5" /> Delete ({selected.size})
+            </Button>
+          )}
           {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
         </div>
 
@@ -3126,8 +3182,16 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
                         className="group relative aspect-[4/3] rounded-md overflow-hidden border bg-muted"
                       >
                         <img src={thumbSrc(a)} alt={a.caption || ""} className="w-full h-full object-cover" />
+                        <input
+                          type="checkbox"
+                          checked={!!a.imageStudioId && selected.has(a.imageStudioId)}
+                          onChange={() => toggleSelect(a.imageStudioId)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute top-1 left-1 z-10 w-4 h-4 cursor-pointer accent-primary"
+                          title="Select (then Delete above)"
+                        />
                         {a.kind === "hero" && (
-                          <span className="absolute top-1 left-1 bg-amber-500 text-white text-[9px] px-1 rounded">⭐ HERO</span>
+                          <span className="absolute top-1 right-1 bg-amber-500 text-white text-[9px] px-1 rounded">⭐ HERO</span>
                         )}
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/45 transition-colors flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
                           <button
@@ -3147,16 +3211,14 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
                               ⭐
                             </button>
                           )}
-                          <a
-                            href={`/image-studio?propertyId=${propertyId}&property=${encodeURIComponent(propertyAddress)}`}
-                            target="_blank"
-                            rel="noreferrer"
+                          <button
+                            onClick={() => { setAiEditAsset(a); setAiPrompt(""); }}
+                            disabled={busy}
                             className="bg-white/90 text-foreground text-[10px] px-1.5 py-1 rounded hover:opacity-90"
-                            title="Edit in Image Studio"
-                            onClick={(e) => e.stopPropagation()}
+                            title="AI edit this image"
                           >
-                            📷
-                          </a>
+                            ✨
+                          </button>
                           <button
                             onClick={() => hideAsset(a.id)}
                             disabled={busy}
@@ -3191,6 +3253,35 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
           onClose={() => setPlanEditorOpen(false)}
           onChange={refresh}
         />
+      )}
+
+      {aiEditAsset && (
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={() => setAiEditAsset(null)}>
+          <div className="bg-background rounded-lg shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="p-3 border-b flex items-center justify-between">
+              <h4 className="text-sm font-semibold">AI edit image</h4>
+              <button onClick={() => setAiEditAsset(null)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+            </div>
+            <div className="p-3 space-y-2">
+              <img src={thumbSrc(aiEditAsset)} alt="" className="w-full rounded border max-h-48 object-contain bg-muted" />
+              <textarea
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                rows={3}
+                maxLength={1000}
+                placeholder="Describe the edit — e.g. 'brighten and warm the lighting', 'remove the parked cars', 'add outdoor seating and people'"
+                className="w-full border rounded p-2 text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">Edits this image in place via AI (OpenAI / Gemini) and saves it back, so you can <strong>Use</strong> it in the deck.</p>
+            </div>
+            <div className="p-3 border-t flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setAiEditAsset(null)} disabled={busy}>Cancel</Button>
+              <Button size="sm" onClick={applyAiEdit} disabled={busy || !aiPrompt.trim()}>
+                {busy && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}Apply edit
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {captureOpen && propertyAddress && (
