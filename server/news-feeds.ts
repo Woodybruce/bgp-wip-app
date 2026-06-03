@@ -1558,6 +1558,20 @@ export function setupNewsFeedRoutes(app: Express) {
     }
   });
 
+  // Dismiss an article — hard-delete from the feed. The next news poll
+  // can re-ingest if the source is still publishing it; for genuinely
+  // off-topic articles, dismiss the source itself via news-sources-tab.
+  app.delete("/api/news-feed/articles/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const result = await db.delete(newsArticles).where(eq(newsArticles.id, id)).returning({ id: newsArticles.id });
+      if (result.length === 0) return res.status(404).json({ error: "Article not found" });
+      res.json({ ok: true, id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/news-feed/articles", requireAuth, async (req: Request, res: Response) => {
     try {
       const { team, limit: limitStr, search } = req.query;
@@ -1567,7 +1581,7 @@ export function setupNewsFeedRoutes(app: Express) {
       // Fetch a WIDER pool than `limit` so relevance/team filtering below
       // doesn't starve the result (previously we limited to `limit` first,
       // then filtered — which let off-topic items survive simply by being
-      // the newest, and shrank the list). Slice to `limit` at the very end.
+      // the newest, and shrank the list).
       const pool = Math.max(limit * 5, 80);
       // Google News is intentionally OFF for the general feed — it's not
       // specific enough and floods out the curated trade-press RSS. We exclude
