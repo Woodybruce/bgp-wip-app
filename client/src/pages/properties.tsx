@@ -4698,7 +4698,10 @@ export function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) 
 export default function Properties() {
   const [, params] = useRoute("/properties/:id");
   const [search, setSearch] = useState("");
-  const [activeGroup, setActiveGroup] = useState("Properties");
+  // Default view = "all" properties. The old "Properties" tab was a
+  // group_name=='Properties' filter and is gone; team tabs filter by
+  // bgp_engagement and only render when populated.
+  const [activeGroup, setActiveGroup] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
@@ -5028,16 +5031,21 @@ function PropertiesList({
           if (assignedIds.length > 0 && !assignedIds.some(id => teamUserIds.has(id))) return false;
         }
         const isComp = HIDDEN_FROM_ALL.has(item.groupName || "");
-        // The main board ("Properties") and the legacy "all" view both show
-        // EVERY non-comp property — regardless of whether its group_name is
-        // the literal string "Properties", NULL, or some legacy/imported
-        // value. Comps are the only thing held back, and only surface under
-        // their own tab. (Previously "Properties" was an exact group_name
-        // match, which hid the ~300 properties tagged with anything else.)
-        if ((activeGroup === "all" || activeGroup === "Properties") && isComp) return false;
-        if (activeGroup === "Investment Comps" && !isComp) return false;
-        // Pipeline / Archived / Development remain exact-match sub-lenses.
-        if (activeGroup !== "all" && activeGroup !== "Properties" && activeGroup !== "Investment Comps" && item.groupName !== activeGroup) return false;
+        // Comps are filtered off every tab — they live exclusively in the
+        // dedicated investment-comps schedule (and retail_leasing_comps),
+        // not on the property CRM board. Confirmed in 2026-06 that
+        // crm_properties has zero comp-tagged rows, but the guard stays
+        // in case imports stamp the value in future.
+        if (isComp) return false;
+        // "all" = every property. Team tabs = property whose
+        // bgp_engagement array contains the team string. Engagement can be
+        // an array (canonical), a single string (legacy), or null.
+        if (activeGroup !== "all") {
+          const eng = Array.isArray(item.bgpEngagement)
+            ? item.bgpEngagement
+            : item.bgpEngagement ? [item.bgpEngagement as unknown as string] : [];
+          if (!eng.includes(activeGroup)) return false;
+        }
 
         const statusFilters = columnFilters["status"] || [];
         if (statusFilters.length > 0 && (!item.status || !statusFilters.includes(item.status))) return false;
@@ -5094,17 +5102,30 @@ function PropertiesList({
     setSelectedIds(new Set());
   }, [activeGroup, search, columnFilters]);
 
+  // Team tabs replace the old group-name tabs (Pipeline / Archived /
+  // Development / Investment Comps), which read 0 for nearly every
+  // property because no row was tagged with those exact group_name
+  // strings. Engagement (bgp_engagement) is populated on most rows and
+  // gives a useful slice — Investment vs Leasing vs Tenant Rep, etc.
+  //
+  // Empty teams are hidden so the toolbar doesn't grow a wall of dead
+  // zero-count chips. Sorted by count desc so the biggest teams sit
+  // closest to the "All Properties" tab.
   const groupCounts = useMemo(() => {
-    return GROUP_TABS.filter((g) => g.id !== "all").map((g) => ({
-      ...g,
-      count: g.id === "Investment Comps"
-        ? items.filter((i) => HIDDEN_FROM_ALL.has(i.groupName || "")).length
-        : g.id === "Properties"
-        // "Properties" is the catch-all: every non-comp property, matching
-        // what the board actually shows now.
-        ? items.filter((i) => !HIDDEN_FROM_ALL.has(i.groupName || "")).length
-        : items.filter((i) => i.groupName === g.id).length,
-    }));
+    const nonComp = items.filter((i) => !HIDDEN_FROM_ALL.has(i.groupName || ""));
+    return CRM_OPTIONS.dealTeam
+      .map((team) => ({
+        id: team,
+        label: team,
+        count: nonComp.filter((i) => {
+          const eng = Array.isArray(i.bgpEngagement)
+            ? i.bgpEngagement
+            : i.bgpEngagement ? [i.bgpEngagement as unknown as string] : [];
+          return eng.includes(team);
+        }).length,
+      }))
+      .filter((t) => t.count > 0)
+      .sort((a, b) => b.count - a.count);
   }, [items]);
 
   if (error) {
@@ -5188,7 +5209,7 @@ function PropertiesList({
           {groupCounts.map((g) => (
             <button
               key={g.id}
-              onClick={() => setActiveGroup(activeGroup === g.id ? "Properties" : g.id)}
+              onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === g.id ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
               data-testid={`chip-group-${g.id.toLowerCase()}`}
             >
@@ -5212,7 +5233,7 @@ function PropertiesList({
             className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
               activeGroup === g.id ? "border-primary bg-primary/5" : ""
             }`}
-            onClick={() => setActiveGroup(activeGroup === g.id ? "Properties" : g.id)}
+            onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
             data-testid={`card-group-${g.id.toLowerCase()}`}
           >
             <CardContent className="p-3">

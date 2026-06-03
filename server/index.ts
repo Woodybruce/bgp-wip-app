@@ -2295,6 +2295,14 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
      WHERE NOT EXISTS (
        SELECT 1 FROM app_change_requests WHERE description LIKE '%[Deck primitive · app-wide composable document layer]%'
      )`,
+
+    // Backfill NULL group_name on crm_properties. 304/425 imported rows
+    // came in without a group string, which left the Properties board
+    // unable to show them under any tab (the old logic was exact-string
+    // match). The board now treats nulls as "Properties" implicitly, but
+    // setting the value explicitly keeps the data tidy and makes ad-hoc
+    // SQL / exports unambiguous. Idempotent — re-runs are no-ops.
+    `UPDATE crm_properties SET group_name = 'Properties' WHERE group_name IS NULL`,
   ];
 
   let ok = 0, skipped = 0;
