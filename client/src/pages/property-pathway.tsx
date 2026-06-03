@@ -1584,6 +1584,18 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         <WhyBuyCompsCard runId={run.id} propertyId={run.propertyId || null} whyBuyComps={(run.stageResults as any)?.whyBuyComps} onReload={onReload} />
       )}
 
+      {/* ERV walk + Covenant card — generated from the run's rent/tenant */}
+      {(s7 || s8 || s9) && (
+        <WhyBuyChartsCard
+          runId={run.id}
+          propertyId={run.propertyId || null}
+          passingRent={s7?.currentRentPA}
+          area={s7?.totalAreaSqFt}
+          tenantName={s1?.tenant?.name}
+          tenantCo={s1?.tenant?.companyNumber}
+        />
+      )}
+
       {/* Stage 9 — Why Buy */}
       {s9 && (
         <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} propertyId={run.propertyId || null} />
@@ -2509,6 +2521,78 @@ function RelatedLeaseAdvisoryMatters({ propertyId }: { propertyId: string }) {
             </span>
           </a>
         ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function WhyBuyChartsCard({ runId, propertyId, passingRent, area, tenantName, tenantCo }: { runId: string; propertyId: string | null; passingRent?: number; area?: number; tenantName?: string; tenantCo?: string }) {
+  const { toast } = useToast();
+  const [passing, setPassing] = useState(passingRent ? String(passingRent) : "");
+  const [erv, setErv] = useState("");
+  const [tName, setTName] = useState(tenantName || "");
+  const [tCo, setTCo] = useState(tenantCo || "");
+  const [busy, setBusy] = useState<"erv" | "cov" | null>(null);
+  const num = (v: string) => { const n = parseFloat(String(v).replace(/[^0-9.]/g, "")); return isFinite(n) ? n : 0; };
+
+  const genErv = async () => {
+    if (!propertyId) { toast({ title: "No property linked", description: "Stage 1 needs to resolve the property first.", variant: "destructive" }); return; }
+    const p = num(passing), e = num(erv);
+    if (p <= 0 || e <= 0) { toast({ title: "Enter passing rent + ERV", variant: "destructive" }); return; }
+    setBusy("erv");
+    try {
+      const r = await fetch(`/api/property-imagery/${propertyId}/compose/erv-walk`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ passingRentPa: p, ervPa: e, areaSqft: area || undefined, pathwayRunId: runId }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      toast({ title: "ERV walk generated", description: "Saved to the Why Buy imagery." });
+    } catch (e: any) { toast({ title: "ERV walk failed", description: e?.message || "", variant: "destructive" }); }
+    finally { setBusy(null); }
+  };
+
+  const genCov = async () => {
+    if (!propertyId) { toast({ title: "No property linked", description: "Stage 1 needs to resolve the property first.", variant: "destructive" }); return; }
+    if (!tName.trim()) { toast({ title: "Enter the tenant name", variant: "destructive" }); return; }
+    setBusy("cov");
+    try {
+      const r = await fetch(`/api/property-imagery/${propertyId}/compose/covenant-card-auto`, {
+        method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantName: tName.trim(), companiesHouseNumber: tCo.trim() || undefined, pathwayRunId: runId }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      toast({ title: "Covenant card generated", description: "Saved to the Why Buy imagery." });
+    } catch (e: any) { toast({ title: "Covenant card failed", description: e?.message || "", variant: "destructive" }); }
+    finally { setBusy(null); }
+  };
+
+  const inputCls = "w-full border rounded px-2 py-1 text-sm";
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" /> Charts & cards</CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">ERV walk</p>
+            <input value={passing} onChange={(e) => setPassing(e.target.value)} placeholder="Passing rent (£ pa)" className={inputCls} />
+            <input value={erv} onChange={(e) => setErv(e.target.value)} placeholder="ERV (£ pa)" className={inputCls} />
+            <Button size="sm" onClick={genErv} disabled={busy !== null} className="gap-1.5">
+              {busy === "erv" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Generate ERV walk
+            </Button>
+            <p className="text-[10px] text-muted-foreground">Stepped reversion chart from passing rent up to ERV.</p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">Covenant card</p>
+            <input value={tName} onChange={(e) => setTName(e.target.value)} placeholder="Tenant name" className={inputCls} />
+            <input value={tCo} onChange={(e) => setTCo(e.target.value)} placeholder="Companies House no. (optional)" className={inputCls} />
+            <Button size="sm" onClick={genCov} disabled={busy !== null} className="gap-1.5">
+              {busy === "cov" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Generate covenant card
+            </Button>
+            <p className="text-[10px] text-muted-foreground">Tenant + Companies House link + AML status. (Latest filed accounts auto-fill is the next step.)</p>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
