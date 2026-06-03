@@ -407,6 +407,28 @@ export function setupRevolutRoutes(app: Express): void {
     }
   });
 
+  // OAuth redirect target. Set this URL as the "OAuth redirect URI" on the
+  // Revolut certificate. After you authorise, Revolut sends you back here
+  // with `?code=...`; we exchange it for a refresh token automatically so
+  // there's no manual bootstrap step. The code is single-use and only our
+  // private key can redeem it, so this route is safe without auth.
+  app.get("/api/revolut/callback", async (req: Request, res: Response) => {
+    const code = String(req.query?.code || "").trim();
+    const page = (title: string, body: string) =>
+      `<!doctype html><meta charset=utf-8><title>${title}</title>` +
+      `<body style="font-family:system-ui;max-width:640px;margin:64px auto;padding:0 24px;line-height:1.5">` +
+      `<h2>${title}</h2>${body}</body>`;
+    if (!code) {
+      return res.status(400).send(page("Revolut: no code", "<p>No <code>?code=</code> in the redirect. Start again from the Revolut authorise URL.</p>"));
+    }
+    try {
+      const result = await exchangeCodeForToken(code);
+      res.send(page("Revolut connected ✓", `<p>Refresh token saved. Access token valid for ~${Math.round(result.expiresIn / 60)} min and auto-rotates from here.</p><p>Next: register the webhook — <code>POST /api/revolut/webhook/register</code> with the production URL.</p>`));
+    } catch (e: any) {
+      res.status(500).send(page("Revolut: exchange failed", `<p>${String(e?.message || e).replace(/[<>]/g, "")}</p><p>The code is single-use — re-authorise to get a fresh one.</p>`));
+    }
+  });
+
   // Register the webhook with Revolut, pointing at this host. Pass a
   // publicly-routable URL (Railway production domain).
   app.post("/api/revolut/webhook/register", requireAdmin, async (req: Request, res: Response) => {
