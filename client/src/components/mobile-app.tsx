@@ -2864,6 +2864,28 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     enabled: tab === "menu" && moreSubTab === "news",
   });
 
+  // Dismiss a news article so it disappears from the feed. Optimistic
+  // update + server delete; the source itself can be removed via the
+  // News Sources tab if a whole feed is noisy.
+  const dismissNewsMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/news-feed/articles/${id}`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error(`Couldn't dismiss (${r.status})`);
+    },
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/news-feed/articles"] });
+      const prev = queryClient.getQueryData<any[]>(["/api/news-feed/articles"]);
+      queryClient.setQueryData<any[]>(["/api/news-feed/articles"], (cur) => (cur || []).filter((a) => a.id !== id));
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(["/api/news-feed/articles"], ctx.prev);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/news-feed/articles"] });
+    },
+  });
+
   const { data: reqsLeasing, isLoading: reqsLeasingLoading } = useQuery<Array<{
     id: string; name: string; status: string | null; groupName: string | null;
     use: string[] | null; size: string[] | null; requirementLocations: string[] | null;
@@ -3852,40 +3874,58 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 {!newsLoading && newsArticles && newsArticles.length > 0 && (
                   <div className="space-y-3">
                     {newsArticles.map(article => (
-                      <a
-                        key={article.id}
-                        href={article.url || "#"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm active:bg-gray-50 transition-colors"
-                        data-testid={`news-card-${article.id}`}
-                      >
-                        {article.imageUrl && (
-                          <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
-                            <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                          </div>
-                        )}
-                        <div className="p-4">
-                          <div className="flex items-center gap-2 mb-2 flex-wrap">
-                            {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
-                            {article.publishedAt && (
-                              <>
-                                <span className="text-gray-300">·</span>
-                                <span className="text-[11px] text-gray-400">
-                                  {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                                </span>
-                              </>
-                            )}
-                            {article.category && (
-                              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
-                            )}
-                          </div>
-                          <div className="text-[16px] font-semibold text-gray-900 leading-snug mb-1.5 tracking-tight">{article.title}</div>
-                          {(article.aiSummary || article.summary) && (
-                            <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+                      <div key={article.id} className="relative">
+                        <a
+                          href={article.url || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm active:bg-gray-50 transition-colors"
+                          data-testid={`news-card-${article.id}`}
+                        >
+                          {article.imageUrl && (
+                            <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
+                              <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                            </div>
                           )}
-                        </div>
-                      </a>
+                          <div className="p-4">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
+                              {article.publishedAt && (
+                                <>
+                                  <span className="text-gray-300">·</span>
+                                  <span className="text-[11px] text-gray-400">
+                                    {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                  </span>
+                                </>
+                              )}
+                              {article.category && (
+                                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
+                              )}
+                            </div>
+                            <div className="text-[16px] font-semibold text-gray-900 leading-snug mb-1.5 tracking-tight">{article.title}</div>
+                            {(article.aiSummary || article.summary) && (
+                              <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+                            )}
+                          </div>
+                        </a>
+                        {/* Dismiss — kills off-topic articles individually. The
+                            click intentionally lives OUTSIDE the <a> so it
+                            doesn't open the article while you're trying to
+                            remove it. */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            dismissNewsMutation.mutate(article.id);
+                          }}
+                          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/55 backdrop-blur-sm text-white inline-flex items-center justify-center active:bg-black/75"
+                          aria-label="Dismiss article"
+                          data-testid={`news-dismiss-${article.id}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
