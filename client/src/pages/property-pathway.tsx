@@ -119,9 +119,31 @@ export default function PropertyPathway() {
     loadRuns();
   }, []);
 
+  // Anchor the open run to the URL's ?runId=. With several pathways
+  // auto-running, the list + per-run polls re-render constantly; without an
+  // anchor a re-render that drops `selectedRun` bounces you back to the list
+  // (or the URL/state drift lands you on a different run). Here the URL wins:
+  // if the selection drifts from the URL, restore it — instantly from the
+  // cached list, then refresh. We never clear on a transient empty URL; only
+  // the explicit "All investigations" back action does that.
   useEffect(() => {
-    if (runIdFromUrl) loadRun(runIdFromUrl);
-  }, [runIdFromUrl]);
+    if (!runIdFromUrl) return;
+    if (selectedRun?.id === runIdFromUrl) return;
+    const cached = runs.find((r) => r.id === runIdFromUrl);
+    if (cached) setSelectedRun(cached);
+    loadRun(runIdFromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runIdFromUrl, runs]);
+
+  // Mirror the open run into the URL (?runId=) so the anchor above can always
+  // restore it after a re-render/refresh. Without this the selection lived
+  // only in volatile state and a re-render bounced you back to the list.
+  useEffect(() => {
+    if (selectedRun?.id && runIdFromUrl !== selectedRun.id) {
+      navigate(`/property-pathway?runId=${selectedRun.id}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun?.id]);
 
   // Keep the run list fresh while any run has a stage in "running" state —
   // lets the list page show live progress for background runs.
