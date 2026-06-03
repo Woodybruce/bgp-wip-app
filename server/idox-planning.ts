@@ -240,15 +240,50 @@ async function fetchIdoxResultsTiered(host: string, searchTerm: string): Promise
 const cache = new Map<string, { at: number; data: IdoxPlanningApp[] }>();
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
+// When a postcode isn't in the static LPA_REGISTRY, derive its Idox portal host
+// dynamically from PlanIt (national coverage): PlanIt returns each application's
+// council portal URL, and an Idox portal URL's hostname IS the host we need to
+// run the search against. Cached per outward area so we never hand-add a
+// council again — this retires the manual registry for any Idox council.
+const hostCache = new Map<string, { at: number; lpa: { name: string; host: string } | null }>();
+async function deriveIdoxHostFromPlanit(postcode: string): Promise<{ name: string; host: string } | null> {
+  const key = postcode.toUpperCase().replace(/\s+/g, "").slice(0, 4);
+  const cached = hostCache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.lpa;
+  let result: { name: string; host: string } | null = null;
+  try {
+    const { fetchPlanitPlanning } = await import("./planit-planning");
+    const apps = await fetchPlanitPlanning(postcode, "", { maxAgeYears: 25, radiusKm: 1 });
+    for (const a of apps) {
+      const u = a.documentUrl || "";
+      // Only treat it as Idox if the URL carries the Idox signature — otherwise
+      // the direct search would fail. (Non-Idox councils still come through via
+      // PlanIt's own results in Stage 4.)
+      if (u && /\/online-applications\/|applicationDetails\.do|public-?access/i.test(u)) {
+        try { result = { name: a.lpa || "LPA", host: new URL(u).hostname }; break; } catch { /* not a URL */ }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[idox] PlanIt host-derive failed for ${postcode}: ${err?.message}`);
+  }
+  hostCache.set(key, { at: Date.now(), lpa: result });
+  return result;
+}
+
 export async function fetchIdoxPlanning(
   postcode: string,
   address?: string,
   opts?: { maxAgeYears?: number },
 ): Promise<IdoxPlanningApp[]> {
-  const lpa = resolveLpa(postcode);
+  let lpa = resolveLpa(postcode);
   if (!lpa) {
-    console.log(`[idox] No LPA mapping for ${postcode} — skipping scrape`);
-    return [];
+    lpa = await deriveIdoxHostFromPlanit(postcode);
+    if (lpa) {
+      console.log(`[idox] Resolved ${postcode} → ${lpa.host} via PlanIt (no static mapping)`);
+    } else {
+      console.log(`[idox] No Idox host for ${postcode} (not in registry, none derivable from PlanIt) — skipping`);
+      return [];
+    }
   }
 
   // Try postcode first (widest net at the right building level), then address if nothing comes back.
