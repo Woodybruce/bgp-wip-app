@@ -74,20 +74,33 @@ export default function MobileImages() {
       const r = await fetch("/api/image-studio/upload", { method: "POST", credentials: "include", body: fd });
       const body = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
-      // Endpoint returns the inserted rows directly as an array.
-      return body as { id: string }[];
+      // Server returns a plain array on clean success, OR
+      // { results, failures } when some files in the batch failed.
+      const results: { id: string }[] = Array.isArray(body) ? body : (body?.results || []);
+      const failures: { filename: string; error: string }[] = Array.isArray(body) ? [] : (body?.failures || []);
+      return { results, failures };
     },
-    onSuccess: async (body) => {
+    onSuccess: async ({ results, failures }) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
-      // Only auto-open the edit sheet for single uploads — for batches
-      // the user is more likely to want to browse the grid first.
-      if (body.length === 1) {
+      if (results.length === 1 && failures.length === 0) {
         const fresh = queryClient.getQueryData<StudioImage[]>(["/api/image-studio"]) || [];
-        const img = fresh.find((i) => i.id === body[0].id);
+        const img = fresh.find((i) => i.id === results[0].id);
         if (img) setSelected(img);
         toast({ title: "Uploaded — ready to edit with AI" });
+      } else if (results.length > 0 && failures.length === 0) {
+        toast({ title: `${results.length} photos uploaded`, description: "Tap any one to edit with AI." });
+      } else if (results.length > 0 && failures.length > 0) {
+        toast({
+          title: `${results.length} uploaded, ${failures.length} failed`,
+          description: failures[0].error,
+          variant: "destructive",
+        });
       } else {
-        toast({ title: `${body.length} photos uploaded`, description: "Tap any one to edit with AI." });
+        toast({
+          title: "Upload failed",
+          description: failures[0]?.error || "Couldn't process the photo",
+          variant: "destructive",
+        });
       }
       setUploading(false);
     },

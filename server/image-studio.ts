@@ -1167,8 +1167,10 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   app.post("/api/image-studio/upload", requireAuth, requireAdmin, imageUpload.array("images", 20), async (req: Request, res: Response) => {
+    const t0 = Date.now();
     try {
       const files = req.files as Express.Multer.File[];
+      console.log(`[image-studio/upload] start files=${files?.length || 0} body.tags=${req.body?.tags || ""} body.category=${req.body?.category || ""}`);
       if (!files || files.length === 0) return res.status(400).json({ error: "No files uploaded" });
 
       const userId = req.session?.userId || (req as any).tokenUserId;
@@ -1187,58 +1189,91 @@ export function registerImageStudioRoutes(app: Express) {
       const linkKind = (req.body.kind as string) || "secondary_external";
 
       const results = [];
+      const failures: { filename: string; error: string }[] = [];
       for (const file of files) {
-        const ext = path.extname(file.originalname) || ".jpg";
-        const filename = `${crypto.randomUUID()}${ext}`;
-        const filePath = path.join(IMAGE_DIR, filename);
-        await persistImage(filePath, file.buffer, file.mimetype || "image/jpeg", file.originalname);
-
-        const { thumbnail, width, height } = await generateThumbnail(file.buffer);
-
-        const [inserted] = await db.insert(imageStudioImages).values({
-          fileName: file.originalname,
-          category,
-          tags,
-          description: null,
-          source: "upload",
-          area,
-          address,
-          brandName,
-          brandSector,
-          propertyType,
-          mimeType: file.mimetype,
-          fileSize: file.size,
-          width,
-          height,
-          thumbnailData: thumbnail,
-          localPath: filePath,
-          uploadedBy: userId,
-        }).returning();
-
-        // Link to a CRM property (imagery asset) when caller provided one.
-        if (linkPropertyId) {
-          try {
-            await db.insert(propertyImageryAssets).values({
-              propertyId: linkPropertyId,
-              kind: ALL_KINDS.includes(linkKind as any) ? linkKind : "secondary_external",
-              source: "manual_upload",
-              imageStudioId: inserted.id,
-              score: 0.6,
-              width,
-              height,
-              caption: file.originalname,
-              generatedBy: userId,
-            } as any);
-          } catch (linkErr: any) {
-            console.warn("[image-studio/upload] property_imagery_assets link failed:", linkErr?.message);
+        const original = file.originalname || "unnamed";
+        try {
+          console.log(`[image-studio/upload] file=${original} mime=${file.mimetype} bytes=${file.size}`);
+          // iPhone "High Efficiency" mode sends HEIC. Sharp can decode it
+          // if libheif is present (the Railway base image has it) but
+          // we normalise to JPEG up-front so the thumbnail + downstream
+          // AI edits all get a known-safe format.
+          let workingBuffer = file.buffer;
+          let workingMime = file.mimetype || "image/jpeg";
+          const isHeic = /heic|heif/i.test(workingMime) || /\.heic$|\.heif$/i.test(original);
+          if (isHeic) {
+            try {
+              workingBuffer = await sharp(file.buffer).jpeg({ quality: 92 }).toBuffer();
+              workingMime = "image/jpeg";
+              console.log(`[image-studio/upload] file=${original} HEIC → JPEG conversion ok (${workingBuffer.length} bytes)`);
+            } catch (heicErr: any) {
+              throw new Error(`HEIC conversion failed (${heicErr?.message}). On iPhone, Settings > Camera > Formats > Most Compatible avoids this.`);
+            }
           }
-        }
 
-        results.push(inserted);
+          const ext = workingMime === "image/jpeg" ? ".jpg" : (path.extname(original) || ".jpg");
+          const filename = `${crypto.randomUUID()}${ext}`;
+          const filePath = path.join(IMAGE_DIR, filename);
+          await persistImage(filePath, workingBuffer, workingMime, original);
+
+          const { thumbnail, width, height } = await generateThumbnail(workingBuffer);
+
+          const [inserted] = await db.insert(imageStudioImages).values({
+            fileName: original,
+            category,
+            tags,
+            description: null,
+            source: "upload",
+            area,
+            address,
+            brandName,
+            brandSector,
+            propertyType,
+            mimeType: workingMime,
+            fileSize: workingBuffer.length,
+            width,
+            height,
+            thumbnailData: thumbnail,
+            localPath: filePath,
+            uploadedBy: userId,
+          }).returning();
+
+          // Link to a CRM property (imagery asset) when caller provided one.
+          if (linkPropertyId) {
+            try {
+              await db.insert(propertyImageryAssets).values({
+                propertyId: linkPropertyId,
+                kind: ALL_KINDS.includes(linkKind as any) ? linkKind : "secondary_external",
+                source: "manual_upload",
+                imageStudioId: inserted.id,
+                score: 0.6,
+                width,
+                height,
+                caption: original,
+                generatedBy: userId,
+              } as any);
+            } catch (linkErr: any) {
+              console.warn("[image-studio/upload] property_imagery_assets link failed:", linkErr?.message);
+            }
+          }
+
+          results.push(inserted);
+          console.log(`[image-studio/upload] file=${original} inserted id=${inserted.id}`);
+        } catch (fileErr: any) {
+          console.error(`[image-studio/upload] file=${original} FAILED: ${fileErr?.message}`, fileErr?.stack);
+          failures.push({ filename: original, error: fileErr?.message || "Unknown error" });
+        }
       }
 
-      res.json(results);
+      console.log(`[image-studio/upload] done in ${Date.now() - t0}ms ok=${results.length} failed=${failures.length}`);
+      // Even if some failed, return the successes — the client can show
+      // a partial-failure toast instead of losing the good rows.
+      if (results.length === 0 && failures.length > 0) {
+        return res.status(500).json({ error: failures[0].error, failures });
+      }
+      res.json(failures.length > 0 ? { results, failures } : results);
     } catch (e: any) {
+      console.error(`[image-studio/upload] crashed in ${Date.now() - t0}ms:`, e?.message, e?.stack);
       res.status(500).json({ error: e.message });
     }
   });
