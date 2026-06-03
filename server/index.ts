@@ -165,6 +165,11 @@ import { pool } from "./db";
     // `geometry` is a tiny GeoJSON blob for future polygons / lines /
     // drive-time routes.
     `CREATE TABLE IF NOT EXISTS map_annotations (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), owner_id VARCHAR, kind TEXT NOT NULL, label TEXT, color TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION, geometry JSONB, created_at TIMESTAMP DEFAULT now())`,
+    // Named annotation layers — group pins / labels / polygons / drive
+    // times into a coherent layer (e.g. "Brent Cross deck — Apr 2026")
+    // that can be toggled, renamed, or shared as one unit.
+    `CREATE TABLE IF NOT EXISTS map_layers (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, color TEXT, owner_id VARCHAR, shared_with_team BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT now())`,
+    `ALTER TABLE map_annotations ADD COLUMN IF NOT EXISTS layer_id VARCHAR`,
     `ALTER TABLE knowledge_base ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'sharepoint'`,
     // Drop the legacy index that may have been created with a non-IMMUTABLE
     // expression (array_to_string was STABLE in Postgres <14). We rebuild it

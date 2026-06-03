@@ -559,6 +559,19 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
     onError: (err: any) => { toast({ title: "Couldn't add to schedule", description: err.message, variant: "destructive" }); },
   });
 
+  // Re-sync the status mirror across all four boards for this property.
+  // Links any unmatched Letting Tracker / leasing rows by name and pushes
+  // the current canonical status onto each projection. Heals drift in one
+  // tap (the Bluewater "no linkage" fix).
+  const resyncMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/properties/${propertyId}/resync-mirror`, {}),
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      toast({ title: "Boards re-synced", description: `${res?.synced ?? 0} units mirrored to Letting Tracker + leasing.` });
+    },
+    onError: (err: any) => { toast({ title: "Re-sync failed", description: err.message, variant: "destructive" }); },
+  });
+
   const inlineUpdate = useCallback((unitId: string | number, field: string, value: string) => {
     updateMutation.mutate({ id: unitId, [field]: value });
   }, [updateMutation]);

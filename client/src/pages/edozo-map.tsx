@@ -3540,6 +3540,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const [hmlrPolygons, setHmlrPolygons] = useState<any>(null);
   const hmlrLayerRef = useRef<L.LayerGroup | null>(null);
 
+  // ── Named layers ───────────────────────────────────────────────────────
+  // Group annotations into named layers ("Brent Cross deck", "Old Street
+  // catchment") so they can be toggled, shared, deleted as one unit.
+  interface MapLayer { id: string; name: string; color: string | null; ownerId: string | null; sharedWithTeam: boolean; annotationCount: number; mine: boolean; }
+  const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
+  const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
+  const [hiddenLayerIds, setHiddenLayerIds] = useState<Set<string>>(new Set());
+  const [newLayerName, setNewLayerName] = useState("");
+
   // ── Street View on-click ───────────────────────────────────────────────────
   // When toggled on, clicking the map opens an embedded Google Street View
   // panorama at that lat/lng in a popup. Reuses the GOOGLE_API_KEY already
@@ -4474,6 +4483,59 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   }, []);
   useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
 
+  const loadMapLayers = useCallback(async () => {
+    try {
+      const r = await fetch("/api/map-layers", { credentials: "include" });
+      if (!r.ok) return;
+      const data = await r.json();
+      const list: MapLayer[] = Array.isArray(data) ? data : [];
+      setMapLayers(list);
+      // Pick the first owned layer as active by default. Falls back
+      // to the first shared layer, then no layer (annotations go to
+      // the "unfiled" bucket — still visible, just not in a layer).
+      setActiveLayerId((cur) => {
+        if (cur && list.some((l) => l.id === cur)) return cur;
+        const mine = list.find((l) => l.mine);
+        if (mine) return mine.id;
+        const any = list[0];
+        return any ? any.id : null;
+      });
+    } catch {}
+  }, []);
+  useEffect(() => { loadMapLayers(); }, [loadMapLayers]);
+
+  const createMapLayer = useCallback(async () => {
+    const name = newLayerName.trim();
+    if (!name) return;
+    const r = await fetch("/api/map-layers", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color: annotateColor }),
+    });
+    const body = await r.json().catch(() => ({} as any));
+    if (r.ok && body?.id) {
+      setNewLayerName("");
+      await loadMapLayers();
+      setActiveLayerId(body.id);
+    }
+  }, [newLayerName, annotateColor, loadMapLayers]);
+
+  const deleteMapLayer = useCallback(async (id: string, name: string) => {
+    if (!window.confirm(`Delete layer "${name}" and all its annotations?`)) return;
+    await fetch(`/api/map-layers/${id}`, { method: "DELETE", credentials: "include" });
+    await loadMapLayers();
+    await loadAnnotations();
+    if (activeLayerId === id) setActiveLayerId(null);
+  }, [activeLayerId, loadMapLayers, loadAnnotations]);
+
+  const toggleLayerVisibility = useCallback((id: string) => {
+    setHiddenLayerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
   // Reset in-progress polygon / drive-time when mode changes.
   useEffect(() => {
     polygonPointsRef.current = [];
@@ -4517,9 +4579,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
         const resp = await fetch("/api/map-annotations", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: mode, label, color, lat, lng }),
+          body: JSON.stringify({ kind: mode, label, color, lat, lng, layerId: activeLayerId }),
         });
-        if (resp.ok) { await loadAnnotations(); setAnnotateMode(null); }
+        if (resp.ok) { await loadAnnotations(); await loadMapLayers(); setAnnotateMode(null); }
         return;
       }
 
@@ -4568,9 +4630,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
           const resp = await fetch("/api/map-annotations", {
             method: "POST", credentials: "include",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ kind: "drive_time", label, color, lat: origin.lat, lng: origin.lng, geometry }),
+            body: JSON.stringify({ kind: "drive_time", label, color, lat: origin.lat, lng: origin.lng, geometry, layerId: activeLayerId }),
           });
-          if (resp.ok) { await loadAnnotations(); setAnnotateMode(null); }
+          if (resp.ok) { await loadAnnotations(); await loadMapLayers(); setAnnotateMode(null); }
         } catch (err: any) {
           window.alert(`Couldn't fetch route: ${err?.message}`);
         }
@@ -4593,9 +4655,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       const resp = await fetch("/api/map-annotations", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: "polygon", label, color, lat: pts[0].lat, lng: pts[0].lng, geometry }),
+        body: JSON.stringify({ kind: "polygon", label, color, lat: pts[0].lat, lng: pts[0].lng, geometry, layerId: activeLayerId }),
       });
-      if (resp.ok) { await loadAnnotations(); setAnnotateMode(null); }
+      if (resp.ok) { await loadAnnotations(); await loadMapLayers(); setAnnotateMode(null); }
     };
 
     map.on("click", handler);
@@ -4623,6 +4685,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     if (!showAnnotations) return;
     for (const a of annotations) {
       if (a.lat == null || a.lng == null) continue;
+      if (a.layerId && hiddenLayerIds.has(a.layerId)) continue;
       const color = a.color || "#ef4444";
       if (a.kind === "pin") {
         const marker = L.circleMarker([a.lat, a.lng], {
@@ -4702,7 +4765,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
         }
       }
     }
-  }, [annotations, showAnnotations, loadAnnotations]);
+  }, [annotations, showAnnotations, hiddenLayerIds, loadAnnotations]);
 
   // ── HMLR title polygons overlay ─────────────────────────────────────────
   // Fetches polygons in the current viewport when the layer is on; debounced
@@ -4745,11 +4808,24 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     }
     if (!showHmlrTitles || !hmlrPolygons?.features?.length) return;
     const group = L.layerGroup().addTo(map);
+    // Colour by tenure — freehold = blue, leasehold = orange, unknown = grey.
+    // Matches the legend below the layer toggle in the sidebar.
+    const styleFor = (tenure: string) => {
+      if (tenure === "freehold") return { color: "#1e40af", weight: 1.5, fillColor: "#3b82f6", fillOpacity: 0.12 };
+      if (tenure === "leasehold") return { color: "#c2410c", weight: 1.5, fillColor: "#f97316", fillOpacity: 0.12 };
+      return { color: "#6b7280", weight: 1.2, fillColor: "#9ca3af", fillOpacity: 0.06, dashArray: "3 3" };
+    };
     const gj = L.geoJSON(hmlrPolygons, {
-      style: { color: "#1e40af", weight: 1.5, fillColor: "#3b82f6", fillOpacity: 0.08 },
+      style: (feat: any) => styleFor(feat?.properties?.tenure || "unknown") as any,
       onEachFeature: (feat: any, lyr: any) => {
         const title = feat?.properties?.titleNumber || "Title";
-        lyr.bindPopup(`<div style="font-weight:600">${title}</div><div style="font-size:11px;color:#6b7280">Region: ${feat?.properties?.region || "—"}</div>`);
+        const tenure = feat?.properties?.tenure || "unknown";
+        const tenurePill = tenure === "freehold"
+          ? `<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">FREEHOLD</span>`
+          : tenure === "leasehold"
+            ? `<span style="background:#ffedd5;color:#c2410c;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">LEASEHOLD</span>`
+            : `<span style="background:#f3f4f6;color:#374151;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">UNKNOWN</span>`;
+        lyr.bindPopup(`<div style="font-weight:600">${title}</div><div style="margin-top:4px">${tenurePill}</div><div style="font-size:11px;color:#6b7280;margin-top:4px">Region: ${feat?.properties?.region || "—"}</div>`);
       },
     } as any);
     group.addLayer(gj);
@@ -5830,7 +5906,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               { key: "oss",    label: mapZoom < 14 && showOSSites ? "Named Sites (zoom 14+)" : "Named Sites", count: 0, dot: "#15616D", on: showOSSites,     set: setShowOSSites },
               { key: "tp",     label: "Tenancy Plans",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
               { key: "annot",  label: "Annotations",     count: annotations.length, dot: "#a855f7", on: showAnnotations, set: setShowAnnotations },
-              { key: "hmlr",   label: "HMLR Titles",     count: hmlrPolygons?.features?.length ?? 0, dot: "#1e40af", on: showHmlrTitles, set: setShowHmlrTitles },
+              { key: "hmlr",   label: "HMLR Titles", count: hmlrPolygons?.features?.length ?? 0, dot: "#1e40af", on: showHmlrTitles, set: setShowHmlrTitles },
             ].map((row) => (
               <button
                 key={row.key}
@@ -5896,6 +5972,88 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                 })}
               </div>
             </div>
+          )}
+        </div>
+
+        {/* HMLR tenure legend — only shown when the layer is on. */}
+        {showHmlrTitles && (
+          <div className="px-3 pb-2 pt-1 flex items-center gap-3 text-[10px] text-gray-600">
+            <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#3b82f6" }} />Freehold</div>
+            <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#f97316" }} />Leasehold</div>
+            <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#9ca3af" }} />Unknown</div>
+          </div>
+        )}
+
+        {/* Named annotation layers — group pins / labels / polygons /
+            drive-times into a coherent set (e.g. "Brent Cross deck"),
+            toggle visibility, share with the team. */}
+        <div className="border-t" />
+        <div className="px-3 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold text-gray-700">Annotation layers</p>
+            <span className="text-[10px] text-gray-400">{mapLayers.length}</span>
+          </div>
+          {mapLayers.length > 0 && (
+            <div className="space-y-1">
+              {mapLayers.map((layer) => {
+                const hidden = hiddenLayerIds.has(layer.id);
+                const active = activeLayerId === layer.id;
+                return (
+                  <div key={layer.id} className={`flex items-center gap-1.5 px-1.5 py-1 rounded border ${active ? "border-gray-900 bg-gray-50" : "border-transparent"}`}>
+                    <button
+                      type="button"
+                      onClick={() => toggleLayerVisibility(layer.id)}
+                      className="w-3 h-3 rounded-full shrink-0 border-2"
+                      style={{ background: hidden ? "transparent" : (layer.color || "#a855f7"), borderColor: layer.color || "#a855f7" }}
+                      aria-label={hidden ? "Show layer" : "Hide layer"}
+                      title={hidden ? "Show" : "Hide"}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setActiveLayerId(layer.id)}
+                      className="flex-1 min-w-0 text-left text-[11px] truncate"
+                      title={`Set as active layer for new annotations · ${layer.annotationCount} item${layer.annotationCount === 1 ? "" : "s"}`}
+                      data-testid={`layer-pick-${layer.id}`}
+                    >
+                      <span className={hidden ? "text-gray-400 line-through" : "text-gray-800"}>{layer.name}</span>
+                      <span className="ml-1 text-gray-400">{layer.annotationCount}</span>
+                      {layer.sharedWithTeam && <span className="ml-1 text-[9px] uppercase tracking-wider text-emerald-600">shared</span>}
+                    </button>
+                    {layer.mine && (
+                      <button
+                        type="button"
+                        onClick={() => deleteMapLayer(layer.id, layer.name)}
+                        className="text-[11px] text-red-500 hover:text-red-700"
+                        title="Delete layer + its annotations"
+                        data-testid={`layer-delete-${layer.id}`}
+                      >×</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex gap-1">
+            <input
+              value={newLayerName}
+              onChange={(e) => setNewLayerName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); createMapLayer(); } }}
+              placeholder='+ new layer'
+              className="flex-1 min-w-0 h-7 px-2 text-[11px] rounded border border-gray-200 focus:border-gray-400 outline-none"
+              data-testid="new-layer-input"
+            />
+            <button
+              type="button"
+              onClick={createMapLayer}
+              disabled={!newLayerName.trim()}
+              className="h-7 px-2 rounded bg-gray-900 text-white text-[11px] font-medium disabled:opacity-40"
+              data-testid="new-layer-btn"
+            >Add</button>
+          </div>
+          {activeLayerId && (
+            <p className="text-[10px] text-gray-500">
+              New annotations land in {mapLayers.find((l) => l.id === activeLayerId)?.name || "current layer"}.
+            </p>
           )}
         </div>
 

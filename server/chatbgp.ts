@@ -11764,6 +11764,36 @@ export function setupChatBGPRoutes(app: Express) {
         const initialStageResults: any = {};
         if (confirmedTitleNumber) {
           initialStageResults.confirmedLandReg = { titleNumber: confirmedTitleNumber, confirmedAt: new Date().toISOString(), confirmedBy: userId };
+          // CRITICAL: seed stage1.initialOwnership with manualLock so the
+          // Stage 1 runner HONOURS this title instead of re-fetching and
+          // potentially picking a different one. Stage 1 checks
+          // `stage1.initialOwnership.manualLock` and skips cross-validation
+          // when set (property-pathway.ts). Without this the confirmed
+          // title is stored but ignored — the gate would be cosmetic.
+          let proprietorName: string | null = null;
+          let tenure: string | null = null;
+          try {
+            const { findProprietorsByTitle } = await import("./hmlr-direct");
+            const props = await findProprietorsByTitle(confirmedTitleNumber);
+            if (props?.length) {
+              proprietorName = props.map((p: any) => p.proprietorName).filter(Boolean).join(", ") || null;
+              tenure = (props[0] as any)?.tenure || null;
+            }
+          } catch (e: any) {
+            console.warn(`[start_property_pathway] proprietor lookup for ${confirmedTitleNumber} failed: ${e?.message}`);
+          }
+          initialStageResults.stage1 = {
+            initialOwnership: {
+              titleNumber: confirmedTitleNumber,
+              proprietorName,
+              tenure,
+              titleVerified: true,
+              titleSource: "user_confirmed",
+              manualLock: true,
+              manualSetBy: userId,
+              manualSetAt: new Date().toISOString(),
+            },
+          };
         } else if (skipLandReg) {
           initialStageResults.confirmedLandReg = { skipped: true, skippedAt: new Date().toISOString(), skippedBy: userId };
         }
