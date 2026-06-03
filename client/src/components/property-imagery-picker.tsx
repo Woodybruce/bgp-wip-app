@@ -268,6 +268,7 @@ function ComposeButton({
   const [anchorsLayer, setAnchorsLayer] = useState(false);
   const [restaurantsLayer, setRestaurantsLayer] = useState(false);
   const [mapType, setMapType] = useState<"hybrid" | "roadmap" | "satellite" | "terrain">("hybrid");
+  const [mapDest, setMapDest] = useState<"location_plan" | "hero" | "secondary_external">("location_plan");
   const [scope, setScope] = useState<"investment" | "leasing">("investment");
 
   const compose = async () => {
@@ -282,7 +283,7 @@ function ComposeButton({
         if (compsLayer) layers.push("comps");
         if (anchorsLayer) layers.push("anchors");
         if (restaurantsLayer) layers.push("restaurants");
-        body = { ...body, zoom: 16, mapType, layers };
+        body = { ...body, zoom: 16, mapType, layers, kind: mapDest };
       } else if (kind === "comps_chart") {
         // Auto-pull from investment_comps + crm_comps in the same postcode area
         endpoint = `/api/property-imagery/${propertyId}/compose/comps-chart-auto`;
@@ -336,6 +337,11 @@ function ComposeButton({
       </div>
       {kind === "location_plan" && (
         <div className="flex items-center gap-3 flex-wrap text-xs">
+          <select value={mapDest} onChange={(e) => setMapDest(e.target.value as any)} className="bg-background border rounded px-2 py-1" title="Where to save this map shot">
+            <option value="location_plan">Save as: Location plan</option>
+            <option value="hero">Save as: Hero shot</option>
+            <option value="secondary_external">Save as: Gallery</option>
+          </select>
           <select value={mapType} onChange={(e) => setMapType(e.target.value as any)} className="bg-background border rounded px-2 py-1">
             <option value="hybrid">Hybrid (satellite + labels)</option>
             <option value="satellite">Satellite</option>

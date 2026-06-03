@@ -467,6 +467,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
         propertyId,
         zoom: req.body?.zoom,
         mapType: req.body?.mapType,
+        kind: req.body?.kind,
         markers,
         size: req.body?.size,
         generatedBy: userId,

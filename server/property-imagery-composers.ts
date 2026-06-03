@@ -39,6 +39,9 @@ export interface LocationPlanInput {
   propertyId: string;
   zoom?: number;                  // 14–18 typical; default 16 (street + nearby blocks)
   mapType?: "roadmap" | "satellite" | "hybrid" | "terrain";
+  // Where the generated map shot lands in the imagery — defaults to the
+  // location plan, but can be saved as the hero or a gallery shot.
+  kind?: "location_plan" | "hero" | "secondary_external";
   /** Optional layer markers to drop on the map. */
   markers?: Array<{
     lat: number;
@@ -114,10 +117,10 @@ export async function composeLocationPlan(input: LocationPlanInput): Promise<Com
     }
     const buffer = Buffer.from(await resp.arrayBuffer());
 
-    const caption = `Location plan — ${property.name}${property.postcode ? `, ${property.postcode}` : ""} (${mapType}, zoom ${zoom})`;
+    const caption = `${input.kind === "hero" ? "Hero" : "Location plan"} — ${property.name}${property.postcode ? `, ${property.postcode}` : ""} (${mapType}, zoom ${zoom})`;
     const result = await persistAsImageryAsset({
       propertyId: input.propertyId,
-      kind: "location_plan",
+      kind: input.kind || "location_plan",
       source: "google_static",
       buffer,
       filename: `location-plan-${slug(property.name)}-${Date.now()}.png`,
