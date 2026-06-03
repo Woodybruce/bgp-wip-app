@@ -1590,9 +1590,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         />
       )}
 
-      {/* Comps — AI-matched from the board, editable, feed the Why Buy deck */}
+      {/* Comps — AI-matched from the board, editable, feed the Why Buy deck + chart */}
       {(s7 || s8 || s9) && (
-        <WhyBuyCompsCard runId={run.id} whyBuyComps={(run.stageResults as any)?.whyBuyComps} onReload={onReload} />
+        <WhyBuyCompsCard runId={run.id} propertyId={run.propertyId || null} whyBuyComps={(run.stageResults as any)?.whyBuyComps} onReload={onReload} />
       )}
 
       {/* Stage 9 — Why Buy */}
@@ -2525,11 +2525,36 @@ function RelatedLeaseAdvisoryMatters({ propertyId }: { propertyId: string }) {
   );
 }
 
-function WhyBuyCompsCard({ runId, whyBuyComps, onReload }: { runId: string; whyBuyComps: any; onReload: () => void }) {
+function WhyBuyCompsCard({ runId, propertyId, whyBuyComps, onReload }: { runId: string; propertyId: string | null; whyBuyComps: any; onReload: () => void }) {
   const { toast } = useToast();
   const [investment, setInvestment] = useState<any[]>(whyBuyComps?.investment || []);
   const [leasing, setLeasing] = useState<any[]>(whyBuyComps?.leasing || []);
   const [busy, setBusy] = useState<"match" | "save" | null>(null);
+  const [charting, setCharting] = useState<"investment" | "leasing" | null>(null);
+  const numOf = (v: any) => { const n = parseFloat(String(v ?? "").replace(/[^0-9.]/g, "")); return isFinite(n) ? n : 0; };
+
+  const genChart = async (kind: "investment" | "leasing") => {
+    if (!propertyId) { toast({ title: "No property linked", description: "Stage 1 needs to resolve the property first.", variant: "destructive" }); return; }
+    const list = kind === "investment" ? investment : leasing;
+    const comps = list.map((c) => ({
+      label: `${String(c.address || c.tenant || "?").slice(0, 30)}${c.date ? " — " + c.date : ""}`,
+      psf: kind === "investment" ? numOf(c.price) : numOf(c.rent),
+      note: c.note || "",
+    })).filter((c) => c.psf > 0);
+    if (comps.length === 0) { toast({ title: "Nothing to chart", description: "Add comps with a price/rent value first.", variant: "destructive" }); return; }
+    setCharting(kind);
+    try {
+      const r = await fetch(`/api/property-imagery/${propertyId}/compose/comps-chart`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ comps, pathwayRunId: runId, title: kind === "investment" ? "Investment Comparables" : "Leasing Comparables", unit: kind === "investment" ? "£ capital" : "£ rent pa" }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      toast({ title: "Comps chart generated", description: "Saved to the Why Buy imagery — it'll show in the deck." });
+      onReload();
+    } catch (e: any) { toast({ title: "Chart failed", description: e?.message || "", variant: "destructive" }); }
+    finally { setCharting(null); }
+  };
   const [addFor, setAddFor] = useState<"investment" | "leasing" | null>(null);
   const [board, setBoard] = useState<any[]>([]);
   const [boardQ, setBoardQ] = useState("");
@@ -2598,7 +2623,12 @@ function WhyBuyCompsCard({ runId, whyBuyComps, onReload }: { runId: string; whyB
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">{kind === "investment" ? "Investment (sales)" : "Leasing (rents)"} ({list.length})</p>
-        <Button size="sm" variant="ghost" className="h-6 text-[11px] gap-1" onClick={() => openAdd(kind)}><Plus className="w-3 h-3" />Add from board</Button>
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="ghost" className="h-6 text-[11px] gap-1" onClick={() => genChart(kind)} disabled={charting !== null || list.length === 0} title="Generate a comps chart from these comps (saves to the Why Buy imagery)">
+            {charting === kind ? <Clock className="w-3 h-3 animate-spin" /> : <FileSpreadsheet className="w-3 h-3" />}Chart
+          </Button>
+          <Button size="sm" variant="ghost" className="h-6 text-[11px] gap-1" onClick={() => openAdd(kind)}><Plus className="w-3 h-3" />Add from board</Button>
+        </div>
       </div>
       {list.length === 0 ? (
         <p className="text-[11px] text-muted-foreground italic">None yet — hit AI match or add from the board.</p>
