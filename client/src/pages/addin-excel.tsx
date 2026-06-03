@@ -1343,6 +1343,47 @@ async function readExcelSelection(): Promise<string> {
   }
 }
 
+// Read any sheet/range on demand (fulfils the AI's readRange/readSheet actions).
+async function readExcelRange(sheetName: string, rangeAddr?: string): Promise<string> {
+  const tag = `${sheetName || "active"}${rangeAddr ? "!" + rangeAddr : ""}`;
+  try {
+    if (!window.Excel) return `\n=== ${tag}: Excel not available ===\n`;
+    return await window.Excel.run(async (context: any) => {
+      let ws: any;
+      if (sheetName) {
+        ws = context.workbook.worksheets.getItemOrNullObject(sheetName);
+        ws.load("isNullObject");
+        await context.sync();
+        if (ws.isNullObject) return `\n=== Sheet "${sheetName}" not found ===\n`;
+      } else {
+        ws = context.workbook.worksheets.getActiveWorksheet();
+      }
+      const range = rangeAddr ? ws.getRange(rangeAddr) : ws.getUsedRangeOrNullObject();
+      range.load(["values", "rowCount", "columnCount", "isNullObject", "address"]);
+      await context.sync();
+      if (range.isNullObject) return `\n=== ${tag}: (empty) ===\n`;
+      let csv = `\n=== ${tag} (${range.rowCount} rows x ${range.columnCount} cols) ===\n`;
+      csv += valuesToCsv(range.values, 200, EXCEL_MAX_COLS);
+      return csv;
+    });
+  } catch (err: any) {
+    return `\n=== ${tag}: read failed (${err?.message || "error"}) ===\n`;
+  }
+}
+
+// Pull the AI's read requests out of a reply (readRange / readSheet action blocks).
+function extractReadRequests(text: string): Array<{ sheet: string; range?: string }> {
+  const out: Array<{ sheet: string; range?: string }> = [];
+  const re = /\{[^{}]*"action"\s*:\s*"(?:readRange|readSheet)"[^{}]*\}/g;
+  for (const m of text.match(re) || []) {
+    try {
+      const o = JSON.parse(m);
+      if (o.sheet || o.range) out.push({ sheet: o.sheet || "", range: o.range });
+    } catch { /* ignore malformed */ }
+  }
+  return out;
+}
+
 // ─── Model Builder Component ──────────────────────────────────────────────
 
 function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string> }) {
@@ -2015,9 +2056,11 @@ function AddinExcel() {
     return headers;
   }, [token]);
 
-  const sendMessage = async (text?: string) => {
+  const autoReadRoundsRef = useRef(0);
+  const sendMessage = async (text?: string, opts?: { autoRead?: boolean }) => {
     const msg = (text || input).trim();
-    if ((!msg && attachedFiles.length === 0) || loading) return;
+    if ((!msg && attachedFiles.length === 0) || (loading && !opts?.autoRead)) return;
+    if (!opts?.autoRead) autoReadRoundsRef.current = 0; // reset on a human-initiated turn
     if (!text) setInput("");
     const filesForThisSend = attachedFiles;
     setAttachedFiles([]);
@@ -2134,6 +2177,18 @@ function AddinExcel() {
           timestamp: new Date(),
         };
         setMessages(prev => [...prev, assistantMsg]);
+      }
+
+      // Auto-fulfil any read requests — read the sheets/ranges live from Excel
+      // and send them straight back so the AI can see the whole workbook and
+      // continue (capped to avoid runaway loops).
+      const reads = fullReply ? extractReadRequests(fullReply) : [];
+      if (reads.length > 0 && autoReadRoundsRef.current < 5) {
+        autoReadRoundsRef.current += 1;
+        let data = "";
+        for (const r of reads.slice(0, 8)) data += await readExcelRange(r.sheet, r.range);
+        await sendMessage(`Here is the Excel data you requested (read live from the workbook):\n${data}`, { autoRead: true });
+        return;
       }
     } catch (err: any) {
       const errorMsg: Message = {
