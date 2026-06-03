@@ -1370,7 +1370,39 @@ router.post("/api/properties/:propertyId/resync-mirror", requireAuth, async (req
   }
 });
 
-// Re-point tenant FKs after a brand merge. When a brand is merged
+router.post("/api/admin/resync-mirror-all", requireAuth, async (_req, res) => {
+  try {
+    const pool = await getPool();
+    const rows = await pool.query(
+      `SELECT tsu.id, p.name AS property_name
+         FROM tenancy_schedule_units tsu
+         LEFT JOIN properties p ON p.id = tsu.property_id`
+    );
+    let synced = 0;
+    let failed = 0;
+    const propertyHits = new Map<string, number>();
+    for (const row of rows.rows) {
+      try {
+        await fanOutTenancyStatus(pool, row.id);
+        synced++;
+        const key = row.property_name || "(no property)";
+        propertyHits.set(key, (propertyHits.get(key) || 0) + 1);
+      } catch { failed++; }
+    }
+    res.json({
+      ok: true,
+      synced,
+      failed,
+      total: rows.rows.length,
+      byProperty: Object.fromEntries(propertyHits),
+    });
+  } catch (e: any) {
+    console.error("[resync-mirror-all]", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 // into another (crm_companies.merged_into_id set), every tenancy /
 // leasing / available row that still points at the merged-away
 // brand needs to follow the chain to the surviving (non-merged)
