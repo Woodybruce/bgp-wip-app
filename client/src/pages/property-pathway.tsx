@@ -3111,17 +3111,6 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
             </p>
           </div>
           <div className="flex items-center gap-1">
-            {propertyId && (
-              <a
-                href={`/image-studio?propertyId=${propertyId}&property=${encodeURIComponent(propertyAddress)}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-muted-foreground hover:text-foreground border rounded px-2 py-1"
-                title="Open Image Studio with this property"
-              >
-                Open Image Studio ↗
-              </a>
-            )}
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none ml-2">✕</button>
           </div>
         </div>

@@ -1300,7 +1300,14 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     } : null,
     tenant: result.tenancy?.tenant ? {
       name: result.tenancy.tenant,
-      companyNumber: result.tenancy.tenantCompanyNumber,
+      // Keep ONLY a valid UK company number (8 digits, or 2 letters + 6 digits).
+      // The extractor sometimes dumps a whole tenant rundown here — that caused
+      // the tenancy-card "hole" and broke the Companies House link. The rundown
+      // still lives in the AI commentary/briefing.
+      companyNumber: (() => {
+        const m = String(result.tenancy.tenantCompanyNumber || "").match(/\b(?:[A-Z]{2}\d{6}|\d{8})\b/i);
+        return m ? m[0].toUpperCase() : undefined;
+      })(),
     } : undefined,
     aiBriefing: result.aiBriefing,
     aiFacts: {
