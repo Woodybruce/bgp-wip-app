@@ -111,6 +111,23 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
 function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
+  // Decode HTML entities FIRST. Forwarded / re-wrapped emails often
+  // arrive with their markup entity-encoded ("&lt;p&gt;£5M&lt;/p&gt;").
+  // If we strip tags before decoding, the entity-encoded tags survive
+  // tag-stripping, then get decoded into real tags AFTER stripping,
+  // leaving raw "<p>" markers behind and — when subsequent prompt
+  // assembly collapses or quotes them — eating the actual content. We
+  // saw the Green Street News bulletin collapse to literally "£" this
+  // way. Decode-first then single-pass strip works for both shapes.
+  s = s.replace(/&nbsp;/g, " ")
+       .replace(/&amp;/g, "&")
+       .replace(/&lt;/g, "<")
+       .replace(/&gt;/g, ">")
+       .replace(/&quot;/g, '"')
+       .replace(/&#39;/g, "'")
+       .replace(/&apos;/g, "'")
+       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+       .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
   // Drop scripts/styles entirely.
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
   s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
@@ -128,17 +145,6 @@ function htmlToText(html: string): string {
   s = s.replace(/<\s*hr\s*\/?\s*>/gi, "\n---\n");
   // Strip all remaining tags.
   s = s.replace(/<[^>]+>/g, " ");
-  // Decode the common HTML entities. Anything else we leave — the classifier
-  // can cope with a stray &mdash;.
-  s = s.replace(/&nbsp;/g, " ")
-       .replace(/&amp;/g, "&")
-       .replace(/&lt;/g, "<")
-       .replace(/&gt;/g, ">")
-       .replace(/&quot;/g, '"')
-       .replace(/&#39;/g, "'")
-       .replace(/&apos;/g, "'")
-       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-       .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
   // Collapse runs of whitespace but keep paragraph breaks.
   s = s.replace(/[ \t]+/g, " ")
        .replace(/\n[ \t]+/g, "\n")
