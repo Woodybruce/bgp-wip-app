@@ -780,6 +780,7 @@ function MatterDetailView({ id }: { id: string }) {
                 <Label className="text-xs mb-1">Fee (£) *</Label>
                 <Input
                   type="number"
+                  step="0.01"
                   value={solForm.fee}
                   onChange={e => setSolForm(f => ({ ...f, fee: e.target.value }))}
                   placeholder="0"

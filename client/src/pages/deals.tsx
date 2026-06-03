@@ -1796,7 +1796,7 @@ function SimplifiedCreateBody({
           </div>
           <div>
             <Label htmlFor="deal-fee" className="text-xs">Total fee £</Label>
-            <Input id="deal-fee" type="number" value={form.fee}
+            <Input id="deal-fee" type="number" step="0.01" value={form.fee}
               onChange={(e) => set("fee", e.target.value)}
               placeholder="auto from rent × %" />
           </div>
@@ -2543,7 +2543,7 @@ export function DealFormDialog({
 
                   <div>
                     <Label>Fee ({"\u00A3"})</Label>
-                    <Input type="number" min="0" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
+                    <Input type="number" min="0" step="0.01" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
                   </div>
 
                   <div>
@@ -2934,9 +2934,9 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
         {feeBasisEditing && (
           <div className="flex items-center gap-2 mb-3 flex-wrap bg-muted/30 rounded-md p-2">
             <span className="text-[10px] text-muted-foreground">Rent £/pa</span>
-            <Input type="number" value={rentInput} onChange={(e) => setRentInput(e.target.value)} className="h-7 w-28 text-xs" data-testid="input-fee-rent" />
+            <Input type="number" step="0.01" value={rentInput} onChange={(e) => setRentInput(e.target.value)} className="h-7 w-28 text-xs" data-testid="input-fee-rent" />
             <span className="text-[10px] text-muted-foreground">Fee %</span>
-            <Input type="number" value={pctInput} onChange={(e) => setPctInput(e.target.value)} className="h-7 w-20 text-xs" data-testid="input-fee-pct" />
+            <Input type="number" step="0.01" value={pctInput} onChange={(e) => setPctInput(e.target.value)} className="h-7 w-20 text-xs" data-testid="input-fee-pct" />
             <span className="text-[10px] text-muted-foreground">= {formatCurrency(Math.round((Number(rentInput) || 0) * (Number(pctInput) || 0) / 100))}</span>
             <Button size="sm" className="h-7 text-xs" onClick={saveFeeBasis} disabled={feeBasisMutation.isPending} data-testid="button-save-fee-basis">
               {feeBasisMutation.isPending && <Loader2 className="w-3 h-3 animate-spin mr-1" />}Save
