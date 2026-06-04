@@ -36,8 +36,6 @@ import {
 } from "lucide-react";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
-import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
-import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
@@ -824,54 +822,24 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
-            {/* Temporary debug strip — prints the property's unified_schedule
-                state + name so we can see at a glance whether the flag is
-                set and whether the name-fallback regex would also trigger.
-                Remove once the rollout is verified. */}
-            <div className="text-[10px] font-mono px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 mb-2">
-              🐛 debug:
-              {" "}name=<b>{property.name || "(none)"}</b>
-              {" · "}unifiedSchedule=<b>{String((property as any).unifiedSchedule ?? "undefined")}</b>
-              {" · "}nameMatchBluewater=<b>{String(/bluewater/i.test(property.name || ""))}</b>
-              {" · "}willShowUnified=<b className="text-emerald-700">{String(!!((property as any).unifiedSchedule || /bluewater/i.test(property.name || "")))}</b>
-            </div>
-
-            {/* Schedule(s) — per-property flag picks the unified view OR
-                the legacy two-panel layout. Bluewater is the first opt-in
-                to the unified view; once verified we flip the default for
-                everyone. Component (PropertyLeasingSchedule + PropertyTenancySchedule)
-                stays imported so the toggle is just a render switch, not
-                a remount lifecycle.
-                Belt-and-braces: also fall back to a name match for
-                Bluewater so the unified view shows even if migration 0030
-                hasn't run on this deploy yet (e.g. a column-missing
-                error blocking the ALTER TABLE). Remove the name check
-                once we flip the firm-wide default. */}
-            {((property as any).unifiedSchedule || /bluewater/i.test(property.name || "")) ? (
-              <ErrorBoundary compact name="Schedule">
-                <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Schedule" testId="toggle-schedule">
-                  <div className="max-h-[640px] overflow-y-auto pr-1">
-                    <PropertyUnifiedSchedule propertyId={property.id} />
-                  </div>
-                </CollapsibleCard>
-              </ErrorBoundary>
-            ) : (
-              <>
-                <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Leasing Schedule" testId="toggle-leasing-schedule">
-                  <div className="max-h-[640px] overflow-y-auto pr-1">
-                    <PropertyLeasingSchedule propertyId={property.id} />
-                  </div>
-                </CollapsibleCard>
-
-                <ErrorBoundary compact name="Tenancy schedule">
-                  <CollapsibleCard open={mainSections.tenancy} onToggle={() => toggleMain("tenancy")} icon={Users} title="Tenancy Schedule" testId="toggle-tenancy">
-                    <div className="max-h-[640px] overflow-y-auto pr-1">
-                      <PropertyTenancySchedule propertyId={property.id} />
-                    </div>
-                  </CollapsibleCard>
-                </ErrorBoundary>
-              </>
-            )}
+            {/* Schedule — unified view (Lettings / Tenancy lens toggle)
+                rendered for every property. Bluewater was the rollout
+                test; verified, so the firm-wide flip is in. The
+                `crm_properties.unified_schedule` column is now vestigial
+                (kept for historical records; safe to drop in a future
+                migration). PropertyTenancySchedule is the only board
+                that reads tenancy_schedule_units, and the unit-mirror
+                fan-out (server/unit-mirror.ts) already keeps the
+                leasing_schedule_units + available_units projections in
+                sync — so the lens toggle is purely a column-visibility
+                preset, not a data switch. */}
+            <ErrorBoundary compact name="Schedule">
+              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Schedule" testId="toggle-schedule">
+                <div className="max-h-[640px] overflow-y-auto pr-1">
+                  <PropertyUnifiedSchedule propertyId={property.id} />
+                </div>
+              </CollapsibleCard>
+            </ErrorBoundary>
 
             <ErrorBoundary compact name="Pathway intel strip">
               <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
