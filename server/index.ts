@@ -1862,7 +1862,9 @@ import { pool } from "./db";
     `UPDATE users SET is_admin = true WHERE
        LOWER(name) ILIKE 'jack%barratt%'
        OR LOWER(name) ILIKE 'charlotte%roberts%'
-       OR LOWER(name) ILIKE 'rupert%bentley%smith%'`,
+       OR LOWER(name) ILIKE 'rupert%bentley%smith%'
+       OR LOWER(name) ILIKE 'wendy%'
+       OR LOWER(name) ILIKE '%mckenzie%'`,
 
     // ── Migration 0005 (resolver columns on crm_properties) — defensively
     // re-applied here in case a Railway deploy ever skipped the file-based
