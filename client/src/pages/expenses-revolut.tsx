@@ -65,7 +65,9 @@ export default function ExpensesRevolut() {
   });
 
   const [code, setCode] = useState("");
-  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState(
+    typeof window !== "undefined" ? `${window.location.origin}/api/revolut/webhook` : "",
+  );
   const [syncFrom, setSyncFrom] = useState(() => new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10));
 
   const bootstrapMutation = useMutation({

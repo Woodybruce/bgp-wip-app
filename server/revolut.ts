@@ -65,10 +65,12 @@ function getConfig(): RevolutConfig | null {
   };
 }
 
-function baseUrl(env: "sandbox" | "production"): string {
-  return env === "production"
-    ? "https://b2b.revolut.com/api/1.0"
-    : "https://sandbox-b2b.revolut.com/api/1.0";
+// Most Business API resources live under /api/1.0 (accounts, transactions,
+// cards, auth/token). Webhooks were migrated to /api/2.0 — the old
+// /api/1.0/webhooks path now 404s — so callers pass version "2.0" for those.
+function baseUrl(env: "sandbox" | "production", version: "1.0" | "2.0" = "1.0"): string {
+  const host = env === "production" ? "https://b2b.revolut.com" : "https://sandbox-b2b.revolut.com";
+  return `${host}/api/${version}`;
 }
 
 const SETTINGS_KEYS = {
@@ -159,11 +161,11 @@ async function getAccessToken(cfg: RevolutConfig): Promise<string> {
 
 // ─── Thin API client ─────────────────────────────────────────────────────
 
-async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+async function api<T = any>(path: string, init: RequestInit = {}, version: "1.0" | "2.0" = "1.0"): Promise<T> {
   const cfg = getConfig();
   if (!cfg) throw new Error("Revolut config missing — set REVOLUT_CLIENT_ID, REVOLUT_JWT_PRIVATE_KEY, REVOLUT_JWT_ISSUER.");
   const token = await getAccessToken(cfg);
-  const res = await fetch(`${baseUrl(cfg.env)}${path}`, {
+  const res = await fetch(`${baseUrl(cfg.env, version)}${path}`, {
     ...init,
     headers: {
       ...(init.headers || {}),
@@ -435,13 +437,17 @@ export function setupRevolutRoutes(app: Express): void {
     try {
       const url = String(req.body?.url || "").trim();
       if (!url || !url.startsWith("https://")) return res.status(400).json({ error: "url required (https://)" });
+      if (!/\/api\/revolut\/webhook\/?$/.test(url)) {
+        return res.status(400).json({ error: `url should be the webhook endpoint, e.g. https://<host>/api/revolut/webhook — got ${url}` });
+      }
       const events = Array.isArray(req.body?.events) && req.body.events.length
         ? req.body.events
         : ["TransactionCreated", "TransactionStateChanged"];
+      // Webhooks live under the 2.0 API (1.0/webhooks was retired → 404).
       const created = await api<any>(`/webhooks`, {
         method: "POST",
         body: JSON.stringify({ url, events }),
-      });
+      }, "2.0");
       // Revolut returns the signing secret on creation — surface it once
       // so the admin can set REVOLUT_WEBHOOK_SECRET on Railway.
       res.json({
