@@ -2515,6 +2515,20 @@ function CreatePropertyDialog({
   // that already exists in CRM, we capture its id here. Save then routes
   // to it instead of creating a duplicate.
   const [resolvedExistingId, setResolvedExistingId] = useState<string | null>(null);
+  // Landlord candidates for the inline picker. Same shape and react-query key
+  // as the parent fetch, so this is a cache-hit and adds no extra network.
+  const { data: allCompaniesForLandlord = [] } = useQuery<CrmCompany[]>({
+    queryKey: ["/api/crm/companies"],
+  });
+  const landlordOptions = useMemo(() => {
+    return allCompaniesForLandlord
+      .filter((c) => {
+        const t = (c.companyType || "").toLowerCase();
+        return t.includes("landlord") || t.includes("investor") || t.includes("developer")
+          || t.includes("reit") || t.includes("fund") || t.includes("freeholder");
+      })
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [allCompaniesForLandlord]);
   const [formData, setFormData] = useState({
     name: "",
     groupName: "Properties",
@@ -2525,6 +2539,7 @@ function CreatePropertyDialog({
     address: null as any,
     agent: "",
     sqft: "",
+    landlordId: "",
     notes: "",
     website: "",
   });
@@ -2572,7 +2587,7 @@ function CreatePropertyDialog({
       });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       onOpenChange(false);
-      setFormData({ name: "", groupName: "Properties", status: "", assetClass: [], tenure: "", bgpEngagement: [], address: null, agent: "", sqft: "", notes: "", website: "" });
+      setFormData({ name: "", groupName: "Properties", status: "", assetClass: [], tenure: "", bgpEngagement: [], address: null, agent: "", sqft: "", notes: "", website: "", landlordId: "" });
       setResolvedExistingId(null);
     },
     onError: (err: any) => {
@@ -2637,14 +2652,18 @@ function CreatePropertyDialog({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Group</Label>
-              <Select value={formData.groupName} onValueChange={(v) => setFormData((p) => ({ ...p, groupName: v }))}>
-                <SelectTrigger data-testid="select-group">
-                  <SelectValue placeholder="Select group" />
+              <Label>Landlord</Label>
+              <Select
+                value={formData.landlordId || "__none__"}
+                onValueChange={(v) => setFormData((p) => ({ ...p, landlordId: v === "__none__" ? "" : v }))}
+              >
+                <SelectTrigger data-testid="select-landlord">
+                  <SelectValue placeholder="Select landlord" />
                 </SelectTrigger>
                 <SelectContent>
-                  {GROUP_TABS.filter((g) => g.id !== "all").map((g) => (
-                    <SelectItem key={g.id} value={g.id}>{g.label}</SelectItem>
+                  <SelectItem value="__none__">(none)</SelectItem>
+                  {landlordOptions.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
