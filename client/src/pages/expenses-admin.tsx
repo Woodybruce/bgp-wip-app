@@ -133,6 +133,27 @@ export default function ExpensesAdmin() {
           <p className="text-sm text-muted-foreground">Revolut Business card programme — manage limits, freeze cards, review expenses</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                const r = await apiRequest("POST", "/api/expenses/admin/reset-self-approved");
+                const d = await r.json();
+                toast({
+                  title: "Approval routing reset",
+                  description: `${d.autoApprovedReset || 0} auto-approved rolled back, ${d.selfApproverCleared || 0} self-approver cleared.`,
+                });
+                refetchExp(); refetchSummary();
+                queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
+              } catch (e: any) {
+                toast({ title: "Reset failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+            title="Roll back any expenses that were auto-approved or self-routed so Wendy/Layla can sign them off"
+          >
+            Send pending to Wendy
+          </Button>
           <Button variant="outline" size="sm" onClick={() => { refetchCh(); refetchExp(); refetchSummary(); }}>
             <RefreshCw className="w-4 h-4 mr-1.5" />
             Refresh

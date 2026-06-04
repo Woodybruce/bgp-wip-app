@@ -695,6 +695,54 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // One-shot: rescue expenses that were either auto-approved (under the
+  // old MD-no-manager branch) or assigned to a self-approver, both of
+  // which mean Wendy/Layla never see them in the shared inbox. Resets
+  // them to pending_approval with a null approver so the fallback pool
+  // picks them up. Skips anything already posted to Xero to avoid
+  // un-posting. Admin only — call once after deploying the routing fix.
+  app.post("/api/expenses/admin/reset-self-approved", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      // (a) Old auto-approved rows: status=approved + the marker note + not
+      //     yet posted to Xero. Flip back to pending_approval.
+      const a = await pool.query(`
+        UPDATE expenses
+           SET status = 'pending_approval',
+               approver_user_id = NULL,
+               approved_at = NULL,
+               approved_by_user_id = NULL,
+               approval_notes = NULL,
+               updated_at = NOW()
+         WHERE status = 'approved'
+           AND approval_notes = 'Auto-approved — admin with no manager'
+           AND xero_expense_id IS NULL
+        RETURNING id
+      `);
+      // (b) Self-approver routing: pending_approval rows where the approver
+      //     IS the submitter. Wendy's shared-inbox query is
+      //     (approver_user_id IS NULL OR approver_user_id = me) so a self-
+      //     approver makes the row invisible to her. Null the approver so it
+      //     hits the fallback pool.
+      const b = await pool.query(`
+        UPDATE expenses
+           SET approver_user_id = NULL,
+               updated_at = NOW()
+         WHERE status = 'pending_approval'
+           AND approver_user_id IS NOT NULL
+           AND approver_user_id = submitter_user_id
+        RETURNING id
+      `);
+      res.json({
+        ok: true,
+        autoApprovedReset: a.rowCount || 0,
+        selfApproverCleared: b.rowCount || 0,
+      });
+    } catch (e: any) {
+      console.error("[expenses] reset-self-approved error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Auto-find an email receipt for a pending expense — searches the
   // cardholder's own mailbox around the transaction time, matches on
   // amount, then attaches + posts. Admin OR the owning cardholder.
