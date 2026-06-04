@@ -1010,7 +1010,33 @@ export default function MobileExpenses() {
                 <div className="text-xs opacity-90">{fmtPence(data.cardholder.monthlyLimit)}</div>
               </div>
             </div>
-            <p className="text-[10px] opacity-70 mt-2">Card details + freeze are in the Revolut app.</p>
+            <div className="flex items-center justify-between gap-2 mt-3">
+              <p className="text-[10px] opacity-70 flex-1">Card number, CVC + freeze are in the Revolut app.</p>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const from = new Date(Date.now() - 30 * 86400_000).toISOString();
+                    const r = await fetch("/api/revolut/sync-transactions", {
+                      method: "POST",
+                      credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ from }),
+                    });
+                    const d = await r.json().catch(() => ({} as any));
+                    if (!r.ok) throw new Error(d?.error || `Sync failed (${r.status})`);
+                    queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+                    toast({ title: "Synced from Revolut", description: `${d.created || 0} new, ${d.updated || 0} updated` });
+                  } catch (e: any) {
+                    toast({ title: "Sync failed", description: e?.message, variant: "destructive" });
+                  }
+                }}
+                className="text-[10px] px-2.5 py-1 rounded-full bg-white/10 active:bg-white/20"
+                data-testid="mobile-revolut-sync"
+              >
+                Sync now
+              </button>
+            </div>
           </div>
         </div>
       )}
