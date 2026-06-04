@@ -1866,6 +1866,24 @@ import { pool } from "./db";
        OR LOWER(name) ILIKE 'wendy%'
        OR LOWER(name) ILIKE '%mckenzie%'`,
 
+    // Ensure Carly Cunliffe (London F&B, reports to Rupert) exists with her
+    // contact details. Idempotent: insert only if she isn't already there
+    // (by name or email), then set email/phone regardless. Placeholder
+    // password — she signs in via Microsoft SSO like the rest of the team.
+    `INSERT INTO users (username, password, name, role, team, manager_id, email, phone, is_admin, is_active)
+     SELECT 'carly.cunliffe', '$2b$10$CDskRcFnhZbhAhSEUnpjeusJATcpEIxJ4WKBqI11EWF02Y3ixn8fq',
+            'Carly Cunliffe', 'Graduate Surveyor – London F&B / Tenant Rep', 'London F&B',
+            (SELECT id FROM users WHERE LOWER(name) ILIKE 'rupert%bentley%smith%' LIMIT 1),
+            'carly@brucegillinghampollard.com', '+44 7930 552978', false, true
+     WHERE NOT EXISTS (
+       SELECT 1 FROM users
+        WHERE LOWER(name) ILIKE 'carly%cunliffe%'
+           OR LOWER(email) = 'carly@brucegillinghampollard.com'
+     )`,
+    `UPDATE users
+        SET email = 'carly@brucegillinghampollard.com', phone = '+44 7930 552978'
+      WHERE LOWER(name) ILIKE 'carly%cunliffe%'`,
+
     // ── Migration 0005 (resolver columns on crm_properties) — defensively
     // re-applied here in case a Railway deploy ever skipped the file-based
     // 0005_property_resolver.sql. Without these the Drizzle select on
