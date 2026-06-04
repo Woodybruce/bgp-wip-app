@@ -11,12 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
-  FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
+  FileText, Image as ImageIcon, ChevronRight, ChevronDown, ChevronsUpDown, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
   Copy, Paperclip, Loader2, Maximize2, Briefcase, FileSpreadsheet, MessageSquare,
   ZoomIn, ZoomOut, Link2,
@@ -3081,25 +3082,36 @@ function WhyBuyCard({
       <CardContent className="text-sm space-y-3">
         <p className="text-muted-foreground">In-app, Claude-designed pitch deck — generated from the agreed business plan + agreed Excel model. Iterate by prompt or click any image / headline to edit inline.</p>
 
-        {/* Comps — folded in from the standalone "Comps" card. AI-matched
-            from the board, editable, feed the deck + the comps_chart imagery. */}
-        <WhyBuyCompsCard
-          runId={runId}
-          propertyId={propertyId}
-          whyBuyComps={whyBuyComps}
-          onReload={onReload}
-        />
+        {/* Collapsible Comps + Charts & cards. Both default collapsed so the
+            Why Buy panel opens at the deck preview rather than the inputs;
+            the analyst expands the section they want to edit. */}
+        <CollapsibleSection title="Comps" defaultOpen={false}>
+          <WhyBuyCompsCard
+            runId={runId}
+            propertyId={propertyId}
+            whyBuyComps={whyBuyComps}
+            onReload={onReload}
+          />
+        </CollapsibleSection>
 
-        {/* Charts & cards — folded in from the standalone card. Generate the
-            ERV walk + Covenant card imagery from the run's rent/tenant data. */}
-        <WhyBuyChartsCard
-          runId={runId}
-          propertyId={propertyId}
-          passingRent={stage7?.currentRentPA}
-          area={stage7?.totalAreaSqFt}
-          tenantName={stage1?.tenant?.name}
-          tenantCo={stage1?.tenant?.companyNumber}
-        />
+        <CollapsibleSection title="ERV walk & Covenant card" defaultOpen={false}>
+          <WhyBuyChartsCard
+            runId={runId}
+            propertyId={propertyId}
+            passingRent={stage7?.currentRentPA}
+            area={stage7?.totalAreaSqFt}
+            tenantName={stage1?.tenant?.name}
+            tenantCo={stage1?.tenant?.companyNumber}
+          />
+        </CollapsibleSection>
+
+        {/* Tenancy schedule — multi-row editable list. Replaces the old
+            single-area + single-passing-rent boxes (useless for a multi-let
+            like Showcase). Each row is one occupier; Stage 7 reads this when
+            building the model. */}
+        <CollapsibleSection title="Tenancy schedule" defaultOpen={true}>
+          <TenancyScheduleEditor runId={runId} stage1={stage1} onReload={onReload} />
+        </CollapsibleSection>
 
         {/* Imagery — pinned candidates per kind feed Claude design's brief.
             comps_chart added so the chart generated above actually has a
@@ -4951,4 +4963,190 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+// Plain expandable section header. Chevron rotates with state. Used to keep
+// the Why Buy panel scannable — analyst expands only the section they need.
+function CollapsibleSection({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="border rounded-md bg-muted/20">
+      <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/40 transition-colors">
+        <span className="text-sm font-medium">{title}</span>
+        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="px-3 pb-3 pt-1">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+// Tenancy schedule editor. Surfaces stage1.tenants[] as an editable table so
+// the analyst can capture/amend the rent-roll for the asset and Stage 7's
+// model reads it as the input set. Replaces the old single-area + single-rent
+// summary inputs which were useless for multi-lets.
+//
+// On save: writes stage1.tenants[] back and mirrors the totals to legacy
+// stage7.totalAreaSqFt / currentRentPA so any consumer that hasn't migrated
+// onto the array yet keeps working.
+function TenancyScheduleEditor({ runId, stage1, onReload }: { runId: string; stage1: any; onReload: () => void }) {
+  const { toast } = useToast();
+  type Row = {
+    id: string;
+    name: string;
+    unit?: string;
+    areaSqFt?: string;
+    passingRentPA?: string;
+    ervPA?: string;
+    leaseStart?: string;
+    leaseEnd?: string;
+    breakDate?: string;
+  };
+  const seed: Row[] = useMemo(() => {
+    const existing: any[] = stage1?.tenants && stage1.tenants.length > 0
+      ? stage1.tenants
+      : stage1?.tenant?.name
+        ? [{ name: stage1.tenant.name, companyNumber: stage1.tenant.companyNumber }]
+        : [];
+    return existing.map((t: any, i: number) => ({
+      id: t.id || `t_${Date.now()}_${i}`,
+      name: t.name || "",
+      unit: t.tradingAs || "",
+      areaSqFt: t.areaSqFt != null ? String(t.areaSqFt) : "",
+      passingRentPA: t.passingRentPA != null ? String(t.passingRentPA) : "",
+      ervPA: t.ervPA != null ? String(t.ervPA) : "",
+      leaseStart: t.leaseStart || "",
+      leaseEnd: t.leaseEnd || "",
+      breakDate: t.breakDate || "",
+    }));
+  }, [stage1]);
+  const [rows, setRows] = useState<Row[]>(seed.length > 0 ? seed : [{ id: `t_${Date.now()}`, name: "" }]);
+  const [saving, setSaving] = useState(false);
+
+  const updateRow = (id: string, patch: Partial<Row>) => setRows((p) => p.map((r) => r.id === id ? { ...r, ...patch } : r));
+  const addRow = () => setRows((p) => [...p, { id: `t_${Date.now()}_${p.length}`, name: "" }]);
+  const removeRow = (id: string) => setRows((p) => p.filter((r) => r.id !== id));
+
+  const totals = useMemo(() => {
+    let area = 0;
+    let rent = 0;
+    let erv = 0;
+    for (const r of rows) {
+      area += Number(r.areaSqFt || 0) || 0;
+      rent += Number(r.passingRentPA || 0) || 0;
+      erv += Number(r.ervPA || 0) || 0;
+    }
+    return { area, rent, erv };
+  }, [rows]);
+
+  const save = async () => {
+    const valid = rows.filter((r) => r.name.trim());
+    if (valid.length === 0) { toast({ title: "Add at least one occupier name", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const runRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
+      if (!runRes.ok) throw new Error("Could not load run");
+      const run = await runRes.json();
+      const stageResults = { ...(run.stageResults || {}) };
+      // Merge our edits onto whatever existing per-tenant detail was on the
+      // run (strategy, companyId, etc.) — the schedule editor only covers
+      // the rent-roll fields, not the brand intel.
+      const existingMap = new Map<string, any>((stage1?.tenants || []).map((t: any) => [t.id, t]));
+      const tenants = valid.map((r) => {
+        const prev = existingMap.get(r.id) || {};
+        return {
+          ...prev,
+          id: r.id,
+          name: r.name.trim(),
+          ...(r.unit?.trim() ? { tradingAs: r.unit.trim() } : {}),
+          ...(r.areaSqFt?.trim() ? { areaSqFt: Number(r.areaSqFt) } : {}),
+          ...(r.passingRentPA?.trim() ? { passingRentPA: Number(r.passingRentPA) } : {}),
+          ...(r.ervPA?.trim() ? { ervPA: Number(r.ervPA) } : {}),
+          ...(r.leaseStart?.trim() ? { leaseStart: r.leaseStart.trim() } : {}),
+          ...(r.leaseEnd?.trim() ? { leaseEnd: r.leaseEnd.trim() } : {}),
+          ...(r.breakDate?.trim() ? { breakDate: r.breakDate.trim() } : {}),
+        };
+      });
+      stageResults.stage1 = {
+        ...(stageResults.stage1 || {}),
+        tenants,
+        tenant: { name: tenants[0].name, ...(tenants[0].companyNumber ? { companyNumber: tenants[0].companyNumber } : {}), ...(tenants[0].companyId ? { companyId: tenants[0].companyId } : {}) },
+      };
+      // Mirror the totals to Stage 7's model inputs so the Excel build picks
+      // up the new figures without a separate migration.
+      stageResults.stage7 = {
+        ...(stageResults.stage7 || {}),
+        totalAreaSqFt: totals.area || (stageResults.stage7?.totalAreaSqFt),
+        currentRentPA: totals.rent || (stageResults.stage7?.currentRentPA),
+      };
+      const res = await fetch(`/api/property-pathway/${runId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ stageResults }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      toast({ title: "Schedule saved", description: `${tenants.length} occupier${tenants.length === 1 ? "" : "s"} · £${totals.rent.toLocaleString()} pa across ${totals.area.toLocaleString()} sq ft.` });
+      onReload();
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        One row per occupier. Totals feed the Stage 7 model and the deck's headline KPIs.
+        Lease dates accept ISO (<code>2025-01-31</code>) or free text.
+      </p>
+      <div className="overflow-x-auto border rounded">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/40 text-muted-foreground text-[10px] uppercase">
+            <tr>
+              <th className="text-left p-1.5 font-medium">Occupier</th>
+              <th className="text-left p-1.5 font-medium">Unit</th>
+              <th className="text-right p-1.5 font-medium">Area (sq ft)</th>
+              <th className="text-right p-1.5 font-medium">Rent (£ pa)</th>
+              <th className="text-right p-1.5 font-medium">ERV (£ pa)</th>
+              <th className="text-left p-1.5 font-medium">Start</th>
+              <th className="text-left p-1.5 font-medium">End</th>
+              <th className="text-left p-1.5 font-medium">Break</th>
+              <th className="p-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t">
+                <td className="p-1"><Input value={r.name} onChange={(e) => updateRow(r.id, { name: e.target.value })} className="h-7 text-xs" placeholder="e.g. Showcase Cinemas" /></td>
+                <td className="p-1"><Input value={r.unit || ""} onChange={(e) => updateRow(r.id, { unit: e.target.value })} className="h-7 text-xs" placeholder="Unit / floor" /></td>
+                <td className="p-1"><Input type="number" value={r.areaSqFt || ""} onChange={(e) => updateRow(r.id, { areaSqFt: e.target.value })} className="h-7 text-xs text-right" /></td>
+                <td className="p-1"><Input type="number" value={r.passingRentPA || ""} onChange={(e) => updateRow(r.id, { passingRentPA: e.target.value })} className="h-7 text-xs text-right" /></td>
+                <td className="p-1"><Input type="number" value={r.ervPA || ""} onChange={(e) => updateRow(r.id, { ervPA: e.target.value })} className="h-7 text-xs text-right" /></td>
+                <td className="p-1"><Input value={r.leaseStart || ""} onChange={(e) => updateRow(r.id, { leaseStart: e.target.value })} className="h-7 text-xs" /></td>
+                <td className="p-1"><Input value={r.leaseEnd || ""} onChange={(e) => updateRow(r.id, { leaseEnd: e.target.value })} className="h-7 text-xs" /></td>
+                <td className="p-1"><Input value={r.breakDate || ""} onChange={(e) => updateRow(r.id, { breakDate: e.target.value })} className="h-7 text-xs" /></td>
+                <td className="p-1 text-right">
+                  <button type="button" className="text-[10px] text-destructive hover:underline" onClick={() => removeRow(r.id)}>×</button>
+                </td>
+              </tr>
+            ))}
+            <tr className="border-t bg-muted/30 font-medium">
+              <td colSpan={2} className="p-1.5 text-right">Totals</td>
+              <td className="p-1.5 text-right">{totals.area.toLocaleString()}</td>
+              <td className="p-1.5 text-right">£{totals.rent.toLocaleString()}</td>
+              <td className="p-1.5 text-right">£{totals.erv.toLocaleString()}</td>
+              <td colSpan={4}></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={addRow} className="h-7 gap-1.5"><Plus className="w-3 h-3" /> Add row</Button>
+        <Button size="sm" onClick={save} disabled={saving} className="h-7 ml-auto">{saving ? "Saving…" : "Save schedule"}</Button>
+      </div>
+    </div>
+  );
 }

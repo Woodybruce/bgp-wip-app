@@ -497,6 +497,8 @@ export function registerPropertyImageryRoutes(app: Express): void {
         kind: req.body?.kind,
         markers,
         size: req.body?.size,
+        centerLat: typeof req.body?.centerLat === "number" ? req.body.centerLat : undefined,
+        centerLng: typeof req.body?.centerLng === "number" ? req.body.centerLng : undefined,
         generatedBy: userId,
         pathwayRunId: req.body?.pathwayRunId,
         matterId: req.body?.matterId,
