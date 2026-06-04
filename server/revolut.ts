@@ -360,6 +360,45 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
     }
   }
 
+  // Alert the cardholder on their phone the moment a payment lands, and kick
+  // off an immediate email-receipt hunt. Both best-effort + non-blocking so
+  // the webhook returns fast. The periodic sweep (sweepPendingEmailReceipts)
+  // is the safety net for receipts that email through after the swipe.
+  if (cardholderId) {
+    void (async () => {
+      try {
+        const { rows } = await pool.query<{ user_id: string | null }>(
+          `SELECT user_id FROM stripe_cardholders WHERE id = $1 LIMIT 1`, [cardholderId],
+        );
+        const uid = rows[0]?.user_id;
+        const amountStr = `£${(amountPence / 100).toFixed(2)}`;
+        if (uid) {
+          const { sendPushNotification } = await import("./push-notifications");
+          await sendPushNotification(uid, {
+            title: `Card payment ${amountStr}`,
+            body: `${merchant} — finding your receipt…`,
+            tag: `expense-${inserted.id}`,
+            url: "/my-expenses",
+          }).catch(() => {});
+        }
+        // Immediate attempt (catches receipts already in the inbox).
+        const { findEmailReceiptForExpense } = await import("./expense-email-receipt");
+        const result = await findEmailReceiptForExpense(inserted.id);
+        if (uid && result.found) {
+          const { sendPushNotification } = await import("./push-notifications");
+          await sendPushNotification(uid, {
+            title: `Receipt filed ✓ ${amountStr}`,
+            body: `${result.matched?.subject || merchant}${result.posted ? " — posted to Xero" : ""}`,
+            tag: `expense-${inserted.id}`,
+            url: "/my-expenses",
+          }).catch(() => {});
+        }
+      } catch (e: any) {
+        console.warn(`[revolut] notify/auto-receipt failed for ${inserted.id}:`, e?.message);
+      }
+    })();
+  }
+
   return { id: inserted.id, created: true };
 }
 

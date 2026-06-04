@@ -18,7 +18,7 @@
  *   4. On a match, attach + populate + submit for approval + post to Xero,
  *      mirroring the WhatsApp "match to pending" downstream exactly.
  */
-import { db } from "./db";
+import { db, pool } from "./db";
 import { expenses, expenseReceipts, stripeCardholders } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { graphRequest } from "./shared-mailbox";
@@ -295,4 +295,46 @@ export async function findEmailReceiptForExpense(
     posted,
     xeroError,
   };
+}
+
+// Periodic retry sweep — receipt emails routinely arrive a few minutes (or
+// hours) AFTER the card swipe, so a one-shot search at payment time usually
+// misses. This re-tries every pending card expense without a receipt from
+// the last 7 days and pushes a notification the moment one is matched.
+// Naturally idempotent: a matched expense gets receipt_filename set and
+// drops out of the query, so it's never double-notified.
+export async function sweepPendingEmailReceipts(): Promise<{ scanned: number; matched: number }> {
+  const { rows } = await pool.query<{ id: string; user_id: string | null; amount_pence: number; merchant: string | null }>(
+    `SELECT e.id, c.user_id, e.amount_pence, e.merchant
+       FROM expenses e
+       JOIN stripe_cardholders c ON c.id = e.cardholder_id
+      WHERE e.status = 'pending_receipt'
+        AND e.receipt_filename IS NULL
+        AND c.email IS NOT NULL
+        AND e.created_at > now() - interval '7 days'
+      ORDER BY e.created_at DESC
+      LIMIT 25`,
+  );
+  let matched = 0;
+  for (const r of rows) {
+    try {
+      const result = await findEmailReceiptForExpense(r.id);
+      if (result.found) {
+        matched++;
+        if (r.user_id) {
+          const { sendPushNotification } = await import("./push-notifications");
+          const amt = `£${(r.amount_pence / 100).toFixed(2)}`;
+          await sendPushNotification(r.user_id, {
+            title: `Receipt filed ✓ ${amt}`,
+            body: `${result.matched?.subject || r.merchant || "Card payment"}${result.posted ? " — posted to Xero" : ""}`,
+            tag: `expense-${r.id}`,
+            url: "/my-expenses",
+          }).catch(() => {});
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[email-receipt sweep] ${r.id}: ${e?.message}`);
+    }
+  }
+  return { scanned: rows.length, matched };
 }
