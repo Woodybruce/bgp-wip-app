@@ -1579,26 +1579,19 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
       {/* Stage 8 Image Studio card retired — imagery is managed inside Why Buy now
           (Manage images button + the deck's inline image edit). */}
 
-      {/* Comps — AI-matched from the board, editable, feed the Why Buy deck + chart */}
+      {/* Stage 9 — Why Buy. Renders from stage 7+ so the analyst can set up
+          Comps + ERV walk + Covenant inputs before the model is agreed.
+          The Claude-designed deck only appears once stage 9 is reached. */}
       {(s7 || s8 || s9) && (
-        <WhyBuyCompsCard runId={run.id} propertyId={run.propertyId || null} whyBuyComps={(run.stageResults as any)?.whyBuyComps} onReload={onReload} />
-      )}
-
-      {/* ERV walk + Covenant card — generated from the run's rent/tenant */}
-      {(s7 || s8 || s9) && (
-        <WhyBuyChartsCard
+        <WhyBuyCard
           runId={run.id}
+          stage9={s9}
+          stage1={s1}
+          stage7={s7}
+          whyBuyComps={(run.stageResults as any)?.whyBuyComps}
+          onReload={onReload}
           propertyId={run.propertyId || null}
-          passingRent={s7?.currentRentPA}
-          area={s7?.totalAreaSqFt}
-          tenantName={s1?.tenant?.name}
-          tenantCo={s1?.tenant?.companyNumber}
         />
-      )}
-
-      {/* Stage 9 — Why Buy */}
-      {s9 && (
-        <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} propertyId={run.propertyId || null} />
       )}
 
       {/* Related Lease Advisory matters — same property anchor */}
@@ -2776,7 +2769,17 @@ function WhyBuyCompsCard({ runId, propertyId, whyBuyComps, onReload }: { runId: 
   );
 }
 
-function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; stage9: any; onReload: () => void; propertyId: string | null }) {
+function WhyBuyCard({
+  runId, stage9, stage1, stage7, whyBuyComps, onReload, propertyId,
+}: {
+  runId: string;
+  stage9: any;
+  stage1?: any;
+  stage7?: any;
+  whyBuyComps?: any;
+  onReload: () => void;
+  propertyId: string | null;
+}) {
   const [manageOpen, setManageOpen] = useState(false);
   return (
     <Card>
@@ -2789,18 +2792,44 @@ function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; st
       <CardContent className="text-sm space-y-3">
         <p className="text-muted-foreground">In-app, Claude-designed pitch deck — generated from the agreed business plan + agreed Excel model. Iterate by prompt or click any image / headline to edit inline.</p>
 
-        {/* Imagery — pinned candidates per kind feed Claude design's brief */}
+        {/* Comps — folded in from the standalone "Comps" card. AI-matched
+            from the board, editable, feed the deck + the comps_chart imagery. */}
+        <WhyBuyCompsCard
+          runId={runId}
+          propertyId={propertyId}
+          whyBuyComps={whyBuyComps}
+          onReload={onReload}
+        />
+
+        {/* Charts & cards — folded in from the standalone card. Generate the
+            ERV walk + Covenant card imagery from the run's rent/tenant data. */}
+        <WhyBuyChartsCard
+          runId={runId}
+          propertyId={propertyId}
+          passingRent={stage7?.currentRentPA}
+          area={stage7?.totalAreaSqFt}
+          tenantName={stage1?.tenant?.name}
+          tenantCo={stage1?.tenant?.companyNumber}
+        />
+
+        {/* Imagery — pinned candidates per kind feed Claude design's brief.
+            comps_chart added so the chart generated above actually has a
+            visible tab here (was missing — chart was being generated but
+            had nowhere to land in the UI). */}
         {propertyId && (
           <div className="border rounded-md p-3 bg-muted/20">
             <PropertyImageryPicker
               propertyId={propertyId}
               pathwayRunId={runId}
-              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "erv_walk", "covenant_card"]}
+              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card"]}
             />
           </div>
         )}
 
-        <ClaudeDesignPane runId={runId} />
+        {/* Claude-designed deck — only available once the model + business
+            plan are agreed (stage 9). Until then the Comps / Charts / Imagery
+            panels above let the analyst stage everything up. */}
+        {stage9 && <ClaudeDesignPane runId={runId} />}
       </CardContent>
 
       {manageOpen && (
