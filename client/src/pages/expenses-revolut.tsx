@@ -127,6 +127,23 @@ export default function ExpensesRevolut() {
     onError: (e: any) => toast({ title: "Sync failed", description: e?.message, variant: "destructive" }),
   });
 
+  const autoAssignMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/revolut/cards/auto-assign");
+      return r.json();
+    },
+    onSuccess: (json: any) => {
+      const unmatched = (json.unmatched || []).length;
+      toast({
+        title: `Auto-assigned ${json.assigned || 0} card(s)`,
+        description: `${json.alreadyMapped || 0} already mapped${unmatched ? `, ${unmatched} couldn't match by email` : ""}.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/revolut/cards"] });
+    },
+    onError: (e: any) => toast({ title: "Auto-assign failed", description: e?.message, variant: "destructive" }),
+  });
+
   if (statusLoading) {
     return <div className="container mx-auto p-6"><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
@@ -238,11 +255,20 @@ export default function ExpensesRevolut() {
       {status?.bootstrapped && (
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-lg flex items-center gap-2"><CreditCard className="w-5 h-5" /> Cards</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => refetchCards()} disabled={cardsFetching}>
-              {cardsFetching && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-              Reload
-            </Button>
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2"><CreditCard className="w-5 h-5" /> Cards</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">Cards auto-assign to BGP users by matching the holder's email. Use the dropdown only to override.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => autoAssignMutation.mutate()} disabled={autoAssignMutation.isPending}>
+                {autoAssignMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                Auto-assign by email
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => refetchCards()} disabled={cardsFetching}>
+                {cardsFetching && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                Reload
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {cards.length === 0 ? (

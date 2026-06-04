@@ -289,6 +289,24 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
       [txn.card.id],
     );
     if (rows[0]) cardholderId = rows[0].id;
+
+    // Self-heal: a brand-new card's first payment won't be mapped yet. Rather
+    // than orphan the expense, auto-assign cards to BGP users by matching the
+    // Revolut cardholder's email to users.email, then re-resolve. Idempotent
+    // and best-effort — if it can't match, the expense is created unowned as
+    // before.
+    if (!cardholderId) {
+      try {
+        await autoAssignRevolutCards();
+        const retry = await pool.query<{ id: string }>(
+          `SELECT id FROM stripe_cardholders WHERE revolut_card_id = $1 LIMIT 1`,
+          [txn.card.id],
+        );
+        if (retry.rows[0]) cardholderId = retry.rows[0].id;
+      } catch (e: any) {
+        console.warn(`[revolut] auto-assign on txn ${txn.id} failed:`, e?.message);
+      }
+    }
   }
 
   // Idempotent: if we already have an expense for this transaction id,
@@ -400,6 +418,95 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
   }
 
   return { id: inserted.id, created: true };
+}
+
+// ─── Auto-assign cards to BGP users by email ─────────────────────────────
+
+// Build a holder_id → email map from the Revolut team. The Business API
+// endpoint shape varies by tenant, so try the known variants and degrade
+// silently.
+async function getRevolutTeamEmailById(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const path of ["/team-members", "/team/members"]) {
+    try {
+      const members = await api<any[]>(path);
+      const arr = Array.isArray(members) ? members : (members as any)?.members || [];
+      for (const m of arr) {
+        const email = (m.email || m.user?.email || "").toString().toLowerCase().trim();
+        if (m.id && email) map.set(m.id, email);
+      }
+      if (map.size > 0) break;
+    } catch { /* try next path */ }
+  }
+  return map;
+}
+
+interface AutoAssignResult { assigned: number; alreadyMapped: number; unmatched: Array<{ card: string; reason: string }>; }
+
+// Map every Revolut card to a BGP user by matching the card holder's email
+// to users.email. Creates/updates the stripe_cardholders row and stamps
+// revolut_card_id so transaction ingestion can resolve the owner. Idempotent.
+export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
+  const cards = await api<any[]>(`/cards`).catch(() => []);
+  const teamEmail = await getRevolutTeamEmailById();
+  const bgpUsers = await db.select().from(users);
+  const userByEmail = new Map<string, typeof bgpUsers[number]>();
+  for (const u of bgpUsers) {
+    if (u.email) userByEmail.set(u.email.toLowerCase().trim(), u);
+  }
+
+  const result: AutoAssignResult = { assigned: 0, alreadyMapped: 0, unmatched: [] };
+
+  for (const card of (Array.isArray(cards) ? cards : [])) {
+    const cardId = card.id;
+    if (!cardId) continue;
+    const cardLabel = card.label || cardId.slice(0, 8);
+
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id FROM stripe_cardholders WHERE revolut_card_id = $1 LIMIT 1`, [cardId],
+    );
+    if (existing.rows[0]) { result.alreadyMapped++; continue; }
+
+    // Resolve the holder's email: team lookup by holder_id, else any email
+    // field on the card, else fuzzy match the card label to a user name.
+    const holderEmail = (card.holder_id && teamEmail.get(card.holder_id))
+      || (card.holder_email || card.email || "").toString().toLowerCase().trim()
+      || null;
+
+    let user = holderEmail ? userByEmail.get(holderEmail) : undefined;
+    if (!user && cardLabel) {
+      const lbl = String(cardLabel).toLowerCase();
+      user = bgpUsers.find(u => u.name && lbl.includes(u.name.toLowerCase()))
+          || bgpUsers.find(u => u.email && lbl.includes(u.email.toLowerCase().split("@")[0]));
+    }
+    if (!user) {
+      result.unmatched.push({ card: cardLabel, reason: holderEmail ? `no BGP user with email ${holderEmail}` : "no holder email on card" });
+      continue;
+    }
+
+    // Create or update this user's cardholder row + stamp the Revolut ids.
+    const existingCh = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, user.id)).limit(1);
+    let cardholderId: string;
+    if (existingCh[0]) {
+      cardholderId = existingCh[0].id;
+    } else {
+      const [created] = await db.insert(stripeCardholders).values({
+        userId: user.id,
+        userName: user.name,
+        email: user.email || `${user.username}@brucegillinghampollard.com`,
+        phone: user.phone || null,
+        stripeCardholderId: null,
+        status: "active",
+      } as any).returning({ id: stripeCardholders.id });
+      cardholderId = created.id;
+    }
+    await pool.query(
+      `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2, updated_at = NOW() WHERE id = $3`,
+      [cardId, card.holder_id || null, cardholderId],
+    );
+    result.assigned++;
+  }
+  return result;
 }
 
 // ─── Auto-migration: add the columns we depend on ────────────────────────
@@ -537,6 +644,16 @@ export function setupRevolutRoutes(app: Express): void {
     try {
       const cards = await api<any[]>(`/cards`);
       res.json(cards);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Auto-assign every card to a BGP user by matching the holder's email.
+  app.post("/api/revolut/cards/auto-assign", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const result = await autoAssignRevolutCards();
+      res.json({ ok: true, ...result });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
