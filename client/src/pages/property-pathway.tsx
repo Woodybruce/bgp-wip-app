@@ -1985,31 +1985,12 @@ function BusinessPlanCard({ runId, stage6, onReload }: { runId: string; stage6: 
 function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; stage7: any; stage6: any; onReload: () => void }) {
   const { toast } = useToast();
   const [agreeing, setAgreeing] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
   const planAgreed = !!stage6?.agreed;
   const modelAgreed = !!stage7?.agreed;
 
-  // The Tenancy schedule below is the source of truth for total area + passing
-  // rent — its Save writes overrideTotalAreaSqFt/overrideCurrentRentPA onto
-  // stage7, so this button just kicks the model rebuild using those stored
-  // overrides. No duplicate input boxes here.
-  async function regenerate() {
-    setRegenerating(true);
-    try {
-      const res = await fetch(`/api/property-pathway/${runId}/stage7/override`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ regenerate: true }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Regenerating model", description: "Using the tenancy schedule totals — refresh shortly." });
-      setTimeout(onReload, 2500);
-    } catch (e: any) {
-      toast({ title: "Couldn't regenerate", description: e?.message, variant: "destructive" });
-    } finally {
-      setRegenerating(false);
-    }
-  }
+  // Tenancy schedule (Why Buy section) is the only place the totals are
+  // edited. Its Save fires a regenerate automatically — no manual button
+  // needed here.
 
   async function agree() {
     if (!confirm("Agree this Excel model version? It will lock this version as the one Why Buy uses.")) return;
@@ -2065,22 +2046,15 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
           </div>
         )}
 
-        {/* No duplicate area / rent inputs here — the Tenancy schedule below
-            (Why Buy section) is the source of truth. Its Save writes the
-            totals as stage7 overrides; this button rebuilds the model using
-            them. */}
+        {/* Schedule-driven model — no inputs or buttons here. Saving the
+            Tenancy schedule below auto-regenerates the model from the new
+            totals. */}
         {stage7?.modelRunId && !modelAgreed && (
-          <div className="mt-3 flex items-center justify-between gap-3 border rounded-lg p-3 bg-muted/30">
-            <p className="text-xs text-muted-foreground">
-              Model uses the Tenancy schedule totals below
-              {(stage7.overrideTotalAreaSqFt || stage7.totalAreaSqFt) ? ` — ${Number(stage7.overrideTotalAreaSqFt || stage7.totalAreaSqFt).toLocaleString()} sq ft` : ""}
-              {(stage7.overrideCurrentRentPA || stage7.currentRentPA) ? ` · £${Number(stage7.overrideCurrentRentPA || stage7.currentRentPA).toLocaleString()} pa passing` : ""}.
-              Edit there, then regenerate.
-            </p>
-            <Button size="sm" variant="outline" onClick={regenerate} disabled={regenerating} className="gap-1.5 shrink-0">
-              {regenerating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Regenerate model
-            </Button>
-          </div>
+          <p className="mt-3 text-xs text-muted-foreground border rounded-lg p-3 bg-muted/30">
+            Model rebuilds automatically when you save the Tenancy schedule below
+            {(stage7.overrideTotalAreaSqFt || stage7.totalAreaSqFt) ? ` — currently ${Number(stage7.overrideTotalAreaSqFt || stage7.totalAreaSqFt).toLocaleString()} sq ft` : ""}
+            {(stage7.overrideCurrentRentPA || stage7.currentRentPA) ? ` · £${Number(stage7.overrideCurrentRentPA || stage7.currentRentPA).toLocaleString()} pa passing` : ""}.
+          </p>
         )}
 
         <p className="text-[11px] text-muted-foreground mt-3">
@@ -2776,15 +2750,13 @@ function WhyBuyChartsCard({ runId, propertyId, passingRent, erv, area, tenants }
   tenants: Array<{ id?: string; name?: string; companyNumber?: string }>;
 }) {
   const { toast } = useToast();
-  // Tenant covenant target: defaults to the first occupier on the schedule.
-  // Dropdown lets the user pick a different tenant from the same schedule
-  // when running a multi-let — no free-text input here, the schedule is the
-  // single source of truth for who's in the building.
   const tenantOptions = tenants.filter((t) => (t?.name || "").trim());
-  const [tenantIdx, setTenantIdx] = useState(0);
-  useEffect(() => { setTenantIdx(0); }, [tenants.length]);
-  const selectedTenant = tenantOptions[tenantIdx];
-  const [busy, setBusy] = useState<"erv" | "cov" | null>(null);
+  // covBusy tracks per-tenant generation so each row can show its own
+  // spinner; "all" is the "Generate all" batch button. ervBusy is its own
+  // boolean since the ERV walk is a single chart per property.
+  const [ervBusy, setErvBusy] = useState(false);
+  const [covBusy, setCovBusy] = useState<Set<string>>(new Set());
+  const [allBusy, setAllBusy] = useState(false);
 
   const p = Number(passingRent || 0);
   const e = Number(erv || 0);
@@ -2793,7 +2765,7 @@ function WhyBuyChartsCard({ runId, propertyId, passingRent, erv, area, tenants }
   const genErv = async () => {
     if (!propertyId) { toast({ title: "No property linked", description: "Stage 1 needs to resolve the property first.", variant: "destructive" }); return; }
     if (!ervReady) { toast({ title: "Add ERV to the tenancy schedule", description: "Each occupier needs a Rent (£ pa) and an ERV (£ pa) for the chart to compute.", variant: "destructive" }); return; }
-    setBusy("erv");
+    setErvBusy(true);
     try {
       const r = await fetch(`/api/property-imagery/${propertyId}/compose/erv-walk`, {
         method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
@@ -2802,26 +2774,56 @@ function WhyBuyChartsCard({ runId, propertyId, passingRent, erv, area, tenants }
       if (!r.ok) throw new Error(await r.text());
       toast({ title: "ERV walk generated", description: "Saved to the Why Buy imagery." });
     } catch (err: any) { toast({ title: "ERV walk failed", description: err?.message || "", variant: "destructive" }); }
-    finally { setBusy(null); }
+    finally { setErvBusy(false); }
   };
 
-  const genCov = async () => {
-    if (!propertyId) { toast({ title: "No property linked", description: "Stage 1 needs to resolve the property first.", variant: "destructive" }); return; }
-    if (!selectedTenant?.name?.trim()) { toast({ title: "Add a tenant to the schedule", description: "The covenant card needs at least one occupier row.", variant: "destructive" }); return; }
-    setBusy("cov");
+  // Generate one covenant card for a single tenant. Used both by the
+  // per-row buttons and the Generate-all batch. Returns the tenant name
+  // on success so the batch can summarise results.
+  const genCovOne = async (t: { id?: string; name?: string; companyNumber?: string }): Promise<{ ok: boolean; name: string; err?: string }> => {
+    if (!propertyId) return { ok: false, name: t.name || "", err: "No property linked" };
+    const name = (t.name || "").trim();
+    if (!name) return { ok: false, name: "", err: "Missing name" };
     try {
       const r = await fetch(`/api/property-imagery/${propertyId}/compose/covenant-card-auto`, {
         method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
-          tenantName: selectedTenant.name.trim(),
-          companiesHouseNumber: selectedTenant.companyNumber?.trim() || undefined,
+          tenantName: name,
+          companiesHouseNumber: t.companyNumber?.trim() || undefined,
           pathwayRunId: runId,
         }),
       });
-      if (!r.ok) throw new Error(await r.text());
-      toast({ title: "Covenant card generated", description: `For ${selectedTenant.name.trim()} — saved to Why Buy imagery.` });
-    } catch (err: any) { toast({ title: "Covenant card failed", description: err?.message || "", variant: "destructive" }); }
-    finally { setBusy(null); }
+      if (!r.ok) return { ok: false, name, err: await r.text() };
+      return { ok: true, name };
+    } catch (err: any) { return { ok: false, name, err: err?.message || "" }; }
+  };
+
+  const genCov = async (t: { id?: string; name?: string; companyNumber?: string }) => {
+    const key = t.id || t.name || "";
+    setCovBusy((s) => new Set(s).add(key));
+    const res = await genCovOne(t);
+    setCovBusy((s) => { const n = new Set(s); n.delete(key); return n; });
+    if (res.ok) toast({ title: "Covenant card generated", description: `For ${res.name} — saved to Why Buy imagery.` });
+    else toast({ title: "Covenant card failed", description: res.err || "", variant: "destructive" });
+  };
+
+  const genCovAll = async () => {
+    if (tenantOptions.length === 0) { toast({ title: "Add a tenant to the schedule first", variant: "destructive" }); return; }
+    setAllBusy(true);
+    // Run them sequentially so the Companies House lookups inside don't
+    // stampede the rate limit. Slower but safer for a multi-let.
+    const results: Array<{ ok: boolean; name: string; err?: string }> = [];
+    for (const t of tenantOptions) results.push(await genCovOne(t));
+    setAllBusy(false);
+    const okCount = results.filter((r) => r.ok).length;
+    const failCount = results.length - okCount;
+    toast({
+      title: failCount === 0 ? "Covenant cards generated" : `Covenant cards: ${okCount}/${results.length}`,
+      description: failCount === 0
+        ? `${okCount} card${okCount === 1 ? "" : "s"} saved to Why Buy imagery.`
+        : `Failed: ${results.filter((r) => !r.ok).map((r) => r.name).join(", ")}`,
+      variant: failCount === 0 ? "default" : "destructive",
+    });
   };
 
   const fmtGbp = (n: number) => `£${n.toLocaleString()}`;
@@ -2842,38 +2844,45 @@ function WhyBuyChartsCard({ runId, propertyId, passingRent, erv, area, tenants }
                 ? <>From <span className="font-medium">{fmtGbp(p)} passing</span> → <span className="font-medium">{fmtGbp(e)} ERV</span> (tenancy schedule totals)</>
                 : <span className="text-amber-700">Add Rent + ERV per occupier in the tenancy schedule below first.</span>}
             </div>
-            <Button size="sm" onClick={genErv} disabled={busy !== null || !ervReady} className="gap-1.5">
-              {busy === "erv" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Generate ERV walk
+            <Button size="sm" onClick={genErv} disabled={ervBusy || !ervReady} className="gap-1.5">
+              {ervBusy ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Generate ERV walk
             </Button>
           </div>
           <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">Covenant card</p>
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">Covenant cards</p>
+              {tenantOptions.length > 1 && (
+                <Button size="sm" variant="outline" onClick={genCovAll} disabled={allBusy || covBusy.size > 0} className="gap-1.5 h-7 text-xs">
+                  {allBusy ? <Clock className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Generate all ({tenantOptions.length})
+                </Button>
+              )}
+            </div>
             <p className="text-[11px] text-muted-foreground">
-              Tenant + Companies House link + AML status. Pulls the occupier from the schedule.
+              One card per occupier. Tenant + Companies House link + AML status.
             </p>
             {tenantOptions.length === 0 ? (
               <div className="text-xs border rounded px-2 py-1.5 bg-muted/40 text-amber-700">
                 Add an occupier in the tenancy schedule below first.
               </div>
-            ) : tenantOptions.length === 1 ? (
-              <div className="text-xs border rounded px-2 py-1.5 bg-muted/40">
-                For <span className="font-medium">{tenantOptions[0].name}</span>
-                {tenantOptions[0].companyNumber ? <> · CH {tenantOptions[0].companyNumber}</> : null}
-              </div>
             ) : (
-              <select
-                value={tenantIdx}
-                onChange={(e) => setTenantIdx(Number(e.target.value))}
-                className="w-full border rounded px-2 py-1 text-sm bg-background"
-              >
-                {tenantOptions.map((t, i) => (
-                  <option key={t.id || i} value={i}>{t.name}{t.companyNumber ? ` · CH ${t.companyNumber}` : ""}</option>
-                ))}
-              </select>
+              <div className="border rounded divide-y max-h-48 overflow-y-auto">
+                {tenantOptions.map((t, i) => {
+                  const key = t.id || t.name || String(i);
+                  const busy = allBusy || covBusy.has(key);
+                  return (
+                    <div key={key} className="flex items-center justify-between gap-2 p-1.5">
+                      <div className="text-xs min-w-0 flex-1">
+                        <div className="font-medium truncate">{t.name}</div>
+                        {t.companyNumber && <div className="text-[10px] text-muted-foreground">CH {t.companyNumber}</div>}
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => genCov(t)} disabled={busy} className="gap-1 h-6 text-[11px] shrink-0">
+                        {busy ? <Clock className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Generate
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
             )}
-            <Button size="sm" onClick={genCov} disabled={busy !== null || tenantOptions.length === 0} className="gap-1.5">
-              {busy === "cov" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Generate covenant card
-            </Button>
           </div>
         </div>
       </CardContent>
@@ -5104,8 +5113,29 @@ function TenancyScheduleEditor({ runId, stage1, onReload }: { runId: string; sta
         body: JSON.stringify({ stageResults }),
       });
       if (!res.ok) throw new Error("Save failed");
-      toast({ title: "Schedule saved", description: `${tenants.length} occupier${tenants.length === 1 ? "" : "s"} · £${totals.rent.toLocaleString()} pa across ${totals.area.toLocaleString()} sq ft.` });
-      onReload();
+
+      // Kick the model regenerate so the Excel build picks up the new totals
+      // automatically — no manual "Regenerate" button. Best-effort: the
+      // schedule itself is already saved; a regen failure shouldn't block
+      // the success toast.
+      let regenStarted = false;
+      try {
+        const r2 = await fetch(`/api/property-pathway/${runId}/stage7/override`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          credentials: "include",
+          body: JSON.stringify({ regenerate: true }),
+        });
+        regenStarted = r2.ok;
+      } catch { /* ignore — schedule is saved */ }
+
+      toast({
+        title: "Schedule saved",
+        description: `${tenants.length} occupier${tenants.length === 1 ? "" : "s"} · £${totals.rent.toLocaleString()} pa across ${totals.area.toLocaleString()} sq ft.${regenStarted ? " Regenerating model…" : ""}`,
+      });
+      // Slight delay so the regen kick has a chance to land before the
+      // refetch — otherwise the page still shows the previous model run.
+      setTimeout(onReload, regenStarted ? 2500 : 0);
     } catch (e: any) {
       toast({ title: "Save failed", description: e.message, variant: "destructive" });
     } finally {
