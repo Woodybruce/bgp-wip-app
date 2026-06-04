@@ -831,6 +831,7 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   const { data, isLoading } = useQuery<{
     last4: string; brand: string; expMonth: number; expYear: number;
     number: string | null; cvc: string | null; isTestMode: boolean;
+    revolut?: boolean; message?: string;
   }>({
     queryKey: ["/api/expenses/me/card-details"],
     enabled: open,
@@ -851,6 +852,17 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         </DialogHeader>
         {isLoading ? (
           <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+        ) : data?.revolut ? (
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              {data.message || "Card details are managed in the Revolut app."}
+            </p>
+            <ol className="space-y-1.5 list-decimal pl-5 text-muted-foreground">
+              <li>Open the <strong>Revolut</strong> app</li>
+              <li>Go to the <strong>Cards</strong> tab</li>
+              <li>Tap your BGP card to view the number, expiry and CVC</li>
+            </ol>
+          </div>
         ) : data ? (
           <div className="space-y-4">
             {data.isTestMode && (

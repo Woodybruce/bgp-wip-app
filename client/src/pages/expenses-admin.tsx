@@ -107,7 +107,7 @@ export default function ExpensesAdmin() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Expenses & Cards</h1>
-          <p className="text-sm text-muted-foreground">Stripe Issuing card programme — manage limits, freeze cards, review expenses</p>
+          <p className="text-sm text-muted-foreground">Revolut Business card programme — manage limits, freeze cards, review expenses</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => { refetchCh(); refetchExp(); refetchSummary(); }}>

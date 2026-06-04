@@ -203,9 +203,16 @@ export async function updateCardholderLimits(args: {
   const newDaily    = args.dailyLimit    ?? ch.dailyLimit;
   const newSingleTx = args.singleTxLimit ?? ch.singleTxLimit;
 
-  await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, {
-    spending_controls: spendingControls({ monthlyLimit: newMonthly, dailyLimit: newDaily, singleTxLimit: newSingleTx }),
-  });
+  // Revolut-mapped cardholders have no Stripe id — pushing limits to
+  // Stripe would POST /issuing/cardholders/null → 404. Spending limits on
+  // Revolut cards are managed in the Revolut app, so for those we just
+  // persist the figures locally as a record. Only call Stripe for real
+  // Stripe-issued cardholders.
+  if (ch.stripeCardholderId) {
+    await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, {
+      spending_controls: spendingControls({ monthlyLimit: newMonthly, dailyLimit: newDaily, singleTxLimit: newSingleTx }),
+    });
+  }
 
   await db.update(stripeCardholders).set({
     monthlyLimit: newMonthly,
@@ -220,7 +227,13 @@ export async function updateCardholderLimits(args: {
 export async function setCardholderStatus(cardholderId: string, status: "active" | "inactive") {
   const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, cardholderId)).limit(1);
   if (!ch) throw new Error("Cardholder not found");
-  await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, { status });
+  // Revolut-mapped cardholders have no Stripe id — skip the Stripe call
+  // (it would hit /issuing/cardholders/null → 404). Freeze/unfreeze for a
+  // Revolut card is done in the Revolut app; we keep the local status flag
+  // in sync for the dashboard either way.
+  if (ch.stripeCardholderId) {
+    await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, { status });
+  }
   await db.update(stripeCardholders).set({ status, updatedAt: new Date() }).where(eq(stripeCardholders.id, cardholderId));
 }
 
@@ -781,6 +794,15 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!userId) return res.status(401).json({ error: "Not logged in" });
       const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
       if (!ch) return res.status(404).json({ error: "No card issued for this user" });
+
+      // Revolut-mapped cardholders have no Stripe card. Revolut's API doesn't
+      // expose the PAN/CVC anyway (those live in the Revolut app), so return
+      // a clear, non-error payload the dialog can render instead of throwing
+      // a Stripe 404 that surfaces as "Failed to load card details".
+      if (!ch.stripeCardholderId) {
+        return res.json({ provider: "revolut", revolut: true, message: "Card details are managed in the Revolut app." });
+      }
+
       const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
       if (!card) return res.status(404).json({ error: "No card found" });
 
