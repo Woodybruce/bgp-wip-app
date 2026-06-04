@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import DOMPurify from "dompurify";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
@@ -10,7 +10,7 @@ import { usePropertyContext } from "@/lib/property-context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
@@ -19,7 +19,7 @@ import {
   FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
   Copy, Paperclip, Loader2, Maximize2, Briefcase, FileSpreadsheet, MessageSquare,
-  ZoomIn, ZoomOut,
+  ZoomIn, ZoomOut, Link2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -2781,13 +2781,21 @@ function WhyBuyCard({
   propertyId: string | null;
 }) {
   const [manageOpen, setManageOpen] = useState(false);
+  const [relinkOpen, setRelinkOpen] = useState(false);
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
         <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
-        <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setManageOpen(true)} title="Upload, AI-edit, delete and capture imagery for this property">
-          <ImageIcon className="w-3.5 h-3.5" /> Manage images
-        </Button>
+        <div className="flex items-center gap-1.5">
+          {propertyId && (
+            <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setRelinkOpen(true)} title="Pick from uploads that have no property assigned and link them to this property. Fixes the empty-picker case when images were uploaded before per-property folders existed.">
+              <Link2 className="w-3.5 h-3.5" /> Re-link uploads
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setManageOpen(true)} title="Upload, AI-edit, delete and capture imagery for this property">
+            <ImageIcon className="w-3.5 h-3.5" /> Manage images
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="text-sm space-y-3">
         <p className="text-muted-foreground">In-app, Claude-designed pitch deck — generated from the agreed business plan + agreed Excel model. Iterate by prompt or click any image / headline to edit inline.</p>
@@ -2835,7 +2843,129 @@ function WhyBuyCard({
       {manageOpen && (
         <ImageStudioPicker runId={runId} onPick={() => setManageOpen(false)} onClose={() => setManageOpen(false)} />
       )}
+      {relinkOpen && propertyId && (
+        <RelinkUploadsModal
+          propertyId={propertyId}
+          onClose={() => setRelinkOpen(false)}
+        />
+      )}
     </Card>
+  );
+}
+
+// Modal for picking unassigned Image Studio uploads and linking them to
+// the current property. Posts to the existing bulk-assign-property endpoint
+// which sets property_id on image_studio_images AND auto-creates the
+// matching property_imagery_assets / entity_images rows + property folder
+// link. Result: the Why Buy imagery picker stops being empty for properties
+// whose uploads pre-date the per-property folders feature.
+function RelinkUploadsModal({ propertyId, onClose }: { propertyId: string; onClose: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const { data: orphans = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/image-studio/orphans"],
+    queryFn: async () => {
+      const r = await fetch(`/api/image-studio/orphans?limit=300`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error("orphan fetch failed");
+      return r.json();
+    },
+  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orphans;
+    return orphans.filter((o: any) => {
+      const blob = `${o.fileName || ""} ${o.address || ""} ${o.description || ""} ${o.brandName || ""}`.toLowerCase();
+      return blob.includes(q);
+    });
+  }, [orphans, search]);
+  const toggle = (id: string) => setSelected((p) => {
+    const next = new Set(p);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const assignMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selected);
+      const r = await fetch(`/api/image-studio/bulk-assign-property`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ ids, propertyId }),
+      });
+      if (!r.ok) throw new Error("assign failed");
+      return r.json();
+    },
+    onSuccess: (res) => {
+      toast({ title: "Uploads linked", description: `${res?.updated ?? selected.size} uploaded image${selected.size === 1 ? "" : "s"} now attached to this property.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/orphans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/property-imagery", propertyId, "manifest"] });
+      onClose();
+    },
+    onError: (err: any) => toast({ title: "Re-link failed", description: err.message, variant: "destructive" }),
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Re-link uploads to this property</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input
+            placeholder="Filter by filename, address, brand…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="text-xs text-muted-foreground">
+            {isLoading
+              ? "Loading orphan uploads…"
+              : `${filtered.length} unassigned upload${filtered.length === 1 ? "" : "s"} · ${selected.size} selected`}
+          </div>
+          <div className="max-h-[55vh] overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-1 border rounded-md bg-muted/10">
+            {filtered.map((o) => {
+              const picked = selected.has(o.id);
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => toggle(o.id)}
+                  className={`relative text-left rounded-md overflow-hidden border ${picked ? "border-primary ring-2 ring-primary/30" : "border-muted-foreground/20"}`}
+                >
+                  <img
+                    src={`/api/image-studio/${o.id}/thumb`}
+                    alt={o.fileName || "upload"}
+                    className="w-full h-24 object-cover bg-muted"
+                    loading="lazy"
+                  />
+                  <div className="px-2 py-1 text-[10px] leading-tight">
+                    <div className="truncate font-medium">{o.fileName || "(no filename)"}</div>
+                    {o.address && <div className="truncate text-muted-foreground">{o.address}</div>}
+                  </div>
+                  {picked && (
+                    <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-5 h-5 flex items-center justify-center text-[10px]">✓</div>
+                  )}
+                </button>
+              );
+            })}
+            {!isLoading && filtered.length === 0 && (
+              <div className="col-span-full text-center text-xs text-muted-foreground py-6">
+                No orphan uploads to link.
+              </div>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            disabled={selected.size === 0 || assignMutation.isPending}
+            onClick={() => assignMutation.mutate()}
+          >
+            {assignMutation.isPending ? "Linking…" : `Link ${selected.size} to property`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
