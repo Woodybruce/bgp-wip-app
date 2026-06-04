@@ -234,7 +234,11 @@ export default function MyExpenses() {
                 <div className="text-xs uppercase tracking-wider opacity-70">BGP Virtual Card</div>
                 <div className="text-xl font-semibold mt-1">{cardholder.userName}</div>
               </div>
-              {card?.status === "active" ? (
+              {/* Status comes from the cardholder, not a Stripe card row —
+                  Revolut cardholders have no stripe_cards record, so keying
+                  off card?.status falsely showed every Revolut card as
+                  "Frozen". cardholder.status is the source of truth. */}
+              {cardholder.status === "active" ? (
                 <Badge className="bg-emerald-500/20 text-emerald-200 border-emerald-400/30">Active</Badge>
               ) : (
                 <Badge className="bg-amber-500/20 text-amber-200 border-amber-400/30">Frozen</Badge>
@@ -252,7 +256,7 @@ export default function MyExpenses() {
                 size="sm"
                 variant="secondary"
                 onClick={() => setShowCardDetails(true)}
-                disabled={card?.status !== "active"}
+                disabled={cardholder.status !== "active"}
               >
                 <Eye className="w-4 h-4 mr-1.5" /> Show details
               </Button>

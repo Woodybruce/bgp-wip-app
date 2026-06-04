@@ -98,6 +98,17 @@ ${text.slice(0, 6000)}`,
   }
 }
 
+interface BestMatch {
+  parsed: ParsedReceipt;
+  msg: any;
+  source: "attachment" | "body";
+  filename?: string;
+  diff: number;
+  bytes?: Buffer;
+  mimeType?: string;
+  html?: string;
+}
+
 export async function findEmailReceiptForExpense(
   expenseId: string,
   opts: { hoursBefore?: number; hoursAfter?: number; maxEmails?: number } = {},
@@ -140,7 +151,8 @@ export async function findEmailReceiptForExpense(
 
   let scanned = 0;
   let parses = 0;
-  let best: { parsed: ParsedReceipt; msg: any; source: "attachment" | "body"; filename?: string; diff: number; bytes?: Buffer; mimeType?: string; html?: string } | null = null;
+  let best: BestMatch | null = null;
+  let bestDiff = Infinity;       // tracked separately to keep CFA simple
 
   for (const m of messages) {
     if (parses >= MAX_PARSES) break;
@@ -169,13 +181,14 @@ export async function findEmailReceiptForExpense(
           parses++;
           const parsed = await parseReceiptImage({ imageBytes: bytes, mimeType: att.contentType || (isPdf ? "application/pdf" : "image/jpeg") });
           const diff = Math.abs(parsed.totalPence - expense.amountPence);
-          if (diff <= AMOUNT_TOLERANCE_PENCE && (!best || diff < best.diff)) {
+          if (diff <= AMOUNT_TOLERANCE_PENCE && diff < bestDiff) {
             best = { parsed, msg: m, source: "attachment", filename: att.name, diff, bytes, mimeType: att.contentType };
+            bestDiff = diff;
             if (diff === 0) break;
           }
         } catch { /* unreadable attachment — skip */ }
       }
-      if (best && best.diff === 0) break;
+      if (best && bestDiff === 0) break;
     }
 
     // 2) Body fallback — only if the email looks like a receipt and we
@@ -194,8 +207,9 @@ export async function findEmailReceiptForExpense(
           const parsed = await parseReceiptFromText(text, categories);
           if (parsed) {
             const diff = Math.abs(parsed.totalPence - expense.amountPence);
-            if (diff <= AMOUNT_TOLERANCE_PENCE && (!best || diff < best.diff)) {
+            if (diff <= AMOUNT_TOLERANCE_PENCE && diff < bestDiff) {
               best = { parsed, msg: m, source: "body", diff, html: body.content };
+              bestDiff = diff;
             }
           }
         }

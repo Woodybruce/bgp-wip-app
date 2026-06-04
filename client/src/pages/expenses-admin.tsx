@@ -151,8 +151,6 @@ export default function ExpensesAdmin() {
         </div>
       )}
 
-      <RevolutPanel />
-
       {summary && summary.byCardholder.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
@@ -375,128 +373,6 @@ export default function ExpensesAdmin() {
         />
       )}
     </div>
-  );
-}
-
-// ── Revolut connection panel ───────────────────────────────────────────────
-// One-click controls for the bits that otherwise need raw admin POSTs:
-// a live status readout, a transaction backfill, and webhook registration.
-interface RevolutStatus {
-  configured: boolean;
-  env?: string;
-  bootstrapped?: boolean;
-  webhookSecretConfigured?: boolean;
-  probe?: { ok: boolean; accounts?: number; error?: string };
-  missing?: string[];
-}
-
-function RevolutPanel() {
-  const { toast } = useToast();
-  const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
-
-  const { data: status, isLoading, refetch } = useQuery<RevolutStatus>({
-    queryKey: ["/api/revolut/status"],
-  });
-
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      // Backfill the last 60 days — catches anything the webhook missed and
-      // confirms the API path end-to-end.
-      const from = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
-      const r = await apiRequest("POST", "/api/revolut/sync-transactions", { from });
-      return r.json();
-    },
-    onSuccess: (d: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
-      toast({ title: "Transactions synced", description: `${d?.created ?? 0} new, ${d?.updated ?? 0} updated, ${d?.skipped ?? 0} skipped.` });
-    },
-    onError: (e: any) => toast({ title: "Sync failed", description: e?.message, variant: "destructive" }),
-  });
-
-  const registerMutation = useMutation({
-    mutationFn: async () => {
-      // Register against this same origin so the URL always matches the host
-      // the app is actually served from.
-      const url = `${window.location.origin}/api/revolut/webhook`;
-      const r = await apiRequest("POST", "/api/revolut/webhook/register", { url });
-      return r.json();
-    },
-    onSuccess: (d: any) => {
-      const secret = d?.webhook?.signing_secret || null;
-      setWebhookSecret(secret);
-      refetch();
-      toast({
-        title: "Webhook registered",
-        description: secret ? "Copy the signing secret into Railway (shown below)." : "Created — capture the signing secret from Revolut.",
-      });
-    },
-    onError: (e: any) => toast({ title: "Register failed", description: e?.message, variant: "destructive" }),
-  });
-
-  const Dot = ({ ok }: { ok: boolean }) => (
-    <span className={`inline-block w-2 h-2 rounded-full ${ok ? "bg-emerald-500" : "bg-red-500"}`} />
-  );
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Revolut connection</CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isLoading}>
-            <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {!status ? (
-          <p className="text-sm text-muted-foreground">{isLoading ? "Checking…" : "Status unavailable."}</p>
-        ) : !status.configured ? (
-          <div className="text-sm text-amber-700">
-            Not configured. Missing env: {(status.missing || []).join(", ") || "credentials"}.
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-              <div className="flex items-center gap-2"><Dot ok={!!status.configured} /> Credentials <span className="text-muted-foreground">({status.env})</span></div>
-              <div className="flex items-center gap-2"><Dot ok={!!status.bootstrapped} /> Bootstrapped</div>
-              <div className="flex items-center gap-2"><Dot ok={!!status.probe?.ok} /> API {status.probe?.ok ? `(${status.probe.accounts} accts)` : ""}</div>
-              <div className="flex items-center gap-2"><Dot ok={!!status.webhookSecretConfigured} /> Live webhook</div>
-            </div>
-
-            {status.probe && !status.probe.ok && status.probe.error && (
-              <p className="text-xs text-red-600">API probe error: {status.probe.error}</p>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending || !status.bootstrapped}>
-                {syncMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
-                Sync transactions (60 days)
-              </Button>
-              {!status.webhookSecretConfigured && (
-                <Button size="sm" variant="outline" onClick={() => registerMutation.mutate()} disabled={registerMutation.isPending || !status.bootstrapped}>
-                  {registerMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Plus className="w-4 h-4 mr-1.5" />}
-                  Register webhook
-                </Button>
-              )}
-            </div>
-
-            {webhookSecret && (
-              <div className="text-xs p-3 rounded bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-950/30 dark:border-amber-900 space-y-1.5">
-                <p className="font-semibold">Set this in Railway, then redeploy (shown once):</p>
-                <code className="block font-mono break-all bg-white/60 dark:bg-black/30 px-2 py-1 rounded">REVOLUT_WEBHOOK_SECRET={webhookSecret}</code>
-              </div>
-            )}
-
-            {!status.bootstrapped && (
-              <p className="text-xs text-muted-foreground">
-                Not bootstrapped yet — complete the Revolut OAuth consent so a refresh token is stored, then these actions unlock.
-              </p>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
