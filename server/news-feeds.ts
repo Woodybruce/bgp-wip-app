@@ -34,21 +34,28 @@ const DEFAULT_SOURCES = [
   { name: "Retail Week", url: "https://www.retailweek.com", feedUrl: "https://www.retailweek.com/feed", type: "rss", category: "Retail" },
   { name: "Modern Retail", url: "https://www.modernretail.co", feedUrl: "https://www.modernretail.co/feed/", type: "rss", category: "Retail" },
   { name: "Glossy", url: "https://www.glossy.co", feedUrl: "https://www.glossy.co/feed/", type: "rss", category: "Retail" },
-  { name: "Sourcing Journal", url: "https://sourcingjournal.com", feedUrl: "https://sourcingjournal.com/feed/", type: "rss", category: "Retail" },
+  // Sourcing Journal — direct /feed/ returns malformed XML ("Invalid character
+  // in entity name" — unescaped & in titles) which crashes rss-parser. Google
+  // News with a site: scope is reliable and unwraps the redirect.
+  { name: "Sourcing Journal", url: "https://sourcingjournal.com", feedUrl: "https://news.google.com/rss/search?q=site:sourcingjournal.com&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
   { name: "Retail Dive", url: "https://www.retaildive.com", feedUrl: "https://www.retaildive.com/feeds/news/", type: "rss", category: "Retail" },
   { name: "WWD", url: "https://wwd.com", feedUrl: "https://wwd.com/feed/", type: "rss", category: "Retail" },
   { name: "The Industry Beauty", url: "https://www.theindustry.beauty", feedUrl: "https://www.theindustry.beauty/feed/", type: "rss", category: "Retail" },
   { name: "Hospitality Net", url: "https://www.hospitalitynet.org", feedUrl: "https://www.hospitalitynet.org/rss/news.xml", type: "rss", category: "Hospitality" },
-  { name: "Big Hospitality", url: "https://www.bighospitality.co.uk", feedUrl: "https://www.bighospitality.co.uk/feed", type: "rss", category: "Hospitality" },
-  // Harry's curated luxury / fashion / lifestyle list — additions Nov 2026
-  { name: "GQ (UK)", url: "https://www.gq-magazine.co.uk", feedUrl: "https://www.gq-magazine.co.uk/feed", type: "rss", category: "Retail" },
-  { name: "Gentleman's Journal", url: "https://www.thegentlemansjournal.com", feedUrl: "https://www.thegentlemansjournal.com/feed/", type: "rss", category: "Retail" },
-  { name: "Vogue (UK)", url: "https://www.vogue.co.uk", feedUrl: "https://www.vogue.co.uk/feed", type: "rss", category: "Retail" },
+  // Big Hospitality — site removed /feed (404). Google News site-scope fallback.
+  { name: "Big Hospitality", url: "https://www.bighospitality.co.uk", feedUrl: "https://news.google.com/rss/search?q=site:bighospitality.co.uk&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Hospitality" },
+  // Harry's curated luxury / fashion / lifestyle list — additions Nov 2026.
+  // Condé Nast UK + Gentleman's Journal all return 404 on /feed — switched
+  // to Google News site-scope so we still get their coverage.
+  { name: "GQ (UK)", url: "https://www.gq-magazine.co.uk", feedUrl: "https://news.google.com/rss/search?q=site:gq-magazine.co.uk&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
+  { name: "Gentleman's Journal", url: "https://www.thegentlemansjournal.com", feedUrl: "https://news.google.com/rss/search?q=site:thegentlemansjournal.com&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
+  { name: "Vogue (UK)", url: "https://www.vogue.co.uk", feedUrl: "https://news.google.com/rss/search?q=site:vogue.co.uk&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
   { name: "Vogue Runway", url: "https://www.vogue.com", feedUrl: "https://www.vogue.com/feed/rss", type: "rss", category: "Retail" },
   { name: "Reuters Business", url: "https://www.reuters.com/business", feedUrl: "https://feeds.reuters.com/reuters/businessNews", type: "rss", category: "Retail" },
   { name: "The Guardian — Retail", url: "https://www.theguardian.com/business/retail", feedUrl: "https://www.theguardian.com/business/retail/rss", type: "rss", category: "Retail" },
-  // Brand / fashion / retail press — added for Tenant Rep + Leasing brand-hunting
-  { name: "Vogue Business", url: "https://www.voguebusiness.com", feedUrl: "https://www.voguebusiness.com/feed", type: "rss", category: "Retail" },
+  // Brand / fashion / retail press — added for Tenant Rep + Leasing brand-hunting.
+  // Vogue Business /feed → 404, same Condé Nast fix.
+  { name: "Vogue Business", url: "https://www.voguebusiness.com", feedUrl: "https://news.google.com/rss/search?q=site:voguebusiness.com&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
   { name: "Highsnobiety", url: "https://www.highsnobiety.com", feedUrl: "https://www.highsnobiety.com/feed/", type: "rss", category: "Retail" },
   // Google News searches for topics without a direct RSS feed
   { name: "Industry of Fashion (Google News)", url: "https://news.google.com/search?q=%22industry+of+fashion%22", feedUrl: "https://news.google.com/rss/search?q=%22industry+of+fashion%22&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
@@ -89,6 +96,20 @@ const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
 
 async function seedNewsSources() {
   const existing = await db.select().from(newsSources);
+  const existingByName = new Map(existing.map(s => [s.name, s]));
+  // Heal dead URLs: when DEFAULT_SOURCES has a different feedUrl/type for a
+  // name that already exists in the DB (publication killed its RSS, we
+  // pointed it at Google News instead), refresh the row in place. Without
+  // this step, the original insert from a year ago keeps returning 404
+  // forever and the fix here only helps fresh deploys.
+  for (const source of DEFAULT_SOURCES) {
+    const prev = existingByName.get(source.name);
+    if (prev && (prev.feedUrl !== source.feedUrl || prev.type !== source.type)) {
+      await db.update(newsSources)
+        .set({ feedUrl: source.feedUrl, type: source.type })
+        .where(eq(newsSources.id, prev.id));
+    }
+  }
   const existingNames = new Set(existing.map(s => s.name));
   let added = 0;
   for (const source of DEFAULT_SOURCES) {
