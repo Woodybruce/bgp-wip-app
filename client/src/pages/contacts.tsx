@@ -1259,8 +1259,22 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
 
   const syncInteractions = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
-      return res.json();
+      // Sync now runs in the background (POST returns 202 — it used to 504
+      // after 3 min). Kick it, then poll /sync-status until it finishes so
+      // the toast can report the real counts.
+      await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
+      const deadline = Date.now() + 5 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const sr = await fetch("/api/interactions/sync-status", { credentials: "include" });
+        if (!sr.ok) break;
+        const status = await sr.json();
+        if (!status.running) {
+          if (status.error) throw new Error(status.error);
+          return status.lastResult || {};
+        }
+      }
+      return {};
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/interactions/summary"] });
