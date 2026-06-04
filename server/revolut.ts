@@ -329,6 +329,37 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
     [txn.id, inserted.id],
   );
 
+  // Best-effort diary match at swipe time — if the cardholder had a meeting
+  // around the transaction time, attach the subject + attendees so the
+  // expense arrives pre-contextualised ("Lunch with … re …") before any
+  // receipt comes in. Degrades silently if Graph/calendar isn't available.
+  if (cardholderId) {
+    try {
+      const { rows } = await pool.query<{ email: string | null; user_id: string | null }>(
+        `SELECT email, user_id FROM stripe_cardholders WHERE id = $1 LIMIT 1`,
+        [cardholderId],
+      );
+      const email = rows[0]?.email;
+      if (email) {
+        const { findMeetingContext } = await import("./expense-calendar-context");
+        const ctx = await findMeetingContext({ userEmail: email, userId: rows[0]?.user_id, when: txnDate });
+        if (ctx) {
+          await pool.query(
+            `UPDATE expenses
+                SET business_purpose = COALESCE(business_purpose, $1),
+                    attendees = COALESCE(attendees, $2),
+                    calendar_event_id = COALESCE(calendar_event_id, $3),
+                    updated_at = NOW()
+              WHERE id = $4`,
+            [ctx.subject, ctx.attendees || null, ctx.eventId, inserted.id],
+          );
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[revolut] calendar enrich failed for txn ${txn.id}:`, e?.message);
+    }
+  }
+
   return { id: inserted.id, created: true };
 }
 
