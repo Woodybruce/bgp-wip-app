@@ -172,7 +172,9 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
       const calendar = await import("./expense-calendar-context");
       const ctx = await calendar.findMeetingContext({
         userEmail: ch.email,
+        userId: ch.userId,
         when: target.transactionDate,
+        baseCategory: parsed.category,
       });
       if (ctx) {
         attendees = ctx.attendees;

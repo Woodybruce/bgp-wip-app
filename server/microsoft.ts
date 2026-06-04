@@ -67,6 +67,59 @@ function getMsalClient(): ConfidentialClientApplication {
   return msalClient;
 }
 
+// App-only (client-credential) Graph token for background jobs that have no
+// logged-in user session — e.g. the Revolut webhook enriching a card
+// transaction with the cardholder's calendar. Uses the same confidential
+// client as SharePoint uploads. Returns null (rather than throwing) so
+// callers can degrade gracefully when Azure creds / app permissions aren't
+// configured yet.
+export async function getAppGraphToken(): Promise<string | null> {
+  try {
+    const client = getMsalClient();
+    const r = await client.acquireTokenByClientCredential({
+      scopes: ["https://graph.microsoft.com/.default"],
+    });
+    return r?.accessToken || null;
+  } catch (e: any) {
+    console.warn("[microsoft] app-only Graph token failed:", e?.message);
+    return null;
+  }
+}
+
+// Session-less delegated Graph token for a specific BGP user, from their
+// stored MSAL cache (same mechanism as getValidMsToken, minus the org
+// fallback — we want *this* user's token so /me/calendarView reads their
+// own calendar). Returns null if the user hasn't connected M365 or the
+// silent refresh fails. Lets background jobs read a user's calendar using
+// the delegated Calendars.Read consent that's already in place, without
+// needing the app-only Application permission.
+export async function getDelegatedGraphTokenForUser(userId: string): Promise<string | null> {
+  if (!userId) return null;
+  return withMsalCacheLock(async () => {
+    try {
+      const client = getMsalClient();
+      const cacheData = await loadMsalCache(String(userId));
+      const homeAccountId = await getHomeAccountId(String(userId));
+      if (!cacheData || !homeAccountId) return null;
+
+      client.getTokenCache().deserialize(cacheData);
+      const accounts = await client.getTokenCache().getAllAccounts();
+      const account = accounts.find((a) => a.homeAccountId === homeAccountId);
+      if (!account) return null;
+
+      const result = await client.acquireTokenSilent({ scopes: SCOPES, account });
+      if (result?.accessToken) {
+        await saveMsalCache(String(userId), homeAccountId);
+        return result.accessToken;
+      }
+      return null;
+    } catch (e: any) {
+      console.warn(`[microsoft] delegated token for user ${userId} failed:`, e?.message);
+      return null;
+    }
+  });
+}
+
 function getRedirectUri(req: Request): string {
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
   const host = req.headers["x-forwarded-host"] || req.headers.host;

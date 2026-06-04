@@ -14,7 +14,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import {
   CreditCard, Eye, EyeOff, Copy, Check, Upload, Receipt, AlertCircle,
   CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil,
-  Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown,
+  Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown, CalendarClock,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +28,7 @@ interface Expense {
   transactionDate: string | null;
   businessPurpose: string | null;
   attendees: string | null;
+  calendarEventId: string | null;
   relatedDealId: string | null;
   relatedPropertyId: string | null;
   receiptFilename: string | null;
@@ -394,7 +395,18 @@ export default function MyExpenses() {
                   {expenses.map((e) => (
                     <tr key={e.id} className="border-t hover:bg-muted/20">
                       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{fmtDate(e.transactionDate)}</td>
-                      <td className="px-4 py-2 font-medium">{e.merchant || "—"}</td>
+                      <td className="px-4 py-2 font-medium">
+                        {e.merchant || "—"}
+                        {e.calendarEventId && e.businessPurpose && (
+                          <div className="flex items-start gap-1 mt-0.5 text-[11px] font-normal text-emerald-600" title="Auto-matched to a diary event">
+                            <CalendarClock className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>
+                              matched: {e.businessPurpose}
+                              {e.attendees ? <span className="text-muted-foreground"> · {e.attendees}</span> : null}
+                            </span>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-right font-mono">{fmt(e.amountPence)}</td>
                       <td className="px-4 py-2 text-muted-foreground">{e.category || "—"}</td>
                       <td className="px-4 py-2"><StatusBadge status={e.status} isPersonal={e.isPersonal} /></td>
