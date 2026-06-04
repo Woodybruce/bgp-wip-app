@@ -1986,33 +1986,23 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
   const { toast } = useToast();
   const [agreeing, setAgreeing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
-  const [areaInput, setAreaInput] = useState<string>(
-    stage7?.overrideTotalAreaSqFt ? String(stage7.overrideTotalAreaSqFt) :
-    stage7?.totalAreaSqFt ? String(stage7.totalAreaSqFt) : "",
-  );
-  const [rentInput, setRentInput] = useState<string>(
-    stage7?.overrideCurrentRentPA ? String(stage7.overrideCurrentRentPA) :
-    stage7?.currentRentPA ? String(stage7.currentRentPA) : "",
-  );
   const planAgreed = !!stage6?.agreed;
   const modelAgreed = !!stage7?.agreed;
 
+  // The Tenancy schedule below is the source of truth for total area + passing
+  // rent — its Save writes overrideTotalAreaSqFt/overrideCurrentRentPA onto
+  // stage7, so this button just kicks the model rebuild using those stored
+  // overrides. No duplicate input boxes here.
   async function regenerate() {
-    const totalAreaSqFt = areaInput.trim() ? parseFloat(areaInput.replace(/[^0-9.]/g, "")) : null;
-    const currentRentPA = rentInput.trim() ? parseFloat(rentInput.replace(/[^0-9.]/g, "")) : null;
-    if (totalAreaSqFt !== null && (!Number.isFinite(totalAreaSqFt) || totalAreaSqFt <= 0)) {
-      toast({ title: "Invalid area", description: "Enter a positive number of sq ft", variant: "destructive" });
-      return;
-    }
     setRegenerating(true);
     try {
       const res = await fetch(`/api/property-pathway/${runId}/stage7/override`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ totalAreaSqFt, currentRentPA, regenerate: true }),
+        body: JSON.stringify({ regenerate: true }),
       });
       if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Regenerating model", description: "Using your overrides — refresh shortly." });
+      toast({ title: "Regenerating model", description: "Using the tenancy schedule totals — refresh shortly." });
       setTimeout(onReload, 2500);
     } catch (e: any) {
       toast({ title: "Couldn't regenerate", description: e?.message, variant: "destructive" });
@@ -2075,43 +2065,19 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
           </div>
         )}
 
-        {/* Area + passing rent — the two inputs that matter most. Show the
-            value the model was built with (and its source) so you can sanity-
-            check before agreeing. Override + regenerate if wrong. */}
+        {/* No duplicate area / rent inputs here — the Tenancy schedule below
+            (Why Buy section) is the source of truth. Its Save writes the
+            totals as stage7 overrides; this button rebuilds the model using
+            them. */}
         {stage7?.modelRunId && !modelAgreed && (
-          <div className="mt-3 border rounded-lg p-3 bg-muted/30">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-medium">Area & passing rent</p>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${stage7.totalAreaSource === "default" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
-                Area source: {stage7.totalAreaSource || "default"}
-                {stage7.totalAreaSource === "default" && " — please override"}
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Total area (sq ft)</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={areaInput}
-                  onChange={(e) => setAreaInput(e.target.value)}
-                  placeholder={stage7.totalAreaSqFt ? String(stage7.totalAreaSqFt) : "e.g. 22000"}
-                  className="mt-0.5 w-full border rounded px-2 py-1 text-sm"
-                />
-              </label>
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Passing rent (£/year)</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={rentInput}
-                  onChange={(e) => setRentInput(e.target.value)}
-                  placeholder={stage7.currentRentPA ? String(stage7.currentRentPA) : "e.g. 1200000"}
-                  className="mt-0.5 w-full border rounded px-2 py-1 text-sm"
-                />
-              </label>
-            </div>
-            <Button size="sm" variant="outline" onClick={regenerate} disabled={regenerating} className="gap-1.5">
+          <div className="mt-3 flex items-center justify-between gap-3 border rounded-lg p-3 bg-muted/30">
+            <p className="text-xs text-muted-foreground">
+              Model uses the Tenancy schedule totals below
+              {(stage7.overrideTotalAreaSqFt || stage7.totalAreaSqFt) ? ` — ${Number(stage7.overrideTotalAreaSqFt || stage7.totalAreaSqFt).toLocaleString()} sq ft` : ""}
+              {(stage7.overrideCurrentRentPA || stage7.currentRentPA) ? ` · £${Number(stage7.overrideCurrentRentPA || stage7.currentRentPA).toLocaleString()} pa passing` : ""}.
+              Edit there, then regenerate.
+            </p>
+            <Button size="sm" variant="outline" onClick={regenerate} disabled={regenerating} className="gap-1.5 shrink-0">
               {regenerating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Regenerate model
             </Button>
           </div>
@@ -2801,19 +2767,32 @@ function RelatedLeaseAdvisoryMatters({ propertyId }: { propertyId: string }) {
   );
 }
 
-function WhyBuyChartsCard({ runId, propertyId, passingRent, area, tenantName, tenantCo }: { runId: string; propertyId: string | null; passingRent?: number; area?: number; tenantName?: string; tenantCo?: string }) {
+function WhyBuyChartsCard({ runId, propertyId, passingRent, erv, area, tenants }: {
+  runId: string;
+  propertyId: string | null;
+  passingRent?: number;
+  erv?: number;
+  area?: number;
+  tenants: Array<{ id?: string; name?: string; companyNumber?: string }>;
+}) {
   const { toast } = useToast();
-  const [passing, setPassing] = useState(passingRent ? String(passingRent) : "");
-  const [erv, setErv] = useState("");
-  const [tName, setTName] = useState(tenantName || "");
-  const [tCo, setTCo] = useState(tenantCo || "");
+  // Tenant covenant target: defaults to the first occupier on the schedule.
+  // Dropdown lets the user pick a different tenant from the same schedule
+  // when running a multi-let — no free-text input here, the schedule is the
+  // single source of truth for who's in the building.
+  const tenantOptions = tenants.filter((t) => (t?.name || "").trim());
+  const [tenantIdx, setTenantIdx] = useState(0);
+  useEffect(() => { setTenantIdx(0); }, [tenants.length]);
+  const selectedTenant = tenantOptions[tenantIdx];
   const [busy, setBusy] = useState<"erv" | "cov" | null>(null);
-  const num = (v: string) => { const n = parseFloat(String(v).replace(/[^0-9.]/g, "")); return isFinite(n) ? n : 0; };
+
+  const p = Number(passingRent || 0);
+  const e = Number(erv || 0);
+  const ervReady = p > 0 && e > 0;
 
   const genErv = async () => {
     if (!propertyId) { toast({ title: "No property linked", description: "Stage 1 needs to resolve the property first.", variant: "destructive" }); return; }
-    const p = num(passing), e = num(erv);
-    if (p <= 0 || e <= 0) { toast({ title: "Enter passing rent + ERV", variant: "destructive" }); return; }
+    if (!ervReady) { toast({ title: "Add ERV to the tenancy schedule", description: "Each occupier needs a Rent (£ pa) and an ERV (£ pa) for the chart to compute.", variant: "destructive" }); return; }
     setBusy("erv");
     try {
       const r = await fetch(`/api/property-imagery/${propertyId}/compose/erv-walk`, {
@@ -2822,26 +2801,30 @@ function WhyBuyChartsCard({ runId, propertyId, passingRent, area, tenantName, te
       });
       if (!r.ok) throw new Error(await r.text());
       toast({ title: "ERV walk generated", description: "Saved to the Why Buy imagery." });
-    } catch (e: any) { toast({ title: "ERV walk failed", description: e?.message || "", variant: "destructive" }); }
+    } catch (err: any) { toast({ title: "ERV walk failed", description: err?.message || "", variant: "destructive" }); }
     finally { setBusy(null); }
   };
 
   const genCov = async () => {
     if (!propertyId) { toast({ title: "No property linked", description: "Stage 1 needs to resolve the property first.", variant: "destructive" }); return; }
-    if (!tName.trim()) { toast({ title: "Enter the tenant name", variant: "destructive" }); return; }
+    if (!selectedTenant?.name?.trim()) { toast({ title: "Add a tenant to the schedule", description: "The covenant card needs at least one occupier row.", variant: "destructive" }); return; }
     setBusy("cov");
     try {
       const r = await fetch(`/api/property-imagery/${propertyId}/compose/covenant-card-auto`, {
         method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantName: tName.trim(), companiesHouseNumber: tCo.trim() || undefined, pathwayRunId: runId }),
+        body: JSON.stringify({
+          tenantName: selectedTenant.name.trim(),
+          companiesHouseNumber: selectedTenant.companyNumber?.trim() || undefined,
+          pathwayRunId: runId,
+        }),
       });
       if (!r.ok) throw new Error(await r.text());
-      toast({ title: "Covenant card generated", description: "Saved to the Why Buy imagery." });
-    } catch (e: any) { toast({ title: "Covenant card failed", description: e?.message || "", variant: "destructive" }); }
+      toast({ title: "Covenant card generated", description: `For ${selectedTenant.name.trim()} — saved to Why Buy imagery.` });
+    } catch (err: any) { toast({ title: "Covenant card failed", description: err?.message || "", variant: "destructive" }); }
     finally { setBusy(null); }
   };
 
-  const inputCls = "w-full border rounded px-2 py-1 text-sm";
+  const fmtGbp = (n: number) => `£${n.toLocaleString()}`;
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -2851,21 +2834,46 @@ function WhyBuyChartsCard({ runId, propertyId, passingRent, area, tenantName, te
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="space-y-2">
             <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">ERV walk</p>
-            <input value={passing} onChange={(e) => setPassing(e.target.value)} placeholder="Passing rent (£ pa)" className={inputCls} />
-            <input value={erv} onChange={(e) => setErv(e.target.value)} placeholder="ERV (£ pa)" className={inputCls} />
-            <Button size="sm" onClick={genErv} disabled={busy !== null} className="gap-1.5">
+            <p className="text-[11px] text-muted-foreground">
+              Chart that "walks" from passing rent up to ERV — shows the reversion potential.
+            </p>
+            <div className="text-xs border rounded px-2 py-1.5 bg-muted/40">
+              {ervReady
+                ? <>From <span className="font-medium">{fmtGbp(p)} passing</span> → <span className="font-medium">{fmtGbp(e)} ERV</span> (tenancy schedule totals)</>
+                : <span className="text-amber-700">Add Rent + ERV per occupier in the tenancy schedule below first.</span>}
+            </div>
+            <Button size="sm" onClick={genErv} disabled={busy !== null || !ervReady} className="gap-1.5">
               {busy === "erv" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Generate ERV walk
             </Button>
-            <p className="text-[10px] text-muted-foreground">Stepped reversion chart from passing rent up to ERV.</p>
           </div>
           <div className="space-y-2">
             <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">Covenant card</p>
-            <input value={tName} onChange={(e) => setTName(e.target.value)} placeholder="Tenant name" className={inputCls} />
-            <input value={tCo} onChange={(e) => setTCo(e.target.value)} placeholder="Companies House no. (optional)" className={inputCls} />
-            <Button size="sm" onClick={genCov} disabled={busy !== null} className="gap-1.5">
+            <p className="text-[11px] text-muted-foreground">
+              Tenant + Companies House link + AML status. Pulls the occupier from the schedule.
+            </p>
+            {tenantOptions.length === 0 ? (
+              <div className="text-xs border rounded px-2 py-1.5 bg-muted/40 text-amber-700">
+                Add an occupier in the tenancy schedule below first.
+              </div>
+            ) : tenantOptions.length === 1 ? (
+              <div className="text-xs border rounded px-2 py-1.5 bg-muted/40">
+                For <span className="font-medium">{tenantOptions[0].name}</span>
+                {tenantOptions[0].companyNumber ? <> · CH {tenantOptions[0].companyNumber}</> : null}
+              </div>
+            ) : (
+              <select
+                value={tenantIdx}
+                onChange={(e) => setTenantIdx(Number(e.target.value))}
+                className="w-full border rounded px-2 py-1 text-sm bg-background"
+              >
+                {tenantOptions.map((t, i) => (
+                  <option key={t.id || i} value={i}>{t.name}{t.companyNumber ? ` · CH ${t.companyNumber}` : ""}</option>
+                ))}
+              </select>
+            )}
+            <Button size="sm" onClick={genCov} disabled={busy !== null || tenantOptions.length === 0} className="gap-1.5">
               {busy === "cov" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Generate covenant card
             </Button>
-            <p className="text-[10px] text-muted-foreground">Tenant + Companies House link + AML status. (Latest filed accounts auto-fill is the next step.)</p>
           </div>
         </div>
       </CardContent>
@@ -3098,10 +3106,12 @@ function WhyBuyCard({
           <WhyBuyChartsCard
             runId={runId}
             propertyId={propertyId}
-            passingRent={stage7?.currentRentPA}
-            area={stage7?.totalAreaSqFt}
-            tenantName={stage1?.tenant?.name}
-            tenantCo={stage1?.tenant?.companyNumber}
+            passingRent={stage7?.overrideCurrentRentPA || stage7?.currentRentPA}
+            erv={stage7?.ervPA}
+            area={stage7?.overrideTotalAreaSqFt || stage7?.totalAreaSqFt}
+            tenants={stage1?.tenants && stage1.tenants.length > 0
+              ? stage1.tenants
+              : (stage1?.tenant?.name ? [stage1.tenant] : [])}
           />
         </CollapsibleSection>
 
@@ -5073,12 +5083,19 @@ function TenancyScheduleEditor({ runId, stage1, onReload }: { runId: string; sta
         tenants,
         tenant: { name: tenants[0].name, ...(tenants[0].companyNumber ? { companyNumber: tenants[0].companyNumber } : {}), ...(tenants[0].companyId ? { companyId: tenants[0].companyId } : {}) },
       };
-      // Mirror the totals to Stage 7's model inputs so the Excel build picks
-      // up the new figures without a separate migration.
+      // Mirror totals onto Stage 7 — both as the convenience fields (so the
+      // Model Studio summary line + Why Buy charts read them straight away)
+      // AND as the canonical overrides (so a Regenerate run preserves them
+      // instead of re-deriving from old aiFacts / tenancy.units shapes).
+      // ervPA is new — Stage 7 doesn't compute it, but the ERV walk chart
+      // needs the total ERV from the schedule.
       stageResults.stage7 = {
         ...(stageResults.stage7 || {}),
         totalAreaSqFt: totals.area || (stageResults.stage7?.totalAreaSqFt),
         currentRentPA: totals.rent || (stageResults.stage7?.currentRentPA),
+        ...(totals.area > 0 ? { overrideTotalAreaSqFt: totals.area } : {}),
+        ...(totals.rent > 0 ? { overrideCurrentRentPA: totals.rent } : {}),
+        ...(totals.erv > 0 ? { ervPA: totals.erv } : {}),
       };
       const res = await fetch(`/api/property-pathway/${runId}`, {
         method: "PATCH",
