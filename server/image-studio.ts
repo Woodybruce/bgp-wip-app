@@ -2170,24 +2170,49 @@ export function registerImageStudioRoutes(app: Express) {
   // real categories instead of deleting blind.
   app.post("/api/image-studio/ai-tag-uncategorised", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const limit = Math.min(Math.max(Number(req.body?.limit) || 25, 1), 40);
+      // Cap small enough to fit Railway's 45s gateway timeout: Claude vision
+      // calls run ~2-5s each, so 8 keeps the round-trip under ~40s. Bigger
+      // batches were causing 504s; the client paginates by re-calling.
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 8, 1), 12);
       const idRows = await pool.query<{ id: string }>(
         `SELECT id FROM image_studio_images
          WHERE (category IS NULL OR category = 'Uncategorised') AND local_path IS NOT NULL
          ORDER BY created_at ASC LIMIT $1`, [limit]);
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
+      const sharpMod = (await import("sharp")).default;
       const anthropic = new Anthropic();
+
+      // Anthropic vision rejects images >10 MB after base64 encoding. We
+      // downscale anything large to a 1568px long edge (Claude's recommended
+      // resolution cap) and re-encode as JPEG q85, which keeps quality high
+      // for tagging while staying well under the limit. Tiny / already-small
+      // files pass through untouched to avoid double-encoding artefacts.
+      const MAX_BYTES_RAW = 4 * 1024 * 1024;
+      const MAX_EDGE = 1568;
+      const prepareForVision = async (buf: Buffer, mime: string): Promise<{ buf: Buffer; mime: string }> => {
+        try {
+          const meta = await sharpMod(buf).metadata();
+          const longest = Math.max(meta.width || 0, meta.height || 0);
+          if (buf.length <= MAX_BYTES_RAW && longest <= MAX_EDGE) return { buf, mime };
+          const out = await sharpMod(buf).rotate().resize({ width: MAX_EDGE, height: MAX_EDGE, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+          return { buf: out, mime: "image/jpeg" };
+        } catch {
+          return { buf, mime };
+        }
+      };
+
       let processed = 0;
       for (const { id } of idRows.rows) {
         try {
           const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
           if (!image) continue;
-          const buf = await readPersistedImage(image.localPath);
-          if (!buf) continue;
+          const buf0 = await readPersistedImage(image.localPath);
+          if (!buf0) continue;
+          const { buf, mime } = await prepareForVision(buf0, image.mimeType || "image/jpeg");
           const response = await anthropic.messages.create({
             model: "claude-sonnet-4-6", max_tokens: 500,
             messages: [{ role: "user", content: [
-              { type: "image", source: { type: "base64", media_type: (image.mimeType || "image/jpeg") as any, data: buf.toString("base64") } },
+              { type: "image", source: { type: "base64", media_type: mime as any, data: buf.toString("base64") } },
               { type: "text", text: `Analyze this image for a London commercial property agency (BGP). Return JSON only:\n{"description": "one sentence", "tags": ["tag1","tag2"], "category": "one of: Properties, Areas, Marketing, Events, Headshots, Floor Plans, Interiors, Exteriors, Street Views, Generated, Other", "area": "London area or null"}` },
             ] }],
           });
@@ -2205,9 +2230,12 @@ export function registerImageStudioRoutes(app: Express) {
         } catch (e: any) { console.warn("[ai-tag-uncategorised] failed for", id, e?.message); }
       }
       const remRes = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM image_studio_images WHERE category IS NULL OR category = 'Uncategorised'`);
-      res.json({ processed, remaining: remRes.rows[0]?.n ?? 0 });
+      // Guard against the case where Railway's gateway already 504'd this
+      // request — writing to a dead socket throws ERR_HTTP_HEADERS_SENT and
+      // poisons the global error log. Silent skip is fine: client retries.
+      if (!res.headersSent) res.json({ processed, remaining: remRes.rows[0]?.n ?? 0 });
     } catch (e: any) {
-      res.status(500).json({ error: e?.message });
+      if (!res.headersSent) res.status(500).json({ error: e?.message });
     }
   });
 
@@ -2255,7 +2283,10 @@ export function registerImageStudioRoutes(app: Express) {
     try {
       const apply = req.body?.apply === true;
       const threshold = Math.min(Math.max(Number(req.body?.threshold) || 6, 1), 16);
-      const cap = Math.min(Math.max(Number(req.body?.cap) || 4000, 1), 8000);
+      // Cap of 4000 was hitting Railway's 45s gateway timeout (each image is
+      // a disk read + sharp 8x8 hash). 1200 reliably finishes in ~30s on
+      // production. Client paginates by created_at if more scans needed.
+      const cap = Math.min(Math.max(Number(req.body?.cap) || 1200, 1), 2500);
       const rows = await pool.query<{ id: string; local_path: string | null; width: number | null; height: number | null; file_size: number | null }>(
         `SELECT id, local_path, width, height, file_size FROM image_studio_images
          WHERE local_path IS NOT NULL ORDER BY created_at ASC LIMIT $1`, [cap]);
@@ -2292,9 +2323,9 @@ export function registerImageStudioRoutes(app: Express) {
         await pool.query(`DELETE FROM property_imagery_assets WHERE image_studio_id = ANY($1::text[])`, [toDelete]).catch(() => {});
         await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [toDelete]);
       }
-      res.json({ success: true, scanned: items.length, groups, duplicates: toDelete.length, duplicatesRemoved: apply ? toDelete.length : 0 });
+      if (!res.headersSent) res.json({ success: true, scanned: items.length, groups, duplicates: toDelete.length, duplicatesRemoved: apply ? toDelete.length : 0 });
     } catch (e: any) {
-      res.status(500).json({ error: e?.message });
+      if (!res.headersSent) res.status(500).json({ error: e?.message });
     }
   });
 
