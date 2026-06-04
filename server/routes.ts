@@ -1199,7 +1199,7 @@ export async function registerRoutes(
   const HR_PUBLIC_COLUMNS = `
     id, username, name, email, phone, role, department, team, additional_teams,
     profile_pic_url, manager_id, board_member, management_team, display_order,
-    wfh_days, bio, cv_url, is_active
+    wfh_days, bio, cv_url, is_active, is_admin
   `;
   const HR_PRIVATE_COLUMNS = `
     dob, address, personal_email, employment_type, start_date
@@ -1280,7 +1280,7 @@ export async function registerRoutes(
             "name", "email", "phone", "role", "department", "team", "additionalTeams",
             "managerId", "boardMember", "managementTeam", "displayOrder",
             "dob", "address", "personalEmail", "wfhDays", "employmentType",
-            "startDate", "cvUrl", "bio", "isActive",
+            "startDate", "cvUrl", "bio", "isActive", "isAdmin",
           ])
         : new Set([
             "phone", "dob", "address", "personalEmail", "wfhDays",
@@ -1288,13 +1288,15 @@ export async function registerRoutes(
           ]);
 
       const camelToSnake = (s: string) => s.replace(/[A-Z]/g, c => "_" + c.toLowerCase());
+      // Booleans must go in as real booleans, not the string "true".
+      const boolFields = new Set(["isAdmin", "boardMember", "managementTeam", "isActive"]);
       const sets: string[] = [];
       const params: any[] = [];
       let p = 1;
       for (const [key, value] of Object.entries(req.body || {})) {
         if (!allowed.has(key)) continue;
         sets.push(`${camelToSnake(key)} = $${p++}`);
-        params.push(value);
+        params.push(boolFields.has(key) ? value === true || value === "true" : value);
       }
       if (sets.length === 0) return res.status(400).json({ message: "No editable fields supplied" });
       params.push(targetId);

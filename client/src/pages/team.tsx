@@ -34,6 +34,7 @@ type Person = {
   bio: string | null;
   cv_url: string | null;
   is_active: boolean | null;
+  is_admin: boolean | null;
   // Private tier — only present for self / admins
   dob?: string | null;
   address?: string | null;
@@ -322,7 +323,7 @@ function ProfileDrawer({
   const buildPatch = () => {
     const patch: Record<string, any> = {};
     const fields = isAdmin
-      ? ["name", "email", "phone", "role", "team", "managerId", "boardMember", "managementTeam", "dob", "address", "personalEmail", "wfhDays", "employmentType", "startDate", "cvUrl", "bio"]
+      ? ["name", "email", "phone", "role", "team", "managerId", "boardMember", "managementTeam", "isAdmin", "dob", "address", "personalEmail", "wfhDays", "employmentType", "startDate", "cvUrl", "bio"]
       : ["phone", "dob", "address", "personalEmail", "wfhDays", "cvUrl", "bio"];
     for (const f of fields) {
       const draftKey = f as keyof Person;
@@ -415,6 +416,7 @@ function ProfileDrawer({
             <>
               <ToggleField label="Board member" value={!!(draft.board_member ?? person.board_member)} onChange={v => setDraft({ ...draft, board_member: v })} />
               <ToggleField label="Management team" value={!!(draft.management_team ?? person.management_team)} onChange={v => setDraft({ ...draft, management_team: v })} />
+              <ToggleField label="Admin access" value={!!(draft.is_admin ?? person.is_admin)} onChange={v => setDraft({ ...draft, is_admin: v })} />
             </>
           )}
           <Field label="WFH days" value={(person.wfh_days || []).join(", ") || null} edit={edit && canEdit} onChange={v => setDraft({ ...draft, wfh_days: v ? v.split(",").map(s => s.trim()).filter(Boolean) : [] })} draftValue={(draft.wfh_days || person.wfh_days || []).join(", ")} placeholder="Mon, Wed, Fri" />
