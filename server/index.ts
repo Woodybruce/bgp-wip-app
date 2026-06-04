@@ -1598,6 +1598,10 @@ import { pool } from "./db";
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_specialisms TEXT[]`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_notable_clients TEXT[]`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_career_history JSONB`,
+    // ── Xero Payroll employee link (Jun 2026) ───────────────────────────────
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS xero_employee_id TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS xero_employee_name TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS xero_linked_at TIMESTAMP`,
     `CREATE TABLE IF NOT EXISTS cpd_entries (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,

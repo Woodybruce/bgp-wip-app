@@ -29,6 +29,47 @@ async function hydrateReqUser(req: any): Promise<{ id: string | null; isAdmin: b
   return req.user;
 }
 
+// Normalise a person's name for fuzzy matching — strip everything but
+// lowercase alphanumerics so "Tom O'Brien" and "tom obrien" collide.
+function normaliseNameKey(s: string | null | undefined): string {
+  return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+type XeroEmployee = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  email: string | null;
+  status: string | null;
+};
+
+// Pull every employee from Xero Payroll UK, paging 100 at a time, flattened
+// to a stable shape. Used by the link-status + link-employees endpoints.
+async function fetchXeroPayrollEmployees(session: any): Promise<XeroEmployee[]> {
+  const out: XeroEmployee[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const data = await xeroPayrollApi(session, `/Employees?page=${page}`);
+    const emps: any[] = data.Employees || [];
+    for (const e of emps) {
+      const firstName = e.FirstName || "";
+      const lastName = e.LastName || "";
+      const id = e.EmployeeID || e.EmployeeId;
+      if (!id) continue;
+      out.push({
+        id,
+        firstName,
+        lastName,
+        fullName: `${firstName} ${lastName}`.trim(),
+        email: e.Email || null,
+        status: e.Status || null,
+      });
+    }
+    if (emps.length < 100) break;
+  }
+  return out;
+}
+
 // Benefit renewal sweep — for each benefit with a renewal_date in the next
 // 60 days that hasn't already had a task generated this calendar year, create
 // a high-priority task for the broker_contact (or first admin) so HR has 8
@@ -653,8 +694,8 @@ export function setupHrRoutes(app: Express) {
       let xeroError: string | null = null;
 
       try {
-        const { getXeroSystemSession } = await import("./xero-system-session");
-        const session = await getXeroSystemSession();
+        const { getSystemXeroSession } = await import("./xero-system-session");
+        const session = await getSystemXeroSession();
         if (session) {
           // Query paid invoices for this scheme year where tracking matches the agent
           const fromDate = schemeYearStart.toISOString().split("T")[0];
@@ -1998,6 +2039,188 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
+  // ── Admin: Xero Payroll employee link ──────────────────────────────────────
+  // Reconciliation view — every active BGP person with their stored Xero
+  // employee link (if any), plus the Xero employees that aren't linked to
+  // anyone yet. Drives the "Xero Payroll" panel on the HR page so HR can see
+  // at a glance who's linked and resolve the stragglers.
+  app.get("/api/hr/xero/link-status", requireAdmin, async (_req, res) => {
+    try {
+      const usersRes = await pool.query(
+        `SELECT u.id, u.name, u.email,
+                sp.xero_employee_id, sp.xero_employee_name, sp.xero_linked_at
+           FROM users u
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.is_active = true
+          ORDER BY u.name`
+      );
+      const people = usersRes.rows.map((u: any) => ({
+        userId: u.id,
+        name: u.name,
+        email: u.email,
+        xeroEmployeeId: u.xero_employee_id || null,
+        xeroEmployeeName: u.xero_employee_name || null,
+        xeroLinkedAt: u.xero_linked_at || null,
+        linked: !!u.xero_employee_id,
+      }));
+
+      const { getSystemXeroSession } = await import("./xero-system-session");
+      const session = await getSystemXeroSession();
+
+      let xeroEmployees: XeroEmployee[] | null = null;
+      let xeroError: string | null = null;
+      if (!session) {
+        xeroError = "Xero isn't connected — connect it in admin before linking.";
+      } else {
+        try {
+          xeroEmployees = await fetchXeroPayrollEmployees(session);
+        } catch (e: any) {
+          xeroError = e.message;
+        }
+      }
+
+      // Xero employees with no BGP person pointing at them.
+      const linkedIds = new Set(people.filter(p => p.xeroEmployeeId).map(p => p.xeroEmployeeId));
+      const xeroUnmatched = (xeroEmployees || []).filter(e => !linkedIds.has(e.id));
+
+      res.json({
+        connected: !!session,
+        xeroError,
+        people,
+        xeroUnmatched,
+        counts: {
+          people: people.length,
+          linked: people.filter(p => p.linked).length,
+          bgpUnlinked: people.filter(p => !p.linked).length,
+          xeroTotal: xeroEmployees?.length ?? null,
+          xeroUnmatched: xeroEmployees ? xeroUnmatched.length : null,
+        },
+      });
+    } catch (e: any) {
+      console.error("[hr] xero link-status error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Auto-link: pull all Xero employees, match each to a BGP person by email
+  // first (most reliable) then normalised full name, and store the employee
+  // ID on their staff_profile. Only fills blanks — never overwrites an
+  // existing manual link. Returns a report of what it did.
+  app.post("/api/hr/xero/link-employees", requireAdmin, async (_req, res) => {
+    try {
+      const { getSystemXeroSession } = await import("./xero-system-session");
+      const session = await getSystemXeroSession();
+      if (!session) return res.status(401).json({ error: "Connect Xero first" });
+
+      const employees = await fetchXeroPayrollEmployees(session);
+
+      const usersRes = await pool.query(
+        `SELECT u.id, u.name, u.email, sp.xero_employee_id
+           FROM users u
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.is_active = true`
+      );
+      const emailToUser = new Map<string, any>();
+      const nameToUser = new Map<string, any>();
+      for (const u of usersRes.rows) {
+        if (u.email) emailToUser.set(u.email.toLowerCase(), u);
+        if (u.name) nameToUser.set(normaliseNameKey(u.name), u);
+      }
+
+      // Don't relink a Xero employee that's already claimed by someone.
+      const alreadyLinked = new Set(
+        usersRes.rows.filter((u: any) => u.xero_employee_id).map((u: any) => u.xero_employee_id)
+      );
+
+      let linked = 0, alreadyOk = 0;
+      const unmatchedEmployees: string[] = [];
+      const newlyLinked: Array<{ name: string; employee: string; via: string }> = [];
+
+      for (const emp of employees) {
+        if (alreadyLinked.has(emp.id)) { alreadyOk++; continue; }
+
+        let user: any = null;
+        let via = "";
+        if (emp.email && emailToUser.has(emp.email.toLowerCase())) {
+          user = emailToUser.get(emp.email.toLowerCase());
+          via = "email";
+        } else if (nameToUser.has(normaliseNameKey(emp.fullName))) {
+          user = nameToUser.get(normaliseNameKey(emp.fullName));
+          via = "name";
+        }
+
+        if (!user) { unmatchedEmployees.push(emp.fullName || emp.id); continue; }
+        if (user.xero_employee_id) { alreadyOk++; continue; }
+
+        // Upsert — a profile row may not exist yet for this user.
+        await pool.query(
+          `INSERT INTO staff_profiles (user_id, xero_employee_id, xero_employee_name, xero_linked_at)
+             VALUES ($1, $2, $3, now())
+           ON CONFLICT (user_id) DO UPDATE
+             SET xero_employee_id = EXCLUDED.xero_employee_id,
+                 xero_employee_name = EXCLUDED.xero_employee_name,
+                 xero_linked_at = now()`,
+          [user.id, emp.id, emp.fullName || null]
+        );
+        alreadyLinked.add(emp.id);
+        linked++;
+        newlyLinked.push({ name: user.name, employee: emp.fullName, via });
+      }
+
+      res.json({
+        linked,
+        alreadyLinked: alreadyOk,
+        unmatched: unmatchedEmployees.length,
+        unmatchedEmployees,
+        newlyLinked,
+        xeroTotal: employees.length,
+      });
+    } catch (e: any) {
+      console.error("[hr] xero link-employees error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Manual link / unlink — HR resolves a straggler by hand. Pass
+  // xeroEmployeeId + xeroEmployeeName to set, or null to clear the link.
+  app.post("/api/hr/xero/link-employee", requireAdmin, async (req, res) => {
+    try {
+      const { userId, xeroEmployeeId, xeroEmployeeName } = req.body || {};
+      if (!userId) return res.status(400).json({ error: "userId required" });
+
+      if (xeroEmployeeId) {
+        // Guard against double-claiming one Xero employee.
+        const clash = await pool.query(
+          `SELECT user_id FROM staff_profiles WHERE xero_employee_id = $1 AND user_id <> $2 LIMIT 1`,
+          [xeroEmployeeId, userId]
+        );
+        if (clash.rows.length > 0) {
+          return res.status(409).json({ error: "That Xero employee is already linked to someone else" });
+        }
+        await pool.query(
+          `INSERT INTO staff_profiles (user_id, xero_employee_id, xero_employee_name, xero_linked_at)
+             VALUES ($1, $2, $3, now())
+           ON CONFLICT (user_id) DO UPDATE
+             SET xero_employee_id = EXCLUDED.xero_employee_id,
+                 xero_employee_name = EXCLUDED.xero_employee_name,
+                 xero_linked_at = now()`,
+          [userId, xeroEmployeeId, xeroEmployeeName || null]
+        );
+      } else {
+        await pool.query(
+          `UPDATE staff_profiles
+              SET xero_employee_id = NULL, xero_employee_name = NULL, xero_linked_at = NULL
+            WHERE user_id = $1`,
+          [userId]
+        );
+      }
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[hr] xero link-employee error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Admin: sync payslips from Xero Payroll ─────────────────────────────────
   // Pulls every PayslipID from the most recent N pay runs, downloads the PDF
   // for each, matches the employee email to a BGP user, and stores the PDF as
@@ -2007,17 +2230,26 @@ export function setupHrRoutes(app: Express) {
   // disconnect/reconnect Xero once after this lands.
   app.post("/api/hr/payslips/sync-from-xero", requireAdmin, async (_req, res) => {
     try {
-      const { getXeroSystemSession } = await import("./xero-system-session");
-      const session = await getXeroSystemSession();
+      const { getSystemXeroSession } = await import("./xero-system-session");
+      const session = await getSystemXeroSession();
       if (!session) return res.status(401).json({ error: "Connect Xero first" });
 
-      // Build email/name → user_id map.
-      const usersRes = await pool.query("SELECT id, name, email FROM users WHERE is_active = true");
+      // Build lookup maps. Stored Xero employee ID is the most reliable
+      // (set via the link-employees step); email + normalised name are
+      // fallbacks for anyone not linked yet.
+      const usersRes = await pool.query(
+        `SELECT u.id, u.name, u.email, sp.xero_employee_id
+           FROM users u
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.is_active = true`
+      );
       const emailToId = new Map<string, string>();
       const nameToId = new Map<string, string>();
+      const xeroEmpToId = new Map<string, string>();
       for (const u of usersRes.rows) {
         if (u.email) emailToId.set(u.email.toLowerCase(), u.id);
-        if (u.name) nameToId.set(u.name.toLowerCase().replace(/[^a-z0-9]/g, ""), u.id);
+        if (u.name) nameToId.set(normaliseNameKey(u.name), u.id);
+        if (u.xero_employee_id) xeroEmpToId.set(u.xero_employee_id, u.id);
       }
 
       // Fetch the 6 most-recent pay runs and their payslips.
@@ -2032,8 +2264,9 @@ export function setupHrRoutes(app: Express) {
         const slips = detail.PayRuns?.[0]?.Payslips || [];
         for (const slip of slips) {
           const emp = `${slip.FirstName || ""} ${slip.LastName || ""}`.trim();
-          const empKey = emp.toLowerCase().replace(/[^a-z0-9]/g, "");
-          let userId = nameToId.get(empKey) || null;
+          const empKey = normaliseNameKey(emp);
+          // Stored link wins; fall back to normalised name, then email.
+          let userId = (slip.EmployeeID && xeroEmpToId.get(slip.EmployeeID)) || nameToId.get(empKey) || null;
 
           // Try email if name didn't match — needs employee detail
           if (!userId && slip.EmployeeID) {

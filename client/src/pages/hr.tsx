@@ -5873,6 +5873,185 @@ function AddStaffDialog({ allStaff, open, onClose }: { allStaff: StaffMember[]; 
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+// ── Xero Payroll link panel (admin) ─────────────────────────────────────────
+// Firm-wide reconciliation: shows which BGP people are linked to a Xero
+// Payroll employee, auto-links by email→name, and lets HR resolve stragglers
+// by hand. The stored link is what payslip sync resolves against.
+interface XeroLinkPerson {
+  userId: string;
+  name: string;
+  email: string | null;
+  xeroEmployeeId: string | null;
+  xeroEmployeeName: string | null;
+  xeroLinkedAt: string | null;
+  linked: boolean;
+}
+interface XeroUnmatchedEmployee {
+  id: string;
+  fullName: string;
+  email: string | null;
+  status: string | null;
+}
+interface XeroLinkStatus {
+  connected: boolean;
+  xeroError: string | null;
+  people: XeroLinkPerson[];
+  xeroUnmatched: XeroUnmatchedEmployee[];
+  counts: {
+    people: number;
+    linked: number;
+    bgpUnlinked: number;
+    xeroTotal: number | null;
+    xeroUnmatched: number | null;
+  };
+}
+
+function XeroPayrollPanel() {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<XeroLinkStatus>({
+    queryKey: ["/api/hr/xero/link-status"],
+  });
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/hr/xero/link-status"] });
+
+  const autoLink = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/xero/link-employees").then(r => r.json()),
+    onSuccess: (d: any) => {
+      refresh();
+      const bits = [
+        d.linked ? `${d.linked} newly linked` : null,
+        d.alreadyLinked ? `${d.alreadyLinked} already linked` : null,
+        d.unmatched ? `${d.unmatched} Xero employees unmatched` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "Auto-link complete", description: bits || "Nothing to link" });
+    },
+    onError: (e: any) => toast({ title: "Auto-link failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const setLink = useMutation({
+    mutationFn: async (vars: { userId: string; xeroEmployeeId: string | null; xeroEmployeeName?: string | null }) =>
+      apiRequest("POST", "/api/hr/xero/link-employee", vars).then(r => r.json()),
+    onSuccess: () => { refresh(); },
+    onError: (e: any) => toast({ title: "Link update failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const syncPayslips = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/payslips/sync-from-xero").then(r => r.json()),
+    onSuccess: (d: any) => {
+      const msg = `${d.imported} imported · ${d.skipped} already had · ${d.unmatched} unmatched`;
+      toast({ title: "Payslip sync done", description: msg });
+    },
+    onError: (e: any) => toast({ title: "Payslip sync failed", description: e?.message, variant: "destructive" }),
+  });
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  }
+
+  const people = data?.people || [];
+  const unmatched = data?.xeroUnmatched || [];
+  const c = data?.counts;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-start gap-2 flex-wrap">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <PoundSterling className="w-4 h-4 text-emerald-500" /> Xero Payroll links
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Match each BGP person to their Xero Payroll employee. Payslip sync resolves people by this link.
+              </p>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" variant="outline" className="h-8" onClick={() => autoLink.mutate()} disabled={autoLink.isPending || !data?.connected}>
+                {autoLink.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                Auto-link
+              </Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={() => syncPayslips.mutate()} disabled={syncPayslips.isPending || !data?.connected}>
+                {syncPayslips.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-1.5" />}
+                Sync payslips
+              </Button>
+            </div>
+          </div>
+          {!data?.connected && (
+            <div className="mt-2 text-xs flex items-center gap-1.5 text-amber-600">
+              <AlertCircle className="w-3.5 h-3.5" /> Xero isn't connected. An admin needs to connect Xero (with payroll scopes) before linking.
+            </div>
+          )}
+          {data?.xeroError && data?.connected && (
+            <div className="mt-2 text-xs flex items-center gap-1.5 text-amber-600">
+              <AlertCircle className="w-3.5 h-3.5" /> {data.xeroError}
+            </div>
+          )}
+          {c && (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <Badge variant="secondary">{c.linked} linked</Badge>
+              <Badge variant="outline">{c.bgpUnlinked} unlinked</Badge>
+              {c.xeroTotal != null && <Badge variant="outline">{c.xeroTotal} in Xero</Badge>}
+              {c.xeroUnmatched != null && c.xeroUnmatched > 0 && (
+                <Badge variant="outline" className="text-amber-600 border-amber-300">{c.xeroUnmatched} Xero employees unmatched</Badge>
+              )}
+            </div>
+          )}
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="divide-y">
+            {people.map(p => (
+              <div key={p.userId} className="flex items-center gap-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{p.name}</div>
+                  <div className="text-xs text-muted-foreground truncate">{p.email || "no email"}</div>
+                </div>
+                {p.linked ? (
+                  <>
+                    <Badge variant="secondary" className="gap-1">
+                      <Check className="w-3 h-3" /> {p.xeroEmployeeName || "Linked"}
+                    </Badge>
+                    <Button
+                      size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground"
+                      onClick={() => setLink.mutate({ userId: p.userId, xeroEmployeeId: null })}
+                      disabled={setLink.isPending}
+                    >
+                      Unlink
+                    </Button>
+                  </>
+                ) : (
+                  <div className="w-56 shrink-0">
+                    <Select
+                      onValueChange={(empId) => {
+                        const emp = unmatched.find(e => e.id === empId);
+                        setLink.mutate({ userId: p.userId, xeroEmployeeId: empId, xeroEmployeeName: emp?.fullName || null });
+                      }}
+                      disabled={!data?.connected || unmatched.length === 0 || setLink.isPending}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder={unmatched.length === 0 ? "No unmatched Xero employees" : "Link to Xero employee…"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {unmatched.map(e => (
+                          <SelectItem key={e.id} value={e.id} className="text-xs">
+                            {e.fullName}{e.email ? ` · ${e.email}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            ))}
+            {people.length === 0 && (
+              <div className="text-sm text-muted-foreground py-6 text-center">No active staff found.</div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function HRPage() {
   const { toast } = useToast();
   const [location, navigate] = useLocation();
@@ -6067,6 +6246,7 @@ export default function HRPage() {
             { value: "marketing", label: "Marketing" },
             ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
             { value: "policies", label: "Policies" },
+            ...(isAdmin ? [{ value: "xero-payroll", label: "Xero Payroll" }] : []),
           ].map(t => (
             <TabsTrigger
               key={t.value}
@@ -6104,6 +6284,12 @@ export default function HRPage() {
         <TabsContent value="policies">
           <div className="pb-6"><PoliciesPanel isAdmin={isAdmin} /></div>
         </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="xero-payroll">
+            <div className="pb-6"><XeroPayrollPanel /></div>
+          </TabsContent>
+        )}
       </Tabs>
       </div>
 
