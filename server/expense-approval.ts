@@ -23,6 +23,7 @@ import { eq, and, desc, gte, isNull, or, sql, inArray } from "drizzle-orm";
 export const FALLBACK_APPROVER_EMAILS = new Set([
   "layla@brucegillinghampollard.com",
   "wendy@brucegillinghampollard.com",
+  "accounts@brucegillinghampollard.com",   // Wendy McKenzie's actual login
 ]);
 
 // Entertainment categories trigger extra scrutiny — these are the ones

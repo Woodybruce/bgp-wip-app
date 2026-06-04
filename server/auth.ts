@@ -14,6 +14,7 @@ export const ADMIN_EMAILS = new Set([
   "rupert@brucegillinghampollard.com",
   "layla@brucegillinghampollard.com",
   "wendy@brucegillinghampollard.com",
+  "accounts@brucegillinghampollard.com",   // Wendy McKenzie's actual login
   "charlotte@brucegillinghampollard.com",
   "jack@brucegillinghampollard.com",
 ]);
