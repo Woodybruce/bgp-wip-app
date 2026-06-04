@@ -118,7 +118,32 @@ interface StageResults {
       manualSetBy?: string;
       manualSetAt?: string;
     } | null;
+    // Legacy single-tenant slot. Still read by downstream consumers as a
+    // fallback when `tenants` is empty (old runs predate multi-tenant).
+    // New writes go to `tenants[]` and mirror the first entry here so any
+    // un-migrated consumer keeps working.
     tenant?: { name: string; companyNumber?: string; companyId?: string };
+    // Multi-tenant capture. Each row is one occupier on the asset, with the
+    // commercial detail that drives the Covenant card + the business plan
+    // per-tenant strategy. Optional fields are exactly that — capture is
+    // progressive, the analyst fills them in as the data is uncovered.
+    tenants?: Array<{
+      id: string;                      // client-generated, stable across edits
+      name: string;
+      companyNumber?: string;          // Companies House number for KYC + covenant fetch
+      companyId?: string;              // crm_companies.id if matched to brand
+      tradingAs?: string;              // public-facing brand if different
+      areaSqFt?: number;
+      passingRentPA?: number;
+      ervPA?: number;
+      leaseStart?: string;             // ISO date or free text — analyst-friendly
+      leaseEnd?: string;
+      breakDate?: string;
+      reviewDate?: string;
+      // Free-text per-tenant business plan strategy. Feeds the Business Plan
+      // generator (one block per tenant) and the Why Buy deck's narrative.
+      strategy?: string;
+    }>;
     folderTree?: { root: string; webUrl: string; children: string[] };
     summary?: string;
     aiBriefing?: { bullets: string[]; headline: string; keyQuestions: string[] };
