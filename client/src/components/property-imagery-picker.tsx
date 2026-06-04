@@ -15,7 +15,8 @@
  * any consumer reads.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { loadGoogleMaps } from "@/lib/google-maps-loader";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -224,7 +225,20 @@ function KindPanel({
   const cols = compact ? "grid-cols-1" : "grid-cols-2 md:grid-cols-3";
   return (
     <div className="space-y-3">
-      {composable && (
+      {/* Location plan gets the live interactive map composer instead of the
+          one-shot Generate button. The analyst pans/zooms/changes map type to
+          frame the shot, then clicks Capture — the server renders the framed
+          view at retina via Static Maps (live tiles can't be screen-grabbed
+          client-side because of cross-origin canvas tainting). */}
+      {kind === "location_plan" && (
+        <LocationPlanComposer
+          propertyId={propertyId}
+          pathwayRunId={pathwayRunId}
+          matterId={matterId}
+          onComposed={onComposed}
+        />
+      )}
+      {composable && kind !== "location_plan" && (
         <ComposeButton
           kind={kind}
           propertyId={propertyId}
@@ -374,6 +388,191 @@ function ComposeButton({
           </select>
         </div>
       )}
+    </div>
+  );
+}
+
+// Interactive Google Map for framing the location plan shot. Loaded via the
+// shared loadGoogleMaps singleton (same loader used by retail-context plan,
+// Street View capture, etc.). Subject pin sits on the property's resolved
+// coordinates; if those don't exist yet we fall back to a client-side
+// Geocoder lookup on the postcode so the analyst can still frame a shot.
+//
+// "Capture this view" reads the live map's center / zoom / type and POSTs
+// to /compose/location-plan with centerLat + centerLng overrides. The
+// server renders that exact framed view via Static Maps at 2× scale and
+// saves it as the canonical location plan asset.
+function LocationPlanComposer({ propertyId, pathwayRunId, matterId, onComposed }: {
+  propertyId: string;
+  pathwayRunId?: string;
+  matterId?: string;
+  onComposed: () => void;
+}) {
+  const { toast } = useToast();
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const mapObj = useRef<google.maps.Map | null>(null);
+  const markerObj = useRef<google.maps.Marker | null>(null);
+  const [property, setProperty] = useState<{ lat: number; lng: number; postcode?: string; name?: string } | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [tubeLayer, setTubeLayer] = useState(true);
+  const [compsLayer, setCompsLayer] = useState(true);
+  const [anchorsLayer, setAnchorsLayer] = useState(false);
+  const [restaurantsLayer, setRestaurantsLayer] = useState(false);
+  const [mapType, setMapType] = useState<"hybrid" | "roadmap" | "satellite" | "terrain">("hybrid");
+  const [mapDest, setMapDest] = useState<"location_plan" | "hero" | "secondary_external">("location_plan");
+
+  // Resolve initial coordinates. Server-side geocoding only fires when
+  // /compose is hit, so on first render we need lat/lng ourselves: try the
+  // CRM record first, fall back to a Geocoder lookup on the postcode.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/crm/properties/${propertyId}`, { credentials: "include", headers: getAuthHeaders() });
+        if (!res.ok) { setMapError(`Could not load property (${res.status}).`); return; }
+        const p = await res.json();
+        if (cancelled) return;
+        const lat = p?.latitude != null ? Number(p.latitude) : null;
+        const lng = p?.longitude != null ? Number(p.longitude) : null;
+        if (lat && lng) {
+          setProperty({ lat, lng, postcode: p.postcode, name: p.name });
+          return;
+        }
+        const ok = await loadGoogleMaps();
+        if (cancelled) return;
+        if (!ok) { setMapError("Could not load Google Maps."); return; }
+        const query = p?.postcode || (p?.address as any)?.address || p?.name;
+        if (!query) { setMapError("No coordinates or postcode on the property record. Resolve the property first or add a postcode."); return; }
+        const geo = new google.maps.Geocoder();
+        geo.geocode({ address: query }, (results: any, status: any) => {
+          if (cancelled) return;
+          if (status === "OK" && results?.[0]) {
+            const loc = results[0].geometry.location;
+            setProperty({ lat: loc.lat(), lng: loc.lng(), postcode: p.postcode, name: p.name });
+          } else {
+            setMapError(`Geocoding failed (${status}). Resolve the property first.`);
+          }
+        });
+      } catch (e: any) {
+        if (!cancelled) setMapError(e?.message || "Failed to load property.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [propertyId]);
+
+  // Initialise the map once property coords are resolved.
+  useEffect(() => {
+    if (!property || !mapRef.current) return;
+    let cancelled = false;
+    (async () => {
+      const ok = await loadGoogleMaps();
+      if (cancelled || !ok) { if (!cancelled) setMapError("Could not load Google Maps."); return; }
+      if (!mapRef.current) return;
+      const map = new google.maps.Map(mapRef.current, {
+        center: { lat: property.lat, lng: property.lng },
+        zoom: 16,
+        mapTypeId: mapType,
+        streetViewControl: false,
+        fullscreenControl: true,
+        rotateControl: true,
+        tilt: 0,
+      });
+      mapObj.current = map;
+      markerObj.current = new google.maps.Marker({
+        position: { lat: property.lat, lng: property.lng },
+        map,
+        title: property.name || "Subject property",
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 9,
+          fillColor: "#d11a2a",
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+        },
+      });
+      setMapReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [property]);
+
+  // Keep the live map's type in sync with the dropdown selection.
+  useEffect(() => {
+    if (mapObj.current) (mapObj.current as any).setMapTypeId(mapType);
+  }, [mapType]);
+
+  const capture = async () => {
+    if (!mapObj.current) return;
+    const m = mapObj.current as any;
+    const c = m.getCenter();
+    if (!c) return;
+    const z = m.getZoom() ?? 16;
+    const t = m.getMapTypeId() || mapType;
+    setBusy(true);
+    try {
+      const layers: string[] = [];
+      if (tubeLayer) layers.push("tube");
+      if (compsLayer) layers.push("comps");
+      if (anchorsLayer) layers.push("anchors");
+      if (restaurantsLayer) layers.push("restaurants");
+      const res = await fetch(`/api/property-imagery/${propertyId}/compose/location-plan`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          pathwayRunId,
+          matterId,
+          centerLat: c.lat(),
+          centerLng: c.lng(),
+          zoom: z,
+          mapType: t,
+          layers,
+          kind: mapDest,
+        }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => null);
+        toast({ title: "Capture failed", description: e?.error || `${res.status}`, variant: "destructive" });
+        return;
+      }
+      toast({ title: "Location plan captured", description: "Saved with your framed view + overlays." });
+      onComposed();
+    } catch (e: any) {
+      toast({ title: "Capture failed", description: e?.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="border rounded-md p-3 bg-muted/40 space-y-2">
+      <div className="text-xs text-muted-foreground">
+        Drag, zoom and switch map types to frame the shot. Click <strong>Capture this view</strong> to save the
+        framed view as the location plan (rendered at retina with selected overlays).
+      </div>
+      {mapError && <p className="text-xs text-destructive">{mapError}</p>}
+      <div ref={mapRef} className="w-full h-[380px] rounded border bg-muted" />
+      <div className="flex items-center gap-3 flex-wrap text-xs">
+        <select value={mapDest} onChange={(e) => setMapDest(e.target.value as any)} className="bg-background border rounded px-2 py-1" title="Where to save the captured shot">
+          <option value="location_plan">Save as: Location plan</option>
+          <option value="hero">Save as: Hero shot</option>
+          <option value="secondary_external">Save as: Gallery</option>
+        </select>
+        <select value={mapType} onChange={(e) => setMapType(e.target.value as any)} className="bg-background border rounded px-2 py-1">
+          <option value="hybrid">Hybrid</option>
+          <option value="satellite">Satellite</option>
+          <option value="roadmap">Roadmap</option>
+          <option value="terrain">Terrain</option>
+        </select>
+        <label className="inline-flex items-center gap-1"><input type="checkbox" checked={tubeLayer} onChange={(e) => setTubeLayer(e.target.checked)} /> Tube/rail</label>
+        <label className="inline-flex items-center gap-1"><input type="checkbox" checked={compsLayer} onChange={(e) => setCompsLayer(e.target.checked)} /> Inv comps</label>
+        <label className="inline-flex items-center gap-1"><input type="checkbox" checked={anchorsLayer} onChange={(e) => setAnchorsLayer(e.target.checked)} /> Anchors</label>
+        <label className="inline-flex items-center gap-1"><input type="checkbox" checked={restaurantsLayer} onChange={(e) => setRestaurantsLayer(e.target.checked)} /> Restaurants</label>
+        <Button size="sm" variant="outline" onClick={capture} disabled={busy || !mapReady} className="gap-1.5 h-7 ml-auto">
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+          Capture this view
+        </Button>
+      </div>
     </div>
   );
 }

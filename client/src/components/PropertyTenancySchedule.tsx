@@ -199,9 +199,13 @@ const SCHEDULE_STATUSES = [
 ] as const;
 const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
   "Vacant":         "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+  "Void":           "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300", // Landsec feed
   "In Negotiation": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   "Under Offer":    "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
   "Occupied":       "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  "Let":            "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300", // Landsec feed
+  "Holding Over":   "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  "TAW":            "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
   "Trading":        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
   "Lease Event":    "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
   "Archived":       "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-500",

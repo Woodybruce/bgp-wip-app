@@ -28,36 +28,48 @@ export type TenancyStatus =
 // switch doesn't recognise returns null and the fan-out silently no-ops —
 // which is exactly the bug that left Bluewater's Letting Tracker / leasing
 // lens unlinked when units were set to "In Negotiation" / "Trading" / "Held".
+// Case-insensitive so Landsec sheets that send "VOID" / "void" / "Void"
+// all land on the same bucket — the import preserves whatever casing
+// the feed used.
 function mapTenancyToMarketingStatus(s: string | null | undefined): string | null {
-  switch ((s || "").trim()) {
-    case "Vacant":          return "AVA";
-    case "Marketing":       return "AVA";
-    case "In Negotiation":  return "NEG";
-    case "Held":            return "NEG";   // reserved / under negotiation
-    case "Under Offer":     return "SOL";
-    case "Occupied":        return "COM";
-    case "Trading":         return "COM";   // occupied and trading
-    case "Lease Event":     return "COM";   // let — has an upcoming lease event
-    case "Archived":        return "WIT";
+  switch ((s || "").trim().toLowerCase()) {
+    case "vacant":          return "AVA";
+    case "void":            return "AVA";    // Landsec Bluewater feed
+    case "marketing":       return "AVA";
+    case "in negotiation":  return "NEG";
+    case "held":            return "NEG";    // reserved / under negotiation
+    case "under offer":     return "SOL";
+    case "occupied":        return "COM";
+    case "trading":         return "COM";    // occupied and trading
+    case "let":             return "COM";    // Landsec Bluewater feed
+    case "holding over":    return "COM";    // tenant in possession, lease expired
+    case "taw":             return "COM";    // tenancy at will
+    case "lease event":     return "COM";    // let — has an upcoming lease event
+    case "archived":        return "WIT";
     default:                return null;     // genuinely unknown → don't touch
   }
 }
 
 function mapTenancyToLeasingStatus(s: string | null | undefined): string | null {
-  switch ((s || "").trim()) {
-    case "Vacant":          return "Vacant";
-    case "Marketing":       return "Marketing";
-    case "In Negotiation":  return "In Negotiation";
-    case "Held":            return "In Negotiation";
-    case "Under Offer":     return "Under Offer";
-    // Occupied / Trading / Lease Event all stay on the leasing schedule —
-    // it's the Landsec rent roll, not a marketing board. Mapping these to
-    // "Archived" previously clobbered the 4-way mirror on every COM
-    // transition, making just-completed deals vanish off the schedule.
-    case "Occupied":        return "Occupied";
-    case "Trading":         return "Occupied";
-    case "Lease Event":     return "Occupied";
-    case "Archived":        return "Archived";
+  switch ((s || "").trim().toLowerCase()) {
+    case "vacant":          return "Vacant";
+    case "void":            return "Vacant";
+    case "marketing":       return "Marketing";
+    case "in negotiation":  return "In Negotiation";
+    case "held":            return "In Negotiation";
+    case "under offer":     return "Under Offer";
+    // Occupied / Trading / Lease Event / Let all stay on the leasing
+    // schedule — it's the Landsec rent roll, not a marketing board.
+    // Mapping these to "Archived" previously clobbered the 4-way mirror
+    // on every COM transition, making just-completed deals vanish off
+    // the schedule.
+    case "occupied":        return "Occupied";
+    case "trading":         return "Occupied";
+    case "let":             return "Occupied";
+    case "holding over":    return "Occupied";
+    case "taw":             return "Occupied";
+    case "lease event":     return "Occupied";
+    case "archived":        return "Archived";
     default:                return null;
   }
 }
@@ -67,7 +79,7 @@ function mapTenancyToLeasingStatus(s: string | null | undefined): string | null 
 export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promise<void> {
   try {
     const r = await pool.query(
-      `SELECT id, property_id, unit_number, status, gia_sqft, nia_sqft,
+      `SELECT id, property_id, unit_number, premises, status, gia_sqft, nia_sqft,
               marketing_rent_pa, erv_pa, epc_rating
          FROM tenancy_schedule_units
         WHERE id = $1`,
@@ -109,8 +121,10 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
     // existed). Without this the fan-out below can't see them and would
     // spawn a DUPLICATE letting-tracker / leasing row on every status
     // edit — exactly the "no linkage" symptom on Bluewater. Idempotent:
-    // once linked, the WHERE clause stops matching.
-    const unitNorm = (t.unit_number || "").trim().toLowerCase();
+    // once linked, the WHERE clause stops matching. Falls back to
+    // `premises` when `unit_number` is empty (Landsec sheets sometimes
+    // land the unit label in either column depending on the template).
+    const unitNorm = (t.unit_number || t.premises || "").trim().toLowerCase();
     if (unitNorm) {
       await Promise.all([
         pool.query(

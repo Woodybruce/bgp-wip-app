@@ -39,6 +39,13 @@ export interface LocationPlanInput {
   propertyId: string;
   zoom?: number;                  // 14–18 typical; default 16 (street + nearby blocks)
   mapType?: "roadmap" | "satellite" | "hybrid" | "terrain";
+  // Optional view override. When the user frames the shot on the interactive
+  // map and hits "Capture", the client sends the live map center here so the
+  // Static Maps render matches exactly what they positioned (rather than
+  // always centring on the property pin). The subject pin still drops at the
+  // property's own coordinates regardless of where the view is centred.
+  centerLat?: number;
+  centerLng?: number;
   // Where the generated map shot lands in the imagery — defaults to the
   // location plan, but can be saved as the hero or a gallery shot.
   kind?: "location_plan" | "hero" | "secondary_external";
@@ -84,9 +91,14 @@ export async function composeLocationPlan(input: LocationPlanInput): Promise<Com
     const zoom = input.zoom ?? 16;
     const mapType = input.mapType || "hybrid";
 
+    // The Static Maps view is centred either on the user's framed position
+    // (when the interactive widget sends one) or on the subject pin itself.
+    const centerLat = input.centerLat ?? lat;
+    const centerLng = input.centerLng ?? lng;
+
     // Build the URL — markers param can be repeated
     const params = new URLSearchParams();
-    params.set("center", `${lat},${lng}`);
+    params.set("center", `${centerLat},${centerLng}`);
     params.set("zoom", String(zoom));
     params.set("size", `${w}x${h}`);
     params.set("maptype", mapType);
