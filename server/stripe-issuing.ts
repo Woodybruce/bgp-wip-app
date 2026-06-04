@@ -695,6 +695,35 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Auto-find an email receipt for a pending expense — searches the
+  // cardholder's own mailbox around the transaction time, matches on
+  // amount, then attaches + posts. Admin OR the owning cardholder.
+  app.post("/api/expenses/:id/find-email-receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId;
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, String(req.params.id))).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+
+      // Ownership check: admins always; otherwise the expense's cardholder
+      // must belong to the logged-in user.
+      const [me] = userId ? await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1) : [];
+      const isAdmin = !!me?.isAdmin;
+      if (!isAdmin) {
+        const [ch] = exp.cardholderId
+          ? await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1)
+          : [];
+        if (!ch || ch.userId !== userId) return res.status(403).json({ error: "Not your expense" });
+      }
+
+      const { findEmailReceiptForExpense } = await import("./expense-email-receipt");
+      const result = await findEmailReceiptForExpense(String(req.params.id));
+      res.json(result);
+    } catch (e: any) {
+      console.error("[expenses] find-email-receipt error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // ─── SELF-SERVICE (per-user) ──────────────────────────────────────────────
 
   // Get my cardholder + card + expenses + monthly summary

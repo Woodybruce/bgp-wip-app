@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
+import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check, Mail } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -97,9 +97,32 @@ export default function ExpensesAdmin() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
       setEditing(null);
-      toast({ title: "Limits updated", description: "Synced to Stripe" });
+      toast({ title: "Limits updated" });
     },
     onError: (e: any) => toast({ title: "Update failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const [findingId, setFindingId] = useState<string | null>(null);
+  const findReceiptMutation = useMutation({
+    mutationFn: async (id: string) => {
+      setFindingId(id);
+      const r = await apiRequest("POST", `/api/expenses/${id}/find-email-receipt`);
+      return r.json();
+    },
+    onSuccess: (d: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
+      if (d?.found) {
+        toast({
+          title: "Receipt found in email ✓",
+          description: `Matched "${d.matched?.subject}" (£${((d.amountPence || 0) / 100).toFixed(2)}).${d.posted ? " Posted to Xero." : ""}`,
+        });
+      } else {
+        toast({ title: "No matching receipt found", description: `Scanned ${d?.scanned ?? 0} emails around the purchase time — none matched the amount.` });
+      }
+    },
+    onError: (e: any) => toast({ title: "Search failed", description: e?.message, variant: "destructive" }),
+    onSettled: () => setFindingId(null),
   });
 
   return (
@@ -302,7 +325,22 @@ export default function ExpensesAdmin() {
                         <ExpenseStatusBadge status={e.status} />
                       </td>
                       <td className="px-4 py-2">
-                        {e.receiptFilename ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
+                        {e.receiptFilename ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs gap-1"
+                            disabled={findingId === e.id}
+                            onClick={() => findReceiptMutation.mutate(e.id)}
+                            title="Search this person's email around the purchase time for a matching receipt"
+                            data-testid={`find-receipt-${e.id}`}
+                          >
+                            {findingId === e.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
+                            Find in email
+                          </Button>
+                        )}
                       </td>
                       <td className="px-4 py-2 text-xs">
                         {e.xeroExpenseId ? (
