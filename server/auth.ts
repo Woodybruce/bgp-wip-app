@@ -22,10 +22,12 @@ export const ADMIN_EMAILS = new Set([
 async function ensureAdminFlag(userId: string, email: string) {
   const normalised = email.toLowerCase().trim();
   try {
+    // ADMIN_EMAILS is the permanent baseline — the core team is always
+    // promoted and can't be accidentally locked out. For everyone else we
+    // leave is_admin untouched, so admin granted/revoked via the Team page
+    // (PATCH /api/hr/team/:id) survives login instead of being reset here.
     if (ADMIN_EMAILS.has(normalised)) {
       await pool.query("UPDATE users SET is_admin = true WHERE id = $1 AND (is_admin IS NULL OR is_admin = false)", [userId]);
-    } else {
-      await pool.query("UPDATE users SET is_admin = false WHERE id = $1 AND is_admin = true", [userId]);
     }
   } catch (err: any) {
     console.error("Failed to update admin flag:", err.message);
