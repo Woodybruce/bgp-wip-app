@@ -518,6 +518,7 @@ function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () =>
 
 function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, onDelete }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void; onDelete: () => void }) {
   const [, navigate] = useLocation();
+  const [tenantsEditorOpen, setTenantsEditorOpen] = useState(false);
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
@@ -826,18 +827,54 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(tenantName)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenantName}<ExternalLink className="w-2.5 h-2.5" /></a>;
                   }
 
+                  // Multi-tenant rendering. Prefer the new tenants[] list;
+                  // fall back to the legacy single `tenant` object for old
+                  // runs that haven't been migrated yet. Both paths get the
+                  // same row UI so the user sees an identical card whether
+                  // the data came from AI extraction or a manual edit.
+                  const multi: Array<{ name: string; companyNumber?: string; companyId?: string; tradingAs?: string }> = (s1 as any).tenants && (s1 as any).tenants.length > 0
+                    ? (s1 as any).tenants
+                    : tenant?.name ? [{ name: tenant.name, companyNumber: tenant.companyNumber, companyId: tenant.companyId }] : [];
+                  const renderTenant = (t: { name: string; companyNumber?: string; companyId?: string; tradingAs?: string }, idx: number) => {
+                    const cleaned = cleanName(t.name);
+                    let el: any = cleaned || "—";
+                    if (cleaned && t.companyId) {
+                      el = <Link href={`/companies/${t.companyId}`}><span className="text-primary hover:underline cursor-pointer font-medium">{cleaned}</span></Link>;
+                    } else if (cleaned && t.companyNumber) {
+                      el = <a href={`https://find-and-update.company-information.service.gov.uk/company/${t.companyNumber}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{cleaned}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                    } else if (cleaned) {
+                      el = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(cleaned)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{cleaned}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                    }
+                    return (
+                      <div key={idx} className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] border-b border-muted-foreground/10 pb-1 last:border-0 last:pb-0">
+                        <div className="min-w-0"><span className="text-muted-foreground">Tenant:</span> {el}</div>
+                        {t.companyNumber && <div className={`min-w-0 ${String(t.companyNumber).length > 12 ? "col-span-2" : ""}`}><span className="text-muted-foreground">Co#:</span> <span className="font-medium break-words">{t.companyNumber}</span></div>}
+                        {t.tradingAs && t.tradingAs !== t.name && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Trading as:</span> <span className="font-medium break-words">{t.tradingAs}</span></div>}
+                      </div>
+                    );
+                  };
                   return (
                     <div className="border rounded p-2 bg-muted/20">
-                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Tenancy</p>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                        <div className="min-w-0"><span className="text-muted-foreground">Tenant:</span> {tenantEl}</div>
-                        {tenant?.companyNumber && <div className={`min-w-0 ${String(tenant.companyNumber).length > 12 ? "col-span-2" : ""}`}><span className="text-muted-foreground">Co#:</span> <span className="font-medium break-words">{tenant.companyNumber}</span></div>}
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Tenancy{multi.length > 1 ? ` · ${multi.length} tenants` : ""}</p>
+                        <button
+                          type="button"
+                          onClick={() => setTenantsEditorOpen(true)}
+                          className="text-[10px] text-primary hover:underline"
+                          data-testid="btn-edit-tenants"
+                        >
+                          Edit{multi.length === 0 ? "" : ` (${multi.length})`}
+                        </button>
+                      </div>
+                      <div className="space-y-1">
+                        {multi.length > 0
+                          ? multi.map(renderTenant)
+                          : <p className="text-[10px] text-muted-foreground">No tenants captured yet. Tap Edit to add.</p>}
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] mt-1.5 pt-1.5 border-t border-muted-foreground/10">
                         {s1.aiFacts?.passingRent && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Rent passing:</span> <span className="font-medium break-words">{s1.aiFacts.passingRent}</span></div>}
                         {tenantCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{tenantCommentary}</div>}
                         {s1.aiFacts?.leaseStatus && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Status:</span> <span className="font-medium break-words">{s1.aiFacts.leaseStatus}</span></div>}
-                        {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 1 && (
-                          <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Other occupiers:</span> <span className="font-medium break-words">{s1.aiFacts.mainTenants.slice(1).join(", ")}</span></div>
-                        )}
                       </div>
                     </div>
                   );
@@ -1597,7 +1634,198 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
       {/* Related Lease Advisory matters — same property anchor */}
       {run.propertyId && <RelatedLeaseAdvisoryMatters propertyId={run.propertyId} />}
 
+      {tenantsEditorOpen && (
+        <TenantsEditorDialog
+          runId={run.id}
+          stage1={s1}
+          onClose={() => setTenantsEditorOpen(false)}
+          onSaved={() => { setTenantsEditorOpen(false); onReload(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// Multi-tenant editor. Reads stage1.tenants (preferred) or seeds from the
+// legacy stage1.tenant single object. On save: writes the array back to
+// stage1.tenants AND mirrors the first row to stage1.tenant so any consumer
+// that hasn't migrated to the array path yet keeps working unchanged.
+function TenantsEditorDialog({ runId, stage1, onClose, onSaved }: {
+  runId: string;
+  stage1: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  type Row = {
+    id: string;
+    name: string;
+    companyNumber?: string;
+    companyId?: string;
+    tradingAs?: string;
+    areaSqFt?: string;
+    passingRentPA?: string;
+    ervPA?: string;
+    leaseStart?: string;
+    leaseEnd?: string;
+    breakDate?: string;
+    reviewDate?: string;
+    strategy?: string;
+  };
+  const seedRows = useMemo<Row[]>(() => {
+    const existing: any[] = stage1?.tenants && stage1.tenants.length > 0
+      ? stage1.tenants
+      : stage1?.tenant?.name
+        ? [{ name: stage1.tenant.name, companyNumber: stage1.tenant.companyNumber, companyId: stage1.tenant.companyId }]
+        : [];
+    return existing.map((t: any, i: number) => ({
+      id: t.id || `t_${Date.now()}_${i}`,
+      name: t.name || "",
+      companyNumber: t.companyNumber || "",
+      companyId: t.companyId,
+      tradingAs: t.tradingAs || "",
+      areaSqFt: t.areaSqFt != null ? String(t.areaSqFt) : "",
+      passingRentPA: t.passingRentPA != null ? String(t.passingRentPA) : "",
+      ervPA: t.ervPA != null ? String(t.ervPA) : "",
+      leaseStart: t.leaseStart || "",
+      leaseEnd: t.leaseEnd || "",
+      breakDate: t.breakDate || "",
+      reviewDate: t.reviewDate || "",
+      strategy: t.strategy || "",
+    }));
+  }, [stage1]);
+  const [rows, setRows] = useState<Row[]>(seedRows.length > 0 ? seedRows : [{ id: `t_${Date.now()}_0`, name: "" }]);
+  const [saving, setSaving] = useState(false);
+  const updateRow = (id: string, patch: Partial<Row>) => setRows((p) => p.map((r) => r.id === id ? { ...r, ...patch } : r));
+  const addRow = () => setRows((p) => [...p, { id: `t_${Date.now()}_${p.length}`, name: "" }]);
+  const removeRow = (id: string) => setRows((p) => p.filter((r) => r.id !== id));
+  const save = async () => {
+    const valid = rows.filter((r) => r.name.trim());
+    if (valid.length === 0) { toast({ title: "Add at least one tenant name", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const runRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
+      if (!runRes.ok) throw new Error("Could not load run");
+      const run = await runRes.json();
+      const stageResults = { ...(run.stageResults || {}) };
+      const tenants = valid.map((r) => ({
+        id: r.id,
+        name: r.name.trim(),
+        ...(r.companyNumber?.trim() ? { companyNumber: r.companyNumber.trim() } : {}),
+        ...(r.companyId ? { companyId: r.companyId } : {}),
+        ...(r.tradingAs?.trim() ? { tradingAs: r.tradingAs.trim() } : {}),
+        ...(r.areaSqFt?.trim() ? { areaSqFt: Number(r.areaSqFt) } : {}),
+        ...(r.passingRentPA?.trim() ? { passingRentPA: Number(r.passingRentPA) } : {}),
+        ...(r.ervPA?.trim() ? { ervPA: Number(r.ervPA) } : {}),
+        ...(r.leaseStart?.trim() ? { leaseStart: r.leaseStart.trim() } : {}),
+        ...(r.leaseEnd?.trim() ? { leaseEnd: r.leaseEnd.trim() } : {}),
+        ...(r.breakDate?.trim() ? { breakDate: r.breakDate.trim() } : {}),
+        ...(r.reviewDate?.trim() ? { reviewDate: r.reviewDate.trim() } : {}),
+        ...(r.strategy?.trim() ? { strategy: r.strategy.trim() } : {}),
+      }));
+      // Mirror first tenant to the legacy single-tenant slot so old readers
+      // (Covenant card, Stage 2 brand intel, deck) keep working until slices
+      // 2-5 migrate them onto the array.
+      stageResults.stage1 = {
+        ...(stageResults.stage1 || {}),
+        tenants,
+        tenant: { name: tenants[0].name, ...(tenants[0].companyNumber ? { companyNumber: tenants[0].companyNumber } : {}), ...(tenants[0].companyId ? { companyId: tenants[0].companyId } : {}) },
+      };
+      const res = await fetch(`/api/property-pathway/${runId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ stageResults }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      toast({ title: "Tenants saved", description: `${tenants.length} tenant${tenants.length === 1 ? "" : "s"} on this pathway.` });
+      onSaved();
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Tenants on this asset</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          Capture each occupier separately. Covenant cards, Stage 2 enrichment, and the business plan
+          will iterate over these. Lease dates accept ISO (2025-01-31) or free text.
+        </p>
+        <div className="space-y-4">
+          {rows.map((r, idx) => (
+            <div key={r.id} className="border rounded-md p-3 space-y-2 bg-muted/10">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-muted-foreground">Tenant #{idx + 1}</div>
+                <button type="button" className="text-xs text-destructive hover:underline" onClick={() => removeRow(r.id)}>Remove</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Tenant name *</label>
+                  <Input value={r.name} onChange={(e) => updateRow(r.id, { name: e.target.value })} className="h-8 text-xs" placeholder="e.g. Costa Limited" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Companies House #</label>
+                  <Input value={r.companyNumber || ""} onChange={(e) => updateRow(r.id, { companyNumber: e.target.value })} className="h-8 text-xs" placeholder="8 digits" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Trading as</label>
+                  <Input value={r.tradingAs || ""} onChange={(e) => updateRow(r.id, { tradingAs: e.target.value })} className="h-8 text-xs" placeholder="Public brand if different" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Area (sq ft)</label>
+                  <Input type="number" value={r.areaSqFt || ""} onChange={(e) => updateRow(r.id, { areaSqFt: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Passing rent (£ pa)</label>
+                  <Input type="number" value={r.passingRentPA || ""} onChange={(e) => updateRow(r.id, { passingRentPA: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">ERV (£ pa)</label>
+                  <Input type="number" value={r.ervPA || ""} onChange={(e) => updateRow(r.id, { ervPA: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Lease start</label>
+                  <Input value={r.leaseStart || ""} onChange={(e) => updateRow(r.id, { leaseStart: e.target.value })} className="h-8 text-xs" placeholder="2024-01-01 or Jan 2024" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Lease end</label>
+                  <Input value={r.leaseEnd || ""} onChange={(e) => updateRow(r.id, { leaseEnd: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Break date</label>
+                  <Input value={r.breakDate || ""} onChange={(e) => updateRow(r.id, { breakDate: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Review date</label>
+                  <Input value={r.reviewDate || ""} onChange={(e) => updateRow(r.id, { reviewDate: e.target.value })} className="h-8 text-xs" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Business plan strategy for this tenant</label>
+                <textarea
+                  value={r.strategy || ""}
+                  onChange={(e) => updateRow(r.id, { strategy: e.target.value })}
+                  className="w-full text-xs border rounded-md p-2 min-h-[60px] bg-background"
+                  placeholder="e.g. Reversionary upside on review; retain on existing terms…"
+                />
+              </div>
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={addRow} className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> Add tenant
+          </Button>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save tenants"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
