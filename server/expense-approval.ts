@@ -140,6 +140,41 @@ export async function submitForApproval(expenseId: string, submitterUserId: stri
   }
   const approverUserId = resolvedSubmitter ? await resolveApproverUserId(resolvedSubmitter) : null;
 
+  // Auto-approve for admins with no manager (e.g. the MD). They have no one
+  // above them to sign off their own spend, so rather than parking it in the
+  // Layla/Wendy shared inbox we approve it here and post straight to Xero.
+  // Everyone else (including admins who DO report to someone) routes normally.
+  if (approverUserId === null && resolvedSubmitter) {
+    const [submitter] = await db.select().from(users).where(eq(users.id, resolvedSubmitter)).limit(1);
+    if ((submitter as any)?.isAdmin) {
+      await db.update(expenses).set({
+        status: "approved",
+        submitterUserId: resolvedSubmitter,
+        submittedForApprovalAt: exp.submittedForApprovalAt || new Date(),
+        approverUserId: null,
+        approvedAt: new Date(),
+        approvedByUserId: resolvedSubmitter,
+        approvalNotes: "Auto-approved — admin with no manager",
+        flaggedForReview: reasons.length > 0,
+        flagReasons: reasons,
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, expenseId));
+
+      // Post to Xero (best-effort; idempotent — a later caller post no-ops).
+      // Personal "deduct from payroll" items never go to Xero.
+      if (!exp.isPersonal) {
+        try {
+          const { withSystemXero } = await import("./xero-system-session");
+          const { postExpenseToXero } = await import("./expense-xero-poster");
+          await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
+        } catch (e: any) {
+          console.warn("[expense-approval] auto-approve → Xero post failed (stays approved):", e?.message);
+        }
+      }
+      return;
+    }
+  }
+
   await db.update(expenses).set({
     status: "pending_approval",
     submitterUserId: resolvedSubmitter || exp.submitterUserId || null,
