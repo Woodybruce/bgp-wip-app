@@ -156,6 +156,10 @@ export default function PropertyPathway() {
     return () => clearInterval(id);
   }, [runs]);
 
+  // Generation counter for advanceRun's inline poll loop. See advanceRun()
+  // below — every call increments this and the loop bails when superseded.
+  const advanceTokenRef = useRef(0);
+
   // Auto-poll whenever the selected run has a stage in "running" state — the
   // server keeps running stages in the background even if the user navigates
   // away, so on re-entry (or a refresh) we pick up progress without needing
@@ -167,34 +171,66 @@ export default function PropertyPathway() {
   // re-created the interval on every poll response — gone now, so the
   // interval lives for the lifetime of the runId rather than churning
   // every few seconds.
+  // useRef holds the single live interval id keyed by runId. Earlier this
+  // effect leaked: production logs showed the same runId being polled every
+  // ~3 seconds because multiple intervals were stacking when re-renders
+  // re-ran the effect before cleanup completed. The ref guarantees that for
+  // any given runId at most one timer exists at a time across the page's
+  // lifetime, regardless of how many re-renders, route changes, or polled
+  // state updates happen.
+  const pollIntervalRef = useRef<{ runId: string; id: ReturnType<typeof setInterval> } | null>(null);
   useEffect(() => {
-    if (!selectedRun?.id) return;
-    const anyRunning = Object.values((selectedRun as any).stageStatus || {}).some(
-      (s) => s === "running",
-    );
-    if (!anyRunning) return;
+    const runId = selectedRun?.id;
+    if (!runId) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current.id);
+        pollIntervalRef.current = null;
+      }
+      return;
+    }
+    // Already polling this runId? Don't stack another interval. The tick
+    // itself stops the loop when no stages are "running", so we never need
+    // to re-enter the effect just because stage status flipped.
+    if (pollIntervalRef.current?.runId === runId) return;
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current.id);
+      pollIntervalRef.current = null;
+    }
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
+      // Don't poll while the tab is hidden — wastes battery + API quota.
+      // The list-poll (every 30s) catches you up when the tab refocuses.
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
-        const res = await fetch(`/api/property-pathway/${selectedRun.id}`, {
+        const res = await fetch(`/api/property-pathway/${runId}`, {
           headers: getAuthHeaders(),
           credentials: "include",
         });
         if (res.ok) {
           const polled = await res.json();
-          if (!cancelled) setSelectedRun(polled);
+          if (cancelled) return;
+          setSelectedRun(polled);
+          const stillRunning = Object.values(polled?.stageStatus || {}).some(
+            (s) => s === "running",
+          );
+          if (!stillRunning && pollIntervalRef.current?.runId === runId) {
+            clearInterval(pollIntervalRef.current.id);
+            pollIntervalRef.current = null;
+          }
         }
       } catch (err: any) {
         console.error("[pathway] polling error:", err?.message);
       }
-      // No inner loadRuns() — the background loadRuns interval above
-      // already refreshes the list. Calling it here doubled every poll.
     };
-    const id = setInterval(tick, 10_000);
+    const id = setInterval(tick, 15_000);
+    pollIntervalRef.current = { runId, id };
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (pollIntervalRef.current?.id === id) {
+        clearInterval(id);
+        pollIntervalRef.current = null;
+      }
     };
   }, [selectedRun?.id]);
 
@@ -235,7 +271,11 @@ export default function PropertyPathway() {
       if (existing) {
         toast({ title: "Opened existing investigation", description: `Resuming ${run.address}.` });
       } else {
-        advanceRun(run.id, 1); // auto-advance Stage 1 on brand new runs only
+        // Used to auto-advance Stage 1 here. That caused unwanted "main page
+        // jumps me into a running pathway" behaviour when an address was
+        // entered just to navigate or browse. The user now taps Advance when
+        // they're ready.
+        toast({ title: "Pathway created", description: `Tap Advance to run Stage 1 for ${run.address}.` });
       }
     } catch (err: any) {
       toast({ title: "Could not start", description: err.message, variant: "destructive" });
@@ -263,6 +303,13 @@ export default function PropertyPathway() {
   }
 
   async function advanceRun(runId: string, stage?: number) {
+    // Cancellation token. Each advance call bumps the counter; the in-flight
+    // while-loop below checks `myToken === advanceTokenRef.current` every
+    // iteration and exits if a newer advance has superseded it. This is what
+    // stops the per-run poll from stacking — previously two Advance clicks
+    // (or a click + a route change) left two 6-second poll loops running in
+    // parallel for 20 minutes each.
+    const myToken = ++advanceTokenRef.current;
     setAdvancing(true);
     try {
       const currentRun = selectedRun?.id === runId ? selectedRun : null;
@@ -317,10 +364,16 @@ export default function PropertyPathway() {
 
         while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
           await new Promise((r) => setTimeout(r, 6000));
+          // A newer advanceRun has superseded this one — stop polling.
+          if (myToken !== advanceTokenRef.current) return;
+          // Tab is hidden — skip this tick instead of hammering the API while
+          // the user isn't watching. The list-poll catches them up on return.
+          if (typeof document !== "undefined" && document.hidden) continue;
           try {
             const pollRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
             if (!pollRes.ok) continue;
             const polled = await pollRes.json();
+            if (myToken !== advanceTokenRef.current) return;
             setSelectedRun(polled);
             lastPolled = polled;
 
