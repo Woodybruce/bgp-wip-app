@@ -679,6 +679,7 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     let imported = 0;
     let sortOrder = 0;
     let currentGrouping = ""; // Landsec tracks a "Grouping" header band
+    const insertedIds: string[] = []; // fan out the mirror for these after import
 
     for (let i = bestHeaderIdx + 1; i < data.length; i++) {
       const row = data[i] || [];
@@ -723,10 +724,11 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       const values = [propertyId, ...Object.values(rec)];
 
       try {
-        await pool.query(
-          `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")})`,
+        const ins = await pool.query(
+          `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING id`,
           values
         );
+        if (ins.rows[0]?.id) insertedIds.push(ins.rows[0].id);
         imported++;
       } catch (e: any) {
         console.warn(`[tenancy-import] row ${i + 1} skipped: ${e.message}`);
@@ -742,6 +744,18 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       resolution = await backfillPropertyTenants(propertyId);
     } catch (e: any) {
       console.warn("[tenancy-import] resolver pass failed:", e?.message);
+    }
+
+    // Fan out the status mirror for every freshly-imported row so the
+    // Letting Tracker + Leasing projections are joined up immediately —
+    // without this the import lands rows that only exist on the Tenancy
+    // schedule until someone manually taps "Re-sync (all)", which is the
+    // "boards not joined up" symptom. Run AFTER the brand-resolver pass
+    // so tenant/brand FKs are set before fan-out reads them. Best-effort
+    // per row: the import is already committed, a mirror miss is recoverable
+    // via Re-sync.
+    for (const id of insertedIds) {
+      try { await fanOutTenancyStatus(pool, id); } catch {}
     }
 
     const unmatchedNote = unmatchedHeaders.length > 0

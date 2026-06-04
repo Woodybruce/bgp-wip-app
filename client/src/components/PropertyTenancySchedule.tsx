@@ -891,7 +891,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
                   </th>
                 ));
               })()}
-              <th colSpan={3} className="bg-slate-800 text-white p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center">Actions</th>
+              <th colSpan={2} className="bg-slate-800 text-white p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center">Actions</th>
             </tr>
             {/* Column labels — text-style columns get an inline filter pill
                 so the team can narrow by Use, Zone, Tenant, etc without
@@ -928,7 +928,6 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
                   </th>
                 );
               })}
-              <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Status</th>
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
@@ -1061,7 +1060,8 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
-  const totalCols = columns.length + 3;
+  // columns (incl. the inline Status select) + Links td + delete td.
+  const totalCols = columns.length + 2;
 
   if (unit.is_vacant) {
     return (
@@ -1072,11 +1072,6 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
           {unit.erv_pa ? ` · £${unit.erv_pa.toLocaleString()} pa asking` : ""}
         </td>
         <td className="p-1 text-muted-foreground text-center" colSpan={Math.max(0, columns.length - 6)}>—</td>
-        <td className="p-1 text-center">
-          <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 dark:text-amber-400">
-            {unit.status || "AVA"}
-          </Badge>
-        </td>
         <td className="p-1 text-center">
           <div className="flex gap-1 justify-center items-center flex-wrap">
             {onPromote && (
@@ -1131,9 +1126,37 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
 
         // Specialised renderers — keep the InlineEdit-only default for the
         // bulk of columns and override only where the cell needs extra UI:
+        //  - Status: canonical lifecycle dropdown, colour-tinted by value.
         //  - AM Initiative: Y/N select instead of free text.
         //  - Break Date: date input + T/L/M (Tenant / Landlord / Mutual) chip.
         //  - Tenant / Trading As: link icon to /companies/<id> when resolved.
+        if (c.field === "status") {
+          // Canonical lifecycle status — dropdown carries the full vocab the
+          // four-way mirror expects. Changing here fans out to
+          // leasing_schedule_units + available_units + crm_deals via the
+          // mirror on the PUT endpoint, so the Letting Tracker and the
+          // Leasing lens both reflect the change on next refresh. Rendered
+          // inline (not as a trailing column) so it sits in its natural
+          // Unit Details position AND keeps the colour tint + header filter.
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+              <select
+                value={unit.status || ""}
+                onChange={(e) => onUpdate(unit.id, "status", e.target.value)}
+                className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[unit.status || ""] || "bg-gray-100 text-gray-700"}`}
+                data-testid={`tenancy-status-${unit.id}`}
+                aria-label="Status"
+              >
+                {!SCHEDULE_STATUSES.includes(unit.status as any) && unit.status && (
+                  <option value={unit.status}>{unit.status}</option>
+                )}
+                {SCHEDULE_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </td>
+          );
+        }
         if (c.field === "am_initiative") {
           return (
             <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
@@ -1243,27 +1266,6 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
           </td>
         );
       })}
-      <td className="p-1 text-center">
-        {/* Canonical lifecycle status — dropdown carries the full 7-state
-            vocab the four-way mirror expects. Changing here fans out to
-            leasing_schedule_units + available_units + crm_deals via the
-            existing mirror on the PUT endpoint, so the Letting Tracker
-            and the Leasing lens both reflect the change on next refresh. */}
-        <select
-          value={unit.status || ""}
-          onChange={(e) => onUpdate(unit.id, "status", e.target.value)}
-          className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[unit.status || ""] || "bg-gray-100 text-gray-700"}`}
-          data-testid={`tenancy-status-${unit.id}`}
-          aria-label="Status"
-        >
-          {!SCHEDULE_STATUSES.includes(unit.status as any) && unit.status && (
-            <option value={unit.status}>{unit.status}</option>
-          )}
-          {SCHEDULE_STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-      </td>
       <td className="p-1 text-center">
         <div className="flex gap-1 justify-center">
           {deal && (
