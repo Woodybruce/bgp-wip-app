@@ -1167,7 +1167,26 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  // Serve a single image's thumbnail (the base64 JPEG stored in
+  // Recent uploads with no property assigned. Used by the Pathway Why Buy
+  // "Re-link uploads" picker to fix the 95%-NULL problem on
+  // image_studio_images.property_id, which leaves the imagery manifest
+  // empty for the assigned property. Capped + ordered newest-first so
+  // a human can eyeball the picker without scrolling forever.
+  app.get("/api/image-studio/orphans", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(parseInt((req.query.limit as string) || "200"), 500);
+      const images = await db.select(LIST_COLS)
+        .from(imageStudioImages)
+        .where(sql`${imageStudioImages.propertyId} IS NULL`)
+        .orderBy(desc(imageStudioImages.createdAt))
+        .limit(limit);
+      res.json(images);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+
   // thumbnail_data, decoded). Cached aggressively — the row is small but
   // the trip to Postgres still adds up at scale, so let the browser cache
   // it for a day.

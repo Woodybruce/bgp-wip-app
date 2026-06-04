@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import DOMPurify from "dompurify";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
@@ -10,7 +10,7 @@ import { usePropertyContext } from "@/lib/property-context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
@@ -19,7 +19,7 @@ import {
   FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
   Copy, Paperclip, Loader2, Maximize2, Briefcase, FileSpreadsheet, MessageSquare,
-  ZoomIn, ZoomOut,
+  ZoomIn, ZoomOut, Link2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -518,6 +518,7 @@ function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () =>
 
 function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, onDelete }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void; onDelete: () => void }) {
   const [, navigate] = useLocation();
+  const [tenantsEditorOpen, setTenantsEditorOpen] = useState(false);
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
@@ -826,18 +827,54 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(tenantName)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenantName}<ExternalLink className="w-2.5 h-2.5" /></a>;
                   }
 
+                  // Multi-tenant rendering. Prefer the new tenants[] list;
+                  // fall back to the legacy single `tenant` object for old
+                  // runs that haven't been migrated yet. Both paths get the
+                  // same row UI so the user sees an identical card whether
+                  // the data came from AI extraction or a manual edit.
+                  const multi: Array<{ name: string; companyNumber?: string; companyId?: string; tradingAs?: string }> = (s1 as any).tenants && (s1 as any).tenants.length > 0
+                    ? (s1 as any).tenants
+                    : tenant?.name ? [{ name: tenant.name, companyNumber: tenant.companyNumber, companyId: tenant.companyId }] : [];
+                  const renderTenant = (t: { name: string; companyNumber?: string; companyId?: string; tradingAs?: string }, idx: number) => {
+                    const cleaned = cleanName(t.name);
+                    let el: any = cleaned || "—";
+                    if (cleaned && t.companyId) {
+                      el = <Link href={`/companies/${t.companyId}`}><span className="text-primary hover:underline cursor-pointer font-medium">{cleaned}</span></Link>;
+                    } else if (cleaned && t.companyNumber) {
+                      el = <a href={`https://find-and-update.company-information.service.gov.uk/company/${t.companyNumber}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{cleaned}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                    } else if (cleaned) {
+                      el = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(cleaned)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{cleaned}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                    }
+                    return (
+                      <div key={idx} className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] border-b border-muted-foreground/10 pb-1 last:border-0 last:pb-0">
+                        <div className="min-w-0"><span className="text-muted-foreground">Tenant:</span> {el}</div>
+                        {t.companyNumber && <div className={`min-w-0 ${String(t.companyNumber).length > 12 ? "col-span-2" : ""}`}><span className="text-muted-foreground">Co#:</span> <span className="font-medium break-words">{t.companyNumber}</span></div>}
+                        {t.tradingAs && t.tradingAs !== t.name && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Trading as:</span> <span className="font-medium break-words">{t.tradingAs}</span></div>}
+                      </div>
+                    );
+                  };
                   return (
                     <div className="border rounded p-2 bg-muted/20">
-                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Tenancy</p>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                        <div className="min-w-0"><span className="text-muted-foreground">Tenant:</span> {tenantEl}</div>
-                        {tenant?.companyNumber && <div className={`min-w-0 ${String(tenant.companyNumber).length > 12 ? "col-span-2" : ""}`}><span className="text-muted-foreground">Co#:</span> <span className="font-medium break-words">{tenant.companyNumber}</span></div>}
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Tenancy{multi.length > 1 ? ` · ${multi.length} tenants` : ""}</p>
+                        <button
+                          type="button"
+                          onClick={() => setTenantsEditorOpen(true)}
+                          className="text-[10px] text-primary hover:underline"
+                          data-testid="btn-edit-tenants"
+                        >
+                          Edit{multi.length === 0 ? "" : ` (${multi.length})`}
+                        </button>
+                      </div>
+                      <div className="space-y-1">
+                        {multi.length > 0
+                          ? multi.map(renderTenant)
+                          : <p className="text-[10px] text-muted-foreground">No tenants captured yet. Tap Edit to add.</p>}
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] mt-1.5 pt-1.5 border-t border-muted-foreground/10">
                         {s1.aiFacts?.passingRent && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Rent passing:</span> <span className="font-medium break-words">{s1.aiFacts.passingRent}</span></div>}
                         {tenantCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{tenantCommentary}</div>}
                         {s1.aiFacts?.leaseStatus && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Status:</span> <span className="font-medium break-words">{s1.aiFacts.leaseStatus}</span></div>}
-                        {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 1 && (
-                          <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Other occupiers:</span> <span className="font-medium break-words">{s1.aiFacts.mainTenants.slice(1).join(", ")}</span></div>
-                        )}
                       </div>
                     </div>
                   );
@@ -1579,32 +1616,216 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
       {/* Stage 8 Image Studio card retired — imagery is managed inside Why Buy now
           (Manage images button + the deck's inline image edit). */}
 
-      {/* Comps — AI-matched from the board, editable, feed the Why Buy deck + chart */}
+      {/* Stage 9 — Why Buy. Renders from stage 7+ so the analyst can set up
+          Comps + ERV walk + Covenant inputs before the model is agreed.
+          The Claude-designed deck only appears once stage 9 is reached. */}
       {(s7 || s8 || s9) && (
-        <WhyBuyCompsCard runId={run.id} propertyId={run.propertyId || null} whyBuyComps={(run.stageResults as any)?.whyBuyComps} onReload={onReload} />
-      )}
-
-      {/* ERV walk + Covenant card — generated from the run's rent/tenant */}
-      {(s7 || s8 || s9) && (
-        <WhyBuyChartsCard
+        <WhyBuyCard
           runId={run.id}
+          stage9={s9}
+          stage1={s1}
+          stage7={s7}
+          whyBuyComps={(run.stageResults as any)?.whyBuyComps}
+          onReload={onReload}
           propertyId={run.propertyId || null}
-          passingRent={s7?.currentRentPA}
-          area={s7?.totalAreaSqFt}
-          tenantName={s1?.tenant?.name}
-          tenantCo={s1?.tenant?.companyNumber}
         />
-      )}
-
-      {/* Stage 9 — Why Buy */}
-      {s9 && (
-        <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} propertyId={run.propertyId || null} />
       )}
 
       {/* Related Lease Advisory matters — same property anchor */}
       {run.propertyId && <RelatedLeaseAdvisoryMatters propertyId={run.propertyId} />}
 
+      {tenantsEditorOpen && (
+        <TenantsEditorDialog
+          runId={run.id}
+          stage1={s1}
+          onClose={() => setTenantsEditorOpen(false)}
+          onSaved={() => { setTenantsEditorOpen(false); onReload(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// Multi-tenant editor. Reads stage1.tenants (preferred) or seeds from the
+// legacy stage1.tenant single object. On save: writes the array back to
+// stage1.tenants AND mirrors the first row to stage1.tenant so any consumer
+// that hasn't migrated to the array path yet keeps working unchanged.
+function TenantsEditorDialog({ runId, stage1, onClose, onSaved }: {
+  runId: string;
+  stage1: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  type Row = {
+    id: string;
+    name: string;
+    companyNumber?: string;
+    companyId?: string;
+    tradingAs?: string;
+    areaSqFt?: string;
+    passingRentPA?: string;
+    ervPA?: string;
+    leaseStart?: string;
+    leaseEnd?: string;
+    breakDate?: string;
+    reviewDate?: string;
+    strategy?: string;
+  };
+  const seedRows = useMemo<Row[]>(() => {
+    const existing: any[] = stage1?.tenants && stage1.tenants.length > 0
+      ? stage1.tenants
+      : stage1?.tenant?.name
+        ? [{ name: stage1.tenant.name, companyNumber: stage1.tenant.companyNumber, companyId: stage1.tenant.companyId }]
+        : [];
+    return existing.map((t: any, i: number) => ({
+      id: t.id || `t_${Date.now()}_${i}`,
+      name: t.name || "",
+      companyNumber: t.companyNumber || "",
+      companyId: t.companyId,
+      tradingAs: t.tradingAs || "",
+      areaSqFt: t.areaSqFt != null ? String(t.areaSqFt) : "",
+      passingRentPA: t.passingRentPA != null ? String(t.passingRentPA) : "",
+      ervPA: t.ervPA != null ? String(t.ervPA) : "",
+      leaseStart: t.leaseStart || "",
+      leaseEnd: t.leaseEnd || "",
+      breakDate: t.breakDate || "",
+      reviewDate: t.reviewDate || "",
+      strategy: t.strategy || "",
+    }));
+  }, [stage1]);
+  const [rows, setRows] = useState<Row[]>(seedRows.length > 0 ? seedRows : [{ id: `t_${Date.now()}_0`, name: "" }]);
+  const [saving, setSaving] = useState(false);
+  const updateRow = (id: string, patch: Partial<Row>) => setRows((p) => p.map((r) => r.id === id ? { ...r, ...patch } : r));
+  const addRow = () => setRows((p) => [...p, { id: `t_${Date.now()}_${p.length}`, name: "" }]);
+  const removeRow = (id: string) => setRows((p) => p.filter((r) => r.id !== id));
+  const save = async () => {
+    const valid = rows.filter((r) => r.name.trim());
+    if (valid.length === 0) { toast({ title: "Add at least one tenant name", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const runRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
+      if (!runRes.ok) throw new Error("Could not load run");
+      const run = await runRes.json();
+      const stageResults = { ...(run.stageResults || {}) };
+      const tenants = valid.map((r) => ({
+        id: r.id,
+        name: r.name.trim(),
+        ...(r.companyNumber?.trim() ? { companyNumber: r.companyNumber.trim() } : {}),
+        ...(r.companyId ? { companyId: r.companyId } : {}),
+        ...(r.tradingAs?.trim() ? { tradingAs: r.tradingAs.trim() } : {}),
+        ...(r.areaSqFt?.trim() ? { areaSqFt: Number(r.areaSqFt) } : {}),
+        ...(r.passingRentPA?.trim() ? { passingRentPA: Number(r.passingRentPA) } : {}),
+        ...(r.ervPA?.trim() ? { ervPA: Number(r.ervPA) } : {}),
+        ...(r.leaseStart?.trim() ? { leaseStart: r.leaseStart.trim() } : {}),
+        ...(r.leaseEnd?.trim() ? { leaseEnd: r.leaseEnd.trim() } : {}),
+        ...(r.breakDate?.trim() ? { breakDate: r.breakDate.trim() } : {}),
+        ...(r.reviewDate?.trim() ? { reviewDate: r.reviewDate.trim() } : {}),
+        ...(r.strategy?.trim() ? { strategy: r.strategy.trim() } : {}),
+      }));
+      // Mirror first tenant to the legacy single-tenant slot so old readers
+      // (Covenant card, Stage 2 brand intel, deck) keep working until slices
+      // 2-5 migrate them onto the array.
+      stageResults.stage1 = {
+        ...(stageResults.stage1 || {}),
+        tenants,
+        tenant: { name: tenants[0].name, ...(tenants[0].companyNumber ? { companyNumber: tenants[0].companyNumber } : {}), ...(tenants[0].companyId ? { companyId: tenants[0].companyId } : {}) },
+      };
+      const res = await fetch(`/api/property-pathway/${runId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ stageResults }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      toast({ title: "Tenants saved", description: `${tenants.length} tenant${tenants.length === 1 ? "" : "s"} on this pathway.` });
+      onSaved();
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Tenants on this asset</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          Capture each occupier separately. Covenant cards, Stage 2 enrichment, and the business plan
+          will iterate over these. Lease dates accept ISO (2025-01-31) or free text.
+        </p>
+        <div className="space-y-4">
+          {rows.map((r, idx) => (
+            <div key={r.id} className="border rounded-md p-3 space-y-2 bg-muted/10">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-muted-foreground">Tenant #{idx + 1}</div>
+                <button type="button" className="text-xs text-destructive hover:underline" onClick={() => removeRow(r.id)}>Remove</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Tenant name *</label>
+                  <Input value={r.name} onChange={(e) => updateRow(r.id, { name: e.target.value })} className="h-8 text-xs" placeholder="e.g. Costa Limited" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Companies House #</label>
+                  <Input value={r.companyNumber || ""} onChange={(e) => updateRow(r.id, { companyNumber: e.target.value })} className="h-8 text-xs" placeholder="8 digits" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Trading as</label>
+                  <Input value={r.tradingAs || ""} onChange={(e) => updateRow(r.id, { tradingAs: e.target.value })} className="h-8 text-xs" placeholder="Public brand if different" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Area (sq ft)</label>
+                  <Input type="number" value={r.areaSqFt || ""} onChange={(e) => updateRow(r.id, { areaSqFt: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Passing rent (£ pa)</label>
+                  <Input type="number" value={r.passingRentPA || ""} onChange={(e) => updateRow(r.id, { passingRentPA: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">ERV (£ pa)</label>
+                  <Input type="number" value={r.ervPA || ""} onChange={(e) => updateRow(r.id, { ervPA: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Lease start</label>
+                  <Input value={r.leaseStart || ""} onChange={(e) => updateRow(r.id, { leaseStart: e.target.value })} className="h-8 text-xs" placeholder="2024-01-01 or Jan 2024" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Lease end</label>
+                  <Input value={r.leaseEnd || ""} onChange={(e) => updateRow(r.id, { leaseEnd: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Break date</label>
+                  <Input value={r.breakDate || ""} onChange={(e) => updateRow(r.id, { breakDate: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Review date</label>
+                  <Input value={r.reviewDate || ""} onChange={(e) => updateRow(r.id, { reviewDate: e.target.value })} className="h-8 text-xs" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Business plan strategy for this tenant</label>
+                <textarea
+                  value={r.strategy || ""}
+                  onChange={(e) => updateRow(r.id, { strategy: e.target.value })}
+                  className="w-full text-xs border rounded-md p-2 min-h-[60px] bg-background"
+                  placeholder="e.g. Reversionary upside on review; retain on existing terms…"
+                />
+              </div>
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={addRow} className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> Add tenant
+          </Button>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save tenants"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2776,37 +2997,203 @@ function WhyBuyCompsCard({ runId, propertyId, whyBuyComps, onReload }: { runId: 
   );
 }
 
-function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; stage9: any; onReload: () => void; propertyId: string | null }) {
+function WhyBuyCard({
+  runId, stage9, stage1, stage7, whyBuyComps, onReload, propertyId,
+}: {
+  runId: string;
+  stage9: any;
+  stage1?: any;
+  stage7?: any;
+  whyBuyComps?: any;
+  onReload: () => void;
+  propertyId: string | null;
+}) {
   const [manageOpen, setManageOpen] = useState(false);
+  const [relinkOpen, setRelinkOpen] = useState(false);
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
         <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
-        <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setManageOpen(true)} title="Upload, AI-edit, delete and capture imagery for this property">
-          <ImageIcon className="w-3.5 h-3.5" /> Manage images
-        </Button>
+        <div className="flex items-center gap-1.5">
+          {propertyId && (
+            <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setRelinkOpen(true)} title="Pick from uploads that have no property assigned and link them to this property. Fixes the empty-picker case when images were uploaded before per-property folders existed.">
+              <Link2 className="w-3.5 h-3.5" /> Re-link uploads
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setManageOpen(true)} title="Upload, AI-edit, delete and capture imagery for this property">
+            <ImageIcon className="w-3.5 h-3.5" /> Manage images
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="text-sm space-y-3">
         <p className="text-muted-foreground">In-app, Claude-designed pitch deck — generated from the agreed business plan + agreed Excel model. Iterate by prompt or click any image / headline to edit inline.</p>
 
-        {/* Imagery — pinned candidates per kind feed Claude design's brief */}
+        {/* Comps — folded in from the standalone "Comps" card. AI-matched
+            from the board, editable, feed the deck + the comps_chart imagery. */}
+        <WhyBuyCompsCard
+          runId={runId}
+          propertyId={propertyId}
+          whyBuyComps={whyBuyComps}
+          onReload={onReload}
+        />
+
+        {/* Charts & cards — folded in from the standalone card. Generate the
+            ERV walk + Covenant card imagery from the run's rent/tenant data. */}
+        <WhyBuyChartsCard
+          runId={runId}
+          propertyId={propertyId}
+          passingRent={stage7?.currentRentPA}
+          area={stage7?.totalAreaSqFt}
+          tenantName={stage1?.tenant?.name}
+          tenantCo={stage1?.tenant?.companyNumber}
+        />
+
+        {/* Imagery — pinned candidates per kind feed Claude design's brief.
+            comps_chart added so the chart generated above actually has a
+            visible tab here (was missing — chart was being generated but
+            had nowhere to land in the UI). */}
         {propertyId && (
           <div className="border rounded-md p-3 bg-muted/20">
             <PropertyImageryPicker
               propertyId={propertyId}
               pathwayRunId={runId}
-              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "erv_walk", "covenant_card"]}
+              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card"]}
             />
           </div>
         )}
 
-        <ClaudeDesignPane runId={runId} />
+        {/* Claude-designed deck — only available once the model + business
+            plan are agreed (stage 9). Until then the Comps / Charts / Imagery
+            panels above let the analyst stage everything up. */}
+        {stage9 && <ClaudeDesignPane runId={runId} />}
       </CardContent>
 
       {manageOpen && (
         <ImageStudioPicker runId={runId} onPick={() => setManageOpen(false)} onClose={() => setManageOpen(false)} />
       )}
+      {relinkOpen && propertyId && (
+        <RelinkUploadsModal
+          propertyId={propertyId}
+          onClose={() => setRelinkOpen(false)}
+        />
+      )}
     </Card>
+  );
+}
+
+// Modal for picking unassigned Image Studio uploads and linking them to
+// the current property. Posts to the existing bulk-assign-property endpoint
+// which sets property_id on image_studio_images AND auto-creates the
+// matching property_imagery_assets / entity_images rows + property folder
+// link. Result: the Why Buy imagery picker stops being empty for properties
+// whose uploads pre-date the per-property folders feature.
+function RelinkUploadsModal({ propertyId, onClose }: { propertyId: string; onClose: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const { data: orphans = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/image-studio/orphans"],
+    queryFn: async () => {
+      const r = await fetch(`/api/image-studio/orphans?limit=300`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error("orphan fetch failed");
+      return r.json();
+    },
+  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orphans;
+    return orphans.filter((o: any) => {
+      const blob = `${o.fileName || ""} ${o.address || ""} ${o.description || ""} ${o.brandName || ""}`.toLowerCase();
+      return blob.includes(q);
+    });
+  }, [orphans, search]);
+  const toggle = (id: string) => setSelected((p) => {
+    const next = new Set(p);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const assignMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selected);
+      const r = await fetch(`/api/image-studio/bulk-assign-property`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ ids, propertyId }),
+      });
+      if (!r.ok) throw new Error("assign failed");
+      return r.json();
+    },
+    onSuccess: (res) => {
+      toast({ title: "Uploads linked", description: `${res?.updated ?? selected.size} uploaded image${selected.size === 1 ? "" : "s"} now attached to this property.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/orphans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/property-imagery", propertyId, "manifest"] });
+      onClose();
+    },
+    onError: (err: any) => toast({ title: "Re-link failed", description: err.message, variant: "destructive" }),
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Re-link uploads to this property</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input
+            placeholder="Filter by filename, address, brand…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="text-xs text-muted-foreground">
+            {isLoading
+              ? "Loading orphan uploads…"
+              : `${filtered.length} unassigned upload${filtered.length === 1 ? "" : "s"} · ${selected.size} selected`}
+          </div>
+          <div className="max-h-[55vh] overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-1 border rounded-md bg-muted/10">
+            {filtered.map((o) => {
+              const picked = selected.has(o.id);
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => toggle(o.id)}
+                  className={`relative text-left rounded-md overflow-hidden border ${picked ? "border-primary ring-2 ring-primary/30" : "border-muted-foreground/20"}`}
+                >
+                  <img
+                    src={`/api/image-studio/${o.id}/thumb`}
+                    alt={o.fileName || "upload"}
+                    className="w-full h-24 object-cover bg-muted"
+                    loading="lazy"
+                  />
+                  <div className="px-2 py-1 text-[10px] leading-tight">
+                    <div className="truncate font-medium">{o.fileName || "(no filename)"}</div>
+                    {o.address && <div className="truncate text-muted-foreground">{o.address}</div>}
+                  </div>
+                  {picked && (
+                    <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full w-5 h-5 flex items-center justify-center text-[10px]">✓</div>
+                  )}
+                </button>
+              );
+            })}
+            {!isLoading && filtered.length === 0 && (
+              <div className="col-span-full text-center text-xs text-muted-foreground py-6">
+                No orphan uploads to link.
+              </div>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            disabled={selected.size === 0 || assignMutation.isPending}
+            onClick={() => assignMutation.mutate()}
+          >
+            {assignMutation.isPending ? "Linking…" : `Link ${selected.size} to property`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

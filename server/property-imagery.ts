@@ -29,7 +29,7 @@
 
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import {
   propertyImageryAssets,
   imageStudioImages,
@@ -439,8 +439,35 @@ export function registerPropertyImageryRoutes(app: Express): void {
     try {
       const userId = (req as any).user?.id;
       const propertyId = String(req.params.propertyId);
-      const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
+      let [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
       if (!property) return res.status(404).json({ error: "property not found" });
+
+      // Auto-geocode when the property has no coordinates. composeLocationPlan
+      // bails out otherwise (it needs lat/lng to drop the Google Static map
+      // pin) and the user just sees a 400 toast — exactly the silent-failure
+      // path Barrbridge Road was hitting. Best-effort: tries postcode first
+      // (most reliable for UK lookups), then address line, then property name.
+      // Caches via geocodeOne, so re-runs against the same address are free.
+      if (!property.latitude || !property.longitude) {
+        const addr = (property.address as any)?.address || (property.address as any)?.formattedAddress || null;
+        const candidates = [property.postcode, addr, property.name].filter(Boolean) as string[];
+        for (const q of candidates) {
+          try {
+            const { geocodeOne } = await import("./geocode");
+            const geo = await geocodeOne(q);
+            if (geo.lat && geo.lng) {
+              await pool.query(
+                `UPDATE crm_properties SET latitude = $1, longitude = $2 WHERE id = $3 AND (latitude IS NULL OR longitude IS NULL)`,
+                [String(geo.lat), String(geo.lng), propertyId]
+              );
+              [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
+              break;
+            }
+          } catch (e: any) {
+            console.warn("[location-plan auto-geocode]", e?.message);
+          }
+        }
+      }
 
       // Caller can request layer auto-population — we resolve the markers
       // server-side rather than making the client ferry coordinates.
