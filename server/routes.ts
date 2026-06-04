@@ -1316,7 +1316,7 @@ export async function registerRoutes(
       const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
       if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
 
-      const { name, role, team, managerId, email, additionalTeams, boardMember, managementTeam } = req.body || {};
+      const { name, role, team, managerId, email, phone, additionalTeams, boardMember, managementTeam } = req.body || {};
       if (!name || typeof name !== "string") return res.status(400).json({ message: "Name is required" });
 
       const username = name.toLowerCase().replace(/['']/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
@@ -1326,13 +1326,13 @@ export async function registerRoutes(
       const { rows } = await pool.query(
         `INSERT INTO users (
           username, password, name, role, team, additional_teams, manager_id,
-          board_member, management_team, email, is_admin, is_active
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,true)
+          board_member, management_team, email, phone, is_admin, is_active
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,true)
          RETURNING ${HR_PUBLIC_COLUMNS}`,
         [
           username, placeholderHash, name.trim(), role || null, team || null,
           additionalTeams || [], managerId || null,
-          boardMember === true, managementTeam === true, email || null,
+          boardMember === true, managementTeam === true, email || null, phone || null,
         ]
       );
       res.json(rows[0]);

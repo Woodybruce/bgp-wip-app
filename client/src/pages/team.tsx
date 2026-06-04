@@ -549,6 +549,7 @@ function AddPersonDialog({ open, onClose, allPeople }: { open: boolean; onClose:
   const [team, setTeam] = useState("");
   const [managerId, setManagerId] = useState<string>("none");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [boardMember, setBoardMember] = useState(false);
   const [managementTeam, setManagementTeam] = useState(false);
 
@@ -559,13 +560,14 @@ function AddPersonDialog({ open, onClose, allPeople }: { open: boolean; onClose:
       team: team || null,
       managerId: managerId === "none" ? null : managerId,
       email: email.trim() || null,
+      phone: phone.trim() || null,
       boardMember,
       managementTeam,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/team"] });
       toast({ title: `Added ${name}` });
-      setName(""); setRole(""); setTeam(""); setManagerId("none"); setEmail(""); setBoardMember(false); setManagementTeam(false);
+      setName(""); setRole(""); setTeam(""); setManagerId("none"); setEmail(""); setPhone(""); setBoardMember(false); setManagementTeam(false);
       onClose();
     },
     onError: (e: any) => toast({ title: "Add failed", description: e?.message || "Try again", variant: "destructive" }),
@@ -606,6 +608,10 @@ function AddPersonDialog({ open, onClose, allPeople }: { open: boolean; onClose:
           <div>
             <Label className="text-xs">Work email</Label>
             <Input value={email} onChange={e => setEmail(e.target.value)} placeholder="jane@bgpcommercial.com" />
+          </div>
+          <div>
+            <Label className="text-xs">Phone</Label>
+            <Input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+44 7700 900000" />
           </div>
           <div className="flex items-center justify-between pt-2">
             <Label className="text-xs">Board member</Label>
