@@ -53,6 +53,10 @@ interface Expense {
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  // Identifies a real Revolut card swipe (vs a receipt-photo or manual
+  // entry). Null = the expense was NOT created by the Revolut feed.
+  revolutTransactionId?: string | null;
+  type?: string | null;
   attendeeContacts?: { id: string; name: string | null }[];
 }
 interface NominalCode { code: string; name: string; }
@@ -1144,7 +1148,20 @@ export default function MobileExpenses() {
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-[13px] truncate">{e.merchant || "Unknown merchant"}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="font-medium text-[13px] truncate">{e.merchant || "Unknown merchant"}</div>
+                      {/* Tiny source tag — Revolut = real card swipe, Receipt
+                          = uploaded photo, Cash = manual entry. Makes it
+                          obvious at a glance which spend actually came from
+                          the live card feed vs ad-hoc additions. */}
+                      {e.revolutTransactionId ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-semibold shrink-0">Revolut</span>
+                      ) : e.type === "cash" ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold shrink-0">Cash</span>
+                      ) : e.receiptFilename ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold shrink-0">Receipt</span>
+                      ) : null}
+                    </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
                       <span>{fmtDate(e.transactionDate)}</span>
                       <span>·</span>
