@@ -35,6 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
   X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
+  CreditCard,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -58,8 +59,24 @@ interface NominalCode { code: string; name: string; }
 interface CrmContact { id: string; name: string; email?: string | null; companyId?: string | null; companyName?: string | null; }
 interface CrmProperty { id: string; name: string; postcode?: string | null; }
 interface CrmDeal { id: string; name: string; status?: string | null; }
+interface MyCardholder {
+  id: string; userName: string; email: string;
+  monthlyLimit: number; dailyLimit: number; singleTxLimit: number;
+  status: "active" | "inactive";
+}
+interface MyCard { id: string; last4: string; status: string; }
+interface MySummary {
+  monthlySpendPence: number;
+  monthlyLimitPence: number;
+  remainingPence: number;
+  pendingReceipts: number;
+  totalThisMonth: number;
+}
 interface MyData {
   expenses: Expense[];
+  cardholder?: MyCardholder | null;
+  card?: MyCard | null;
+  summary?: MySummary | null;
 }
 
 const ENTERTAINMENT_CATEGORIES = new Set([
@@ -963,6 +980,40 @@ export default function MobileExpenses() {
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
       </div>
+
+      {/* Card panel — shows the user's BGP/Revolut card status + this month's
+          spend. Mirrors the desktop My Card view but compact for mobile.
+          Active/Frozen reads from cardholder.status (Revolut cards have no
+          stripe_cards row, so card?.status would always be undefined). */}
+      {data?.cardholder && (
+        <div className="px-4 mt-3 mb-3">
+          <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 text-white p-4 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider opacity-70">BGP Card</div>
+                <div className="text-sm font-semibold mt-0.5">{data.cardholder.userName}</div>
+              </div>
+              {data.cardholder.status === "active" ? (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">Active</span>
+              ) : (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-400/30">Frozen</span>
+              )}
+            </div>
+            <div className="font-mono text-base tracking-widest mt-3">•••• •••• •••• {data.card?.last4 || "0000"}</div>
+            <div className="flex items-end justify-between gap-3 mt-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider opacity-60">This month</div>
+                <div className="text-base font-semibold">{fmtPence(data.summary?.monthlySpendPence || 0)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] uppercase tracking-wider opacity-60">Monthly limit</div>
+                <div className="text-xs opacity-90">{fmtPence(data.cardholder.monthlyLimit)}</div>
+              </div>
+            </div>
+            <p className="text-[10px] opacity-70 mt-2">Card details + freeze are in the Revolut app.</p>
+          </div>
+        </div>
+      )}
 
       <div className="px-4 mb-3">
         <button
