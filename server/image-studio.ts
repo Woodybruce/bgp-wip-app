@@ -1124,7 +1124,11 @@ export function registerImageStudioRoutes(app: Express) {
     hasThumbnail: sql<boolean>`(${imageStudioImages.thumbnailData} IS NOT NULL)`.as("has_thumbnail"),
   };
 
-  app.get("/api/image-studio", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  // Browsing the library is open to any logged-in user — the Image Studio
+  // is a shared firm-wide asset pool, and non-admins (e.g. Luke on mobile)
+  // need to see thumbnails to use their own uploads + ChatBGP edits.
+  // Destructive + bulk ops below still require admin.
+  app.get("/api/image-studio", requireAuth, async (_req: Request, res: Response) => {
     try {
       const images = await db.select(LIST_COLS).from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
@@ -1190,7 +1194,7 @@ export function registerImageStudioRoutes(app: Express) {
   // thumbnail_data, decoded). Cached aggressively — the row is small but
   // the trip to Postgres still adds up at scale, so let the browser cache
   // it for a day.
-  app.get("/api/image-studio/:id/thumb", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/image-studio/:id/thumb", requireAuth, async (req: Request, res: Response) => {
     try {
       const [row] = await db
         .select({ thumbnailData: imageStudioImages.thumbnailData, mimeType: imageStudioImages.mimeType })
@@ -1212,7 +1216,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/upload", requireAuth, requireAdmin, imageUpload.array("images", 20), async (req: Request, res: Response) => {
+  app.post("/api/image-studio/upload", requireAuth, imageUpload.array("images", 20), async (req: Request, res: Response) => {
     const t0 = Date.now();
     try {
       const files = req.files as Express.Multer.File[];
@@ -1324,7 +1328,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.get("/api/image-studio/:id/full", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/image-studio/:id/full", requireAuth, async (req: Request, res: Response) => {
     try {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
       if (!image) return res.status(404).json({ error: "Not found" });
