@@ -5904,25 +5904,43 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
-        // "Client" = the BGP-side counterparty for this deal:
-        //   leasing  → landlord (we act for the landlord)
-        //   sale     → vendor   (we act for the vendor)
-        //   purchase → purchaser
-        // Falls through in that order so legacy rows missing the
-        // primary counterparty still resolve to something useful.
-        // Final fallback: if the deal's own counterparty FKs are missing
-        // or orphaned (point at a deleted/merged company that no longer
-        // resolves in compMap), fall back to the linked property's
-        // landlord. Stops a stale landlord_id showing the deal as
-        // "Unknown" client on the WIP roll-up.
+        // "Client" = the BGP-side counterparty for this deal. Picked by
+        // deal_type so Tenant Rep deals don't get mis-bucketed against
+        // the landlord:
+        //   Sale              → vendor    (we act for the vendor)
+        //   Purchase          → purchaser (we act for the purchaser)
+        //   Lease Acquisition → tenant    (tenant rep)
+        //   Lease Disposal    → tenant    (tenant rep)
+        //   New Letting       → landlord  (landlord rep — default)
+        //   anything else, OR Tenant Rep team set → tenant first
+        // After the role pick, fall through the other counterparties +
+        // the property's landlord so legacy / partially-filled rows
+        // still resolve to something useful rather than showing
+        // "Unknown" the moment a fee allocation isn't filled.
         const propLandlordId = deal.propertyId
           ? (properties.find(p => p.id === deal.propertyId) as any)?.landlordId
           : null;
+        const dt = deal.dealType || "";
+        const teamStrLower = Array.isArray(deal.team)
+          ? deal.team.join(",").toLowerCase()
+          : String(deal.team || "").toLowerCase();
+        const isTenantRepTeam = /tenant\s*rep/.test(teamStrLower);
+        const lookup = (id: string | null | undefined) => (id ? compMap.get(id) || null : null);
+        const clientByRole =
+          dt === "Sale"              ? lookup((deal as any).vendorId) :
+          dt === "Purchase"          ? lookup((deal as any).purchaserId) :
+          dt === "Lease Acquisition" ? lookup(deal.tenantId) :
+          dt === "Lease Disposal"    ? lookup(deal.tenantId) :
+          isTenantRepTeam            ? lookup(deal.tenantId) :
+          dt === "New Letting"       ? lookup(deal.landlordId) :
+                                       lookup(deal.landlordId);
         const clientName =
-          (deal.landlordId  ? compMap.get(deal.landlordId)  : null) ||
-          ((deal as any).vendorId    ? compMap.get((deal as any).vendorId)    : null) ||
-          ((deal as any).purchaserId ? compMap.get((deal as any).purchaserId) : null) ||
-          (propLandlordId ? compMap.get(propLandlordId) : null) ||
+          clientByRole ||
+          lookup(deal.landlordId) ||
+          lookup(deal.tenantId) ||
+          lookup((deal as any).vendorId) ||
+          lookup((deal as any).purchaserId) ||
+          lookup(propLandlordId) ||
           null;
         const billingEntityName = deal.xeroContactName || null;
         const invoice = invoicesByDeal.get(deal.id);

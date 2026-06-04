@@ -1090,6 +1090,25 @@ When suggesting target tenants for a scheme, leasing pitch, or tenant mix analys
 ## WIP/Deals Architecture
 crm_deals IS the WIP source of truth. Status determines WIP stage automatically. Update deals → WIP Report updates automatically. Fee allocations (dealFeeAllocations) track per-agent billing.
 
+## Logging a deal — rules (Carly Cunliffe feedback, June 2026)
+When the user asks to log a deal, follow this checklist BEFORE calling create_deal:
+
+1. **Pick the right "client" side based on the team / deal type.** The WIP report's Client column reads from whichever counterparty matches the role — get this wrong and the deal shows "Unknown".
+   - Tenant Rep team, Lease Acquisition, or Lease Disposal → set **tenantId** (the tenant is the client).
+   - New Letting → set **landlordId**.
+   - Sale → set **vendorId**. Purchase → set **purchaserId**.
+   - When in doubt, ASK the user "is this a landlord rep or tenant rep instruction?" — don't default to landlord.
+
+2. **Disambiguate the property.** If the user gives an address:
+   - Call search_crm({entityType:'properties', query:'<address>'}) first.
+   - If 0 matches → create a new property with create_property, then use its id.
+   - If 1 match → use it.
+   - If >1 match → STOP. Show the user a numbered list of the candidates (id, name, status, postcode/area) and ask which one. Never pick the first automatically — multiple properties at the same address are usually a building vs unit vs floor distinction that only the user can resolve.
+
+3. **Resolve company names to CRM company UUIDs.** If the user names a landlord/tenant/vendor/purchaser that isn't already in the CRM, call create_company first with the right companyType (Landlord / Tenant – Brand / Vendor / Purchaser), then pass the new id into create_deal.
+
+4. **Fee allocation is separate.** The "client" on the WIP report is now derived from the counterparty FKs above, NOT from fee allocations — so a deal with no allocation entered will STILL show the right client as long as you set landlordId / tenantId / vendorId / purchaserId correctly at create time.
+
 ## Frontend Sync Rules
 CRM_OPTIONS (crm-options.ts) and color maps (deals.tsx) MUST stay in sync. Missing color map entry = invisible badge. When adding values: update options list → update color map → then update database.
 
@@ -1873,14 +1892,19 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_deal",
-      description: "Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.",
+      description: "Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Deal name (usually the property address)" },
+          propertyId: { type: "string", description: "CRM property UUID. Set after the user has confirmed which property when multiple share the address." },
+          landlordId: { type: "string", description: "CRM company UUID of the landlord. The client on New Letting deals." },
+          tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Lease Disposal deals." },
+          vendorId: { type: "string", description: "CRM company UUID of the vendor. The client on Sale deals." },
+          purchaserId: { type: "string", description: "CRM company UUID of the purchaser. The client on Purchase deals." },
           team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
-          dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
+          dealType: { type: "string", description: "Type: New Letting, Lease Acquisition, Lease Disposal, Lease Renewal, Rent Review, Sale, Purchase" },
           status: { type: "string", description: "Status of the deal" },
           pricing: { type: "number", description: "Deal value/price in GBP" },
           fee: { type: "number", description: "BGP fee in GBP" },
@@ -5161,6 +5185,11 @@ async function executeCrmToolRaw(
     const { crmDeals } = await import("@shared/schema");
     const [created] = await db.insert(crmDeals).values({
       name: fnArgs.name,
+      propertyId: fnArgs.propertyId || null,
+      landlordId: fnArgs.landlordId || null,
+      tenantId: fnArgs.tenantId || null,
+      vendorId: fnArgs.vendorId || null,
+      purchaserId: fnArgs.purchaserId || null,
       team: fnArgs.team || [],
       groupName: fnArgs.groupName || "New Instructions",
       dealType: fnArgs.dealType,
@@ -9960,6 +9989,11 @@ export async function handleCrmToolCall(
     const { crmDeals } = await import("@shared/schema");
     const [created] = await db.insert(crmDeals).values({
       name: fnArgs.name,
+      propertyId: fnArgs.propertyId || null,
+      landlordId: fnArgs.landlordId || null,
+      tenantId: fnArgs.tenantId || null,
+      vendorId: fnArgs.vendorId || null,
+      purchaserId: fnArgs.purchaserId || null,
       team: fnArgs.team || [],
       groupName: fnArgs.groupName || "New Instructions",
       dealType: fnArgs.dealType,
