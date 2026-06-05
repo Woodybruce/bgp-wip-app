@@ -199,9 +199,11 @@ function extractEmailBodyText(msg: any): string {
       text = preview;
     }
   }
-  // Cap at 20k chars — classifier only reads ~6k, but we keep some
-  // headroom so specialist prompts can see more context later.
-  return text.slice(0, 20000);
+  // Cap at 60k chars — long forwarded threads (especially with the full
+  // chain quoted underneath) were getting truncated below the structure
+  // people actually wanted ChatBGP to read. 60k is well within Claude's
+  // context but still bounds runaway emails.
+  return text.slice(0, 60000);
 }
 
 // Pull headline-shaped link anchors from newsletter HTML — i.e. an
@@ -580,7 +582,11 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
           { role: "system", content: INSTRUCTION_PROMPT + "\n\n" + crmContext },
           {
             role: "user",
-            content: `Subject: ${subject}\nFrom: ${from}${entityContext}${conversationHistory}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
+            // Was sliced to 6k — long forwarded structuring proposals
+            // were being cut off below the headline, so ChatBGP replied
+            // "the forwarded email was truncated" even when we had the
+            // full body in hand. 50k gives the full thread to Claude.
+            content: `Subject: ${subject}\nFrom: ${from}${entityContext}${conversationHistory}\n\nBody:\n${(bodyText || "").slice(0, 50000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
           },
         ],
         max_completion_tokens: 2048,
