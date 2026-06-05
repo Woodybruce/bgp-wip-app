@@ -36,7 +36,7 @@
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { db, pool } from "./db";
-import { stripeCardholders, expenses, systemSettings, users } from "@shared/schema";
+import { stripeCardholders, stripeCards, expenses, systemSettings, users } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin, requireAuth } from "./auth";
 
@@ -516,6 +516,29 @@ export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
       `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2, updated_at = NOW() WHERE id = $3`,
       [cardId, card.holder_id || null, cardholderId],
     );
+
+    // Also upsert a stripe_cards row so the existing /api/expenses/me +
+    // mobile card panel pick up last4 + status from there. Revolut field
+    // names: `last_digits` (4 chars), `state` (active/blocked/inactive).
+    // stripe_card_id is set to the Revolut card id so we have one stable
+    // key per card across both vendors.
+    const lastDigits: string | null = typeof card.last_digits === "string" ? card.last_digits : null;
+    const state: string = card.state === "active" ? "active" : (card.state || "inactive");
+    const existingCard = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, cardholderId)).limit(1);
+    if (existingCard[0]) {
+      await pool.query(
+        `UPDATE stripe_cards SET last4 = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+        [lastDigits, state, existingCard[0].id],
+      );
+    } else {
+      await db.insert(stripeCards).values({
+        cardholderId,
+        stripeCardId: cardId,
+        last4: lastDigits || "",
+        status: state,
+      } as any);
+    }
+
     result.assigned++;
   }
   return result;

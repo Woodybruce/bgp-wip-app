@@ -41,7 +41,10 @@ interface RevolutCard {
   id: string;
   holder_id?: string;
   label?: string;
-  last_four?: string;
+  // Revolut returns this as `last_digits` (NOT `last_four` like Stripe).
+  // Spent an hour wondering why it was always empty — it's available on
+  // the standard READ scope, no extra permission needed.
+  last_digits?: string;
   state?: string;
 }
 
@@ -354,7 +357,7 @@ function CardRow({ card }: { card: RevolutCard }) {
   return (
     <tr className="border-t hover:bg-muted/10">
       <td className="px-4 py-2 font-medium">{card.label || card.id.slice(0, 8)}</td>
-      <td className="px-4 py-2 font-mono text-xs">•••• {card.last_four || "—"}</td>
+      <td className="px-4 py-2 font-mono text-xs">•••• {card.last_digits || "—"}</td>
       <td className="px-4 py-2">
         <Badge variant="outline" className={card.state === "active" ? "text-emerald-600 border-emerald-600/30" : "text-muted-foreground"}>
           {card.state || "—"}
