@@ -578,17 +578,20 @@ export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
     );
 
     // Also upsert a stripe_cards row so the existing /api/expenses/me +
-    // mobile card panel pick up last4 + status from there. Revolut field
-    // names: `last_digits` (4 chars), `state` (active/blocked/inactive).
-    // stripe_card_id is set to the Revolut card id so we have one stable
-    // key per card across both vendors.
+    // mobile card panel pick up last4 + status + expiry + product from
+    // there. Revolut field names: `last_digits` (4 chars), `state`
+    // (active/blocked/inactive), `expiry` ("MM/YYYY"), `virtual` (bool),
+    // `product.code` ("BPD" virtual, "VWE" physical wave).
     const lastDigits: string | null = typeof card.last_digits === "string" ? card.last_digits : null;
     const state: string = card.state === "active" ? "active" : (card.state || "inactive");
+    const expiry: string | null = typeof card.expiry === "string" ? card.expiry : null;
+    const virtual: boolean | null = typeof card.virtual === "boolean" ? card.virtual : null;
+    const productCode: string | null = typeof card?.product?.code === "string" ? card.product.code : null;
     const existingCard = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, cardholderId)).limit(1);
     if (existingCard[0]) {
       await pool.query(
-        `UPDATE stripe_cards SET last4 = $1, status = $2, updated_at = NOW() WHERE id = $3`,
-        [lastDigits, state, existingCard[0].id],
+        `UPDATE stripe_cards SET last4 = $1, status = $2, expiry = $3, virtual = $4, product_code = $5 WHERE id = $6`,
+        [lastDigits, state, expiry, virtual, productCode, existingCard[0].id],
       );
     } else {
       await db.insert(stripeCards).values({
@@ -596,6 +599,9 @@ export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
         stripeCardId: cardId,
         last4: lastDigits || "",
         status: state,
+        expiry,
+        virtual,
+        productCode,
       } as any);
     }
 
@@ -621,6 +627,15 @@ async function ensureColumns(): Promise<void> {
         ADD COLUMN IF NOT EXISTS revolut_transaction_id TEXT
     `);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_revolut_txn ON expenses (revolut_transaction_id) WHERE revolut_transaction_id IS NOT NULL`);
+    // Revolut card detail extras — populated by autoAssignRevolutCards
+    // from the GET /cards response. Surfaced on the My Card page so the
+    // card visual shows expiry + Virtual/Physical alongside last 4.
+    await pool.query(`
+      ALTER TABLE stripe_cards
+        ADD COLUMN IF NOT EXISTS expiry TEXT,
+        ADD COLUMN IF NOT EXISTS virtual BOOLEAN,
+        ADD COLUMN IF NOT EXISTS product_code TEXT
+    `);
     _migrated = true;
   } catch (err: any) {
     if (err?.code !== "42P01") console.warn("[revolut] migration:", err?.message);

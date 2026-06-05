@@ -15,7 +15,7 @@
  */
 import type { Express, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAttendees, crmContacts, users as usersTable } from "@shared/schema";
 import { eq, desc, and, gte, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";

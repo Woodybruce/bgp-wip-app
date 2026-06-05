@@ -2910,6 +2910,14 @@ export const stripeCards = pgTable("stripe_cards", {
   stripeCardId: text("stripe_card_id").notNull().unique(),
   last4: text("last4"),
   status: text("status").notNull().default("active"),  // active | inactive | canceled
+  // Revolut Business extras (columns added via auto-migrate in
+  // server/revolut.ts). Surfaced on My Card so the card visual looks
+  // like a real card — expiry "MM/YYYY", virtual/physical flag, product
+  // code (BPD = Business Prepaid Debit, VWE = physical wave). Nullable
+  // for legacy Stripe-only rows.
+  expiry: text("expiry"),
+  virtual: boolean("virtual"),
+  productCode: text("product_code"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

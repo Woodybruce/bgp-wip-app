@@ -68,7 +68,13 @@ interface MyCardholder {
   monthlyLimit: number; dailyLimit: number; singleTxLimit: number;
   status: "active" | "inactive";
 }
-interface MyCard { id: string; last4: string; status: string; }
+interface MyCard {
+  id: string; last4: string; status: string;
+  // Revolut-only extras (null on the legacy Stripe Issuing path).
+  expiry?: string | null;
+  virtual?: boolean | null;
+  productCode?: string | null;
+}
 interface MySummary {
   monthlySpendPence: number;
   monthlyLimitPence: number;
@@ -1037,7 +1043,7 @@ export default function MobileExpenses() {
           <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 text-white p-4 shadow-sm">
             <div className="flex items-start justify-between">
               <div>
-                <div className="text-[10px] uppercase tracking-wider opacity-70">BGP Card</div>
+                <div className="text-[10px] uppercase tracking-wider opacity-70">BGP {data.card?.virtual === false ? "Physical" : "Virtual"} Card</div>
                 <div className="text-sm font-semibold mt-0.5">{data.cardholder.userName}</div>
               </div>
               {data.cardholder.status === "active" ? (
@@ -1047,6 +1053,9 @@ export default function MobileExpenses() {
               )}
             </div>
             <div className="font-mono text-base tracking-widest mt-3">•••• •••• •••• {data.card?.last4 || "0000"}</div>
+            {data.card?.expiry && (
+              <div className="text-[10px] uppercase tracking-wider opacity-60 mt-1">Expires {data.card.expiry}</div>
+            )}
             <div className="flex items-end justify-between gap-3 mt-3">
               <div>
                 <div className="text-[10px] uppercase tracking-wider opacity-60">This month</div>

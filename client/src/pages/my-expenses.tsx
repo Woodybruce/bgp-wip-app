@@ -47,7 +47,7 @@ interface Cardholder {
 }
 interface MyData {
   cardholder: Cardholder | null;
-  card: { id: string; last4: string; status: string } | null;
+  card: { id: string; last4: string; status: string; expiry?: string | null; virtual?: boolean | null; productCode?: string | null } | null;
   expenses: Expense[];
   summary: {
     monthlySpendPence: number;
@@ -231,7 +231,7 @@ export default function MyExpenses() {
           <CardContent className="p-6 space-y-6">
             <div className="flex items-start justify-between">
               <div>
-                <div className="text-xs uppercase tracking-wider opacity-70">BGP Virtual Card</div>
+                <div className="text-xs uppercase tracking-wider opacity-70">BGP {card?.virtual === false ? "Physical" : "Virtual"} Card</div>
                 <div className="text-xl font-semibold mt-1">{cardholder.userName}</div>
               </div>
               {/* Status comes from the cardholder, not a Stripe card row —
@@ -247,8 +247,11 @@ export default function MyExpenses() {
             <div>
               <div className="font-mono text-2xl tracking-widest">•••• •••• •••• {card?.last4 || "0000"}</div>
               <div className="flex gap-6 mt-3 text-xs opacity-80">
-                <div>MONTHLY LIMIT: {fmt(cardholder.monthlyLimit)}</div>
-                <div>DAILY LIMIT: {fmt(cardholder.dailyLimit)}</div>
+                {card?.expiry && (
+                  <div>EXPIRES: {card.expiry}</div>
+                )}
+                <div>MONTHLY: {fmt(cardholder.monthlyLimit)}</div>
+                <div>DAILY: {fmt(cardholder.dailyLimit)}</div>
               </div>
             </div>
             <div className="flex gap-2 pt-2">
