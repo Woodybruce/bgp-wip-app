@@ -28,7 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Link } from "wouter";
 import {
   ChevronLeft, Loader2, Inbox, CheckCircle2, AlertCircle, Receipt, X,
-  TrendingUp, Users,
+  TrendingUp, Users, Snowflake, Banknote,
 } from "lucide-react";
 
 const fmt = (p: number) => `£${((p || 0) / 100).toFixed(2)}`;
@@ -437,10 +437,127 @@ function ApprovalRow({ r, busy, onApprove, onReject }: { r: PendingExpense; busy
   );
 }
 
+// ─── Payroll tab ─────────────────────────────────────────────────────────
+// What's been marked personal this month and needs deducting from
+// payroll, plus a "Run month-end freeze now" button for testing the
+// freeze sweep without waiting for the 1st.
+
+interface PayrollPayload {
+  month: string;
+  totalPence: number;
+  groups: Array<{ userId: string | null; userName: string; totalPence: number; rows: Array<{ id: string; merchant: string | null; amountPence: number; transactionDate: string | null }> }>;
+}
+
+function PayrollTab() {
+  const { toast } = useToast();
+  const [month, setMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  });
+
+  const { data, isLoading } = useQuery<PayrollPayload>({
+    queryKey: ["/api/expenses/admin/payroll-deductions", month],
+    queryFn: async () => {
+      const r = await fetch(`/api/expenses/admin/payroll-deductions?month=${encodeURIComponent(month)}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+  });
+
+  const runFreezeMutation = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/expenses/admin/run-month-end-freeze", {})).json(),
+    onSuccess: (json: any) => {
+      const n = json?.frozen?.length || 0;
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
+      toast({
+        title: n > 0 ? `Froze ${n} card(s)` : "Nothing to freeze",
+        description: n > 0
+          ? json.frozen.map((f: any) => `${f.userName} · ${f.blockingCount} missing`).join("\n")
+          : `${json?.skipped || 0} cardholders checked — all clear or exempt`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Sweep failed", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="px-4 pb-8 space-y-4">
+      {/* Month picker */}
+      <div className="flex items-center gap-2">
+        <input
+          type="month"
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          className="flex-1 h-10 px-3 rounded-lg border border-border bg-background text-sm"
+          data-testid="m-admin-payroll-month"
+        />
+      </div>
+
+      {/* Run freeze sweep — admin testing helper */}
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+        <div className="flex items-start gap-2">
+          <Snowflake className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-amber-900">Month-end freeze sweep</div>
+            <p className="text-[11px] text-amber-800 mt-0.5">
+              Runs automatically on the 1st of each month at 09:00 UTC. Freezes any non-admin cardholder with a Revolut swipe older than 3 days still missing a receipt (and ≥ £10).
+            </p>
+            <button
+              type="button"
+              onClick={() => runFreezeMutation.mutate()}
+              disabled={runFreezeMutation.isPending}
+              className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-amber-600 text-white text-[12px] font-semibold active:scale-95 transition-transform disabled:opacity-60"
+              data-testid="m-admin-run-freeze"
+            >
+              {runFreezeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Snowflake className="w-3.5 h-3.5" />}
+              Run sweep now
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Payroll deductions */}
+      <section>
+        <div className="flex items-baseline justify-between mb-2">
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Banknote className="w-3.5 h-3.5" /> Payroll deductions
+          </h2>
+          {data && <span className="text-sm font-bold font-mono">{fmt(data.totalPence)}</span>}
+        </div>
+        {isLoading ? (
+          <div className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>
+        ) : !data || data.groups.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-6">
+            Nothing marked personal in {month}. When a user marks an expense personal it shows up here for payroll.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {data.groups.map((g) => (
+              <div key={g.userId || g.userName} className="rounded-2xl border border-border bg-card p-3" data-testid={`m-admin-payroll-${g.userId || g.userName}`}>
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <span className="text-sm font-semibold truncate pr-2">{g.userName}</span>
+                  <span className="font-mono text-sm font-bold shrink-0">{fmt(g.totalPence)}</span>
+                </div>
+                <div className="space-y-0.5">
+                  {g.rows.map((r) => (
+                    <div key={r.id} className="text-[11px] text-muted-foreground flex items-center justify-between gap-2">
+                      <span className="truncate">{r.merchant || "—"} · {fmtDate(r.transactionDate)}</span>
+                      <span className="font-mono shrink-0">{fmt(r.amountPence)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 // ─── Page shell ────────────────────────────────────────────────────────────
 
 export default function MobileAdminExpenses() {
-  const [tab, setTab] = useState<"spend" | "approvals">("spend");
+  const [tab, setTab] = useState<"spend" | "approvals" | "payroll">("spend");
   const { data: user, isLoading: userLoading } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
   // Pending count for the Approvals tab badge.
@@ -479,7 +596,7 @@ export default function MobileAdminExpenses() {
 
       {/* Tab toggle */}
       <div className="px-4 pt-3">
-        <div className="flex rounded-full bg-muted p-1 text-sm">
+        <div className="flex rounded-full bg-muted p-1 text-[13px]">
           <button
             type="button"
             onClick={() => setTab("spend")}
@@ -491,7 +608,7 @@ export default function MobileAdminExpenses() {
           <button
             type="button"
             onClick={() => setTab("approvals")}
-            className={`flex-1 py-2 rounded-full font-medium transition-colors flex items-center justify-center gap-1.5 ${tab === "approvals" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+            className={`flex-1 py-2 rounded-full font-medium transition-colors flex items-center justify-center gap-1 ${tab === "approvals" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
             data-testid="m-admin-tab-approvals"
           >
             Approvals
@@ -501,11 +618,19 @@ export default function MobileAdminExpenses() {
               </span>
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("payroll")}
+            className={`flex-1 py-2 rounded-full font-medium transition-colors ${tab === "payroll" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+            data-testid="m-admin-tab-payroll"
+          >
+            Payroll
+          </button>
         </div>
       </div>
 
       <div className="pt-4">
-        {tab === "spend" ? <SpendTab /> : <ApprovalsTab />}
+        {tab === "spend" ? <SpendTab /> : tab === "approvals" ? <ApprovalsTab /> : <PayrollTab />}
       </div>
     </div>
   );

@@ -163,6 +163,17 @@ export function startExpenseCron(): void {
     if (date === 28 && hour === 9) {
       runMonthlyApproverDigest().catch(e => console.error("[expense-cron] monthly digest failed:", e?.message));
     }
+
+    // 1st of the month 09:00 UTC — month-end card freeze sweep. Anyone
+    // with a Revolut card swipe older than 3 days still missing a receipt
+    // (and ≥ £10, not personal, not an admin) gets their card frozen
+    // until they upload the receipt or mark it personal.
+    if (date === 1 && hour === 9) {
+      import("./expense-freeze")
+        .then(m => m.runMonthEndFreezeSweep())
+        .then(r => console.log(`[expense-cron] month-end freeze: ${r.frozen.length} frozen, ${r.skipped} clean/exempt`))
+        .catch(e => console.error("[expense-cron] month-end freeze failed:", e?.message));
+    }
   }, 60 * 60 * 1000);
 
   // Revolut safety-net sync — every 10 minutes, pull anything from the
@@ -189,7 +200,7 @@ export function startExpenseCron(): void {
       .catch(e => console.warn("[expense-cron] revolut startup sync failed:", e?.message));
   }, 30_000);
 
-  console.log("[expense-cron] scheduled — weekly Mon 09:00 UTC + monthly 28th 09:00 UTC + revolut every 10min");
+  console.log("[expense-cron] scheduled — weekly Mon 09:00 UTC + monthly 28th 09:00 UTC + month-end freeze 1st 09:00 UTC + revolut every 10min");
 }
 
 // Manual fire helpers — exported for admin "run now" endpoints if added.
