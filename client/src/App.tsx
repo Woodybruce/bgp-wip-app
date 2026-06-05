@@ -83,6 +83,7 @@ const AddinsPage = lazy(() => import("@/pages/addins"));
 const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
 const MyExpenses = lazy(() => import("@/pages/my-expenses"));
 const MobileExpenses = lazy(() => import("@/pages/mobile-expenses"));
+const MobileAdminExpenses = lazy(() => import("@/pages/mobile-admin-expenses"));
 const MobileImages = lazy(() => import("@/pages/mobile-images"));
 const ExpensesApprovals = lazy(() => import("@/pages/expenses-approvals"));
 const ExpensesRevolut = lazy(() => import("@/pages/expenses-revolut"));
@@ -267,6 +268,7 @@ function Router() {
       <Route path="/expenses/revolut" component={ExpensesRevolut} />
       <Route path="/my-expenses" component={MyExpenses} />
       <Route path="/m/expenses" component={MobileExpenses} />
+      <Route path="/m/team-expenses" component={MobileAdminExpenses} />
       <Route path="/m/images" component={MobileImages} />
       <Route path="/hr" component={HRPage} />
       <Route path="/hr/:userId">{(params) => <HRPage />}</Route>
