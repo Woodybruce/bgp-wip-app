@@ -914,6 +914,74 @@ export function setupRevolutRoutes(app: Express): void {
     }
   });
 
+  // Diagnostic — Revolut's "code invalid/expired" is famously ambiguous.
+  // It returns the same message when the auth code legitimately expired
+  // (60-120s lifetime), when the JWT issuer doesn't match the cert's
+  // configured JWT URL, when the client_id is wrong, when the private
+  // key in Railway doesn't match the public cert uploaded to Revolut,
+  // and when the env var has its PEM newlines mangled. This endpoint
+  // checks each of those without burning an auth code.
+  app.get("/api/revolut/diagnose", requireAdmin, async (_req: Request, res: Response) => {
+    const out: any = {};
+    out.env = {
+      REVOLUT_CLIENT_ID: process.env.REVOLUT_CLIENT_ID ? `${process.env.REVOLUT_CLIENT_ID.slice(0, 8)}…${process.env.REVOLUT_CLIENT_ID.slice(-4)}` : null,
+      REVOLUT_JWT_ISSUER: process.env.REVOLUT_JWT_ISSUER || null,
+      REVOLUT_ENV: process.env.REVOLUT_ENV || "(unset → defaults to sandbox)",
+      REVOLUT_JWT_PRIVATE_KEY_set: !!process.env.REVOLUT_JWT_PRIVATE_KEY,
+      REVOLUT_JWT_PRIVATE_KEY_len: process.env.REVOLUT_JWT_PRIVATE_KEY?.length || 0,
+    };
+
+    const cfg = getConfig();
+    if (!cfg) {
+      out.config = { ok: false, reason: "getConfig() returned null — one of CLIENT_ID/PRIVATE_KEY/ISSUER missing" };
+      return res.json(out);
+    }
+    out.config = { ok: true, env: cfg.env, issuer: cfg.issuer, clientIdPrefix: cfg.clientId.slice(0, 8) };
+
+    // Private-key sanity: does the PEM parse? If newlines were mangled
+    // in Railway (raw "\n" vs actual newlines vs missing header line),
+    // node's crypto rejects it before any HTTP call.
+    try {
+      const k = crypto.createPrivateKey(cfg.privateKeyPem);
+      out.privateKey = {
+        parses: true,
+        type: k.asymmetricKeyType,
+        bits: (k as any).asymmetricKeyDetails?.modulusLength || null,
+        sha256: crypto.createHash("sha256").update(k.export({ type: "pkcs8", format: "der" })).digest("hex").slice(0, 16) + "…",
+      };
+    } catch (e: any) {
+      out.privateKey = { parses: false, error: e?.message };
+    }
+
+    // JWT signing dry-run: build the same JWT the exchange uses and
+    // surface the decoded payload so we can eyeball iss/sub/aud.
+    try {
+      const jwt = signClientAssertion(cfg);
+      const [, payloadB64] = jwt.split(".");
+      const payload = JSON.parse(Buffer.from(payloadB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString());
+      out.jwt = { signed: true, header: { alg: "RS256", typ: "JWT" }, payload, length: jwt.length };
+    } catch (e: any) {
+      out.jwt = { signed: false, error: e?.message };
+    }
+
+    // Already-bootstrapped probe: if we have a refresh token, try a
+    // /accounts call — non-destructive, no code burned. Tells us
+    // whether the JWT+cert pair are actually accepted by Revolut.
+    const rt = await readSetting<string>(SETTINGS_KEYS.refreshToken);
+    if (rt) {
+      try {
+        const accounts = await api<any[]>(`/accounts`);
+        out.liveProbe = { ok: true, accounts: Array.isArray(accounts) ? accounts.length : 0 };
+      } catch (e: any) {
+        out.liveProbe = { ok: false, error: e?.message };
+      }
+    } else {
+      out.liveProbe = { ok: false, reason: "no refresh_token stored yet — bootstrap not complete" };
+    }
+
+    res.json(out);
+  });
+
   app.post("/api/revolut/bootstrap", requireAdmin, async (req: Request, res: Response) => {
     try {
       const code = String(req.body?.code || "").trim();
