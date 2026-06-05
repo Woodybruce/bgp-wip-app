@@ -168,8 +168,13 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiApplied, setAiApplied] = useState(false);
+  // Free-text reply the user types when the AI couldn't infer the
+  // business purpose from the calendar — e.g. 'beers with my Wingstop
+  // investors'. Sent back into auto-classify so Claude can use it as
+  // ground truth and stop asking the same question.
+  const [aiUserReply, setAiUserReply] = useState("");
 
-  const runClassify = (expenseId: string) => {
+  const runClassify = (expenseId: string, userReply?: string) => {
     setAiSuggestion(null);
     setAiError(null);
     setAiApplied(false);
@@ -180,6 +185,8 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
       method: "POST",
       credentials: "include",
       signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userReply: userReply || null }),
     })
       .then((r) => r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b?.error || `HTTP ${r.status}`))))
       .then((s: AutoClassifyResult) => {
@@ -212,6 +219,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAiSuggestion(null);
     setAiError(null);
     setAiApplied(false);
+    setAiUserReply("");
     // Always fire on sheet open unless already locked in Xero.
     if (expense.xeroExpenseId) return;
     runClassify(expense.id);
@@ -433,9 +441,39 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
               )}
 
               {aiSuggestion?.followUpQuestion && (
-                <div className="rounded-lg bg-white dark:bg-violet-950 border border-violet-200 dark:border-violet-800 p-2.5">
-                  <div className="text-[10px] uppercase tracking-wider font-semibold text-violet-600 mb-0.5">Question</div>
-                  <p className="text-[12px] text-foreground">{aiSuggestion.followUpQuestion}</p>
+                <div className="rounded-lg bg-white dark:bg-violet-950 border border-violet-200 dark:border-violet-800 p-2.5 space-y-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-semibold text-violet-600 mb-0.5">Question</div>
+                    <p className="text-[12px] text-foreground">{aiSuggestion.followUpQuestion}</p>
+                  </div>
+                  {/* Reply box — free text. On send, re-runs auto-classify
+                      with the reply as ground-truth context. Claude will
+                      use it to fill category / purpose / attendees and
+                      should drop the question. */}
+                  <div className="flex gap-1.5">
+                    <Textarea
+                      value={aiUserReply}
+                      onChange={(e) => setAiUserReply(e.target.value)}
+                      placeholder="e.g. Beers with the Wingstop investors after the meeting"
+                      rows={2}
+                      className="text-[12px] min-h-[44px] resize-none"
+                      data-testid="m-ai-reply"
+                    />
+                    <button
+                      type="button"
+                      disabled={!aiUserReply.trim() || aiLoading || !expense}
+                      onClick={() => {
+                        if (!expense) return;
+                        const reply = aiUserReply.trim();
+                        runClassify(expense.id, reply);
+                        setAiUserReply("");
+                      }}
+                      className="shrink-0 self-end px-3 h-9 rounded-md bg-violet-600 text-white text-xs font-medium active:bg-violet-700 disabled:opacity-50"
+                      data-testid="m-ai-reply-send"
+                    >
+                      {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
+                    </button>
+                  </div>
                 </div>
               )}
 

@@ -130,7 +130,7 @@ async function matchAttendeesToCrmContacts(
   return rows;
 }
 
-export async function autoClassifyExpense(expenseId: string, fallbackUserId?: string | null): Promise<AutoClassifyResult> {
+export async function autoClassifyExpense(expenseId: string, fallbackUserId?: string | null, userReply?: string | null): Promise<AutoClassifyResult> {
   const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
   if (!exp) throw new Error("Expense not found");
 
@@ -186,11 +186,21 @@ export async function autoClassifyExpense(expenseId: string, fallbackUserId?: st
     `For the businessPurpose, write ONE clear sentence describing what this was for. Reference the calendar ` +
     `subject if relevant. Don't invent attendees not on the calendar.\n\n` +
     `For attendees, list ONLY contact ids from the matchedContacts array — never guess. If no match, leave empty.\n\n` +
+    `If the user has supplied a userReply (free-text answer to your previous question), TREAT IT AS GROUND TRUTH. ` +
+    `Use it to pick the category, write the businessPurpose, and match attendees against matchedContacts by name (e.g. ` +
+    `if the reply says "beers with the Wingstop investors", look for matchedContacts containing "Wingstop" in name or ` +
+    `email domain). Set followUpQuestion to null unless the reply itself was ambiguous.\n\n` +
     `If you genuinely can't tell what this is for (no calendar entry that matches the time, ambiguous merchant), ` +
     `set a one-line followUpQuestion. Otherwise leave it null.\n\n` +
     `Output ONLY valid JSON with this exact shape (no prose, no markdown):\n` +
     `{"category": string, "businessPurpose": string, "attendeeContactIds": string[], "followUpQuestion": string|null, "confidence": "high"|"medium"|"low", "reasoning": string, "matchedEventIndex": number|null}`;
 
+  // userReply is the free-text answer the user typed in response to the
+  // previous followUpQuestion. Pass it through to Claude so it can match
+  // names (e.g. 'beers with Wingstop investors') to the matchedContacts
+  // list, pick a category, and SHOULD NOT ask the same question again —
+  // followUpQuestion must be null when userReply is present unless the
+  // reply itself was ambiguous.
   const userPrompt = JSON.stringify({
     receipt: {
       merchant: exp.merchant,
@@ -200,6 +210,7 @@ export async function autoClassifyExpense(expenseId: string, fallbackUserId?: st
     },
     calendar: promptCalendar,
     matchedContacts: matchedContacts.map((c) => ({ id: c.id, name: c.name, email: c.email })),
+    userReply: userReply ? userReply.trim() : null,
   });
 
   let result: AutoClassifyResult = {
@@ -279,8 +290,9 @@ export function registerExpenseAutoClassifyRoutes(app: Express) {
     try {
       const expenseId = String(req.params.id);
       const sessionUserId = (req.session as any)?.userId || (req as any).tokenUserId || null;
-      console.log(`[expense-auto-classify] start ${expenseId} sessionUser=${sessionUserId}`);
-      const result = await autoClassifyExpense(expenseId, sessionUserId);
+      const userReply = typeof req.body?.userReply === "string" ? req.body.userReply : null;
+      console.log(`[expense-auto-classify] start ${expenseId} sessionUser=${sessionUserId} userReply=${userReply ? `"${userReply.slice(0, 80)}"` : "none"}`);
+      const result = await autoClassifyExpense(expenseId, sessionUserId, userReply);
       console.log(`[expense-auto-classify] done ${expenseId} in ${Date.now() - t0}ms confidence=${result.confidence} matchedEvent=${result.matchedCalendarEvent?.subject || "none"}`);
       res.json(result);
     } catch (err: any) {
