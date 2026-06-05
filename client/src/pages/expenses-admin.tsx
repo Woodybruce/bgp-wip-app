@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Link } from "wouter";
 import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check, Mail, ChevronRight } from "lucide-react";
 
 // React doesn't accept fragments directly inside a <tbody> when each
@@ -67,6 +68,7 @@ interface ExpenseRow {
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  attendeeContacts?: { id: string; name: string | null }[];
 }
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
@@ -122,6 +124,7 @@ export default function ExpensesAdmin() {
     byCardholder: Array<{ cardholderId: string; name: string; spentPence: number; monthlyLimit: number; utilisation: number; txCount: number; status: string }>;
     byCategory: Array<{ category: string; count: number; pence: number }>;
     byMonth: Array<{ month: string; count: number; pence: number }>;
+    byAttendee: Array<{ contactId: string; name: string; pence: number; count: number }>;
     range: { from: string; to: string };
   }>({
     queryKey: ["/api/expenses/admin/summary", rangeFrom.toISOString(), rangeTo.toISOString()],
@@ -337,27 +340,47 @@ export default function ExpensesAdmin() {
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                                      <th className="py-1 font-medium">Date</th>
-                                      <th className="py-1 font-medium">Merchant</th>
-                                      <th className="py-1 font-medium text-right">Amount</th>
-                                      <th className="py-1 font-medium">Category</th>
-                                      <th className="py-1 font-medium">Purpose / Attendees</th>
-                                      <th className="py-1 font-medium">Status</th>
+                                      <th className="py-1.5 pr-6 font-medium">Date</th>
+                                      <th className="py-1.5 pr-6 font-medium">Merchant</th>
+                                      <th className="py-1.5 pr-8 font-medium text-right">Amount</th>
+                                      <th className="py-1.5 pr-6 font-medium">Category</th>
+                                      <th className="py-1.5 pr-6 font-medium">Purpose</th>
+                                      <th className="py-1.5 pr-6 font-medium">Attendees</th>
+                                      <th className="py-1.5 pl-2 font-medium">Status</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {myExpenses.map(e => (
-                                      <tr key={e.id} className="border-t border-border/40">
-                                        <td className="py-1.5 text-muted-foreground whitespace-nowrap">
+                                      <tr key={e.id} className="border-t border-border/40 align-top">
+                                        <td className="py-2 pr-6 text-muted-foreground whitespace-nowrap">
                                           {e.transactionDate ? new Date(e.transactionDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
                                         </td>
-                                        <td className="py-1.5 font-medium">{e.merchant || "—"}</td>
-                                        <td className="py-1.5 text-right font-mono">{fmt(e.amountPence)}</td>
-                                        <td className="py-1.5 text-muted-foreground">{e.category || "—"}</td>
-                                        <td className="py-1.5 text-muted-foreground max-w-[300px] truncate" title={[e.businessPurpose, e.attendees].filter(Boolean).join(" · ")}>
-                                          {e.businessPurpose || e.attendees || "—"}
+                                        <td className="py-2 pr-6 font-medium whitespace-nowrap">{e.merchant || "—"}</td>
+                                        <td className="py-2 pr-8 text-right font-mono whitespace-nowrap">{fmt(e.amountPence)}</td>
+                                        <td className="py-2 pr-6 text-muted-foreground whitespace-nowrap">{e.category || "—"}</td>
+                                        <td className="py-2 pr-6 text-muted-foreground max-w-[260px]">
+                                          <span className="line-clamp-2" title={e.businessPurpose || ""}>{e.businessPurpose || "—"}</span>
                                         </td>
-                                        <td className="py-1.5">
+                                        <td className="py-2 pr-6 max-w-[200px]">
+                                          {e.attendeeContacts && e.attendeeContacts.length > 0 ? (
+                                            <div className="flex flex-wrap gap-1">
+                                              {e.attendeeContacts.map(a => (
+                                                <Link
+                                                  key={a.id}
+                                                  href={`/contacts/${a.id}`}
+                                                  className="inline-flex items-center px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 hover:bg-violet-100 text-[11px] whitespace-nowrap"
+                                                  title={`Open ${a.name || "contact"} in CRM`}
+                                                  onClick={(ev) => ev.stopPropagation()}
+                                                >
+                                                  {a.name || "Contact"}
+                                                </Link>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                          )}
+                                        </td>
+                                        <td className="py-2 pl-2 whitespace-nowrap">
                                           <DrilldownStatusBadge status={e.status} isPersonal={e.isPersonal} hasReceipt={!!e.receiptFilename} hasXero={!!e.xeroExpenseId} />
                                         </td>
                                       </tr>
@@ -630,12 +653,42 @@ export default function ExpensesAdmin() {
                       const pct = max > 0 ? Math.round((c.spentPence / max) * 100) : 0;
                       return (
                         <div key={c.cardholderId} className="flex items-center gap-3 text-xs">
-                          <div className="w-40 truncate">{c.name}</div>
+                          <div className="w-48 truncate">{c.name}</div>
                           <div className="flex-1 h-5 bg-muted rounded relative overflow-hidden">
                             <div className="absolute inset-y-0 left-0 bg-emerald-500/70" style={{ width: `${pct}%` }} />
                             <div className="absolute inset-0 flex items-center px-2 text-[10px] text-foreground/80">{c.txCount} tx</div>
                           </div>
                           <div className="font-mono w-20 text-right">{fmt(c.spentPence)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              {/* Who with — entertainment spend grouped by attendee
+                  (CRM contact). The full expense amount is attributed to
+                  each attendee, so this answers 'how much have we spent
+                  entertaining X' rather than a per-head split. Only rows
+                  with attendees appear, so it's naturally scoped to
+                  client/agent/staff entertainment. */}
+              <section>
+                <h3 className="text-sm font-semibold mb-2">Who with (entertainment)</h3>
+                {(!summary.byAttendee || summary.byAttendee.length === 0) ? (
+                  <p className="text-xs text-muted-foreground">No entertainment expenses with named attendees in this range.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {summary.byAttendee.map((a) => {
+                      const max = summary.byAttendee[0].pence;
+                      const pct = max > 0 ? Math.round((a.pence / max) * 100) : 0;
+                      return (
+                        <div key={a.contactId} className="flex items-center gap-3 text-xs">
+                          <div className="w-48 truncate">{a.name}</div>
+                          <div className="flex-1 h-5 bg-muted rounded relative overflow-hidden">
+                            <div className="absolute inset-y-0 left-0 bg-violet-500/70" style={{ width: `${pct}%` }} />
+                            <div className="absolute inset-0 flex items-center px-2 text-[10px] text-foreground/80">{a.count} {a.count === 1 ? "time" : "times"}</div>
+                          </div>
+                          <div className="font-mono w-20 text-right">{fmt(a.pence)}</div>
                         </div>
                       );
                     })}

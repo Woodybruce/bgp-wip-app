@@ -530,7 +530,27 @@ export function setupStripeIssuingRoutes(app: Express) {
   app.get("/api/expenses", requireAdmin, async (req: Request, res: Response) => {
     try {
       const rows = await db.select().from(expenses).orderBy(desc(expenses.transactionDate)).limit(200);
-      res.json(rows);
+      // Hydrate attendees with their CRM contact id + name so the admin
+      // drilldown can render each attendee as its own linked chip.
+      const ids = rows.map(r => r.id);
+      const attRows = ids.length > 0
+        ? await db
+            .select({
+              expenseId: expenseAttendees.expenseId,
+              contactId: expenseAttendees.contactId,
+              name: crmContacts.name,
+            })
+            .from(expenseAttendees)
+            .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
+            .where(inArray(expenseAttendees.expenseId, ids))
+        : [];
+      const byExpense = new Map<string, { id: string; name: string | null }[]>();
+      for (const a of attRows) {
+        if (!byExpense.has(a.expenseId)) byExpense.set(a.expenseId, []);
+        byExpense.get(a.expenseId)!.push({ id: a.contactId, name: a.name });
+      }
+      const enriched = rows.map(r => ({ ...r, attendeeContacts: byExpense.get(r.id) || [] }));
+      res.json(enriched);
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
@@ -1311,6 +1331,36 @@ export function setupStripeIssuingRoutes(app: Express) {
         .map(([month, v]) => ({ month, ...v }))
         .sort((a, b) => a.month.localeCompare(b.month));
 
+      // Spend "who with" — group by attendee. One expense can have many
+      // attendees; we attribute the FULL expense amount to each attendee
+      // (so "how much have we spent entertaining X" answers correctly,
+      // not an arbitrary split). Only entertainment rows carry attendees,
+      // so this naturally scopes to client/agent/staff entertainment.
+      const rangeIds = rangeExp.filter(e => !e.isPersonal).map(e => e.id);
+      const expAmount = new Map(rangeExp.map(e => [e.id, e.amountPence || 0]));
+      let byAttendee: Array<{ contactId: string; name: string; pence: number; count: number }> = [];
+      if (rangeIds.length > 0) {
+        const attendeeRows = await db
+          .select({
+            expenseId: expenseAttendees.expenseId,
+            contactId: expenseAttendees.contactId,
+            name: crmContacts.name,
+          })
+          .from(expenseAttendees)
+          .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
+          .where(inArray(expenseAttendees.expenseId, rangeIds));
+        const attMap: Record<string, { name: string; pence: number; count: number }> = {};
+        for (const a of attendeeRows) {
+          const amt = expAmount.get(a.expenseId) || 0;
+          if (!attMap[a.contactId]) attMap[a.contactId] = { name: a.name || "Unknown contact", pence: 0, count: 0 };
+          attMap[a.contactId].pence += amt;
+          attMap[a.contactId].count += 1;
+        }
+        byAttendee = Object.entries(attMap)
+          .map(([contactId, v]) => ({ contactId, ...v }))
+          .sort((a, b) => b.pence - a.pence);
+      }
+
       res.json({
         totalMonthPence,
         totalMonthCount,
@@ -1325,6 +1375,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         byCardholder: byCh,
         byCategory,
         byMonth,
+        byAttendee,
         range: { from: rangeFrom.toISOString(), to: rangeTo.toISOString() },
       });
     } catch (e: any) {

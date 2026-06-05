@@ -118,10 +118,17 @@ export default function MobileImages() {
   });
 
   const handleUploadChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const files = ev.target.files;
-    ev.target.value = "";
-    if (!files || files.length === 0) return;
-    const arr = Array.from(files).slice(0, 20);          // server cap is 20
+    // CRITICAL on iOS Safari: snapshot the FileList into an array BEFORE
+    // touching ev.target.value. Setting .value = "" empties the input's
+    // files list, and on iOS the FileList we already grabbed is a LIVE
+    // reference — clearing the input wipes it out from under us, leaving
+    // arr.length === 0 and the function silently returning. That was the
+    // "tap Add → pick photo → nothing happens" bug Woody hit on /m/images.
+    const fileList = ev.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const arr = Array.from(fileList).slice(0, 20); // server cap is 20
+    ev.target.value = ""; // safe now — arr is detached
+    if (arr.length === 0) return;
     setUploading(true);
     uploadMutation.mutate(arr);
   };
