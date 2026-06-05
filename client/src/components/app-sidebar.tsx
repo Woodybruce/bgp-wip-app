@@ -100,6 +100,7 @@ const coreNavBase = [
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Team", url: "/team", icon: UserCog, adminOnly: true },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
@@ -125,7 +126,8 @@ const microsoftNav = [
 
 const adminNavBase = [
   { title: "Expenses", url: "/expenses", icon: Receipt },
-  { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  // My Card moved up to the Core section (next to People & HR) — it's a
+  // staff-facing page, not an admin tool.
   // Studio tools parked here pending fixes — hidden from the main demo
   // nav, kept reachable for admins until they're ready for the firm.
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
@@ -488,6 +490,7 @@ export const mobileOverlayItems = [
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Team", url: "/team", icon: UserCog, adminOnly: true },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },

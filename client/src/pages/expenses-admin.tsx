@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Link } from "wouter";
 import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check, Mail, ChevronRight } from "lucide-react";
 
 // React doesn't accept fragments directly inside a <tbody> when each
@@ -67,6 +68,7 @@ interface ExpenseRow {
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  attendeeContacts?: { id: string; name: string | null }[];
 }
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
@@ -338,27 +340,47 @@ export default function ExpensesAdmin() {
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                                      <th className="py-1 font-medium">Date</th>
-                                      <th className="py-1 font-medium">Merchant</th>
-                                      <th className="py-1 font-medium text-right">Amount</th>
-                                      <th className="py-1 font-medium">Category</th>
-                                      <th className="py-1 font-medium">Purpose / Attendees</th>
-                                      <th className="py-1 font-medium">Status</th>
+                                      <th className="py-1.5 pr-6 font-medium">Date</th>
+                                      <th className="py-1.5 pr-6 font-medium">Merchant</th>
+                                      <th className="py-1.5 pr-8 font-medium text-right">Amount</th>
+                                      <th className="py-1.5 pr-6 font-medium">Category</th>
+                                      <th className="py-1.5 pr-6 font-medium">Purpose</th>
+                                      <th className="py-1.5 pr-6 font-medium">Attendees</th>
+                                      <th className="py-1.5 pl-2 font-medium">Status</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {myExpenses.map(e => (
-                                      <tr key={e.id} className="border-t border-border/40">
-                                        <td className="py-1.5 text-muted-foreground whitespace-nowrap">
+                                      <tr key={e.id} className="border-t border-border/40 align-top">
+                                        <td className="py-2 pr-6 text-muted-foreground whitespace-nowrap">
                                           {e.transactionDate ? new Date(e.transactionDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
                                         </td>
-                                        <td className="py-1.5 font-medium">{e.merchant || "—"}</td>
-                                        <td className="py-1.5 text-right font-mono">{fmt(e.amountPence)}</td>
-                                        <td className="py-1.5 text-muted-foreground">{e.category || "—"}</td>
-                                        <td className="py-1.5 text-muted-foreground max-w-[300px] truncate" title={[e.businessPurpose, e.attendees].filter(Boolean).join(" · ")}>
-                                          {e.businessPurpose || e.attendees || "—"}
+                                        <td className="py-2 pr-6 font-medium whitespace-nowrap">{e.merchant || "—"}</td>
+                                        <td className="py-2 pr-8 text-right font-mono whitespace-nowrap">{fmt(e.amountPence)}</td>
+                                        <td className="py-2 pr-6 text-muted-foreground whitespace-nowrap">{e.category || "—"}</td>
+                                        <td className="py-2 pr-6 text-muted-foreground max-w-[260px]">
+                                          <span className="line-clamp-2" title={e.businessPurpose || ""}>{e.businessPurpose || "—"}</span>
                                         </td>
-                                        <td className="py-1.5">
+                                        <td className="py-2 pr-6 max-w-[200px]">
+                                          {e.attendeeContacts && e.attendeeContacts.length > 0 ? (
+                                            <div className="flex flex-wrap gap-1">
+                                              {e.attendeeContacts.map(a => (
+                                                <Link
+                                                  key={a.id}
+                                                  href={`/contacts/${a.id}`}
+                                                  className="inline-flex items-center px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 hover:bg-violet-100 text-[11px] whitespace-nowrap"
+                                                  title={`Open ${a.name || "contact"} in CRM`}
+                                                  onClick={(ev) => ev.stopPropagation()}
+                                                >
+                                                  {a.name || "Contact"}
+                                                </Link>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                          )}
+                                        </td>
+                                        <td className="py-2 pl-2 whitespace-nowrap">
                                           <DrilldownStatusBadge status={e.status} isPersonal={e.isPersonal} hasReceipt={!!e.receiptFilename} hasXero={!!e.xeroExpenseId} />
                                         </td>
                                       </tr>

@@ -537,7 +537,27 @@ export function setupStripeIssuingRoutes(app: Express) {
   app.get("/api/expenses", requireAdmin, async (req: Request, res: Response) => {
     try {
       const rows = await db.select().from(expenses).orderBy(desc(expenses.transactionDate)).limit(200);
-      res.json(rows);
+      // Hydrate attendees with their CRM contact id + name so the admin
+      // drilldown can render each attendee as its own linked chip.
+      const ids = rows.map(r => r.id);
+      const attRows = ids.length > 0
+        ? await db
+            .select({
+              expenseId: expenseAttendees.expenseId,
+              contactId: expenseAttendees.contactId,
+              name: crmContacts.name,
+            })
+            .from(expenseAttendees)
+            .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
+            .where(inArray(expenseAttendees.expenseId, ids))
+        : [];
+      const byExpense = new Map<string, { id: string; name: string | null }[]>();
+      for (const a of attRows) {
+        if (!byExpense.has(a.expenseId)) byExpense.set(a.expenseId, []);
+        byExpense.get(a.expenseId)!.push({ id: a.contactId, name: a.name });
+      }
+      const enriched = rows.map(r => ({ ...r, attendeeContacts: byExpense.get(r.id) || [] }));
+      res.json(enriched);
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
