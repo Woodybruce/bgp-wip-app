@@ -1,13 +1,32 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check, Mail } from "lucide-react";
+import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check, Mail, ChevronRight } from "lucide-react";
+
+// React doesn't accept fragments directly inside a <tbody> when each
+// 'logical row' has TWO real <tr> children (the row itself + its expand
+// row). This thin wrapper lets us return both without an outer element.
+const FragmentRows: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
+
+// Compact status pill for the expandable per-cardholder drilldown.
+// Named DrilldownStatusBadge because the file already has an
+// ExpenseStatusBadge with a different signature used elsewhere.
+function DrilldownStatusBadge({ status, isPersonal, hasReceipt, hasXero }: { status: string; isPersonal: boolean | null; hasReceipt: boolean; hasXero: boolean }) {
+  if (isPersonal) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">Personal</span>;
+  if (hasXero) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">In Xero</span>;
+  if (status === "approved") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">Approved</span>;
+  if (status === "pending_approval") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Pending approval</span>;
+  if (status === "pending_receipt") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-medium">{hasReceipt ? "Receipt added" : "Receipt needed"}</span>;
+  if (status === "rejected") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">Rejected</span>;
+  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{status}</span>;
+}
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ExpensesNavTabs } from "@/components/expenses-nav-tabs";
@@ -24,6 +43,15 @@ interface Cardholder {
   singleTxLimit: number;
   status: "active" | "inactive";
   createdAt: string;
+  // Joined from stripe_cards on the server side so Cardholders can show
+  // type + last 4 inline (the old Cards & Revolut tab is now folded in).
+  card?: {
+    last4: string | null;
+    expiry: string | null;
+    virtual: boolean | null;
+    productCode: string | null;
+    status: string;
+  } | null;
 }
 
 interface ExpenseRow {
@@ -49,6 +77,10 @@ export default function ExpensesAdmin() {
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Cardholder | null>(null);
   const [viewingCard, setViewingCard] = useState<Cardholder | null>(null);
+  // Spend by Cardholder rows are expandable — click to drill into the
+  // cardholder's individual expenses for the period. Set to the
+  // cardholder id of the open row (or null when collapsed).
+  const [expandedCardholderId, setExpandedCardholderId] = useState<string | null>(null);
 
   const { data: cardholders = [], isLoading: chLoading, refetch: refetchCh } = useQuery<Cardholder[]>({
     queryKey: ["/api/expenses/cardholders"],
@@ -174,16 +206,28 @@ export default function ExpensesAdmin() {
         </div>
       )}
 
-      {summary && summary.byCardholder.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Spend by Cardholder (this month)</CardTitle>
+      {/* Three tabs on one board (was three stacked cards). Same data,
+          much tighter. Spend by Cardholder rows expand to the per-person
+          drilldown so all three views are reachable without scrolling. */}
+      <Card>
+        <Tabs defaultValue="spend">
+          <CardHeader className="pb-0">
+            <TabsList className="grid grid-cols-3 w-full max-w-xl">
+              <TabsTrigger value="spend">Spend by cardholder</TabsTrigger>
+              <TabsTrigger value="cardholders">Cardholders ({cardholders.length})</TabsTrigger>
+              <TabsTrigger value="recent">Recent expenses ({expenses.length})</TabsTrigger>
+            </TabsList>
           </CardHeader>
+
+      <TabsContent value="spend" className="m-0">
+        {summary && summary.byCardholder.length > 0 ? (
           <CardContent className="p-0">
+            <p className="text-xs text-muted-foreground px-4 pt-3 pb-2">Click a row to see what each person bought, the category, and the approval state.</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30">
                   <tr className="text-left">
+                    <th className="px-4 py-2 font-medium w-8"></th>
                     <th className="px-4 py-2 font-medium">Name</th>
                     <th className="px-4 py-2 font-medium text-right">Spent</th>
                     <th className="px-4 py-2 font-medium text-right">Limit</th>
@@ -192,39 +236,98 @@ export default function ExpensesAdmin() {
                   </tr>
                 </thead>
                 <tbody>
-                  {summary.byCardholder.map(row => (
-                    <tr key={row.cardholderId} className="border-t">
-                      <td className="px-4 py-2 font-medium">{row.name}</td>
-                      <td className="px-4 py-2 text-right font-mono">{fmt(row.spentPence)}</td>
-                      <td className="px-4 py-2 text-right font-mono text-muted-foreground">{fmtLimit(row.monthlyLimit)}</td>
-                      <td className="px-4 py-2 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className={`h-full ${row.utilisation > 90 ? "bg-red-500" : row.utilisation > 70 ? "bg-amber-500" : "bg-emerald-500"}`}
-                              style={{ width: `${Math.min(100, row.utilisation)}%` }}
-                            />
-                          </div>
-                          <span className="font-mono text-xs w-10">{row.utilisation}%</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2 text-right text-muted-foreground">{row.txCount}</td>
-                    </tr>
-                  ))}
+                  {summary.byCardholder.map(row => {
+                    const isOpen = expandedCardholderId === row.cardholderId;
+                    // Filter the already-loaded expenses list down to this
+                    // cardholder for the current month — same window the
+                    // summary uses, so the row counts always tally.
+                    const startOfMonth = new Date();
+                    startOfMonth.setDate(1);
+                    startOfMonth.setHours(0, 0, 0, 0);
+                    const myExpenses = expenses
+                      .filter(e => e.cardholderId === row.cardholderId)
+                      .filter(e => e.transactionDate && new Date(e.transactionDate) >= startOfMonth)
+                      .sort((a, b) => (b.transactionDate || "").localeCompare(a.transactionDate || ""));
+                    return (
+                      <FragmentRows key={row.cardholderId}>
+                        <tr
+                          className={`border-t cursor-pointer hover:bg-muted/20 ${isOpen ? "bg-muted/30" : ""}`}
+                          onClick={() => setExpandedCardholderId(isOpen ? null : row.cardholderId)}
+                          data-testid={`spend-row-${row.cardholderId}`}
+                        >
+                          <td className="px-4 py-2 text-muted-foreground">
+                            <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                          </td>
+                          <td className="px-4 py-2 font-medium">{row.name}</td>
+                          <td className="px-4 py-2 text-right font-mono">{fmt(row.spentPence)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-muted-foreground">{fmtLimit(row.monthlyLimit)}</td>
+                          <td className="px-4 py-2 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full ${row.utilisation > 90 ? "bg-red-500" : row.utilisation > 70 ? "bg-amber-500" : "bg-emerald-500"}`}
+                                  style={{ width: `${Math.min(100, row.utilisation)}%` }}
+                                />
+                              </div>
+                              <span className="font-mono text-xs w-10">{row.utilisation}%</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-right text-muted-foreground">{row.txCount}</td>
+                        </tr>
+                        {isOpen && (
+                          <tr className="bg-muted/10">
+                            <td></td>
+                            <td colSpan={5} className="px-4 py-3">
+                              {myExpenses.length === 0 ? (
+                                <p className="text-xs text-muted-foreground">No expenses this month.</p>
+                              ) : (
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                                      <th className="py-1 font-medium">Date</th>
+                                      <th className="py-1 font-medium">Merchant</th>
+                                      <th className="py-1 font-medium text-right">Amount</th>
+                                      <th className="py-1 font-medium">Category</th>
+                                      <th className="py-1 font-medium">Purpose / Attendees</th>
+                                      <th className="py-1 font-medium">Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {myExpenses.map(e => (
+                                      <tr key={e.id} className="border-t border-border/40">
+                                        <td className="py-1.5 text-muted-foreground whitespace-nowrap">
+                                          {e.transactionDate ? new Date(e.transactionDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
+                                        </td>
+                                        <td className="py-1.5 font-medium">{e.merchant || "—"}</td>
+                                        <td className="py-1.5 text-right font-mono">{fmt(e.amountPence)}</td>
+                                        <td className="py-1.5 text-muted-foreground">{e.category || "—"}</td>
+                                        <td className="py-1.5 text-muted-foreground max-w-[300px] truncate" title={[e.businessPurpose, e.attendees].filter(Boolean).join(" · ")}>
+                                          {e.businessPurpose || e.attendees || "—"}
+                                        </td>
+                                        <td className="py-1.5">
+                                          <DrilldownStatusBadge status={e.status} isPersonal={e.isPersonal} hasReceipt={!!e.receiptFilename} hasXero={!!e.xeroExpenseId} />
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </FragmentRows>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </CardContent>
-        </Card>
-      )}
+        ) : (
+          <CardContent className="p-6 text-center text-sm text-muted-foreground">No spend yet this month.</CardContent>
+        )}
+      </TabsContent>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <CreditCard className="w-5 h-5" />
-            Cardholders ({cardholders.length})
-          </CardTitle>
-        </CardHeader>
+      <TabsContent value="cardholders" className="m-0">
         <CardContent className="p-0">
           {chLoading ? (
             <div className="p-6 text-center text-sm text-muted-foreground">Loading...</div>
@@ -238,11 +341,11 @@ export default function ExpensesAdmin() {
                 <thead className="bg-muted/30">
                   <tr className="text-left">
                     <th className="px-4 py-2 font-medium">Name</th>
+                    <th className="px-4 py-2 font-medium">Type</th>
+                    <th className="px-4 py-2 font-medium">Last 4</th>
                     <th className="px-4 py-2 font-medium">Email</th>
-                    <th className="px-4 py-2 font-medium">Phone</th>
                     <th className="px-4 py-2 font-medium text-right">Monthly</th>
                     <th className="px-4 py-2 font-medium text-right">Daily</th>
-                    <th className="px-4 py-2 font-medium text-right">Per-tx</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
@@ -251,11 +354,15 @@ export default function ExpensesAdmin() {
                   {cardholders.map((c) => (
                     <tr key={c.id} className="border-t hover:bg-muted/20" data-testid={`cardholder-${c.id}`}>
                       <td className="px-4 py-2 font-medium">{c.userName}</td>
+                      <td className="px-4 py-2 text-muted-foreground">
+                        {c.card?.virtual === false ? "Physical" : c.card?.virtual === true ? "Virtual" : "—"}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+                        {c.card?.last4 ? `•••• ${c.card.last4}` : "—"}
+                      </td>
                       <td className="px-4 py-2 text-muted-foreground">{c.email}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{c.phone || "—"}</td>
                       <td className="px-4 py-2 text-right font-mono">{fmtLimit(c.monthlyLimit)}</td>
                       <td className="px-4 py-2 text-right font-mono">{fmtLimit(c.dailyLimit)}</td>
-                      <td className="px-4 py-2 text-right font-mono">{fmtLimit(c.singleTxLimit)}</td>
                       <td className="px-4 py-2">
                         {c.status === "active" ? (
                           <Badge variant="outline" className="text-emerald-600 border-emerald-600/30">Active</Badge>
@@ -304,12 +411,9 @@ export default function ExpensesAdmin() {
             </div>
           )}
         </CardContent>
-      </Card>
+      </TabsContent>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Recent Expenses ({expenses.length})</CardTitle>
-        </CardHeader>
+      <TabsContent value="recent" className="m-0">
         <CardContent className="p-0">
           {expLoading ? (
             <div className="p-6 text-center text-sm text-muted-foreground">Loading...</div>
@@ -377,6 +481,8 @@ export default function ExpensesAdmin() {
             </div>
           )}
         </CardContent>
+      </TabsContent>
+        </Tabs>
       </Card>
 
       {editing && (

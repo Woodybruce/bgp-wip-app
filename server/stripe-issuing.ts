@@ -402,7 +402,29 @@ export function setupStripeIssuingRoutes(app: Express) {
   app.get("/api/expenses/cardholders", requireAdmin, async (req: Request, res: Response) => {
     try {
       const rows = await db.select().from(stripeCardholders).orderBy(stripeCardholders.userName);
-      res.json(rows);
+      // Join the cardholder's stripe_cards row so the admin Cardholders
+      // table can show card type + last 4 in the same view (was a
+      // separate Cards & Revolut tab — now merged).
+      const allCards = await db.select().from(stripeCards);
+      const cardByHolder = new Map<string, typeof allCards[number]>();
+      for (const c of allCards) {
+        // First card wins per cardholder (each cardholder has one card today).
+        if (!cardByHolder.has(c.cardholderId)) cardByHolder.set(c.cardholderId, c);
+      }
+      const enriched = rows.map(ch => {
+        const c = cardByHolder.get(ch.id) || null;
+        return {
+          ...ch,
+          card: c ? {
+            last4: c.last4 || null,
+            expiry: (c as any).expiry || null,
+            virtual: (c as any).virtual ?? null,
+            productCode: (c as any).productCode || null,
+            status: c.status,
+          } : null,
+        };
+      });
+      res.json(enriched);
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });

@@ -4,10 +4,14 @@
 // /expenses/approvals still works) — we just collapsed the sidebar.
 import { Link, useLocation } from "wouter";
 
+// Cards & Revolut was folded into 'All expenses' — the Cardholders table
+// there now shows card type + last 4, and the Spend by Cardholder rows
+// expand to the per-person breakdown. The /expenses/revolut route still
+// works (used for one-time bootstrap + webhook register) but it doesn't
+// need a tab anymore.
 const TABS = [
   { label: "All expenses", href: "/expenses" },
   { label: "Approvals", href: "/expenses/approvals" },
-  { label: "Cards & Revolut", href: "/expenses/revolut" },
 ];
 
 export function ExpensesNavTabs() {
