@@ -74,21 +74,25 @@ export default function MobileImages() {
       const r = await fetch("/api/image-studio/upload", { method: "POST", credentials: "include", body: fd });
       const body = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
-      // Server returns the inserted row(s) directly. Pull every field we
-      // need to render the edit sheet from the response itself — fishing
-      // it back out of the gallery cache was racy when invalidate hadn't
-      // finished refetching, which made "upload then open editor" look
-      // like nothing happened.
-      const arr: StudioImage[] = Array.isArray(body) ? body : (body?.results || []);
+      // Server returns the raw Drizzle rows on success (or {results,failures}
+      // on partial). We only need the ids back — the gallery refetch below
+      // gives us properly-shaped StudioImage rows for rendering. (Earlier
+      // attempt to use the upload response directly broke the edit sheet:
+      // the raw row's thumbnailData comes back as a Buffer-shaped object
+      // instead of the data URI the renderer expects.)
+      const results: { id: string }[] = Array.isArray(body) ? body : (body?.results || []);
       const failures: { filename: string; error: string }[] = Array.isArray(body) ? [] : (body?.failures || []);
-      return { results: arr, failures };
+      return { results, failures };
     },
     onSuccess: async ({ results, failures }) => {
-      // Invalidate WITHOUT awaiting so the success toast + edit sheet open
-      // immediately. The grid will catch up on its own refetch.
-      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      // Await the invalidate so the refetch lands BEFORE we read from
+      // cache — otherwise getQueryData returns the stale list and the
+      // edit sheet (and grid) appear not to update.
+      await queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       if (results.length === 1 && failures.length === 0) {
-        setSelected(results[0]);
+        const fresh = queryClient.getQueryData<StudioImage[]>(["/api/image-studio"]) || [];
+        const img = fresh.find((i) => i.id === results[0].id);
+        if (img) setSelected(img);
         toast({ title: "Uploaded — ready to edit with AI" });
       } else if (results.length > 0 && failures.length === 0) {
         toast({ title: `${results.length} photos uploaded`, description: "Tap any one to edit with AI." });
