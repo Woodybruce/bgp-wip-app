@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
+import { loadGoogleMaps } from "@/lib/google-maps-loader";
 import {
   Search,
   X,
@@ -3447,6 +3448,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const { toast } = useToast();
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  // Google Places autocomplete input rendered as an overlay on the map.
+  // The autocomplete instance + the marker we drop on the selected place
+  // both live in refs so we can clear them imperatively without re-rendering
+  // the entire map.
+  const placesSearchInputRef = useRef<HTMLInputElement>(null);
+  const placesAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const placesMarkerRef = useRef<L.Marker | null>(null);
+  const [placesSearchValue, setPlacesSearchValue] = useState("");
   const buildingLayerRef = useRef<L.LayerGroup | null>(null);
   const markerRef = useRef<L.CircleMarker | null>(null);
   const lastBoundsRef = useRef("");
@@ -3925,6 +3934,72 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     return () => {
       map.remove();
       mapRef.current = null;
+    };
+  }, []);
+
+  // Google Places autocomplete on the in-map search box. Loads the
+  // Google Maps JS API the same way the rest of the app does (shared
+  // singleton loader), then attaches an Autocomplete to the input ref.
+  // When the user picks a suggestion we flyTo the Leaflet map and drop a
+  // marker — no map provider change needed, Places works standalone.
+  useEffect(() => {
+    let cancelled = false;
+    let listener: google.maps.MapsEventListener | null = null;
+    let inputChangeListener: ((e: Event) => void) | null = null;
+
+    (async () => {
+      const ok = await loadGoogleMaps();
+      if (cancelled || !ok || !placesSearchInputRef.current) return;
+      if (typeof google === "undefined" || !google.maps?.places) return;
+
+      const ac = new google.maps.places.Autocomplete(placesSearchInputRef.current, {
+        types: ["geocode", "establishment"],
+        componentRestrictions: { country: "gb" },
+        fields: ["geometry", "formatted_address", "name", "place_id"],
+      });
+      placesAutocompleteRef.current = ac;
+
+      // Reflect the typed value into state so we know when to show the
+      // clear (X) button. Google's autocomplete writes back to the input
+      // imperatively on select, so we listen to native input events.
+      inputChangeListener = () => {
+        setPlacesSearchValue(placesSearchInputRef.current?.value || "");
+      };
+      placesSearchInputRef.current.addEventListener("input", inputChangeListener);
+
+      listener = ac.addListener("place_changed", () => {
+        const place = ac.getPlace();
+        const loc = place?.geometry?.location;
+        if (!loc || !mapRef.current) return;
+        const lat = loc.lat();
+        const lng = loc.lng();
+
+        mapRef.current.flyTo([lat, lng], 17, { duration: 0.8 });
+
+        if (placesMarkerRef.current) {
+          mapRef.current.removeLayer(placesMarkerRef.current);
+        }
+        placesMarkerRef.current = L.marker([lat, lng], {
+          icon: L.divIcon({
+            className: "places-search-pin",
+            html: `<div style="width:18px;height:18px;border-radius:50%;background:#4285f4;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
+            iconSize: [18, 18],
+            iconAnchor: [9, 9],
+          }),
+        }).addTo(mapRef.current);
+        const label = place.name || place.formatted_address || "Location";
+        placesMarkerRef.current.bindPopup(`<strong>${label}</strong>${place.formatted_address && place.name !== place.formatted_address ? `<br/><span style="color:#666;font-size:11px">${place.formatted_address}</span>` : ""}`, { closeButton: false, offset: L.point(0, -8) }).openPopup();
+        setPlacesSearchValue(placesSearchInputRef.current?.value || "");
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      if (listener) listener.remove();
+      if (inputChangeListener && placesSearchInputRef.current) {
+        placesSearchInputRef.current.removeEventListener("input", inputChangeListener);
+      }
+      placesAutocompleteRef.current = null;
     };
   }, []);
 
@@ -6229,6 +6304,44 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
       <div className="flex-1 relative">
         <div ref={mapContainerRef} className="w-full h-full" data-testid="edozo-map" />
+
+        {/* Google Places search — top-left so it doesn't collide with the
+            Download Plan + base-layer pills at top-right. Lets Woody jump
+            the map to any UK address from his phone instead of pinching
+            around. On mobile this sits at ~calc(100% - 240px) width so the
+            existing pills still fit on the same row; on desktop it's a
+            fixed 320px. The Leaflet flyTo + marker happen via the
+            handlePlaceSelected callback wired up in a useEffect. */}
+        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-260px)] sm:w-[320px] max-w-[420px]">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <input
+              ref={placesSearchInputRef}
+              type="search"
+              placeholder="Search any address or place…"
+              className="w-full h-10 pl-9 pr-9 rounded-full bg-white border border-border/60 shadow-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              data-testid="map-places-search"
+              autoComplete="off"
+            />
+            {placesSearchValue && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (placesSearchInputRef.current) placesSearchInputRef.current.value = "";
+                  setPlacesSearchValue("");
+                  if (placesMarkerRef.current && mapRef.current) {
+                    mapRef.current.removeLayer(placesMarkerRef.current);
+                    placesMarkerRef.current = null;
+                  }
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Map / Satellite base-layer pill toggle — top-right of the map */}
         <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2" data-testid="base-layer-toggle">
