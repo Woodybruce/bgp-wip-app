@@ -821,6 +821,11 @@ export default function MobileExpenses() {
 
   const { data, isLoading } = useQuery<MyData>({
     queryKey: ["/api/expenses/me"],
+    // Re-poll every 60s while the page is visible so the server-side
+    // auto-sync (every 10min) lands quickly enough that the user doesn't
+    // need to manually refresh.
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const uploadMutation = useMutation({
@@ -1014,33 +1019,9 @@ export default function MobileExpenses() {
                 <div className="text-xs opacity-90">{fmtPence(data.cardholder.monthlyLimit)}</div>
               </div>
             </div>
-            <div className="flex items-center justify-between gap-2 mt-3">
-              <p className="text-[10px] opacity-70 flex-1">Card number, CVC + freeze are in the Revolut app.</p>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const from = new Date(Date.now() - 30 * 86400_000).toISOString();
-                    const r = await fetch("/api/revolut/sync-transactions", {
-                      method: "POST",
-                      credentials: "include",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ from }),
-                    });
-                    const d = await r.json().catch(() => ({} as any));
-                    if (!r.ok) throw new Error(d?.error || `Sync failed (${r.status})`);
-                    queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-                    toast({ title: "Synced from Revolut", description: `${d.created || 0} new, ${d.updated || 0} updated` });
-                  } catch (e: any) {
-                    toast({ title: "Sync failed", description: e?.message, variant: "destructive" });
-                  }
-                }}
-                className="text-[10px] px-2.5 py-1 rounded-full bg-white/10 active:bg-white/20"
-                data-testid="mobile-revolut-sync"
-              >
-                Sync now
-              </button>
-            </div>
+            {/* Auto-syncing from Revolut every 10 minutes server-side, plus
+                live webhooks for instant swipes. No user action needed. */}
+            <p className="text-[10px] opacity-70 mt-3">Card number, CVC + freeze are in the Revolut app. Spend syncs automatically.</p>
           </div>
         </div>
       )}

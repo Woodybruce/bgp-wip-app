@@ -546,6 +546,45 @@ async function ensureColumns(): Promise<void> {
 
 // ─── Routes ──────────────────────────────────────────────────────────────
 
+// Shared backfill — pulls transactions from the last `lookbackMinutes`
+// minutes, runs autoAssign to refresh card mappings, then upserts each
+// txn. Idempotent. Used by both the manual sync endpoint and the
+// background cron so 'how to sync' has one implementation.
+export async function backfillRecentRevolutTransactions(opts: { lookbackMinutes?: number; limit?: number } = {}): Promise<{
+  total: number; created: number; updated: number; skipped: number;
+  cardsAssigned: number; cardsAlreadyMapped: number;
+}> {
+  const lookbackMinutes = opts.lookbackMinutes ?? 60 * 24 * 30; // default 30d
+  const limit = Math.min(opts.limit ?? 500, 1000);
+
+  const assign = await autoAssignRevolutCards().catch(err => {
+    console.warn("[revolut backfill] autoAssign failed:", err?.message);
+    return null;
+  });
+  const from = new Date(Date.now() - lookbackMinutes * 60 * 1000);
+  const params = new URLSearchParams({
+    from: from.toISOString(),
+    type: "card_payment",
+    count: String(limit),
+  });
+  const txns = await api<RevolutTransaction[]>(`/transactions?${params.toString()}`);
+  let created = 0, updated = 0, skipped = 0;
+  for (const t of txns) {
+    const r = await upsertExpenseFromTransaction(t).catch(err => {
+      console.warn(`[revolut backfill] upsert failed for txn ${t.id}:`, err?.message);
+      return null;
+    });
+    if (!r) skipped++;
+    else if (r.created) created++;
+    else updated++;
+  }
+  return {
+    total: txns.length, created, updated, skipped,
+    cardsAssigned: assign?.assigned || 0,
+    cardsAlreadyMapped: assign?.alreadyMapped || 0,
+  };
+}
+
 export function setupRevolutRoutes(app: Express): void {
   ensureColumns().catch(err => console.warn("[revolut] init:", err?.message));
 
@@ -721,47 +760,15 @@ export function setupRevolutRoutes(app: Express): void {
   // feed. Idempotent.
   app.post("/api/revolut/sync-transactions", requireAuth, async (req: Request, res: Response) => {
     try {
-      // Refresh the card->user mappings BEFORE upserting transactions —
-      // if a user's Revolut card was issued after their initial
-      // stripe_cardholders row was created, the link won't exist yet, and
-      // every txn would land as an orphan (cardholder_id NULL). Running
-      // autoAssign first means upsertExpenseFromTransaction can resolve
-      // the cardholder correctly on the very first try.
-      const assign = await autoAssignRevolutCards().catch(err => {
-        console.warn("[revolut sync] autoAssign failed:", err?.message);
-        return null;
+      const lookbackMinutes = req.body?.from
+        ? Math.max(1, Math.round((Date.now() - new Date(req.body.from).getTime()) / 60_000))
+        : 60 * 24 * 30;
+      const result = await backfillRecentRevolutTransactions({
+        lookbackMinutes,
+        limit: Number(req.body?.limit) || 500,
       });
-      const from = req.body?.from ? new Date(req.body.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const params = new URLSearchParams({
-        from: from.toISOString(),
-        type: "card_payment",
-        count: String(Math.min(Number(req.body?.limit) || 500, 1000)),
-      });
-      const txns = await api<RevolutTransaction[]>(`/transactions?${params.toString()}`);
-      let created = 0;
-      let updated = 0;
-      let skipped = 0;
-      for (const t of txns) {
-        const r = await upsertExpenseFromTransaction(t).catch(err => {
-          console.warn(`[revolut] upsert failed for txn ${t.id}:`, err?.message);
-          return null;
-        });
-        if (!r) skipped++;
-        else if (r.created) created++;
-        else updated++;
-      }
-      console.log(`[revolut sync] done assigned=${assign?.assigned || 0} alreadyMapped=${assign?.alreadyMapped || 0} unmatched=${assign?.unmatched?.length || 0} txns=${txns.length} created=${created} updated=${updated} skipped=${skipped}`);
-      res.json({
-        ok: true,
-        total: txns.length,
-        created,
-        updated,
-        skipped,
-        cardsAssigned: assign?.assigned || 0,
-        cardsAlreadyMapped: assign?.alreadyMapped || 0,
-        cardsUnmatched: assign?.unmatched || [],
-        from: from.toISOString(),
-      });
+      console.log(`[revolut sync] manual done txns=${result.total} created=${result.created} updated=${result.updated} skipped=${result.skipped}`);
+      res.json({ ok: true, ...result });
     } catch (e: any) {
       console.error("[revolut sync] crashed:", e?.message);
       res.status(500).json({ error: e?.message });
