@@ -1243,27 +1243,42 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Admin overview — totals + per-cardholder breakdown
-  app.get("/api/expenses/admin/summary", requireAdmin, async (_req: Request, res: Response) => {
+  app.get("/api/expenses/admin/summary", requireAdmin, async (req: Request, res: Response) => {
     try {
       const allCh = await db.select().from(stripeCardholders);
       const allExp = await db.select().from(expenses);
 
+      // Range params — from/to as ISO date strings. Default: this month.
+      // Lets the analysis view query any window without a new endpoint.
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
+      const fromParam = typeof req.query.from === "string" ? new Date(req.query.from) : startOfMonth;
+      const toParam = typeof req.query.to === "string" ? new Date(req.query.to) : new Date();
+      const rangeFrom = isNaN(fromParam.getTime()) ? startOfMonth : fromParam;
+      const rangeTo = isNaN(toParam.getTime()) ? new Date() : toParam;
 
+      const rangeExp = allExp.filter(e => {
+        if (!e.transactionDate) return false;
+        const d = new Date(e.transactionDate);
+        return d >= rangeFrom && d <= rangeTo;
+      });
       const monthExp = allExp.filter(e => e.transactionDate && new Date(e.transactionDate) >= startOfMonth);
 
+      const totalRangePence = rangeExp.filter(e => !e.isPersonal).reduce((s, e) => s + (e.amountPence || 0), 0);
+      const totalRangeCount = rangeExp.length;
+      // Keep the legacy 'Month' fields populated so existing summary tiles
+      // (which always show the current calendar month) don't change shape.
       const totalMonthPence = monthExp.filter(e => !e.isPersonal).reduce((s, e) => s + (e.amountPence || 0), 0);
       const totalMonthCount = monthExp.length;
       const pendingReceipts = allExp.filter(e => e.status === "pending_receipt").length;
       const pendingApproval = allExp.filter(e => e.status === "pending_approval").length;
-      const postedToXero = monthExp.filter(e => e.status === "posted_to_xero").length;
-      const personalFlagged = monthExp.filter(e => e.isPersonal).length;
+      const postedToXero = rangeExp.filter(e => e.status === "posted_to_xero").length;
+      const personalFlagged = rangeExp.filter(e => e.isPersonal).length;
 
-      // Spend by cardholder this month
+      // Spend by cardholder over the selected range.
       const byCh = allCh.map(ch => {
-        const exps = monthExp.filter(e => e.cardholderId === ch.id && !e.isPersonal);
+        const exps = rangeExp.filter(e => e.cardholderId === ch.id && !e.isPersonal);
         const spent = exps.reduce((s, e) => s + (e.amountPence || 0), 0);
         return {
           cardholderId: ch.id,
@@ -1276,9 +1291,9 @@ export function setupStripeIssuingRoutes(app: Express) {
         };
       }).sort((a, b) => b.spentPence - a.spentPence);
 
-      // Spend by category this month
+      // Spend by category over the selected range.
       const catMap: Record<string, { count: number; pence: number }> = {};
-      for (const e of monthExp.filter(e => !e.isPersonal)) {
+      for (const e of rangeExp.filter(e => !e.isPersonal)) {
         const k = e.category || "Uncategorised";
         if (!catMap[k]) catMap[k] = { count: 0, pence: 0 };
         catMap[k].count += 1;
@@ -1288,9 +1303,26 @@ export function setupStripeIssuingRoutes(app: Express) {
         .map(([category, v]) => ({ category, ...v }))
         .sort((a, b) => b.pence - a.pence);
 
+      // Spend by month over the selected range — gives the analysis view
+      // a temporal series without an extra endpoint. Keyed YYYY-MM so the
+      // client can sort chronologically and render any chart it wants.
+      const monthMap: Record<string, { count: number; pence: number }> = {};
+      for (const e of rangeExp.filter(e => !e.isPersonal)) {
+        const d = new Date(e.transactionDate!);
+        const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+        if (!monthMap[key]) monthMap[key] = { count: 0, pence: 0 };
+        monthMap[key].count += 1;
+        monthMap[key].pence += e.amountPence || 0;
+      }
+      const byMonth = Object.entries(monthMap)
+        .map(([month, v]) => ({ month, ...v }))
+        .sort((a, b) => a.month.localeCompare(b.month));
+
       res.json({
         totalMonthPence,
         totalMonthCount,
+        totalRangePence,
+        totalRangeCount,
         pendingReceipts,
         pendingApproval,
         postedToXero,
@@ -1299,6 +1331,8 @@ export function setupStripeIssuingRoutes(app: Express) {
         activeCards: allCh.filter(c => c.status === "active").length,
         byCardholder: byCh,
         byCategory,
+        byMonth,
+        range: { from: rangeFrom.toISOString(), to: rangeTo.toISOString() },
       });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
