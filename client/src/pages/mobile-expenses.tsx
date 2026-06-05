@@ -35,7 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
   X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
-  CreditCard,
+  CreditCard, Eye, EyeOff, Copy, Check,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -130,6 +130,102 @@ interface AutoClassifyResult {
   reasoning: string | null;
   matchedCalendarEvent: { subject: string; start: string; attendees: { email: string; name: string | null }[] } | null;
   matchedContactCount: number;
+}
+
+interface CardDetailsResult {
+  number?: string | null;
+  cvc?: string | null;
+  expMonth?: number;
+  expYear?: number;
+  last4?: string | null;
+  revolut?: boolean;
+  message?: string;
+}
+
+function MobileCardDetailsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery<CardDetailsResult>({
+    queryKey: ["/api/expenses/me/card-details"],
+    enabled: open,
+  });
+
+  const copy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 1500);
+    toast({ title: `${label} copied` });
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) { onClose(); setRevealed(false); } }}>
+      <SheetContent side="bottom" className="h-[90vh] p-0 rounded-t-2xl">
+        <SheetHeader className="px-4 pt-4 pb-2 flex flex-row items-center justify-between border-b">
+          <SheetTitle className="text-base">Card Details</SheetTitle>
+          <button onClick={onClose} className="p-1 -mr-1 active:bg-muted rounded-full" aria-label="Close"><X className="w-5 h-5" /></button>
+        </SheetHeader>
+        <div className="p-4 space-y-4">
+          {isLoading ? (
+            <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+          ) : data?.revolut ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">{data.message || "Card details are managed in the Revolut app."}</p>
+              <ol className="space-y-1.5 list-decimal pl-5 text-muted-foreground">
+                <li>Open the <strong>Revolut</strong> app</li>
+                <li>Go to the <strong>Cards</strong> tab</li>
+                <li>Tap your BGP card to view the number, expiry and CVC</li>
+              </ol>
+            </div>
+          ) : data?.number ? (
+            <>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Card Number</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <code className="flex-1 font-mono text-base bg-muted px-3 py-2 rounded">
+                    {revealed && data.number ? data.number.match(/.{1,4}/g)?.join(" ") : `•••• •••• •••• ${data.last4 || "0000"}`}
+                  </code>
+                  <button onClick={() => setRevealed(!revealed)} className="p-2 active:bg-muted rounded-md">
+                    {revealed ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                  {revealed && data.number && (
+                    <button onClick={() => copy(data.number!, "Number")} className="p-2 active:bg-muted rounded-md">
+                      {copied === "Number" ? <Check className="w-5 h-5 text-emerald-600" /> : <Copy className="w-5 h-5" />}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Expiry</label>
+                  <code className="block font-mono text-base bg-muted px-3 py-2 rounded mt-1">
+                    {data.expMonth ? String(data.expMonth).padStart(2, "0") : "—"} / {data.expYear ? String(data.expYear).slice(-2) : "—"}
+                  </code>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">CVC</label>
+                  <div className="flex items-center gap-1 mt-1">
+                    <code className="flex-1 font-mono text-base bg-muted px-3 py-2 rounded">
+                      {revealed && data.cvc ? data.cvc : "•••"}
+                    </code>
+                    {revealed && data.cvc && (
+                      <button onClick={() => copy(data.cvc!, "CVC")} className="p-2 active:bg-muted rounded-md">
+                        {copied === "CVC" ? <Check className="w-5 h-5 text-emerald-600" /> : <Copy className="w-5 h-5" />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground pt-2">Don't screenshot. Every reveal is audit-logged by Revolut.</p>
+            </>
+          ) : (
+            <div className="py-12 text-center text-sm text-muted-foreground">Couldn't load card details.</div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
@@ -856,6 +952,7 @@ export default function MobileExpenses() {
   const { toast } = useToast();
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<Expense | null>(null);
+  const [showCardDetails, setShowCardDetails] = useState(false);
   // Real DOM input refs — dynamically created <input>.click() doesn't
   // open the iOS PWA file picker reliably. Hidden inputs that already
   // exist in the tree do.
@@ -1066,9 +1163,21 @@ export default function MobileExpenses() {
                 <div className="text-xs opacity-90">{fmtPence(data.cardholder.monthlyLimit)}</div>
               </div>
             </div>
-            {/* Auto-syncing from Revolut every 10 minutes server-side, plus
-                live webhooks for instant swipes. No user action needed. */}
-            <p className="text-[10px] opacity-70 mt-3">Card number, CVC + freeze are in the Revolut app. Spend syncs automatically.</p>
+            {/* Reveal the full PAN + CVC from Revolut's
+                /cards/{id}/sensitive-details endpoint. Requires the
+                READ_SENSITIVE_CARD_DATA scope on the integration. */}
+            <div className="flex items-center justify-between gap-2 mt-3">
+              <p className="text-[10px] opacity-70 flex-1">Spend syncs automatically. Freeze in the Revolut app.</p>
+              <button
+                type="button"
+                onClick={() => setShowCardDetails(true)}
+                className="text-[10px] px-2.5 py-1 rounded-full bg-white/15 active:bg-white/25 flex items-center gap-1"
+                data-testid="mobile-show-card-details"
+              >
+                <Eye className="w-3 h-3" />
+                Show details
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1221,6 +1330,7 @@ export default function MobileExpenses() {
       </section>
 
       <EditExpenseSheet expense={editing} onClose={() => setEditing(null)} />
+      <MobileCardDetailsSheet open={showCardDetails} onClose={() => setShowCardDetails(false)} />
     </div>
   );
 }

@@ -881,12 +881,43 @@ export function setupStripeIssuingRoutes(app: Express) {
       const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
       if (!ch) return res.status(404).json({ error: "No card issued for this user" });
 
-      // Revolut-mapped cardholders have no Stripe card. Revolut's API doesn't
-      // expose the PAN/CVC anyway (those live in the Revolut app), so return
-      // a clear, non-error payload the dialog can render instead of throwing
-      // a Stripe 404 that surfaces as "Failed to load card details".
+      // Revolut path — fetch sensitive details from Revolut's dedicated
+      // endpoint. Token MUST have the sensitive-card-data permission;
+      // otherwise Revolut returns 403 and we surface that as the dialog
+      // message so the admin knows to enable the scope.
       if (!ch.stripeCardholderId) {
-        return res.json({ provider: "revolut", revolut: true, message: "Card details are managed in the Revolut app." });
+        const { rows } = await pool.query<{ stripe_card_id: string | null }>(
+          `SELECT stripe_card_id FROM stripe_cards WHERE cardholder_id = $1 LIMIT 1`,
+          [ch.id],
+        );
+        const revolutCardId = rows[0]?.stripe_card_id;
+        if (!revolutCardId) {
+          return res.json({ provider: "revolut", revolut: true, message: "No Revolut card mapped to your account yet — ask an admin to run Auto-assign on the Cards & Revolut page." });
+        }
+        try {
+          const { fetchRevolutSensitiveCardDetails } = await import("./revolut");
+          const details = await fetchRevolutSensitiveCardDetails(revolutCardId);
+          return res.json({
+            provider: "revolut",
+            number: details.pan,
+            cvc: details.cvv,
+            expMonth: details.expiryMonth,
+            expYear: details.expiryYear,
+            last4: details.pan ? details.pan.slice(-4) : null,
+            isTestMode: false,
+          });
+        } catch (revErr: any) {
+          console.warn(`[expenses/me/card-details] Revolut reveal failed for cardholder ${ch.id}: ${revErr?.message}`);
+          // Common cause: token lacks READ_SENSITIVE_CARD_DATA scope.
+          // Surface a useful message instead of a 500.
+          return res.json({
+            provider: "revolut",
+            revolut: true,
+            message: /403|forbidden|scope|permission/i.test(revErr?.message || "")
+              ? "Revolut API token doesn't have permission to reveal card details. Enable the 'sensitive card data' scope in Revolut Business → APIs → permissions, then re-bootstrap."
+              : `Couldn't fetch card details from Revolut: ${revErr?.message}`,
+          });
+        }
       }
 
       const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);

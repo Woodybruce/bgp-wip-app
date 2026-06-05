@@ -642,6 +642,46 @@ async function ensureColumns(): Promise<void> {
   }
 }
 
+// Reveal the full PAN + CVV + expiry for a Revolut card. The dedicated
+// /cards/{id}/sensitive-details endpoint (documented at
+// https://developer.revolut.com/docs/business/get-sensitive-card-details)
+// returns the card details that are otherwise app-only. Requires the
+// READ_SENSITIVE_CARD_DATA permission on the API certificate; if absent
+// Revolut returns 403 and we let the caller render that as a user-facing
+// 'enable the scope' message.
+//
+// Security:
+//   - This is the ONE place we ask Revolut for the PAN. Never cache it,
+//     never log it, never persist it. Callers are expected to gate on
+//     'cardholder owns the logged-in user' (or admin), which the route
+//     wrapping this function already does.
+//   - Revolut audit-logs every reveal — visible in their Business audit
+//     trail. Treat that as the canonical record.
+export async function fetchRevolutSensitiveCardDetails(revolutCardId: string): Promise<{
+  pan: string;
+  cvv: string;
+  expiryMonth: number | null;
+  expiryYear: number | null;
+}> {
+  const raw = await api<any>(`/cards/${encodeURIComponent(revolutCardId)}/sensitive-details`);
+  // Field names per Revolut docs — defensive fallbacks in case they ever
+  // tweak shape (e.g. pan vs card_number, cvv vs cvc).
+  const pan: string = raw.pan || raw.card_number || raw.number || "";
+  const cvv: string = raw.cvv || raw.cvc || raw.security_code || "";
+  // Revolut returns expiry either as a single "MM/YYYY" string OR as
+  // separate expiry_month / expiry_year fields. Normalise.
+  let expiryMonth: number | null = null;
+  let expiryYear: number | null = null;
+  if (typeof raw.expiry_month === "number") expiryMonth = raw.expiry_month;
+  if (typeof raw.expiry_year === "number") expiryYear = raw.expiry_year;
+  if ((!expiryMonth || !expiryYear) && typeof raw.expiry === "string") {
+    const m = raw.expiry.match(/^(\d{1,2})\/(\d{4})$/);
+    if (m) { expiryMonth = Number(m[1]); expiryYear = Number(m[2]); }
+  }
+  if (!pan) throw new Error("Revolut sensitive-details response had no PAN field");
+  return { pan, cvv, expiryMonth, expiryYear };
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────
 
 // Shared backfill — pulls transactions from the last `lookbackMinutes`
