@@ -653,7 +653,7 @@ export default function ExpensesAdmin() {
                       const pct = max > 0 ? Math.round((c.spentPence / max) * 100) : 0;
                       return (
                         <div key={c.cardholderId} className="flex items-center gap-3 text-xs">
-                          <div className="w-40 truncate">{c.name}</div>
+                          <div className="w-48 truncate">{c.name}</div>
                           <div className="flex-1 h-5 bg-muted rounded relative overflow-hidden">
                             <div className="absolute inset-y-0 left-0 bg-emerald-500/70" style={{ width: `${pct}%` }} />
                             <div className="absolute inset-0 flex items-center px-2 text-[10px] text-foreground/80">{c.txCount} tx</div>
