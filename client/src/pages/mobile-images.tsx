@@ -151,7 +151,10 @@ export default function MobileImages() {
       <input
         ref={uploadInputRef}
         type="file"
-        accept="image/*"
+        // image/* alone misses HEIC on some iOS versions when the file
+        // comes via the share sheet — list the extensions explicitly so
+        // every photo on the Camera Roll is selectable.
+        accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp"
         multiple
         className="hidden"
         onChange={handleUploadChange}

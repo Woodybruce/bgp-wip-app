@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { db } from "./db";
@@ -279,12 +279,37 @@ export async function readPersistedImage(localPath: string | null | undefined): 
 
 const imageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
+  // 50MB caters for iPhone Live Photos / 48MP / ProRAW captures, which
+  // routinely top 25MB and used to silently bounce on upload.
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) cb(null, true);
-    else cb(new Error("Only image files are allowed"));
+    const mime = (file.mimetype || "").toLowerCase();
+    const name = (file.originalname || "").toLowerCase();
+    if (mime.startsWith("image/")) return cb(null, true);
+    // iOS frequently sends HEIC (and sometimes JPEG/PNG via the share
+    // sheet) as application/octet-stream. Trust a known image extension
+    // — the HEIC→JPEG conversion downstream catches anything that isn't
+    // really an image and reports a clear error.
+    if (/\.(heic|heif|jpe?g|png|webp|gif|tiff?)$/i.test(name)) return cb(null, true);
+    cb(new Error(`File type not supported (mime=${mime || "unknown"}, name=${name || "unnamed"})`));
   },
 });
+
+// Run multer with explicit error capture so file-filter rejections + size-limit
+// hits come back as a clean JSON error instead of a default HTML 500. The
+// client just sees "Upload failed (500)" otherwise, with no way to know
+// whether to shrink the photo, switch off HEIC, or fix something else.
+function uploadImagesMw(req: Request, res: Response, next: NextFunction) {
+  imageUpload.array("images", 20)(req, res, (err: any) => {
+    if (!err) return next();
+    const code = err?.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    const msg = err?.code === "LIMIT_FILE_SIZE"
+      ? "That photo is too big (over 50MB). On iPhone try a smaller share size or turn off Live Photo."
+      : (err?.message || "Upload rejected");
+    console.warn(`[image-studio/upload] multer rejected: code=${err?.code} msg=${err?.message}`);
+    res.status(code).json({ error: msg, code: err?.code });
+  });
+}
 
 async function ensureTable() {
   await pool.query(`
@@ -1216,7 +1241,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/upload", requireAuth, imageUpload.array("images", 20), async (req: Request, res: Response) => {
+  app.post("/api/image-studio/upload", requireAuth, uploadImagesMw, async (req: Request, res: Response) => {
     const t0 = Date.now();
     try {
       const files = req.files as Express.Multer.File[];
