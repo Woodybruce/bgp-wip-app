@@ -397,11 +397,41 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
   if (cardholderId) {
     void (async () => {
       try {
-        const { rows } = await pool.query<{ user_id: string | null }>(
-          `SELECT user_id FROM stripe_cardholders WHERE id = $1 LIMIT 1`, [cardholderId],
+        // Fetch the full cardholder row — we need .phone for the WhatsApp
+        // send, and .user_id for the push subscription lookup. Both come
+        // from the same row.
+        const { rows } = await pool.query<{ user_id: string | null; phone: string | null; email: string | null; user_name: string | null }>(
+          `SELECT user_id, phone, email, user_name FROM stripe_cardholders WHERE id = $1 LIMIT 1`, [cardholderId],
         );
         const uid = rows[0]?.user_id;
+        const phone = rows[0]?.phone;
         const amountStr = `£${(amountPence / 100).toFixed(2)}`;
+
+        // WhatsApp prompt — fires alongside the push so non-app users
+        // still get a nudge. Loud log lines so 'WhatsApp not working' is
+        // diagnosable from Railway: which leg failed (config / phone /
+        // send) is now obvious.
+        try {
+          const { notifyExpensePending } = await import("./expense-notify");
+          const { getWhatsAppConfig } = await import("./whatsapp");
+          const cfg = getWhatsAppConfig();
+          if (!cfg.token || !cfg.phoneNumberId) {
+            console.warn(`[revolut notify] WhatsApp SKIPPED for expense ${inserted.id}: env vars missing (token=${!!cfg.token} phoneNumberId=${!!cfg.phoneNumberId})`);
+          } else if (!phone) {
+            console.warn(`[revolut notify] WhatsApp SKIPPED for expense ${inserted.id}: cardholder ${cardholderId} has no phone number (set it on the Team page)`);
+          } else {
+            await notifyExpensePending({
+              cardholder: { phone } as any,
+              merchant,
+              amountPence,
+              transactionId: txn.id,
+            });
+            console.log(`[revolut notify] WhatsApp SENT to ${phone} for expense ${inserted.id} (${amountStr} @ ${merchant})`);
+          }
+        } catch (wErr: any) {
+          console.warn(`[revolut notify] WhatsApp FAILED for expense ${inserted.id}: ${wErr?.message}`);
+        }
+
         if (uid) {
           const { sendPushNotification } = await import("./push-notifications");
           await sendPushNotification(uid, {
