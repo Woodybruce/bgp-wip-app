@@ -87,19 +87,50 @@ export default function ExpensesRevolut() {
     onError: (e: any) => toast({ title: "Bootstrap failed", description: e?.message, variant: "destructive" }),
   });
 
+  // Captures the signing secret in component state so it stays visible
+  // on the page after registration — toasts auto-dismiss before the
+  // admin can copy a 40-char secret, leaving them stuck (the secret is
+  // only returned once by Revolut). Cleared manually with the Dismiss
+  // button on the result panel.
+  const [lastWebhookResult, setLastWebhookResult] = useState<{ signingSecret: string | null; raw: any } | null>(null);
+
   const webhookMutation = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", "/api/revolut/webhook/register", { url: webhookUrl });
       return r.json();
     },
     onSuccess: (json: any) => {
-      toast({
-        title: "Webhook registered",
-        description: json.action || "Set REVOLUT_WEBHOOK_SECRET in env (see logs).",
-      });
+      setLastWebhookResult({ signingSecret: json.signingSecret || null, raw: json });
+      toast({ title: "Webhook registered", description: "Signing secret shown below — copy before leaving the page." });
       queryClient.invalidateQueries({ queryKey: ["/api/revolut/status"] });
+      refetchWebhooks();
     },
     onError: (e: any) => toast({ title: "Webhook register failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const { data: webhooks = [], refetch: refetchWebhooks } = useQuery<Array<{ id: string; url: string; events?: string[] }>>({
+    queryKey: ["/api/revolut/webhooks"],
+    queryFn: async () => {
+      const r = await fetch("/api/revolut/webhooks", { credentials: "include" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      return j.webhooks || [];
+    },
+    enabled: !!status?.bootstrapped,
+    retry: false,
+  });
+
+  const deleteWebhookMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/revolut/webhooks/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Webhook deleted", description: "Re-register to get a fresh signing secret." });
+      refetchWebhooks();
+    },
+    onError: (e: any) => toast({ title: "Delete failed", description: e?.message, variant: "destructive" }),
   });
 
   const mapMutation = useMutation({
@@ -252,6 +283,63 @@ export default function ExpensesRevolut() {
             <p className="text-xs text-muted-foreground">
               The signing secret comes back in the response — you'll only see it once. Copy it into <code>REVOLUT_WEBHOOK_SECRET</code> on Railway, then refresh this page.
             </p>
+
+            {/* Persistent secret panel — stays visible until dismissed,
+                unlike the toast. Click to select-all so it can be copied
+                without DevTools, since the toast is too narrow and gets
+                truncated by the UI library. */}
+            {lastWebhookResult && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 mt-2">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="text-sm font-semibold text-amber-900">Signing secret — only shown once</div>
+                  <button type="button" onClick={() => setLastWebhookResult(null)} className="text-xs text-amber-700 underline">Dismiss</button>
+                </div>
+                {lastWebhookResult.signingSecret ? (
+                  <>
+                    <p className="text-[11px] text-amber-800 mb-1.5">Set as <code>REVOLUT_WEBHOOK_SECRET</code> in Railway. Click the secret to select it for copying.</p>
+                    <code
+                      className="block bg-white border border-amber-200 rounded p-2 text-[11px] font-mono break-all cursor-pointer select-all"
+                      onClick={(e) => { const r = document.createRange(); r.selectNodeContents(e.currentTarget); const sel = window.getSelection(); sel?.removeAllRanges(); sel?.addRange(r); }}
+                      data-testid="revolut-signing-secret"
+                    >
+                      {lastWebhookResult.signingSecret}
+                    </code>
+                  </>
+                ) : (
+                  <p className="text-xs text-amber-800">Revolut didn't return a signing_secret on this response. Try deleting the webhook below and re-registering.</p>
+                )}
+              </div>
+            )}
+
+            {/* Existing webhooks — useful when the toast was missed and
+                you need to delete the live webhook to re-register and
+                get a fresh signing secret. */}
+            {webhooks.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Existing webhooks ({webhooks.length})</div>
+                {webhooks.map((w) => (
+                  <div key={w.id} className="flex items-center justify-between gap-2 rounded border border-border p-2 text-xs">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono truncate" title={w.url}>{w.url}</div>
+                      <div className="text-muted-foreground">{(w.events || []).join(", ") || "(no events)"}</div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (window.confirm(`Delete this webhook? You'll need to re-register to get a fresh signing secret.`)) {
+                          deleteWebhookMutation.mutate(w.id);
+                        }
+                      }}
+                      disabled={deleteWebhookMutation.isPending}
+                      data-testid={`revolut-webhook-delete-${w.id}`}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

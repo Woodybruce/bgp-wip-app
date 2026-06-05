@@ -1053,10 +1053,33 @@ export function setupRevolutRoutes(app: Express): void {
       res.json({
         ok: true,
         webhook: created,
+        signingSecret: created?.signing_secret || null,
         action: created?.signing_secret
           ? `Now set REVOLUT_WEBHOOK_SECRET=${created.signing_secret} in env (only chance to see it).`
           : "Webhook created. Capture the signing secret from the Revolut dev portal and set REVOLUT_WEBHOOK_SECRET.",
       });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // List existing webhooks — useful when the signing secret toast was
+  // missed and you need to delete + re-register to get a fresh one.
+  app.get("/api/revolut/webhooks", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const list = await api<any[]>(`/webhooks`, {}, "2.0");
+      res.json({ webhooks: list });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Delete a webhook by Revolut id. Pair with re-register to recover a
+  // lost signing secret (Revolut only shows it once on creation).
+  app.delete("/api/revolut/webhooks/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      await api<unknown>(`/webhooks/${encodeURIComponent(String(req.params.id))}`, { method: "DELETE" }, "2.0");
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
