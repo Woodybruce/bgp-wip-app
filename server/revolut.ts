@@ -929,6 +929,9 @@ export function setupRevolutRoutes(app: Express): void {
       REVOLUT_ENV: process.env.REVOLUT_ENV || "(unset → defaults to sandbox)",
       REVOLUT_JWT_PRIVATE_KEY_set: !!process.env.REVOLUT_JWT_PRIVATE_KEY,
       REVOLUT_JWT_PRIVATE_KEY_len: process.env.REVOLUT_JWT_PRIVATE_KEY?.length || 0,
+      // First line of the PEM — instantly tells us whether the wrong
+      // file (a CERTIFICATE) was pasted instead of a PRIVATE KEY.
+      REVOLUT_JWT_PRIVATE_KEY_firstLine: (process.env.REVOLUT_JWT_PRIVATE_KEY || "").replace(/\\n/g, "\n").split("\n").find(l => l.trim().length > 0) || null,
     };
 
     const cfg = getConfig();
