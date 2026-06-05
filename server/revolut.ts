@@ -848,6 +848,48 @@ export function setupRevolutRoutes(app: Express): void {
 
   // Exchange an OAuth authorisation code for a refresh token. Run this
   // once after consent — the code is single-use.
+  // Admin-only: probes the current Revolut access token by calling each
+  // scope-gated endpoint we depend on and reports pass/fail per scope.
+  // Built for the "card details says 403, what scope is missing?" loop —
+  // tells you exactly which of the four scopes the token has so you can
+  // re-do the OAuth consent with the missing one.
+  app.get("/api/revolut/probe-scopes", requireAdmin, async (_req: Request, res: Response) => {
+    const checks: Array<{ scope: string; label: string; ok: boolean; status: number | null; error: string | null }> = [];
+
+    const run = async (scope: string, label: string, path: string, method: "GET" | "POST" = "GET") => {
+      try {
+        await api<unknown>(path, { method });
+        checks.push({ scope, label, ok: true, status: 200, error: null });
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        const m = msg.match(/(\d{3})/);
+        const status = m ? Number(m[1]) : null;
+        // 403 → scope missing; 404 → scope OK but the resource doesn't exist
+        // (e.g. no cards); anything else surfaces verbatim.
+        const ok = !(status === 403 || /forbidden|permission|scope/i.test(msg));
+        checks.push({ scope, label, ok, status, error: ok ? null : msg.slice(0, 200) });
+      }
+    };
+
+    // Read-only probes only — never call freeze/unfreeze here since a
+    // failed restore would leave a real card frozen.
+    await run("READ", "Read accounts", `/accounts`);
+    await run("READ", "List cards", `/cards`);
+    try {
+      const cards = await api<any[]>(`/cards`).catch(() => [] as any[]);
+      const probeCardId = Array.isArray(cards) && cards[0]?.id;
+      if (probeCardId) {
+        await run("READ_SENSITIVE_CARD_DATA", "Reveal card PAN / CVV / expiry", `/cards/${encodeURIComponent(probeCardId)}/sensitive-details`);
+      } else {
+        checks.push({ scope: "READ_SENSITIVE_CARD_DATA", label: "Reveal card PAN / CVV / expiry", ok: false, status: null, error: "no card to probe against" });
+      }
+    } catch (e: any) {
+      console.warn("[revolut] scope probe card-lookup failed:", e?.message);
+    }
+
+    res.json({ checks, allGranted: checks.every(c => c.ok) });
+  });
+
   app.post("/api/revolut/bootstrap", requireAdmin, async (req: Request, res: Response) => {
     try {
       const code = String(req.body?.code || "").trim();

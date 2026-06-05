@@ -494,6 +494,25 @@ function PayrollTab() {
     onError: (e: any) => toast({ title: "Sweep failed", description: e?.message, variant: "destructive" }),
   });
 
+  // Revolut API-scope probe. Tells you exactly which of the four scopes
+  // are granted on the current token — the "Card Details says 403"
+  // diagnostic loop should start here.
+  const probeScopesMutation = useMutation({
+    mutationFn: async () => (await fetch("/api/revolut/probe-scopes", { credentials: "include" })).json(),
+    onSuccess: (json: any) => {
+      const checks: Array<{ scope: string; label: string; ok: boolean; status: number | null; error: string | null }> = json?.checks || [];
+      const fails = checks.filter(c => !c.ok);
+      toast({
+        title: fails.length === 0 ? "All Revolut scopes granted" : `${fails.length} scope(s) missing`,
+        description: fails.length === 0
+          ? checks.map(c => `✓ ${c.scope} — ${c.label}`).join("\n")
+          : fails.map(c => `✗ ${c.scope} — ${c.error || `HTTP ${c.status}`}`).join("\n"),
+        variant: fails.length === 0 ? "default" : "destructive",
+      });
+    },
+    onError: (e: any) => toast({ title: "Scope probe failed", description: e?.message, variant: "destructive" }),
+  });
+
   return (
     <div className="px-4 pb-8 space-y-4">
       {/* Xero reconnect prompt. The system Xero session powers
@@ -552,6 +571,32 @@ function PayrollTab() {
             >
               {runFreezeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Snowflake className="w-3.5 h-3.5" />}
               Run sweep now
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Revolut scope probe — diagnostic for the 'card details 403' loop.
+          Hits each scoped endpoint and reports which scopes the current
+          token actually has, so you know what to fix in Revolut Business
+          → APIs without re-bootstrapping blindly. */}
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+        <div className="flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-slate-700 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-slate-900">Revolut API scopes</div>
+            <p className="text-[11px] text-slate-700 mt-0.5">
+              Tap to probe the live token. If "Reveal card PAN" fails with 403, that's why Card Details shows the scope error — re-auth on Revolut Business with READ_SENSITIVE_CARD_DATA added.
+            </p>
+            <button
+              type="button"
+              onClick={() => probeScopesMutation.mutate()}
+              disabled={probeScopesMutation.isPending}
+              className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-slate-700 text-white text-[12px] font-semibold active:scale-95 transition-transform disabled:opacity-60"
+              data-testid="m-admin-probe-revolut"
+            >
+              {probeScopesMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AlertCircle className="w-3.5 h-3.5" />}
+              Probe Revolut scopes
             </button>
           </div>
         </div>
@@ -633,7 +678,13 @@ export default function MobileAdminExpenses() {
         <Link href="/" className="p-2 -ml-2 rounded-full active:bg-gray-100">
           <ChevronLeft className="w-6 h-6" />
         </Link>
-        <h1 className="text-2xl font-semibold flex-1">Team expenses</h1>
+        <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
+        {/* Scope toggle — mirrors the one on /m/expenses so admins can
+            flip back to their personal view without going via Home. */}
+        <div className="flex rounded-full bg-muted p-0.5 text-[12px] font-medium" data-testid="m-admin-scope-toggle">
+          <Link href="/m/expenses" className="px-3 py-1 rounded-full text-muted-foreground active:bg-background/60">Mine</Link>
+          <span className="px-3 py-1 rounded-full bg-background shadow-sm">Team</span>
+        </div>
       </div>
 
       {/* Tab toggle */}

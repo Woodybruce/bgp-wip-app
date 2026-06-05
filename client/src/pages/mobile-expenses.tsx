@@ -978,6 +978,10 @@ export default function MobileExpenses() {
     refetchInterval: 60_000,
   });
 
+  // Admin gate: drives the Mine/Team scope toggle in the header. The
+  // /m/team-expenses tile is gone from Home — admins switch contexts here.
+  const { data: me } = useQuery<{ isAdmin?: boolean }>({ queryKey: ["/api/auth/me"] });
+
   const uploadMutation = useMutation({
     mutationFn: async ({ id, file }: { id: string; file: File }) => {
       const fd = new FormData();
@@ -1138,6 +1142,15 @@ export default function MobileExpenses() {
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
+        {/* Admin-only Mine/Team scope toggle. Replaces the standalone
+            "Team" tile that used to live on the mobile home — now
+            admins flip context here without leaving the Expenses page. */}
+        {me?.isAdmin && (
+          <div className="flex rounded-full bg-muted p-0.5 text-[12px] font-medium" data-testid="m-exp-scope-toggle">
+            <span className="px-3 py-1 rounded-full bg-background shadow-sm">Mine</span>
+            <Link href="/m/team-expenses" className="px-3 py-1 rounded-full text-muted-foreground active:bg-background/60">Team</Link>
+          </div>
+        )}
       </div>
 
       {/* Frozen banner — appears when the month-end sweep has frozen this
