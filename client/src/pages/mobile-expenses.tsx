@@ -162,9 +162,8 @@ function MobileCardDetailsSheet({ open, onClose }: { open: boolean; onClose: () 
   return (
     <Sheet open={open} onOpenChange={(v) => { if (!v) { onClose(); setRevealed(false); } }}>
       <SheetContent side="bottom" className="h-[90vh] p-0 rounded-t-2xl">
-        <SheetHeader className="px-4 pt-4 pb-2 flex flex-row items-center justify-between border-b">
+        <SheetHeader className="px-4 pt-4 pb-2 border-b">
           <SheetTitle className="text-base">Card Details</SheetTitle>
-          <button onClick={onClose} className="p-1 -mr-1 active:bg-muted rounded-full" aria-label="Close"><X className="w-5 h-5" /></button>
         </SheetHeader>
         <div className="p-4 space-y-4">
           {isLoading ? (

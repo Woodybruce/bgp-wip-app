@@ -14,6 +14,13 @@ export function ConnectionStatus() {
   const [socketConnected, setSocketConnected] = useState(true);
   const [showReconnected, setShowReconnected] = useState(false);
   const [showBanner, setShowBanner] = useState(false);
+  // Tracks whether the socket has EVER successfully connected this
+  // session. If false, "Connection lost — trying to reconnect" is a
+  // lie — the socket never connected in the first place (likely an
+  // expired auth_tokens row or a proxy stripping the /ws upgrade), so
+  // we suppress the banner entirely. Realtime features just degrade
+  // silently; the user gets the same red banner for a real outage.
+  const [everConnected, setEverConnected] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -33,6 +40,7 @@ export function ConnectionStatus() {
     const checkSocket = () => {
       const socket = getSocket();
       const connected = socket?.connected ?? true;
+      if (connected && !everConnected) setEverConnected(true);
       setSocketConnected(prev => {
         if (!prev && connected) {
           setShowReconnected(true);
@@ -50,21 +58,31 @@ export function ConnectionStatus() {
       clearInterval(interval);
       if (reconnectedTimer) clearTimeout(reconnectedTimer);
     };
-  }, []);
+  }, [everConnected]);
 
   const disconnected = !isOnline || !socketConnected;
 
   // Hold off rendering the banner for BANNER_GRACE_MS — most "disconnects"
   // are transport blips that resolve themselves before then. If it's still
-  // disconnected at the end of the grace period, show the banner.
+  // disconnected at the end of the grace period, show the banner — but only
+  // if we ever had a real connection to lose. Browser offline state still
+  // shows immediately (that's a genuine OS-level signal, not a socket guess).
   useEffect(() => {
     if (!disconnected) {
       setShowBanner(false);
       return;
     }
+    if (!isOnline) {
+      setShowBanner(true);
+      return;
+    }
+    if (!everConnected) {
+      setShowBanner(false);
+      return;
+    }
     const t = setTimeout(() => setShowBanner(true), BANNER_GRACE_MS);
     return () => clearTimeout(t);
-  }, [disconnected]);
+  }, [disconnected, isOnline, everConnected]);
 
   if (!showBanner && !showReconnected) return null;
 

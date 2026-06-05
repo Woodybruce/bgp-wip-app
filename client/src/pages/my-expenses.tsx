@@ -929,7 +929,7 @@ function AppleWalletDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         </DialogHeader>
         <div className="space-y-4 text-sm">
           <p className="text-muted-foreground">
-            Apple Wallet provisioning happens inside the Revolut app — the BGP dashboard can't add the card for you because Revolut doesn't expose card details to third-party apps (by design).
+            Apple Wallet provisioning needs iOS-native PassKit + an issuer-certified flow that's only built into the Revolut iOS app — no web app can add a card on your behalf. Add it once via Revolut on your phone; spend then still flows back to BGP via the webhook.
           </p>
           <ol className="space-y-2 list-decimal pl-5">
             <li>Open the <strong>Revolut</strong> app on your iPhone</li>
