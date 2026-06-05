@@ -220,29 +220,59 @@ async function exchangeCodeForToken(code: string): Promise<{ refreshToken: strin
 // replay attacks.
 function verifyWebhookSignature(req: Request, cfg: RevolutConfig): boolean {
   if (!cfg.webhookSecret) {
-    console.warn("[revolut] REVOLUT_WEBHOOK_SECRET unset — refusing webhook");
+    console.warn("[revolut webhook verify] FAIL: REVOLUT_WEBHOOK_SECRET unset");
     return false;
   }
   const signatureHeader = req.headers["revolut-signature"];
   const timestamp = req.headers["revolut-request-timestamp"];
-  if (typeof signatureHeader !== "string" || typeof timestamp !== "string") return false;
+  if (typeof signatureHeader !== "string") {
+    console.warn(`[revolut webhook verify] FAIL: revolut-signature header missing (got ${typeof signatureHeader})`);
+    return false;
+  }
+  if (typeof timestamp !== "string") {
+    console.warn(`[revolut webhook verify] FAIL: revolut-request-timestamp header missing (got ${typeof timestamp})`);
+    return false;
+  }
 
   const tsNum = Number(timestamp);
-  if (!isFinite(tsNum)) return false;
-  if (Math.abs(Date.now() - tsNum) > 5 * 60 * 1000) return false;
+  if (!isFinite(tsNum)) {
+    console.warn(`[revolut webhook verify] FAIL: timestamp not a number: "${timestamp}"`);
+    return false;
+  }
+  if (Math.abs(Date.now() - tsNum) > 5 * 60 * 1000) {
+    const driftSec = Math.round((Date.now() - tsNum) / 1000);
+    console.warn(`[revolut webhook verify] FAIL: timestamp drift ${driftSec}s (>5min). Server clock or stale delivery?`);
+    return false;
+  }
 
   const rawBuf = (req as any).rawBody;
+  const rawBodySource = Buffer.isBuffer(rawBuf) ? "buffer" : (typeof rawBuf === "string" ? "string" : "FALLBACK_JSON_STRINGIFY");
+  if (rawBodySource === "FALLBACK_JSON_STRINGIFY") {
+    console.warn(`[revolut webhook verify] WARN: rawBody not captured — HMAC may differ from what Revolut signed`);
+  }
   const rawBody: string = Buffer.isBuffer(rawBuf) ? rawBuf.toString("utf8") : (typeof rawBuf === "string" ? rawBuf : JSON.stringify(req.body || {}));
   const signedPayload = `${timestamp}.${rawBody}`;
   const expected = crypto.createHmac("sha256", cfg.webhookSecret).update(signedPayload).digest("hex");
 
   // Header is "v1=<sig>" or "v1=<sig>,v1=<sig>". Accept if any matches.
   const sigs = signatureHeader.split(",").map(s => s.trim().split("=", 2)).filter(parts => parts[0] === "v1").map(parts => parts[1]);
-  return sigs.some(sig => {
+  if (sigs.length === 0) {
+    console.warn(`[revolut webhook verify] FAIL: no v1= entries in revolut-signature header: "${signatureHeader.slice(0, 60)}"`);
+    return false;
+  }
+  const matched = sigs.some(sig => {
     const a = Buffer.from(sig, "hex");
     const b = Buffer.from(expected, "hex");
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   });
+  if (!matched) {
+    // HMAC mismatch — the only remaining cause is the secret itself.
+    // Log the *expected prefix* + *received prefix* so you can spot a
+    // copy-paste typo without exposing the full secret in logs.
+    console.warn(`[revolut webhook verify] FAIL: HMAC mismatch. Secret length=${cfg.webhookSecret.length} bodySource=${rawBodySource} bodyLen=${rawBody.length} tsDelta=${Math.round((Date.now() - tsNum) / 1000)}s gotSigPrefix=${sigs[0]?.slice(0, 12)}... expectedPrefix=${expected.slice(0, 12)}...`);
+    console.warn(`[revolut webhook verify]   → fix: copy the signing secret from Revolut dashboard > webhooks again and paste into REVOLUT_WEBHOOK_SECRET in Railway (watch for trailing whitespace).`);
+  }
+  return matched;
 }
 
 // ─── Transaction → expense row ───────────────────────────────────────────
