@@ -969,6 +969,15 @@ export default function MobileExpenses() {
     refetchOnWindowFocus: true,
   });
 
+  // Month-end freeze status: if the user's card is currently frozen
+  // because of missing receipts, show a banner listing the blockers.
+  // The banner auto-disappears the moment the last one resolves (the
+  // server unfreezes on receipt upload + mark-personal).
+  const { data: blocking } = useQuery<{ frozen: boolean; blocking: Array<{ id: string; merchant: string | null; amountPence: number; transactionDate: string | null }> }>({
+    queryKey: ["/api/expenses/me/blocking"],
+    refetchInterval: 60_000,
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async ({ id, file }: { id: string; file: File }) => {
       const fd = new FormData();
@@ -1130,6 +1139,37 @@ export default function MobileExpenses() {
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
       </div>
+
+      {/* Frozen banner — appears when the month-end sweep has frozen this
+          user's card because of unresolved receipts. Auto-disappears as
+          soon as the server-side unfreeze hook clears the last blocker. */}
+      {blocking?.frozen && blocking.blocking.length > 0 && (
+        <div className="mx-4 mt-3 mb-2 rounded-2xl border border-red-200 bg-red-50 p-3" data-testid="mobile-frozen-banner">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-red-900">Your card is frozen</div>
+              <div className="text-[12px] text-red-800 mt-0.5">
+                {blocking.blocking.length} receipt{blocking.blocking.length === 1 ? "" : "s"} still missing from last month
+                {" — "}
+                <strong>{fmtPence(blocking.blocking.reduce((s, b) => s + b.amountPence, 0))}</strong>
+                {" total"}. Upload each receipt below, or mark it personal (deducted from payroll), to unfreeze.
+              </div>
+              <div className="mt-2 space-y-0.5">
+                {blocking.blocking.slice(0, 5).map((b) => (
+                  <div key={b.id} className="text-[11px] text-red-800 flex items-center justify-between gap-2">
+                    <span className="truncate">{b.merchant || "Unknown merchant"} · {fmtDate(b.transactionDate)}</span>
+                    <span className="font-mono shrink-0">{fmtPence(b.amountPence)}</span>
+                  </div>
+                ))}
+                {blocking.blocking.length > 5 && (
+                  <div className="text-[11px] text-red-700/80 italic">…and {blocking.blocking.length - 5} more below</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Card panel — shows the user's BGP/Revolut card status + this month's
           spend. Mirrors the desktop My Card view but compact for mobile.

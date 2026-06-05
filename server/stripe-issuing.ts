@@ -986,6 +986,15 @@ export function setupStripeIssuingRoutes(app: Express) {
           }
         }
 
+        // Month-end freeze hook: this receipt may have cleared the last
+        // blocking expense for the user. Fire-and-forget so we don't
+        // hold the response on a Revolut API call.
+        if (exp.cardholderId) {
+          import("./expense-freeze")
+            .then(m => m.unfreezeIfClear(exp.cardholderId!))
+            .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
+        }
+
         res.json({ success: true, parsed, autoposted: parsed.confidence === "high" });
       } catch (e: any) {
         // Receipt saved but parsing failed — let user fix manually
@@ -994,6 +1003,11 @@ export function setupStripeIssuingRoutes(app: Express) {
           receiptUrl: storageKey,
           updatedAt: new Date(),
         }).where(eq(expenses.id, expenseId));
+        if (exp.cardholderId) {
+          import("./expense-freeze")
+            .then(m => m.unfreezeIfClear(exp.cardholderId!))
+            .catch(err => console.warn("[receipt-upload] unfreezeIfClear failed:", err?.message));
+        }
         res.json({ success: true, parsed: null, error: `Saved but parsing failed: ${e?.message}` });
       }
     } catch (e: any) {
@@ -1287,9 +1301,102 @@ export function setupStripeIssuingRoutes(app: Express) {
       const { submitForApproval } = await import("./expense-approval");
       const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
       await submitForApproval(id, userIdForSubmit);
+
+      // Month-end freeze hook: marking personal removes this expense
+      // from the blocking list, which may clear the last reason the card
+      // was frozen. Fire-and-forget.
+      const [updated] = await db.select({ cardholderId: expenses.cardholderId }).from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (updated?.cardholderId) {
+        import("./expense-freeze")
+          .then(m => m.unfreezeIfClear(updated.cardholderId!))
+          .catch(e => console.warn("[mark-personal] unfreezeIfClear failed:", e?.message));
+      }
+
       res.json({ success: true });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Admin: fire the month-end freeze sweep manually (for testing or for
+  // a mid-month re-run). Returns the per-cardholder outcomes so the UI
+  // can show what happened.
+  app.post("/api/expenses/admin/run-month-end-freeze", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { runMonthEndFreezeSweep } = await import("./expense-freeze");
+      const result = await runMonthEndFreezeSweep();
+      res.json(result);
+    } catch (e: any) {
+      console.error("[expenses] run-month-end-freeze error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Per-user: what's currently blocking my card (so the mobile + desktop
+  // app can show a banner "Your card is frozen because of these N
+  // expenses"). Returns the rows the freeze sweep would catch right now.
+  app.get("/api/expenses/me/blocking", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId;
+      if (!userId) return res.status(401).json({ error: "Not logged in" });
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
+      if (!ch) return res.json({ frozen: false, blocking: [] });
+      const { getBlockingExpenses } = await import("./expense-freeze");
+      const blocking = await getBlockingExpenses(ch.id);
+      res.json({ frozen: ch.status === "inactive", cardholderStatus: ch.status, blocking });
+    } catch (e: any) {
+      console.error("[expenses] me/blocking error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Admin: payroll deduction report — every expense marked personal in
+  // a given month, grouped by user with totals. Drives the "what to take
+  // off payroll" sheet Wendy hands to whoever runs payroll.
+  app.get("/api/expenses/admin/payroll-deductions", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      // ?month=YYYY-MM, defaults to current calendar month.
+      const monthParam = String(req.query.month || "");
+      const now = new Date();
+      const m = monthParam.match(/^(\d{4})-(\d{2})$/);
+      const year = m ? Number(m[1]) : now.getUTCFullYear();
+      const month = m ? Number(m[2]) - 1 : now.getUTCMonth();
+      const from = new Date(Date.UTC(year, month, 1));
+      const to = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59));
+
+      const rows = await pool.query<{
+        id: string; merchant: string | null; amount_pence: number;
+        transaction_date: Date | null; cardholder_id: string | null;
+        user_name: string | null; user_id: string | null;
+      }>(`
+        SELECT e.id, e.merchant, e.amount_pence, e.transaction_date,
+               e.cardholder_id, ch.user_name, ch.user_id
+          FROM expenses e
+          LEFT JOIN stripe_cardholders ch ON ch.id = e.cardholder_id
+         WHERE e.is_personal = true
+           AND e.transaction_date BETWEEN $1 AND $2
+         ORDER BY ch.user_name, e.transaction_date
+      `, [from.toISOString(), to.toISOString()]);
+
+      // Group by user.
+      const byUser = new Map<string, { userId: string | null; userName: string; totalPence: number; rows: any[] }>();
+      for (const r of rows.rows) {
+        const key = r.user_id || r.cardholder_id || "unknown";
+        const name = r.user_name || "Unknown";
+        if (!byUser.has(key)) byUser.set(key, { userId: r.user_id, userName: name, totalPence: 0, rows: [] });
+        const bucket = byUser.get(key)!;
+        bucket.totalPence += r.amount_pence || 0;
+        bucket.rows.push({
+          id: r.id, merchant: r.merchant, amountPence: r.amount_pence,
+          transactionDate: r.transaction_date,
+        });
+      }
+      const groups = Array.from(byUser.values()).sort((a, b) => b.totalPence - a.totalPence);
+      const totalPence = groups.reduce((s, g) => s + g.totalPence, 0);
+      res.json({ month: `${year}-${String(month + 1).padStart(2, "0")}`, totalPence, groups });
+    } catch (e: any) {
+      console.error("[expenses] payroll-deductions error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

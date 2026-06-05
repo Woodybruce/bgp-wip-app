@@ -610,6 +610,22 @@ export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
   return result;
 }
 
+// ─── Freeze / unfreeze a Revolut card ────────────────────────────────────
+//
+// Used by the month-end auto-freeze sweep and the admin "freeze card"
+// button. Revolut Business exposes POST /cards/{id}/freeze and
+// /cards/{id}/unfreeze; both 204 No Content on success and 4xx if the
+// token lacks the CARDS_FULL scope. We surface the error verbatim so
+// the caller can show a useful banner.
+
+export async function freezeRevolutCard(cardId: string): Promise<void> {
+  await api<unknown>(`/cards/${encodeURIComponent(cardId)}/freeze`, { method: "POST" });
+}
+
+export async function unfreezeRevolutCard(cardId: string): Promise<void> {
+  await api<unknown>(`/cards/${encodeURIComponent(cardId)}/unfreeze`, { method: "POST" });
+}
+
 // ─── Auto-migration: add the columns we depend on ────────────────────────
 
 let _migrated = false;
