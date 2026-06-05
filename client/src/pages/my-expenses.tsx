@@ -869,11 +869,6 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           </div>
         ) : data ? (
           <div className="space-y-4">
-            {data.isTestMode && (
-              <div className="text-xs p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900">
-                Stripe test mode — these are not real card numbers.
-              </div>
-            )}
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground">Card Number</label>
               <div className="flex items-center gap-2 mt-1">
@@ -920,7 +915,7 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   );
 }
 
-function AppleWalletDialog({ open, onOpenChange, onShowDetails }: { open: boolean; onOpenChange: (v: boolean) => void; onShowDetails: () => void }) {
+function AppleWalletDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void; onShowDetails: () => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -929,23 +924,20 @@ function AppleWalletDialog({ open, onOpenChange, onShowDetails }: { open: boolea
         </DialogHeader>
         <div className="space-y-4 text-sm">
           <p className="text-muted-foreground">
-            One-tap "Add to Wallet" needs a native iOS app (coming later). For now, add the card manually on your iPhone — it takes about 30 seconds.
+            Apple Wallet provisioning happens inside the Revolut app — the BGP dashboard can't add the card for you because Revolut doesn't expose card details to third-party apps (by design).
           </p>
           <ol className="space-y-2 list-decimal pl-5">
-            <li>Open the <strong>Wallet</strong> app on your iPhone</li>
-            <li>Tap the <strong>+</strong> button (top-right)</li>
-            <li>Choose <strong>Debit or Credit Card</strong></li>
-            <li>Tap <strong>Enter Card Details Manually</strong></li>
-            <li>Type the card number, expiry, and CVC from below</li>
-            <li>Approve any verification prompt</li>
+            <li>Open the <strong>Revolut</strong> app on your iPhone</li>
+            <li>Go to the <strong>Cards</strong> tab</li>
+            <li>Tap your <strong>BGP</strong> card</li>
+            <li>Tap <strong>Add to Apple Wallet</strong></li>
           </ol>
-          <div className="text-xs p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900">
-            <strong>Test mode:</strong> If the card is in Stripe test mode, Apple Wallet will reject it. Use the card number directly for online purchases until we go live.
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Once added, Apple Pay works in Safari and any app — and the spend still flows back to BGP automatically via the Revolut webhook.
+          </p>
         </div>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
-          <Button onClick={onShowDetails}>Show card details</Button>
+        <DialogFooter>
+          <Button onClick={() => onOpenChange(false)}>Got it</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

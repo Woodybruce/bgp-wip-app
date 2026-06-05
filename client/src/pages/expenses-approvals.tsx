@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { CheckCircle2, AlertCircle, Loader2, X, Receipt, Inbox } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ExpensesNavTabs } from "@/components/expenses-nav-tabs";
 
 interface PendingExpense {
   id: string;
@@ -128,12 +129,13 @@ export default function ExpensesApprovals() {
   });
 
   if (isLoading) {
-    return <div className="container mx-auto p-6"><Loader2 className="w-6 h-6 animate-spin" /></div>;
+    return <div className="container mx-auto p-6"><ExpensesNavTabs /><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
 
   if (rows.length === 0) {
     return (
       <div className="container mx-auto p-6 max-w-2xl">
+        <ExpensesNavTabs />
         <Card>
           <CardContent className="p-8 text-center">
             <Inbox className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />

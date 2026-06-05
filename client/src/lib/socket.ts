@@ -22,7 +22,14 @@ export function connectSocket(): Socket {
   socket = io({
     path: "/ws",
     auth: { token },
-    transports: ["websocket", "polling"],
+    // Polling-first so the initial handshake works on any HTTPS-fronted
+    // domain (custom domains like chatbgp.app sometimes route through
+    // proxies that don't reliably negotiate WS upgrades). Socket.io will
+    // transparently upgrade to WebSocket once polling has connected; if
+    // the upgrade fails it keeps polling — socket.connected stays true
+    // either way, so the 'Connection lost' banner doesn't flash on every
+    // page load behind a stricter proxy.
+    transports: ["polling", "websocket"],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,

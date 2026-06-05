@@ -125,8 +125,6 @@ const microsoftNav = [
 
 const adminNavBase = [
   { title: "Expenses", url: "/expenses", icon: Receipt },
-  { title: "Expense Approvals", url: "/expenses/approvals", icon: Receipt },
-  { title: "Revolut", url: "/expenses/revolut", icon: CreditCard },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
   // Studio tools parked here pending fixes — hidden from the main demo
   // nav, kept reachable for admins until they're ready for the firm.

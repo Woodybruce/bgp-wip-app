@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check, Mail } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ExpensesNavTabs } from "@/components/expenses-nav-tabs";
 
 interface Cardholder {
   id: string;
@@ -127,10 +128,11 @@ export default function ExpensesAdmin() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      <ExpensesNavTabs />
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Expenses & Cards</h1>
-          <p className="text-sm text-muted-foreground">Revolut Business card programme — manage limits, freeze cards, review expenses</p>
+          <h1 className="text-2xl font-bold">All expenses</h1>
+          <p className="text-sm text-muted-foreground">Every card transaction, manual claim, and pending receipt across the firm.</p>
         </div>
         <div className="flex gap-2">
           <Button

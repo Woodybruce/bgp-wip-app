@@ -2,10 +2,18 @@ import { useState, useEffect } from "react";
 import { WifiOff, Wifi } from "lucide-react";
 import { getSocket } from "@/lib/socket";
 
+// Banner doesn't show instantly when the socket flips to disconnected —
+// we wait this long first. Reason: socket.io routinely cycles through
+// transient disconnect states (transport upgrade, idle reconnect, page
+// visibility resume) and showing a red banner on every blip is noise.
+// Real outages last well past 5s; transient flips don't.
+const BANNER_GRACE_MS = 5000;
+
 export function ConnectionStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [socketConnected, setSocketConnected] = useState(true);
   const [showReconnected, setShowReconnected] = useState(false);
+  const [showBanner, setShowBanner] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -46,7 +54,19 @@ export function ConnectionStatus() {
 
   const disconnected = !isOnline || !socketConnected;
 
-  if (!disconnected && !showReconnected) return null;
+  // Hold off rendering the banner for BANNER_GRACE_MS — most "disconnects"
+  // are transport blips that resolve themselves before then. If it's still
+  // disconnected at the end of the grace period, show the banner.
+  useEffect(() => {
+    if (!disconnected) {
+      setShowBanner(false);
+      return;
+    }
+    const t = setTimeout(() => setShowBanner(true), BANNER_GRACE_MS);
+    return () => clearTimeout(t);
+  }, [disconnected]);
+
+  if (!showBanner && !showReconnected) return null;
 
   if (showReconnected && !disconnected) {
     return (
