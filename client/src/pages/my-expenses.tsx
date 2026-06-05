@@ -82,8 +82,13 @@ export default function MyExpenses() {
   const bulkInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const { data, isLoading, refetch } = useQuery<MyData>({
+  const { data, isLoading } = useQuery<MyData>({
     queryKey: ["/api/expenses/me"],
+    // Live updates — repoll every 60s while the page is open + on
+    // window focus, matching the mobile My Card view. No manual
+    // Refresh button needed.
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const uploadMutation = useMutation({
@@ -220,9 +225,6 @@ export default function MyExpenses() {
           <h1 className="text-2xl font-bold">My Card & Expenses</h1>
           <p className="text-sm text-muted-foreground">{cardholder.userName} · {cardholder.email}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="w-4 h-4 mr-1.5" /> Refresh
-        </Button>
       </div>
 
       {/* Card visual + summary */}

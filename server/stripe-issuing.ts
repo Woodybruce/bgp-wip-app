@@ -805,7 +805,24 @@ export function setupStripeIssuingRoutes(app: Express) {
       const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
       if (!ch) return res.json({ cardholder: null, card: null, expenses: [], summary: null });
 
-      const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+      let [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+
+      // Self-heal: if the cardholder has no stripe_cards row (or it's
+      // missing last4 because auto-assign ran before the schema change),
+      // run autoAssignRevolutCards once and re-query. Fire-and-forget
+      // would race the response; awaiting once is fine (~500ms) and
+      // means the user sees the populated card on the FIRST page load
+      // instead of needing to wait for the 10-min cron.
+      const needsHeal = !ch.stripeCardholderId && (!card || !card.last4);
+      if (needsHeal) {
+        try {
+          const { autoAssignRevolutCards } = await import("./revolut");
+          await autoAssignRevolutCards();
+          [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+        } catch (e: any) {
+          console.warn(`[expenses/me] auto-assign self-heal failed for ${userId}: ${e?.message}`);
+        }
+      }
 
       const myExpenses = await db.select().from(expenses).where(eq(expenses.cardholderId, ch.id)).orderBy(desc(expenses.transactionDate)).limit(100);
 
