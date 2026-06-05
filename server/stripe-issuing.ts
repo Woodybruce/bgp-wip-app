@@ -811,11 +811,20 @@ export function setupStripeIssuingRoutes(app: Express) {
         attendeeContacts: attendeesByExpense.get(e.id) || [],
       }));
 
-      // Month-to-date spend
+      // Month-to-date spend ON THE CARD. Excludes cash claims (type=cash
+      // with no revolutTransactionId) so the card panel doesn't conflate
+      // ad-hoc receipt-photo expenses with real Revolut card swipes —
+      // that was making the panel show '£72.05 spent on card' when the
+      // card hadn't actually been swiped at all.
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
-      const monthly = myExpenses.filter(e => e.transactionDate && new Date(e.transactionDate) >= startOfMonth && !e.isPersonal);
+      const monthly = myExpenses.filter(e => {
+        if (!e.transactionDate || e.isPersonal) return false;
+        if (new Date(e.transactionDate) < startOfMonth) return false;
+        const isCardSpend = !!(e as any).revolutTransactionId || e.type === "card";
+        return isCardSpend;
+      });
       const monthlySpend = monthly.reduce((sum, e) => sum + (e.amountPence || 0), 0);
       const pendingReceipts = myExpenses.filter(e => e.status === "pending_receipt").length;
 

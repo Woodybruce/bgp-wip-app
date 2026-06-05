@@ -732,13 +732,19 @@ export function setupRevolutRoutes(app: Express): void {
   // The actual webhook — Revolut POSTs transaction events here. No auth
   // middleware; we verify with HMAC instead.
   app.post("/api/revolut/webhook", async (req: Request, res: Response) => {
+    // Loud, unconditional log so we can SEE the webhook firing in
+    // production. The previous behaviour (silent unless an error fired)
+    // made it impossible to tell whether 'no transactions on the dashboard'
+    // meant 'Revolut isn't sending events' or 'we're rejecting them'.
+    console.log(`[revolut webhook] HIT event=${req.body?.event || "?"} data_id=${req.body?.data?.id || "?"} type=${req.body?.data?.type || "?"} state=${req.body?.data?.state || "?"}`);
     try {
       const cfg = getConfig();
       if (!cfg) {
-        console.warn("[revolut] webhook ignored: config missing");
+        console.warn("[revolut webhook] REJECTED: config missing");
         return res.status(503).json({ error: "Revolut config not set" });
       }
       if (!verifyWebhookSignature(req, cfg)) {
+        console.warn("[revolut webhook] REJECTED: invalid signature (check REVOLUT_WEBHOOK_SECRET matches the value in Revolut's dashboard)");
         return res.status(401).json({ error: "Invalid signature" });
       }
 
@@ -746,15 +752,16 @@ export function setupRevolutRoutes(app: Express): void {
       const data = req.body?.data;
 
       if (event === "TransactionCreated" || event === "TransactionStateChanged") {
-        // The data block is the transaction itself for these events.
         const r = await upsertExpenseFromTransaction(data as RevolutTransaction);
-        return res.json({ ok: true, action: r?.created ? "created" : r ? "updated" : "ignored" });
+        const action = r?.created ? "created" : r ? "updated" : "ignored";
+        console.log(`[revolut webhook] OK event=${event} action=${action} expense_id=${r?.id || "-"}`);
+        return res.json({ ok: true, action });
       }
 
-      // Other event types (cards, accounts) are no-ops for now.
+      console.log(`[revolut webhook] OK event=${event} action=ignored (not a transaction event)`);
       res.json({ ok: true, action: "ignored", event });
     } catch (e: any) {
-      console.error("[revolut webhook]", e?.message, e?.stack);
+      console.error("[revolut webhook] CRASHED:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

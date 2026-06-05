@@ -1154,12 +1154,17 @@ export default function MobileExpenses() {
                           = uploaded photo, Cash = manual entry. Makes it
                           obvious at a glance which spend actually came from
                           the live card feed vs ad-hoc additions. */}
+                      {/* Badge priority: a real Revolut swipe wins, then a
+                          receipt-photo upload (even if the underlying row
+                          is type=cash — receipt-from-photo flow defaults
+                          to cash), then a genuine cash claim with no
+                          receipt. */}
                       {e.revolutTransactionId ? (
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-semibold shrink-0">Revolut</span>
-                      ) : e.type === "cash" ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold shrink-0">Cash</span>
                       ) : e.receiptFilename ? (
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold shrink-0">Receipt</span>
+                      ) : e.type === "cash" ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold shrink-0">Cash</span>
                       ) : null}
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
