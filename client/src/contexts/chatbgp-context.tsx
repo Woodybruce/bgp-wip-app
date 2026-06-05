@@ -44,8 +44,13 @@ interface ChatBGPState {
 const ChatBGPContext = createContext<ChatBGPState | null>(null);
 
 export function ChatBGPProvider({ children }: { children: ReactNode }) {
-  const [activeThreadId, _setActiveThreadId] = useState<string | null>(null);
-  const activeThreadIdRef = useRef<string | null>(null);
+  // Seed from localStorage so a full reload / app restart re-opens the last
+  // conversation instead of dumping you on a blank screen. The chatbgp page
+  // hydrates the messages from the server once it sees this id.
+  const [activeThreadId, _setActiveThreadId] = useState<string | null>(() => {
+    try { return localStorage.getItem("chatbgp:activeThreadId") || null; } catch { return null; }
+  });
+  const activeThreadIdRef = useRef<string | null>(activeThreadId);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const messagesRef = useRef<LocalMessage[]>([]);
   const [input, setInput] = useState("");
@@ -60,6 +65,10 @@ export function ChatBGPProvider({ children }: { children: ReactNode }) {
   const setActiveThreadId = useCallback((id: string | null) => {
     activeThreadIdRef.current = id;
     _setActiveThreadId(id);
+    try {
+      if (id) localStorage.setItem("chatbgp:activeThreadId", id);
+      else localStorage.removeItem("chatbgp:activeThreadId");
+    } catch {}
     setCompletedActions(new Set());
     messageQueueRef.current = [];
     setQueueLength(0);
@@ -69,6 +78,7 @@ export function ChatBGPProvider({ children }: { children: ReactNode }) {
   const reset = useCallback(() => {
     _setActiveThreadId(null);
     activeThreadIdRef.current = null;
+    try { localStorage.removeItem("chatbgp:activeThreadId"); } catch {}
     setMessages([]);
     messagesRef.current = [];
     setInput("");

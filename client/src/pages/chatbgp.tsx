@@ -2434,6 +2434,17 @@ export default function ChatBGP() {
     }
   }, [status?.connected, initialThreadId]);
 
+  // Safety net: if we land here with an active thread already in context
+  // (e.g. expanded from the dock, or restored after a reload) but no
+  // messages loaded yet, pull them from the server so the conversation
+  // doesn't appear blank. Only fires when there's nothing to lose.
+  useEffect(() => {
+    if (!initialThreadId && activeThreadId && status?.connected && messagesRef.current.length === 0) {
+      loadThread(activeThreadId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.connected]);
+
   const isNearBottom = useCallback(() => {
     if (!scrollRef.current) return true;
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;

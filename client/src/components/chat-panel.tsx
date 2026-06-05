@@ -2581,7 +2581,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              onClick={() => navigate("/chatbgp")}
+              // Carry the open thread into the full-page view so the
+              // conversation follows you instead of opening blank. Without
+              // the ?thread= param the page only had activeThreadId in
+              // context but never loaded its messages — the "it clears when
+              // I expand / move screen" complaint.
+              onClick={() => navigate(activeThreadId ? `/chatbgp?thread=${activeThreadId}` : "/chatbgp")}
               data-testid="button-panel-expand"
               title="Open full screen"
             >
