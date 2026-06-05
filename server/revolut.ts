@@ -979,6 +979,19 @@ export function setupRevolutRoutes(app: Express): void {
       out.liveProbe = { ok: false, reason: "no refresh_token stored yet — bootstrap not complete" };
     }
 
+    // Outbound IP — Revolut Business requires the cert's Production IP
+    // Whitelist to include the egress IP of whatever's calling them.
+    // Railway gives different containers different egress IPs; we ask an
+    // IP-echo service so the admin can paste the right value into the
+    // whitelist on Revolut Business → APIs → cert → Production IP.
+    try {
+      const ipRes = await fetch("https://api.ipify.org?format=json", { signal: AbortSignal.timeout(5000) });
+      const ipJson = await ipRes.json() as { ip?: string };
+      out.egressIp = { ip: ipJson.ip || null, note: "Add this IP to Revolut → APIs → cert → Production IP whitelist. Railway egress IPs are dynamic — consider their Static Egress IP add-on if this changes often." };
+    } catch (e: any) {
+      out.egressIp = { ip: null, error: e?.message };
+    }
+
     res.json(out);
   });
 
