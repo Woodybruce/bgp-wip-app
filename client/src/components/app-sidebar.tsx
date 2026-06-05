@@ -89,30 +89,20 @@ const coreNavBase = [
   // Tracker / Investment / WIP Report), so the standalone sidebar entry
   // was dropped — it duplicated the Deals view.
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Requirements", url: "/requirements", icon: FileText },
-  // Items below are still being polished — admin-only until ready for the firm
-  // MAP BGP retired — the live Goad map is now the Property Intelligence
-  // Map tab; legacy /map-bgp URLs redirect there automatically.
-  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
-  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
-  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
+  // Work-in-progress modules (AML, Tenant Rep, hunters, Landlord Intel,
+  // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
+  // "Unfinished" group below so the everyday Core nav stays clean.
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Team", url: "/team", icon: UserCog, adminOnly: true },
-  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
-  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
 ];
 
 const aiNav = [
   { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
-  // Model Studio / Document Studio / Document Briefs / Decks parked in
-  // the Admin section pending fixes — see adminNavBase.
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
@@ -124,22 +114,32 @@ const microsoftNav = [
   { title: "Mail", url: "/mail", icon: Mail },
 ];
 
-const adminNavBase = [
-  { title: "Expenses", url: "/expenses", icon: Receipt },
-  // My Card moved up to the Core section (next to People & HR) — it's a
-  // staff-facing page, not an admin tool.
-  // Studio tools parked here pending fixes — hidden from the main demo
-  // nav, kept reachable for admins until they're ready for the firm.
+// Modules being polished — grouped together so they're easy for admins to
+// find without cluttering Core. Hidden from non-admins entirely. Order
+// matches the list Woody dictated (AML → Enrichment Hub).
+const unfinishedNav = [
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
+  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
+  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
   { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI" },
   { title: "Decks", url: "/decks", icon: Layers, badge: "New" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
-  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
-  { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, badge: "AI" },
+];
+
+const adminNavBase = [
+  { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
+  { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
   { title: "Subscriptions & APIs", url: "/subscriptions", icon: CreditCard },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle },
   { title: "Settings", url: "/settings", icon: Settings },
@@ -299,19 +299,20 @@ export function AppSidebar() {
     setPeeking(false);
   };
 
-  // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
-  // Items flagged adminOnly are work-in-progress — moved out of Core entirely
-  // so the demo nav is clean, and grouped into the Admin section for admins
-  // to keep working on. Non-admins don't see the Admin section at all.
-  const coreWipItems = coreNavBase.filter((i: any) => i.adminOnly);
-  const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly);
+  // Core hides anything still admin-gated (currently just Team) for non-admins.
+  // Reporting is surfaced inside Core for Landsec tenants — for everyone else
+  // it lives in the Unfinished group along with the other modules being
+  // polished.
+  const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly || user?.isAdmin);
   const coreNav = isLandsec
     ? [...coreNavFiltered, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
     : coreNavFiltered;
-  const adminNavCleaned = isLandsec
-    ? adminNavBase.filter(i => i.url !== "/reporting")
-    : adminNavBase;
-  const adminNav = [...coreWipItems, ...adminNavCleaned];
+  // Drop Reporting from Unfinished when it's already promoted into Core for
+  // Landsec, so it doesn't appear twice in the sidebar.
+  const unfinishedNavCleaned = isLandsec
+    ? unfinishedNav.filter(i => i.url !== "/reporting")
+    : unfinishedNav;
+  const adminNav = adminNavBase;
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
@@ -371,7 +372,18 @@ export function AppSidebar() {
         <SidebarSeparator />
         <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
         <SidebarSeparator />
-        {user?.isAdmin && <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />}
+        {user?.isAdmin && (
+          <>
+            <NavSection
+              label="Unfinished"
+              items={unfinishedNavCleaned}
+              storageKey="unfinished"
+              defaultOpen={false}
+            />
+            <SidebarSeparator />
+            <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />
+          </>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="p-3 space-y-2">
