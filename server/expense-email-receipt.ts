@@ -24,7 +24,7 @@ import { eq } from "drizzle-orm";
 import { graphRequest } from "./shared-mailbox";
 import { parseReceiptImage, type ParsedReceipt } from "./expense-receipt-parser";
 import { getAnthropicClient, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
-import { EXPENSE_CATEGORY_MAP } from "./stripe-issuing";
+import { EXPENSE_CATEGORY_MAP } from "./expense-categories";
 
 export interface FindEmailReceiptResult {
   ok: boolean;

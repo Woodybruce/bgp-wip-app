@@ -19,7 +19,7 @@ import { db } from "./db";
 import { stripeCardholders, expenses, expenseReceipts, users } from "@shared/schema";
 import { eq, and, desc, gte } from "drizzle-orm";
 import { parseReceiptImage } from "./expense-receipt-parser";
-import { EXPENSE_CATEGORY_MAP } from "./stripe-issuing";
+import { EXPENSE_CATEGORY_MAP } from "./expense-categories";
 import { createExpenseFromReceipt } from "./expense-from-receipt";
 
 interface MatchArgs {

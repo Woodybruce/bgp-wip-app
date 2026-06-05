@@ -6,7 +6,7 @@ import { xeroApi } from "./xero";
 import { db } from "./db";
 import { expenses, stripeCardholders, expenseReceipts } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { EXPENSE_CATEGORY_MAP } from "./stripe-issuing";
+import { EXPENSE_CATEGORY_MAP } from "./expense-categories";
 
 const STRIPE_CARDS_ACCOUNT_CODE = "1200";
 

@@ -93,11 +93,7 @@ const KEYS: KeyDef[] = [
   // Comms / collab
   { name: "AGENTMAIL_API_KEY", label: "AgentMail", group: "Comms" },
 
-  // Payments
-  { name: "STRIPE_SECRET_KEY", label: "Stripe", group: "Payments" },
-  { name: "STRIPE_SECRET_KEY", label: "Stripe Secret Key", group: "Payments" },
-  { name: "STRIPE_PUBLISHABLE_KEY", label: "Stripe Publishable Key", group: "Payments" },
-  { name: "STRIPE_WEBHOOK_SECRET", label: "Stripe Webhook Secret", group: "Payments" },
+  // Payments — Stripe retired (Revolut Business is the live card path).
 
   // Storage
   { name: "DROPBOX_APP_KEY", label: "Dropbox App Key", group: "Storage" },

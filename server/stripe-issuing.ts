@@ -239,42 +239,8 @@ export async function setCardholderStatus(cardholderId: string, status: "active"
 
 // ─── XERO CATEGORY MAPPING ─────────────────────────────────────────────────
 
-export const EXPENSE_CATEGORY_MAP: Record<string, { code: string; name: string }> = {
-  "Client Entertainment":           { code: "410", name: "Client Entertainment" },
-  "Agent Entertainment (External)": { code: "411", name: "Agent Entertainment (External)" },
-  "Staff Entertainment":            { code: "412", name: "Staff Entertainment" },
-  "Directors Meetings":             { code: "413", name: "Directors Meetings" },
-  "Subsistence":                    { code: "415", name: "Subsistence" },
-  "Meals & Drinks":                 { code: "416", name: "Meals & Drinks" },
-  "Travel - Train":                 { code: "471", name: "Travel - Train" },
-  "Travel - Tube":                  { code: "472", name: "Travel - Tube" },
-  "Travel - Taxi":                  { code: "473", name: "Travel - Taxi" },
-  "Travel - Flights":               { code: "474", name: "Travel - Flights" },
-  "Travel - Hotels":                { code: "475", name: "Travel - Hotels" },
-  "Travel - Car Hire":              { code: "476", name: "Travel - Car Hire" },
-  "Travel - Parking & Tolls":       { code: "477", name: "Travel - Parking & Tolls" },
-  "Travel - TFL Bike":              { code: "478", name: "Travel - TFL Bike" },
-  "Mileage Claims (HMRC 45p)":      { code: "479", name: "Mileage Claims (HMRC 45p)" },
-  "Marketing & Advertising":        { code: "480", name: "Marketing & Advertising" },
-  "PR (Literature & Brochures)":    { code: "481", name: "PR (Literature & Brochures)" },
-  "Advertising":                    { code: "482", name: "Advertising" },
-  "Office Supplies / Stationery":   { code: "500", name: "Office Supplies / Stationery" },
-  "Office Expenses (general)":      { code: "501", name: "Office Expenses (general)" },
-  "Printing - Pitch Documents":     { code: "512", name: "Printing - Pitch Documents" },
-  "Software (subscriptions)":       { code: "600", name: "Software (subscriptions)" },
-  "IT Charges":                     { code: "601", name: "IT Charges" },
-  "Mobile Phone":                   { code: "611", name: "Mobile Phone" },
-  "Phone & Internet":               { code: "612", name: "Phone & Internet" },
-  "Premises Expenses":              { code: "700", name: "Premises Expenses" },
-  "RICS Fees":                      { code: "750", name: "RICS Fees" },
-  "Training":                       { code: "751", name: "Training" },
-  "Subscriptions - Magazines/Memberships": { code: "753", name: "Subscriptions - Magazines/Memberships" },
-  "Staff Gifts":                    { code: "780", name: "Staff Gifts" },
-  "Client Gifts":                   { code: "781", name: "Client Gifts" },
-  "Other Expenses":                 { code: "900", name: "Other Expenses" },
-  "Personal (deduct from payroll)": { code: "910", name: "Personal (deduct from payroll)" },
-  "Sainsburys / Tesco / Ocado":     { code: "503", name: "Sainsburys / Tesco / Ocado" },
-};
+// EXPENSE_CATEGORY_MAP moved to ./expense-categories (its natural home) so
+// the expense pipeline no longer imports from this legacy Stripe module.
 
 // ─── WEBHOOK ───────────────────────────────────────────────────────────────
 

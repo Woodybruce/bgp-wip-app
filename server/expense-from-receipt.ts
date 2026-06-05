@@ -16,7 +16,7 @@ import { stripeCardholders, expenses, expenseReceipts, users } from "@shared/sch
 import { and, eq, sql } from "drizzle-orm";
 import { saveFile } from "./file-storage";
 import { parseReceiptImage, type ParsedReceipt } from "./expense-receipt-parser";
-import { EXPENSE_CATEGORY_MAP } from "./stripe-issuing";
+import { EXPENSE_CATEGORY_MAP } from "./expense-categories";
 
 export interface CreateFromReceiptArgs {
   receiptBytes: Buffer;
