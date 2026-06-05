@@ -1241,7 +1241,7 @@ export async function getBusinessLearningsContext(): Promise<string> {
   }
 }
 
-async function extractAndSaveMemories(
+export async function extractAndSaveMemories(
   userId: string,
   userMessage: string,
   assistantReply: string

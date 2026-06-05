@@ -74,13 +74,20 @@ export default function MobileImages() {
       const r = await fetch("/api/image-studio/upload", { method: "POST", credentials: "include", body: fd });
       const body = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
-      // Server returns a plain array on clean success, OR
-      // { results, failures } when some files in the batch failed.
+      // Server returns the raw Drizzle rows on success (or {results,failures}
+      // on partial). We only need the ids back — the gallery refetch below
+      // gives us properly-shaped StudioImage rows for rendering. (Earlier
+      // attempt to use the upload response directly broke the edit sheet:
+      // the raw row's thumbnailData comes back as a Buffer-shaped object
+      // instead of the data URI the renderer expects.)
       const results: { id: string }[] = Array.isArray(body) ? body : (body?.results || []);
       const failures: { filename: string; error: string }[] = Array.isArray(body) ? [] : (body?.failures || []);
       return { results, failures };
     },
     onSuccess: async ({ results, failures }) => {
+      // Await the invalidate so the refetch lands BEFORE we read from
+      // cache — otherwise getQueryData returns the stale list and the
+      // edit sheet (and grid) appear not to update.
       await queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       if (results.length === 1 && failures.length === 0) {
         const fresh = queryClient.getQueryData<StudioImage[]>(["/api/image-studio"]) || [];

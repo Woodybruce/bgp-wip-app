@@ -2910,6 +2910,14 @@ export const stripeCards = pgTable("stripe_cards", {
   stripeCardId: text("stripe_card_id").notNull().unique(),
   last4: text("last4"),
   status: text("status").notNull().default("active"),  // active | inactive | canceled
+  // Revolut Business extras (columns added via auto-migrate in
+  // server/revolut.ts). Surfaced on My Card so the card visual looks
+  // like a real card — expiry "MM/YYYY", virtual/physical flag, product
+  // code (BPD = Business Prepaid Debit, VWE = physical wave). Nullable
+  // for legacy Stripe-only rows.
+  expiry: text("expiry"),
+  virtual: boolean("virtual"),
+  productCode: text("product_code"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2917,6 +2925,12 @@ export const expenses = pgTable("expenses", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   cardholderId: varchar("cardholder_id").references(() => stripeCardholders.id),
   stripeTransactionId: text("stripe_transaction_id").unique(),       // null for cash expenses
+  // Revolut Business txn id (column added via auto-migrate in server/
+  // revolut.ts). Set ONLY when the row came from the live Revolut feed —
+  // receipt-photo and manual entries leave this null. The mobile UI uses
+  // this to badge 'Revolut' vs 'Receipt' so card-feed coverage is obvious
+  // at a glance.
+  revolutTransactionId: text("revolut_transaction_id").unique(),
   type: text("type").notNull().default("card"),                      // card | cash | mileage
   status: text("status").notNull().default("pending_receipt"),       // pending_receipt | pending_approval | approved | rejected | posted_to_xero
   merchant: text("merchant"),

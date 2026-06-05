@@ -25,7 +25,10 @@ async function callClaude(prompt: string): Promise<string> {
     try {
       const msg = await anthropic.messages.create({
         model,
-        max_tokens: 800,
+        // 800 truncated the JSON mid-array for multi-competitor brands
+        // (response cut off at ~12 entries → unparseable 502). 2500 gives
+        // headroom for the full 8-12 list with reasons.
+        max_tokens: 2500,
         messages: [{ role: "user", content: prompt }],
       });
       const text = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("").trim();

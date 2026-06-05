@@ -10,6 +10,16 @@ import { users as usersTable } from "@shared/schema";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
+// Background-job state for the interactions sync (see POST /api/interactions/sync).
+// Module-level so the status endpoint can report progress across requests.
+const interactionSyncState: {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lastResult: any;
+  error: string | null;
+} = { running: false, startedAt: null, finishedAt: null, lastResult: null, error: null };
+
 // Top BGP team members by interaction count — used by the InteractionsBoard
 // banner. Returns 90-day count visible, all-time count for hover tooltip.
 // Scope = "contact" → ranks by interactions touching that contactId.
@@ -93,11 +103,20 @@ async function graphGet(token: string, url: string): Promise<any> {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
+  const body = await res.text();
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Graph API error ${res.status}: ${text}`);
+    throw new Error(`Graph API error ${res.status}: ${body}`);
   }
-  return res.json();
+  // Graph occasionally returns a truncated / malformed body under load
+  // (manifests as "Expected ',' or ']' after array element in JSON at
+  // position …"). Surface it as a clear, swallowable error instead of a
+  // raw SyntaxError so the per-user catch in the sync loop records it and
+  // moves on rather than aborting the whole run.
+  try {
+    return JSON.parse(body);
+  } catch (e: any) {
+    throw new Error(`Graph API returned malformed JSON (${body.length} bytes): ${e?.message}`);
+  }
 }
 
 async function getAllContacts(): Promise<ContactMatch[]> {
@@ -874,16 +893,45 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 export function registerInteractionRoutes(app: Express) {
   startAutoSync();
 
+  // Interaction sync fans out across every BGP mailbox (emails + calendar),
+  // which routinely takes 2-3 minutes — well past Railway's gateway timeout
+  // (the old synchronous version 504'd at 180s). So we run it in the
+  // background: POST kicks it and returns 202 immediately, the client polls
+  // /sync-status and refetches when it finishes.
   app.post("/api/interactions/sync", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const daysBack = Number(req.query.daysBack) || 30;
-      const daysForward = Number(req.query.daysForward) || 60;
-      const result = await runInteractionSync(daysBack, daysForward);
-      res.json(result);
-    } catch (e: any) {
-      console.error("Interaction sync error:", e);
-      res.status(500).json({ error: e.message });
+    const daysBack = Number(req.query.daysBack) || 30;
+    const daysForward = Number(req.query.daysForward) || 60;
+    if (interactionSyncState.running) {
+      return res.status(202).json({ started: false, alreadyRunning: true, startedAt: interactionSyncState.startedAt });
     }
+    interactionSyncState.running = true;
+    interactionSyncState.startedAt = new Date().toISOString();
+    interactionSyncState.error = null;
+    // Fire-and-forget — don't await. Result lands on interactionSyncState.
+    runInteractionSync(daysBack, daysForward)
+      .then((result) => {
+        interactionSyncState.lastResult = result;
+        interactionSyncState.finishedAt = new Date().toISOString();
+      })
+      .catch((e: any) => {
+        console.error("Interaction sync error:", e);
+        interactionSyncState.error = e?.message || "Sync failed";
+        interactionSyncState.finishedAt = new Date().toISOString();
+      })
+      .finally(() => {
+        interactionSyncState.running = false;
+      });
+    res.status(202).json({ started: true, startedAt: interactionSyncState.startedAt });
+  });
+
+  app.get("/api/interactions/sync-status", requireAuth, async (_req: Request, res: Response) => {
+    res.json({
+      running: interactionSyncState.running,
+      startedAt: interactionSyncState.startedAt,
+      finishedAt: interactionSyncState.finishedAt,
+      lastResult: interactionSyncState.lastResult,
+      error: interactionSyncState.error,
+    });
   });
 
   app.get("/api/interactions/contact/:contactId", requireAuth, async (req: Request, res: Response) => {

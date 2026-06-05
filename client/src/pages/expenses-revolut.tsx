@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ExpensesNavTabs } from "@/components/expenses-nav-tabs";
 
 interface RevolutStatus {
   configured: boolean;
@@ -40,7 +41,10 @@ interface RevolutCard {
   id: string;
   holder_id?: string;
   label?: string;
-  last_four?: string;
+  // Revolut returns this as `last_digits` (NOT `last_four` like Stripe).
+  // Spent an hour wondering why it was always empty — it's available on
+  // the standard READ scope, no extra permission needed.
+  last_digits?: string;
   state?: string;
 }
 
@@ -127,16 +131,34 @@ export default function ExpensesRevolut() {
     onError: (e: any) => toast({ title: "Sync failed", description: e?.message, variant: "destructive" }),
   });
 
+  const autoAssignMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/revolut/cards/auto-assign");
+      return r.json();
+    },
+    onSuccess: (json: any) => {
+      const unmatched = (json.unmatched || []).length;
+      toast({
+        title: `Auto-assigned ${json.assigned || 0} card(s)`,
+        description: `${json.alreadyMapped || 0} already mapped${unmatched ? `, ${unmatched} couldn't match by email` : ""}.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/revolut/cards"] });
+    },
+    onError: (e: any) => toast({ title: "Auto-assign failed", description: e?.message, variant: "destructive" }),
+  });
+
   if (statusLoading) {
     return <div className="container mx-auto p-6"><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
 
   return (
     <div className="container mx-auto p-6 max-w-5xl space-y-6">
+      <ExpensesNavTabs />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <CreditCard className="w-6 h-6" /> Revolut Integration
+            <CreditCard className="w-6 h-6" /> Cards & Revolut
           </h1>
           <p className="text-sm text-muted-foreground">Connect Revolut Business so card spend lands in BGP Expenses automatically.</p>
         </div>
@@ -238,11 +260,20 @@ export default function ExpensesRevolut() {
       {status?.bootstrapped && (
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-lg flex items-center gap-2"><CreditCard className="w-5 h-5" /> Cards</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => refetchCards()} disabled={cardsFetching}>
-              {cardsFetching && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-              Reload
-            </Button>
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2"><CreditCard className="w-5 h-5" /> Cards</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">Cards auto-assign to BGP users by matching the holder's email. Use the dropdown only to override.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => autoAssignMutation.mutate()} disabled={autoAssignMutation.isPending}>
+                {autoAssignMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                Auto-assign by email
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => refetchCards()} disabled={cardsFetching}>
+                {cardsFetching && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                Reload
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {cards.length === 0 ? (
@@ -251,28 +282,23 @@ export default function ExpensesRevolut() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {/* Auto-assigned by email — no manual override needed. If a
+                    Revolut card has no matching BGP user, fix the user's
+                    email in Team and click Auto-assign by email again.
+                    Last 4 is empty when the Revolut access token lacks the
+                    sensitive-card-data scope (fix it in Revolut Business →
+                    APIs → Permissions, no code change needed). */}
                 <table className="w-full text-sm">
                   <thead className="bg-muted/30">
                     <tr className="text-left">
                       <th className="px-4 py-2 font-medium">Card</th>
                       <th className="px-4 py-2 font-medium">Last 4</th>
                       <th className="px-4 py-2 font-medium">State</th>
-                      <th className="px-4 py-2 font-medium">Assign to BGP user</th>
                     </tr>
                   </thead>
                   <tbody>
                     {cards.map((c) => (
-                      <CardRow
-                        key={c.id}
-                        card={c}
-                        users={users}
-                        onAssign={(userId) => mapMutation.mutate({
-                          revolutCardId: c.id,
-                          holderId: c.holder_id,
-                          label: c.label,
-                          userId,
-                        })}
-                      />
+                      <CardRow key={c.id} card={c} />
                     ))}
                   </tbody>
                 </table>
@@ -327,35 +353,15 @@ function StatusRow({ ok, label }: { ok: boolean | undefined; label: string }) {
   );
 }
 
-function CardRow({
-  card, users, onAssign,
-}: {
-  card: RevolutCard;
-  users: BgpUser[];
-  onAssign: (userId: string) => void;
-}) {
-  const [selected, setSelected] = useState<string>("");
+function CardRow({ card }: { card: RevolutCard }) {
   return (
     <tr className="border-t hover:bg-muted/10">
       <td className="px-4 py-2 font-medium">{card.label || card.id.slice(0, 8)}</td>
-      <td className="px-4 py-2 font-mono text-xs">•••• {card.last_four || "—"}</td>
+      <td className="px-4 py-2 font-mono text-xs">•••• {card.last_digits || "—"}</td>
       <td className="px-4 py-2">
         <Badge variant="outline" className={card.state === "active" ? "text-emerald-600 border-emerald-600/30" : "text-muted-foreground"}>
           {card.state || "—"}
         </Badge>
-      </td>
-      <td className="px-4 py-2">
-        <div className="flex gap-2">
-          <Select value={selected} onValueChange={setSelected}>
-            <SelectTrigger className="h-8 w-[200px]"><SelectValue placeholder="Pick a user…" /></SelectTrigger>
-            <SelectContent>
-              {users.map((u) => (
-                <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button size="sm" disabled={!selected} onClick={() => onAssign(selected)}>Assign</Button>
-        </div>
       </td>
     </tr>
   );

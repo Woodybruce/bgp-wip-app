@@ -129,8 +129,19 @@ export function InteractionsBoard({ scope, contextId }: Props) {
 
   const syncMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
-      return r.json();
+      // The sync now runs in the background (POST returns 202 immediately —
+      // it used to 504 after 3 minutes). Kick it, then poll /sync-status
+      // until it finishes so the board refreshes when the data lands.
+      await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
+      const deadline = Date.now() + 5 * 60_000; // give it up to 5 min
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const sr = await fetch("/api/interactions/sync-status", { credentials: "include" });
+        if (!sr.ok) break;
+        const status = await sr.json();
+        if (!status.running) return status.lastResult || {};
+      }
+      return {};
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/interactions", scope, contextId] });

@@ -3302,6 +3302,17 @@ app.use("/api/branding/assets", express.static(
         }
       })();
 
+      // Auto email-receipt sweep — every 10 min, retry matching email
+      // receipts to pending card expenses (receipts often email through a
+      // few minutes after the swipe). Pushes a phone notification on each
+      // match. Idempotent — matched expenses drop out of the query.
+      setInterval(() => {
+        import("./expense-email-receipt")
+          .then(m => m.sweepPendingEmailReceipts())
+          .then(r => { if (r.matched > 0) console.log(`[email-receipt sweep] matched ${r.matched}/${r.scanned}`); })
+          .catch(err => console.warn("[email-receipt sweep] failed:", err?.message));
+      }, 10 * 60 * 1000);
+
       // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
       // company whose KYC has gone stale (past the firm's recheck_interval_days,
       // default 365) or has an overdue aml_recheck_reminders row, and re-run

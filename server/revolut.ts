@@ -36,9 +36,9 @@
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { db, pool } from "./db";
-import { stripeCardholders, expenses, systemSettings, users } from "@shared/schema";
+import { stripeCardholders, stripeCards, expenses, systemSettings, users } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import { requireAdmin } from "./auth";
+import { requireAdmin, requireAuth } from "./auth";
 
 // ─── Config + token storage ──────────────────────────────────────────────
 
@@ -220,29 +220,59 @@ async function exchangeCodeForToken(code: string): Promise<{ refreshToken: strin
 // replay attacks.
 function verifyWebhookSignature(req: Request, cfg: RevolutConfig): boolean {
   if (!cfg.webhookSecret) {
-    console.warn("[revolut] REVOLUT_WEBHOOK_SECRET unset — refusing webhook");
+    console.warn("[revolut webhook verify] FAIL: REVOLUT_WEBHOOK_SECRET unset");
     return false;
   }
   const signatureHeader = req.headers["revolut-signature"];
   const timestamp = req.headers["revolut-request-timestamp"];
-  if (typeof signatureHeader !== "string" || typeof timestamp !== "string") return false;
+  if (typeof signatureHeader !== "string") {
+    console.warn(`[revolut webhook verify] FAIL: revolut-signature header missing (got ${typeof signatureHeader})`);
+    return false;
+  }
+  if (typeof timestamp !== "string") {
+    console.warn(`[revolut webhook verify] FAIL: revolut-request-timestamp header missing (got ${typeof timestamp})`);
+    return false;
+  }
 
   const tsNum = Number(timestamp);
-  if (!isFinite(tsNum)) return false;
-  if (Math.abs(Date.now() - tsNum) > 5 * 60 * 1000) return false;
+  if (!isFinite(tsNum)) {
+    console.warn(`[revolut webhook verify] FAIL: timestamp not a number: "${timestamp}"`);
+    return false;
+  }
+  if (Math.abs(Date.now() - tsNum) > 5 * 60 * 1000) {
+    const driftSec = Math.round((Date.now() - tsNum) / 1000);
+    console.warn(`[revolut webhook verify] FAIL: timestamp drift ${driftSec}s (>5min). Server clock or stale delivery?`);
+    return false;
+  }
 
   const rawBuf = (req as any).rawBody;
+  const rawBodySource = Buffer.isBuffer(rawBuf) ? "buffer" : (typeof rawBuf === "string" ? "string" : "FALLBACK_JSON_STRINGIFY");
+  if (rawBodySource === "FALLBACK_JSON_STRINGIFY") {
+    console.warn(`[revolut webhook verify] WARN: rawBody not captured — HMAC may differ from what Revolut signed`);
+  }
   const rawBody: string = Buffer.isBuffer(rawBuf) ? rawBuf.toString("utf8") : (typeof rawBuf === "string" ? rawBuf : JSON.stringify(req.body || {}));
   const signedPayload = `${timestamp}.${rawBody}`;
   const expected = crypto.createHmac("sha256", cfg.webhookSecret).update(signedPayload).digest("hex");
 
   // Header is "v1=<sig>" or "v1=<sig>,v1=<sig>". Accept if any matches.
   const sigs = signatureHeader.split(",").map(s => s.trim().split("=", 2)).filter(parts => parts[0] === "v1").map(parts => parts[1]);
-  return sigs.some(sig => {
+  if (sigs.length === 0) {
+    console.warn(`[revolut webhook verify] FAIL: no v1= entries in revolut-signature header: "${signatureHeader.slice(0, 60)}"`);
+    return false;
+  }
+  const matched = sigs.some(sig => {
     const a = Buffer.from(sig, "hex");
     const b = Buffer.from(expected, "hex");
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   });
+  if (!matched) {
+    // HMAC mismatch — the only remaining cause is the secret itself.
+    // Log the *expected prefix* + *received prefix* so you can spot a
+    // copy-paste typo without exposing the full secret in logs.
+    console.warn(`[revolut webhook verify] FAIL: HMAC mismatch. Secret length=${cfg.webhookSecret.length} bodySource=${rawBodySource} bodyLen=${rawBody.length} tsDelta=${Math.round((Date.now() - tsNum) / 1000)}s gotSigPrefix=${sigs[0]?.slice(0, 12)}... expectedPrefix=${expected.slice(0, 12)}...`);
+    console.warn(`[revolut webhook verify]   → fix: copy the signing secret from Revolut dashboard > webhooks again and paste into REVOLUT_WEBHOOK_SECRET in Railway (watch for trailing whitespace).`);
+  }
+  return matched;
 }
 
 // ─── Transaction → expense row ───────────────────────────────────────────
@@ -289,15 +319,45 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
       [txn.card.id],
     );
     if (rows[0]) cardholderId = rows[0].id;
+
+    // Self-heal: a brand-new card's first payment won't be mapped yet. Rather
+    // than orphan the expense, auto-assign cards to BGP users by matching the
+    // Revolut cardholder's email to users.email, then re-resolve. Idempotent
+    // and best-effort — if it can't match, the expense is created unowned as
+    // before.
+    if (!cardholderId) {
+      try {
+        await autoAssignRevolutCards();
+        const retry = await pool.query<{ id: string }>(
+          `SELECT id FROM stripe_cardholders WHERE revolut_card_id = $1 LIMIT 1`,
+          [txn.card.id],
+        );
+        if (retry.rows[0]) cardholderId = retry.rows[0].id;
+      } catch (e: any) {
+        console.warn(`[revolut] auto-assign on txn ${txn.id} failed:`, e?.message);
+      }
+    }
   }
 
   // Idempotent: if we already have an expense for this transaction id,
   // update its state but don't insert a duplicate.
-  const existing = await pool.query<{ id: string; status: string }>(
-    `SELECT id, status FROM expenses WHERE revolut_transaction_id = $1 LIMIT 1`,
+  const existing = await pool.query<{ id: string; status: string; cardholder_id: string | null }>(
+    `SELECT id, status, cardholder_id FROM expenses WHERE revolut_transaction_id = $1 LIMIT 1`,
     [txn.id],
   );
   if (existing.rows[0]) {
+    // Relink orphaned rows: if the row's cardholder_id is NULL but we've
+    // since resolved one (auto-assign mapped the card after the original
+    // insert), backfill it now. This is why the user's mobile page was
+    // empty while desktop admin saw everything: orphan rows existed but
+    // couldn't be filtered to the user's cardholder.
+    if (!existing.rows[0].cardholder_id && cardholderId) {
+      await pool.query(
+        `UPDATE expenses SET cardholder_id = $1, updated_at = NOW() WHERE id = $2`,
+        [cardholderId, existing.rows[0].id],
+      );
+      console.log(`[revolut] relinked orphan expense ${existing.rows[0].id} -> cardholder ${cardholderId}`);
+    }
     // State transitions — completed → posted_to_xero gate, reverted → mark reversed.
     if (txn.state === "reverted") {
       await pool.query(
@@ -360,7 +420,194 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
     }
   }
 
+  // Alert the cardholder on their phone the moment a payment lands, and kick
+  // off an immediate email-receipt hunt. Both best-effort + non-blocking so
+  // the webhook returns fast. The periodic sweep (sweepPendingEmailReceipts)
+  // is the safety net for receipts that email through after the swipe.
+  if (cardholderId) {
+    void (async () => {
+      try {
+        // Fetch the full cardholder row — we need .phone for the WhatsApp
+        // send, and .user_id for the push subscription lookup. Both come
+        // from the same row.
+        const { rows } = await pool.query<{ user_id: string | null; phone: string | null; email: string | null; user_name: string | null }>(
+          `SELECT user_id, phone, email, user_name FROM stripe_cardholders WHERE id = $1 LIMIT 1`, [cardholderId],
+        );
+        const uid = rows[0]?.user_id;
+        const phone = rows[0]?.phone;
+        const amountStr = `£${(amountPence / 100).toFixed(2)}`;
+
+        // WhatsApp prompt — fires alongside the push so non-app users
+        // still get a nudge. Loud log lines so 'WhatsApp not working' is
+        // diagnosable from Railway: which leg failed (config / phone /
+        // send) is now obvious.
+        try {
+          const { notifyExpensePending } = await import("./expense-notify");
+          const { getWhatsAppConfig } = await import("./whatsapp");
+          const cfg = getWhatsAppConfig();
+          if (!cfg.token || !cfg.phoneNumberId) {
+            console.warn(`[revolut notify] WhatsApp SKIPPED for expense ${inserted.id}: env vars missing (token=${!!cfg.token} phoneNumberId=${!!cfg.phoneNumberId})`);
+          } else if (!phone) {
+            console.warn(`[revolut notify] WhatsApp SKIPPED for expense ${inserted.id}: cardholder ${cardholderId} has no phone number (set it on the Team page)`);
+          } else {
+            await notifyExpensePending({
+              cardholder: { phone } as any,
+              merchant,
+              amountPence,
+              transactionId: txn.id,
+            });
+            console.log(`[revolut notify] WhatsApp SENT to ${phone} for expense ${inserted.id} (${amountStr} @ ${merchant})`);
+          }
+        } catch (wErr: any) {
+          console.warn(`[revolut notify] WhatsApp FAILED for expense ${inserted.id}: ${wErr?.message}`);
+        }
+
+        if (uid) {
+          const { sendPushNotification } = await import("./push-notifications");
+          await sendPushNotification(uid, {
+            title: `Card payment ${amountStr}`,
+            body: `${merchant} — finding your receipt…`,
+            tag: `expense-${inserted.id}`,
+            url: "/my-expenses",
+          }).catch(() => {});
+        }
+        // Immediate attempt (catches receipts already in the inbox).
+        const { findEmailReceiptForExpense } = await import("./expense-email-receipt");
+        const result = await findEmailReceiptForExpense(inserted.id);
+        if (uid && result.found) {
+          const { sendPushNotification } = await import("./push-notifications");
+          await sendPushNotification(uid, {
+            title: `Receipt filed ✓ ${amountStr}`,
+            body: `${result.matched?.subject || merchant}${result.posted ? " — posted to Xero" : ""}`,
+            tag: `expense-${inserted.id}`,
+            url: "/my-expenses",
+          }).catch(() => {});
+        }
+      } catch (e: any) {
+        console.warn(`[revolut] notify/auto-receipt failed for ${inserted.id}:`, e?.message);
+      }
+    })();
+  }
+
   return { id: inserted.id, created: true };
+}
+
+// ─── Auto-assign cards to BGP users by email ─────────────────────────────
+
+// Build a holder_id → email map from the Revolut team. The Business API
+// endpoint shape varies by tenant, so try the known variants and degrade
+// silently.
+async function getRevolutTeamEmailById(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const path of ["/team-members", "/team/members"]) {
+    try {
+      const members = await api<any[]>(path);
+      const arr = Array.isArray(members) ? members : (members as any)?.members || [];
+      for (const m of arr) {
+        const email = (m.email || m.user?.email || "").toString().toLowerCase().trim();
+        if (m.id && email) map.set(m.id, email);
+      }
+      if (map.size > 0) break;
+    } catch { /* try next path */ }
+  }
+  return map;
+}
+
+interface AutoAssignResult { assigned: number; alreadyMapped: number; unmatched: Array<{ card: string; reason: string }>; }
+
+// Map every Revolut card to a BGP user by matching the card holder's email
+// to users.email. Creates/updates the stripe_cardholders row and stamps
+// revolut_card_id so transaction ingestion can resolve the owner. Idempotent.
+export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
+  const cards = await api<any[]>(`/cards`).catch(() => []);
+  const teamEmail = await getRevolutTeamEmailById();
+  const bgpUsers = await db.select().from(users);
+  const userByEmail = new Map<string, typeof bgpUsers[number]>();
+  for (const u of bgpUsers) {
+    if (u.email) userByEmail.set(u.email.toLowerCase().trim(), u);
+  }
+
+  const result: AutoAssignResult = { assigned: 0, alreadyMapped: 0, unmatched: [] };
+
+  for (const card of (Array.isArray(cards) ? cards : [])) {
+    const cardId = card.id;
+    if (!cardId) continue;
+    const cardLabel = card.label || cardId.slice(0, 8);
+
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id FROM stripe_cardholders WHERE revolut_card_id = $1 LIMIT 1`, [cardId],
+    );
+    if (existing.rows[0]) { result.alreadyMapped++; continue; }
+
+    // Resolve the holder's email: team lookup by holder_id, else any email
+    // field on the card, else fuzzy match the card label to a user name.
+    const holderEmail = (card.holder_id && teamEmail.get(card.holder_id))
+      || (card.holder_email || card.email || "").toString().toLowerCase().trim()
+      || null;
+
+    let user = holderEmail ? userByEmail.get(holderEmail) : undefined;
+    if (!user && cardLabel) {
+      const lbl = String(cardLabel).toLowerCase();
+      user = bgpUsers.find(u => u.name && lbl.includes(u.name.toLowerCase()))
+          || bgpUsers.find(u => u.email && lbl.includes(u.email.toLowerCase().split("@")[0]));
+    }
+    if (!user) {
+      result.unmatched.push({ card: cardLabel, reason: holderEmail ? `no BGP user with email ${holderEmail}` : "no holder email on card" });
+      continue;
+    }
+
+    // Create or update this user's cardholder row + stamp the Revolut ids.
+    const existingCh = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, user.id)).limit(1);
+    let cardholderId: string;
+    if (existingCh[0]) {
+      cardholderId = existingCh[0].id;
+    } else {
+      const [created] = await db.insert(stripeCardholders).values({
+        userId: user.id,
+        userName: user.name,
+        email: user.email || `${user.username}@brucegillinghampollard.com`,
+        phone: user.phone || null,
+        stripeCardholderId: null,
+        status: "active",
+      } as any).returning({ id: stripeCardholders.id });
+      cardholderId = created.id;
+    }
+    await pool.query(
+      `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2, updated_at = NOW() WHERE id = $3`,
+      [cardId, card.holder_id || null, cardholderId],
+    );
+
+    // Also upsert a stripe_cards row so the existing /api/expenses/me +
+    // mobile card panel pick up last4 + status + expiry + product from
+    // there. Revolut field names: `last_digits` (4 chars), `state`
+    // (active/blocked/inactive), `expiry` ("MM/YYYY"), `virtual` (bool),
+    // `product.code` ("BPD" virtual, "VWE" physical wave).
+    const lastDigits: string | null = typeof card.last_digits === "string" ? card.last_digits : null;
+    const state: string = card.state === "active" ? "active" : (card.state || "inactive");
+    const expiry: string | null = typeof card.expiry === "string" ? card.expiry : null;
+    const virtual: boolean | null = typeof card.virtual === "boolean" ? card.virtual : null;
+    const productCode: string | null = typeof card?.product?.code === "string" ? card.product.code : null;
+    const existingCard = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, cardholderId)).limit(1);
+    if (existingCard[0]) {
+      await pool.query(
+        `UPDATE stripe_cards SET last4 = $1, status = $2, expiry = $3, virtual = $4, product_code = $5 WHERE id = $6`,
+        [lastDigits, state, expiry, virtual, productCode, existingCard[0].id],
+      );
+    } else {
+      await db.insert(stripeCards).values({
+        cardholderId,
+        stripeCardId: cardId,
+        last4: lastDigits || "",
+        status: state,
+        expiry,
+        virtual,
+        productCode,
+      } as any);
+    }
+
+    result.assigned++;
+  }
+  return result;
 }
 
 // ─── Auto-migration: add the columns we depend on ────────────────────────
@@ -380,13 +627,101 @@ async function ensureColumns(): Promise<void> {
         ADD COLUMN IF NOT EXISTS revolut_transaction_id TEXT
     `);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_revolut_txn ON expenses (revolut_transaction_id) WHERE revolut_transaction_id IS NOT NULL`);
+    // Revolut card detail extras — populated by autoAssignRevolutCards
+    // from the GET /cards response. Surfaced on the My Card page so the
+    // card visual shows expiry + Virtual/Physical alongside last 4.
+    await pool.query(`
+      ALTER TABLE stripe_cards
+        ADD COLUMN IF NOT EXISTS expiry TEXT,
+        ADD COLUMN IF NOT EXISTS virtual BOOLEAN,
+        ADD COLUMN IF NOT EXISTS product_code TEXT
+    `);
     _migrated = true;
   } catch (err: any) {
     if (err?.code !== "42P01") console.warn("[revolut] migration:", err?.message);
   }
 }
 
+// Reveal the full PAN + CVV + expiry for a Revolut card. The dedicated
+// /cards/{id}/sensitive-details endpoint (documented at
+// https://developer.revolut.com/docs/business/get-sensitive-card-details)
+// returns the card details that are otherwise app-only. Requires the
+// READ_SENSITIVE_CARD_DATA permission on the API certificate; if absent
+// Revolut returns 403 and we let the caller render that as a user-facing
+// 'enable the scope' message.
+//
+// Security:
+//   - This is the ONE place we ask Revolut for the PAN. Never cache it,
+//     never log it, never persist it. Callers are expected to gate on
+//     'cardholder owns the logged-in user' (or admin), which the route
+//     wrapping this function already does.
+//   - Revolut audit-logs every reveal — visible in their Business audit
+//     trail. Treat that as the canonical record.
+export async function fetchRevolutSensitiveCardDetails(revolutCardId: string): Promise<{
+  pan: string;
+  cvv: string;
+  expiryMonth: number | null;
+  expiryYear: number | null;
+}> {
+  const raw = await api<any>(`/cards/${encodeURIComponent(revolutCardId)}/sensitive-details`);
+  // Field names per Revolut docs — defensive fallbacks in case they ever
+  // tweak shape (e.g. pan vs card_number, cvv vs cvc).
+  const pan: string = raw.pan || raw.card_number || raw.number || "";
+  const cvv: string = raw.cvv || raw.cvc || raw.security_code || "";
+  // Revolut returns expiry either as a single "MM/YYYY" string OR as
+  // separate expiry_month / expiry_year fields. Normalise.
+  let expiryMonth: number | null = null;
+  let expiryYear: number | null = null;
+  if (typeof raw.expiry_month === "number") expiryMonth = raw.expiry_month;
+  if (typeof raw.expiry_year === "number") expiryYear = raw.expiry_year;
+  if ((!expiryMonth || !expiryYear) && typeof raw.expiry === "string") {
+    const m = raw.expiry.match(/^(\d{1,2})\/(\d{4})$/);
+    if (m) { expiryMonth = Number(m[1]); expiryYear = Number(m[2]); }
+  }
+  if (!pan) throw new Error("Revolut sensitive-details response had no PAN field");
+  return { pan, cvv, expiryMonth, expiryYear };
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────
+
+// Shared backfill — pulls transactions from the last `lookbackMinutes`
+// minutes, runs autoAssign to refresh card mappings, then upserts each
+// txn. Idempotent. Used by both the manual sync endpoint and the
+// background cron so 'how to sync' has one implementation.
+export async function backfillRecentRevolutTransactions(opts: { lookbackMinutes?: number; limit?: number } = {}): Promise<{
+  total: number; created: number; updated: number; skipped: number;
+  cardsAssigned: number; cardsAlreadyMapped: number;
+}> {
+  const lookbackMinutes = opts.lookbackMinutes ?? 60 * 24 * 30; // default 30d
+  const limit = Math.min(opts.limit ?? 500, 1000);
+
+  const assign = await autoAssignRevolutCards().catch(err => {
+    console.warn("[revolut backfill] autoAssign failed:", err?.message);
+    return null;
+  });
+  const from = new Date(Date.now() - lookbackMinutes * 60 * 1000);
+  const params = new URLSearchParams({
+    from: from.toISOString(),
+    type: "card_payment",
+    count: String(limit),
+  });
+  const txns = await api<RevolutTransaction[]>(`/transactions?${params.toString()}`);
+  let created = 0, updated = 0, skipped = 0;
+  for (const t of txns) {
+    const r = await upsertExpenseFromTransaction(t).catch(err => {
+      console.warn(`[revolut backfill] upsert failed for txn ${t.id}:`, err?.message);
+      return null;
+    });
+    if (!r) skipped++;
+    else if (r.created) created++;
+    else updated++;
+  }
+  return {
+    total: txns.length, created, updated, skipped,
+    cardsAssigned: assign?.assigned || 0,
+    cardsAlreadyMapped: assign?.alreadyMapped || 0,
+  };
+}
 
 export function setupRevolutRoutes(app: Express): void {
   ensureColumns().catch(err => console.warn("[revolut] init:", err?.message));
@@ -503,6 +838,16 @@ export function setupRevolutRoutes(app: Express): void {
     }
   });
 
+  // Auto-assign every card to a BGP user by matching the holder's email.
+  app.post("/api/revolut/cards/auto-assign", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const result = await autoAssignRevolutCards();
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Map a Revolut card to a BGP user (creates or updates the
   // stripe_cardholders row — the table name is legacy; it's effectively
   // the "expense submitter" table now).
@@ -546,29 +891,24 @@ export function setupRevolutRoutes(app: Express): void {
   // Backfill — pull transactions from a date and upsert as expense rows.
   // Useful for catching anything the webhook missed, and for first-time
   // sync after the integration goes live.
-  app.post("/api/revolut/sync-transactions", requireAdmin, async (req: Request, res: Response) => {
+  // requireAuth (not requireAdmin) so staff can hit "Sync now" on their
+  // mobile card panel without admin perms. The Revolut API call still
+  // goes via the server's own OAuth token (one per org), so this isn't
+  // a privilege-escalation risk — just lets users refresh their own
+  // feed. Idempotent.
+  app.post("/api/revolut/sync-transactions", requireAuth, async (req: Request, res: Response) => {
     try {
-      const from = req.body?.from ? new Date(req.body.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const params = new URLSearchParams({
-        from: from.toISOString(),
-        type: "card_payment",
-        count: String(Math.min(Number(req.body?.limit) || 500, 1000)),
+      const lookbackMinutes = req.body?.from
+        ? Math.max(1, Math.round((Date.now() - new Date(req.body.from).getTime()) / 60_000))
+        : 60 * 24 * 30;
+      const result = await backfillRecentRevolutTransactions({
+        lookbackMinutes,
+        limit: Number(req.body?.limit) || 500,
       });
-      const txns = await api<RevolutTransaction[]>(`/transactions?${params.toString()}`);
-      let created = 0;
-      let updated = 0;
-      let skipped = 0;
-      for (const t of txns) {
-        const r = await upsertExpenseFromTransaction(t).catch(err => {
-          console.warn(`[revolut] upsert failed for txn ${t.id}:`, err?.message);
-          return null;
-        });
-        if (!r) skipped++;
-        else if (r.created) created++;
-        else updated++;
-      }
-      res.json({ ok: true, total: txns.length, created, updated, skipped, from: from.toISOString() });
+      console.log(`[revolut sync] manual done txns=${result.total} created=${result.created} updated=${result.updated} skipped=${result.skipped}`);
+      res.json({ ok: true, ...result });
     } catch (e: any) {
+      console.error("[revolut sync] crashed:", e?.message);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -576,13 +916,19 @@ export function setupRevolutRoutes(app: Express): void {
   // The actual webhook — Revolut POSTs transaction events here. No auth
   // middleware; we verify with HMAC instead.
   app.post("/api/revolut/webhook", async (req: Request, res: Response) => {
+    // Loud, unconditional log so we can SEE the webhook firing in
+    // production. The previous behaviour (silent unless an error fired)
+    // made it impossible to tell whether 'no transactions on the dashboard'
+    // meant 'Revolut isn't sending events' or 'we're rejecting them'.
+    console.log(`[revolut webhook] HIT event=${req.body?.event || "?"} data_id=${req.body?.data?.id || "?"} type=${req.body?.data?.type || "?"} state=${req.body?.data?.state || "?"}`);
     try {
       const cfg = getConfig();
       if (!cfg) {
-        console.warn("[revolut] webhook ignored: config missing");
+        console.warn("[revolut webhook] REJECTED: config missing");
         return res.status(503).json({ error: "Revolut config not set" });
       }
       if (!verifyWebhookSignature(req, cfg)) {
+        console.warn("[revolut webhook] REJECTED: invalid signature (check REVOLUT_WEBHOOK_SECRET matches the value in Revolut's dashboard)");
         return res.status(401).json({ error: "Invalid signature" });
       }
 
@@ -590,15 +936,16 @@ export function setupRevolutRoutes(app: Express): void {
       const data = req.body?.data;
 
       if (event === "TransactionCreated" || event === "TransactionStateChanged") {
-        // The data block is the transaction itself for these events.
         const r = await upsertExpenseFromTransaction(data as RevolutTransaction);
-        return res.json({ ok: true, action: r?.created ? "created" : r ? "updated" : "ignored" });
+        const action = r?.created ? "created" : r ? "updated" : "ignored";
+        console.log(`[revolut webhook] OK event=${event} action=${action} expense_id=${r?.id || "-"}`);
+        return res.json({ ok: true, action });
       }
 
-      // Other event types (cards, accounts) are no-ops for now.
+      console.log(`[revolut webhook] OK event=${event} action=ignored (not a transaction event)`);
       res.json({ ok: true, action: "ignored", event });
     } catch (e: any) {
-      console.error("[revolut webhook]", e?.message, e?.stack);
+      console.error("[revolut webhook] CRASHED:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

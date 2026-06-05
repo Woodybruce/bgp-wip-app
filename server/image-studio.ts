@@ -2534,8 +2534,10 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
   });
 
   app.post("/api/image-studio/import-stock", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    const t0 = Date.now();
     try {
       const { imageUrl, fileName, photographer, category, area, tags } = req.body;
+      console.log(`[image-studio/import-stock] start url=${imageUrl} fileName=${fileName || ""} category=${category || ""}`);
       if (!imageUrl) return res.status(400).json({ error: "imageUrl required" });
 
       const ALLOWED_STOCK_HOSTS = [
@@ -2559,9 +2561,13 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
       const userId = req.session?.userId || (req as any).tokenUserId;
 
       const resp = await fetch(imageUrl);
-      if (!resp.ok) return res.status(400).json({ error: "Failed to download image" });
+      if (!resp.ok) {
+        console.warn(`[image-studio/import-stock] fetch failed status=${resp.status} url=${imageUrl}`);
+        return res.status(400).json({ error: `Failed to download image (HTTP ${resp.status})` });
+      }
 
       const buffer = Buffer.from(await resp.arrayBuffer());
+      console.log(`[image-studio/import-stock] fetched bytes=${buffer.length} url=${imageUrl}`);
       const ext = ".jpg";
       const filename = `stock-${crypto.randomUUID()}${ext}`;
       const filePath = path.join(IMAGE_DIR, filename);
@@ -2585,8 +2591,10 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         uploadedBy: userId,
       }).returning();
 
+      console.log(`[image-studio/import-stock] done in ${Date.now() - t0}ms id=${inserted.id}`);
       res.json(inserted);
     } catch (e: any) {
+      console.error(`[image-studio/import-stock] crashed in ${Date.now() - t0}ms:`, e?.message, e?.stack);
       res.status(500).json({ error: e.message });
     }
   });

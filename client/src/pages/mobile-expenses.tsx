@@ -35,6 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
   X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
+  CreditCard, Eye, EyeOff, Copy, Check,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -52,14 +53,40 @@ interface Expense {
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  // Identifies a real Revolut card swipe (vs a receipt-photo or manual
+  // entry). Null = the expense was NOT created by the Revolut feed.
+  revolutTransactionId?: string | null;
+  type?: string | null;
   attendeeContacts?: { id: string; name: string | null }[];
 }
 interface NominalCode { code: string; name: string; }
 interface CrmContact { id: string; name: string; email?: string | null; companyId?: string | null; companyName?: string | null; }
 interface CrmProperty { id: string; name: string; postcode?: string | null; }
 interface CrmDeal { id: string; name: string; status?: string | null; }
+interface MyCardholder {
+  id: string; userName: string; email: string;
+  monthlyLimit: number; dailyLimit: number; singleTxLimit: number;
+  status: "active" | "inactive";
+}
+interface MyCard {
+  id: string; last4: string; status: string;
+  // Revolut-only extras (null on the legacy Stripe Issuing path).
+  expiry?: string | null;
+  virtual?: boolean | null;
+  productCode?: string | null;
+}
+interface MySummary {
+  monthlySpendPence: number;
+  monthlyLimitPence: number;
+  remainingPence: number;
+  pendingReceipts: number;
+  totalThisMonth: number;
+}
 interface MyData {
   expenses: Expense[];
+  cardholder?: MyCardholder | null;
+  card?: MyCard | null;
+  summary?: MySummary | null;
 }
 
 const ENTERTAINMENT_CATEGORIES = new Set([
@@ -105,6 +132,102 @@ interface AutoClassifyResult {
   matchedContactCount: number;
 }
 
+interface CardDetailsResult {
+  number?: string | null;
+  cvc?: string | null;
+  expMonth?: number;
+  expYear?: number;
+  last4?: string | null;
+  revolut?: boolean;
+  message?: string;
+}
+
+function MobileCardDetailsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery<CardDetailsResult>({
+    queryKey: ["/api/expenses/me/card-details"],
+    enabled: open,
+  });
+
+  const copy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 1500);
+    toast({ title: `${label} copied` });
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) { onClose(); setRevealed(false); } }}>
+      <SheetContent side="bottom" className="h-[90vh] p-0 rounded-t-2xl">
+        <SheetHeader className="px-4 pt-4 pb-2 flex flex-row items-center justify-between border-b">
+          <SheetTitle className="text-base">Card Details</SheetTitle>
+          <button onClick={onClose} className="p-1 -mr-1 active:bg-muted rounded-full" aria-label="Close"><X className="w-5 h-5" /></button>
+        </SheetHeader>
+        <div className="p-4 space-y-4">
+          {isLoading ? (
+            <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+          ) : data?.revolut ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">{data.message || "Card details are managed in the Revolut app."}</p>
+              <ol className="space-y-1.5 list-decimal pl-5 text-muted-foreground">
+                <li>Open the <strong>Revolut</strong> app</li>
+                <li>Go to the <strong>Cards</strong> tab</li>
+                <li>Tap your BGP card to view the number, expiry and CVC</li>
+              </ol>
+            </div>
+          ) : data?.number ? (
+            <>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Card Number</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <code className="flex-1 font-mono text-base bg-muted px-3 py-2 rounded">
+                    {revealed && data.number ? data.number.match(/.{1,4}/g)?.join(" ") : `•••• •••• •••• ${data.last4 || "0000"}`}
+                  </code>
+                  <button onClick={() => setRevealed(!revealed)} className="p-2 active:bg-muted rounded-md">
+                    {revealed ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                  {revealed && data.number && (
+                    <button onClick={() => copy(data.number!, "Number")} className="p-2 active:bg-muted rounded-md">
+                      {copied === "Number" ? <Check className="w-5 h-5 text-emerald-600" /> : <Copy className="w-5 h-5" />}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Expiry</label>
+                  <code className="block font-mono text-base bg-muted px-3 py-2 rounded mt-1">
+                    {data.expMonth ? String(data.expMonth).padStart(2, "0") : "—"} / {data.expYear ? String(data.expYear).slice(-2) : "—"}
+                  </code>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">CVC</label>
+                  <div className="flex items-center gap-1 mt-1">
+                    <code className="flex-1 font-mono text-base bg-muted px-3 py-2 rounded">
+                      {revealed && data.cvc ? data.cvc : "•••"}
+                    </code>
+                    {revealed && data.cvc && (
+                      <button onClick={() => copy(data.cvc!, "CVC")} className="p-2 active:bg-muted rounded-md">
+                        {copied === "CVC" ? <Check className="w-5 h-5 text-emerald-600" /> : <Copy className="w-5 h-5" />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground pt-2">Don't screenshot. Every reveal is audit-logged by Revolut.</p>
+            </>
+          ) : (
+            <div className="py-12 text-center text-sm text-muted-foreground">Couldn't load card details.</div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
   const open = !!expense;
   const { toast } = useToast();
@@ -147,8 +270,13 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiApplied, setAiApplied] = useState(false);
+  // Free-text reply the user types when the AI couldn't infer the
+  // business purpose from the calendar — e.g. 'beers with my Wingstop
+  // investors'. Sent back into auto-classify so Claude can use it as
+  // ground truth and stop asking the same question.
+  const [aiUserReply, setAiUserReply] = useState("");
 
-  const runClassify = (expenseId: string) => {
+  const runClassify = (expenseId: string, userReply?: string) => {
     setAiSuggestion(null);
     setAiError(null);
     setAiApplied(false);
@@ -159,6 +287,8 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
       method: "POST",
       credentials: "include",
       signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userReply: userReply || null }),
     })
       .then((r) => r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b?.error || `HTTP ${r.status}`))))
       .then((s: AutoClassifyResult) => {
@@ -191,6 +321,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAiSuggestion(null);
     setAiError(null);
     setAiApplied(false);
+    setAiUserReply("");
     // Always fire on sheet open unless already locked in Xero.
     if (expense.xeroExpenseId) return;
     runClassify(expense.id);
@@ -412,9 +543,39 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
               )}
 
               {aiSuggestion?.followUpQuestion && (
-                <div className="rounded-lg bg-white dark:bg-violet-950 border border-violet-200 dark:border-violet-800 p-2.5">
-                  <div className="text-[10px] uppercase tracking-wider font-semibold text-violet-600 mb-0.5">Question</div>
-                  <p className="text-[12px] text-foreground">{aiSuggestion.followUpQuestion}</p>
+                <div className="rounded-lg bg-white dark:bg-violet-950 border border-violet-200 dark:border-violet-800 p-2.5 space-y-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-semibold text-violet-600 mb-0.5">Question</div>
+                    <p className="text-[12px] text-foreground">{aiSuggestion.followUpQuestion}</p>
+                  </div>
+                  {/* Reply box — free text. On send, re-runs auto-classify
+                      with the reply as ground-truth context. Claude will
+                      use it to fill category / purpose / attendees and
+                      should drop the question. */}
+                  <div className="flex gap-1.5">
+                    <Textarea
+                      value={aiUserReply}
+                      onChange={(e) => setAiUserReply(e.target.value)}
+                      placeholder="e.g. Beers with the Wingstop investors after the meeting"
+                      rows={2}
+                      className="text-[12px] min-h-[44px] resize-none"
+                      data-testid="m-ai-reply"
+                    />
+                    <button
+                      type="button"
+                      disabled={!aiUserReply.trim() || aiLoading || !expense}
+                      onClick={() => {
+                        if (!expense) return;
+                        const reply = aiUserReply.trim();
+                        runClassify(expense.id, reply);
+                        setAiUserReply("");
+                      }}
+                      className="shrink-0 self-end px-3 h-9 rounded-md bg-violet-600 text-white text-xs font-medium active:bg-violet-700 disabled:opacity-50"
+                      data-testid="m-ai-reply-send"
+                    >
+                      {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -791,6 +952,7 @@ export default function MobileExpenses() {
   const { toast } = useToast();
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<Expense | null>(null);
+  const [showCardDetails, setShowCardDetails] = useState(false);
   // Real DOM input refs — dynamically created <input>.click() doesn't
   // open the iOS PWA file picker reliably. Hidden inputs that already
   // exist in the tree do.
@@ -800,6 +962,11 @@ export default function MobileExpenses() {
 
   const { data, isLoading } = useQuery<MyData>({
     queryKey: ["/api/expenses/me"],
+    // Re-poll every 60s while the page is visible so the server-side
+    // auto-sync (every 10min) lands quickly enough that the user doesn't
+    // need to manually refresh.
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const uploadMutation = useMutation({
@@ -964,6 +1131,57 @@ export default function MobileExpenses() {
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
       </div>
 
+      {/* Card panel — shows the user's BGP/Revolut card status + this month's
+          spend. Mirrors the desktop My Card view but compact for mobile.
+          Active/Frozen reads from cardholder.status (Revolut cards have no
+          stripe_cards row, so card?.status would always be undefined). */}
+      {data?.cardholder && (
+        <div className="px-4 mt-3 mb-3">
+          <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 text-white p-4 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider opacity-70">BGP {data.card?.virtual === false ? "Physical" : "Virtual"} Card</div>
+                <div className="text-sm font-semibold mt-0.5">{data.cardholder.userName}</div>
+              </div>
+              {data.cardholder.status === "active" ? (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">Active</span>
+              ) : (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-400/30">Frozen</span>
+              )}
+            </div>
+            <div className="font-mono text-base tracking-widest mt-3">•••• •••• •••• {data.card?.last4 || "0000"}</div>
+            {data.card?.expiry && (
+              <div className="text-[10px] uppercase tracking-wider opacity-60 mt-1">Expires {data.card.expiry}</div>
+            )}
+            <div className="flex items-end justify-between gap-3 mt-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider opacity-60">This month</div>
+                <div className="text-base font-semibold">{fmtPence(data.summary?.monthlySpendPence || 0)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] uppercase tracking-wider opacity-60">Monthly limit</div>
+                <div className="text-xs opacity-90">{fmtPence(data.cardholder.monthlyLimit)}</div>
+              </div>
+            </div>
+            {/* Reveal the full PAN + CVC from Revolut's
+                /cards/{id}/sensitive-details endpoint. Requires the
+                READ_SENSITIVE_CARD_DATA scope on the integration. */}
+            <div className="flex items-center justify-between gap-2 mt-3">
+              <p className="text-[10px] opacity-70 flex-1">Spend syncs automatically. Freeze in the Revolut app.</p>
+              <button
+                type="button"
+                onClick={() => setShowCardDetails(true)}
+                className="text-[10px] px-2.5 py-1 rounded-full bg-white/15 active:bg-white/25 flex items-center gap-1"
+                data-testid="mobile-show-card-details"
+              >
+                <Eye className="w-3 h-3" />
+                Show details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="px-4 mb-3">
         <button
           type="button"
@@ -1067,7 +1285,25 @@ export default function MobileExpenses() {
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-[13px] truncate">{e.merchant || "Unknown merchant"}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="font-medium text-[13px] truncate">{e.merchant || "Unknown merchant"}</div>
+                      {/* Tiny source tag — Revolut = real card swipe, Receipt
+                          = uploaded photo, Cash = manual entry. Makes it
+                          obvious at a glance which spend actually came from
+                          the live card feed vs ad-hoc additions. */}
+                      {/* Badge priority: a real Revolut swipe wins, then a
+                          receipt-photo upload (even if the underlying row
+                          is type=cash — receipt-from-photo flow defaults
+                          to cash), then a genuine cash claim with no
+                          receipt. */}
+                      {e.revolutTransactionId ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-semibold shrink-0">Revolut</span>
+                      ) : e.receiptFilename ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold shrink-0">Receipt</span>
+                      ) : e.type === "cash" ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold shrink-0">Cash</span>
+                      ) : null}
+                    </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
                       <span>{fmtDate(e.transactionDate)}</span>
                       <span>·</span>
@@ -1094,6 +1330,7 @@ export default function MobileExpenses() {
       </section>
 
       <EditExpenseSheet expense={editing} onClose={() => setEditing(null)} />
+      <MobileCardDetailsSheet open={showCardDetails} onClose={() => setShowCardDetails(false)} />
     </div>
   );
 }

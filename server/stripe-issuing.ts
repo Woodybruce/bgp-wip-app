@@ -15,7 +15,7 @@
  */
 import type { Express, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAttendees, crmContacts, users as usersTable } from "@shared/schema";
 import { eq, desc, and, gte, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
@@ -203,9 +203,16 @@ export async function updateCardholderLimits(args: {
   const newDaily    = args.dailyLimit    ?? ch.dailyLimit;
   const newSingleTx = args.singleTxLimit ?? ch.singleTxLimit;
 
-  await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, {
-    spending_controls: spendingControls({ monthlyLimit: newMonthly, dailyLimit: newDaily, singleTxLimit: newSingleTx }),
-  });
+  // Revolut-mapped cardholders have no Stripe id — pushing limits to
+  // Stripe would POST /issuing/cardholders/null → 404. Spending limits on
+  // Revolut cards are managed in the Revolut app, so for those we just
+  // persist the figures locally as a record. Only call Stripe for real
+  // Stripe-issued cardholders.
+  if (ch.stripeCardholderId) {
+    await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, {
+      spending_controls: spendingControls({ monthlyLimit: newMonthly, dailyLimit: newDaily, singleTxLimit: newSingleTx }),
+    });
+  }
 
   await db.update(stripeCardholders).set({
     monthlyLimit: newMonthly,
@@ -220,7 +227,13 @@ export async function updateCardholderLimits(args: {
 export async function setCardholderStatus(cardholderId: string, status: "active" | "inactive") {
   const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, cardholderId)).limit(1);
   if (!ch) throw new Error("Cardholder not found");
-  await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, { status });
+  // Revolut-mapped cardholders have no Stripe id — skip the Stripe call
+  // (it would hit /issuing/cardholders/null → 404). Freeze/unfreeze for a
+  // Revolut card is done in the Revolut app; we keep the local status flag
+  // in sync for the dashboard either way.
+  if (ch.stripeCardholderId) {
+    await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, { status });
+  }
   await db.update(stripeCardholders).set({ status, updatedAt: new Date() }).where(eq(stripeCardholders.id, cardholderId));
 }
 
@@ -389,7 +402,29 @@ export function setupStripeIssuingRoutes(app: Express) {
   app.get("/api/expenses/cardholders", requireAdmin, async (req: Request, res: Response) => {
     try {
       const rows = await db.select().from(stripeCardholders).orderBy(stripeCardholders.userName);
-      res.json(rows);
+      // Join the cardholder's stripe_cards row so the admin Cardholders
+      // table can show card type + last 4 in the same view (was a
+      // separate Cards & Revolut tab — now merged).
+      const allCards = await db.select().from(stripeCards);
+      const cardByHolder = new Map<string, typeof allCards[number]>();
+      for (const c of allCards) {
+        // First card wins per cardholder (each cardholder has one card today).
+        if (!cardByHolder.has(c.cardholderId)) cardByHolder.set(c.cardholderId, c);
+      }
+      const enriched = rows.map(ch => {
+        const c = cardByHolder.get(ch.id) || null;
+        return {
+          ...ch,
+          card: c ? {
+            last4: c.last4 || null,
+            expiry: (c as any).expiry || null,
+            virtual: (c as any).virtual ?? null,
+            productCode: (c as any).productCode || null,
+            status: c.status,
+          } : null,
+        };
+      });
+      res.json(enriched);
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
@@ -682,6 +717,83 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // One-shot: rescue expenses that were either auto-approved (under the
+  // old MD-no-manager branch) or assigned to a self-approver, both of
+  // which mean Wendy/Layla never see them in the shared inbox. Resets
+  // them to pending_approval with a null approver so the fallback pool
+  // picks them up. Skips anything already posted to Xero to avoid
+  // un-posting. Admin only — call once after deploying the routing fix.
+  app.post("/api/expenses/admin/reset-self-approved", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      // (a) Old auto-approved rows: status=approved + the marker note + not
+      //     yet posted to Xero. Flip back to pending_approval.
+      const a = await pool.query(`
+        UPDATE expenses
+           SET status = 'pending_approval',
+               approver_user_id = NULL,
+               approved_at = NULL,
+               approved_by_user_id = NULL,
+               approval_notes = NULL,
+               updated_at = NOW()
+         WHERE status = 'approved'
+           AND approval_notes = 'Auto-approved — admin with no manager'
+           AND xero_expense_id IS NULL
+        RETURNING id
+      `);
+      // (b) Self-approver routing: pending_approval rows where the approver
+      //     IS the submitter. Wendy's shared-inbox query is
+      //     (approver_user_id IS NULL OR approver_user_id = me) so a self-
+      //     approver makes the row invisible to her. Null the approver so it
+      //     hits the fallback pool.
+      const b = await pool.query(`
+        UPDATE expenses
+           SET approver_user_id = NULL,
+               updated_at = NOW()
+         WHERE status = 'pending_approval'
+           AND approver_user_id IS NOT NULL
+           AND approver_user_id = submitter_user_id
+        RETURNING id
+      `);
+      res.json({
+        ok: true,
+        autoApprovedReset: a.rowCount || 0,
+        selfApproverCleared: b.rowCount || 0,
+      });
+    } catch (e: any) {
+      console.error("[expenses] reset-self-approved error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Auto-find an email receipt for a pending expense — searches the
+  // cardholder's own mailbox around the transaction time, matches on
+  // amount, then attaches + posts. Admin OR the owning cardholder.
+  app.post("/api/expenses/:id/find-email-receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId;
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, String(req.params.id))).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+
+      // Ownership check: admins always; otherwise the expense's cardholder
+      // must belong to the logged-in user.
+      const [me] = userId ? await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1) : [];
+      const isAdmin = !!me?.isAdmin;
+      if (!isAdmin) {
+        const [ch] = exp.cardholderId
+          ? await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1)
+          : [];
+        if (!ch || ch.userId !== userId) return res.status(403).json({ error: "Not your expense" });
+      }
+
+      const { findEmailReceiptForExpense } = await import("./expense-email-receipt");
+      const result = await findEmailReceiptForExpense(String(req.params.id));
+      res.json(result);
+    } catch (e: any) {
+      console.error("[expenses] find-email-receipt error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // ─── SELF-SERVICE (per-user) ──────────────────────────────────────────────
 
   // Get my cardholder + card + expenses + monthly summary
@@ -693,7 +805,24 @@ export function setupStripeIssuingRoutes(app: Express) {
       const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
       if (!ch) return res.json({ cardholder: null, card: null, expenses: [], summary: null });
 
-      const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+      let [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+
+      // Self-heal: if the cardholder has no stripe_cards row (or it's
+      // missing last4 because auto-assign ran before the schema change),
+      // run autoAssignRevolutCards once and re-query. Fire-and-forget
+      // would race the response; awaiting once is fine (~500ms) and
+      // means the user sees the populated card on the FIRST page load
+      // instead of needing to wait for the 10-min cron.
+      const needsHeal = !ch.stripeCardholderId && (!card || !card.last4);
+      if (needsHeal) {
+        try {
+          const { autoAssignRevolutCards } = await import("./revolut");
+          await autoAssignRevolutCards();
+          [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+        } catch (e: any) {
+          console.warn(`[expenses/me] auto-assign self-heal failed for ${userId}: ${e?.message}`);
+        }
+      }
 
       const myExpenses = await db.select().from(expenses).where(eq(expenses.cardholderId, ch.id)).orderBy(desc(expenses.transactionDate)).limit(100);
 
@@ -721,11 +850,20 @@ export function setupStripeIssuingRoutes(app: Express) {
         attendeeContacts: attendeesByExpense.get(e.id) || [],
       }));
 
-      // Month-to-date spend
+      // Month-to-date spend ON THE CARD. Excludes cash claims (type=cash
+      // with no revolutTransactionId) so the card panel doesn't conflate
+      // ad-hoc receipt-photo expenses with real Revolut card swipes —
+      // that was making the panel show '£72.05 spent on card' when the
+      // card hadn't actually been swiped at all.
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
-      const monthly = myExpenses.filter(e => e.transactionDate && new Date(e.transactionDate) >= startOfMonth && !e.isPersonal);
+      const monthly = myExpenses.filter(e => {
+        if (!e.transactionDate || e.isPersonal) return false;
+        if (new Date(e.transactionDate) < startOfMonth) return false;
+        const isCardSpend = !!(e as any).revolutTransactionId || e.type === "card";
+        return isCardSpend;
+      });
       const monthlySpend = monthly.reduce((sum, e) => sum + (e.amountPence || 0), 0);
       const pendingReceipts = myExpenses.filter(e => e.status === "pending_receipt").length;
 
@@ -781,6 +919,46 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!userId) return res.status(401).json({ error: "Not logged in" });
       const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
       if (!ch) return res.status(404).json({ error: "No card issued for this user" });
+
+      // Revolut path — fetch sensitive details from Revolut's dedicated
+      // endpoint. Token MUST have the sensitive-card-data permission;
+      // otherwise Revolut returns 403 and we surface that as the dialog
+      // message so the admin knows to enable the scope.
+      if (!ch.stripeCardholderId) {
+        const { rows } = await pool.query<{ stripe_card_id: string | null }>(
+          `SELECT stripe_card_id FROM stripe_cards WHERE cardholder_id = $1 LIMIT 1`,
+          [ch.id],
+        );
+        const revolutCardId = rows[0]?.stripe_card_id;
+        if (!revolutCardId) {
+          return res.json({ provider: "revolut", revolut: true, message: "No Revolut card mapped to your account yet — ask an admin to run Auto-assign on the Cards & Revolut page." });
+        }
+        try {
+          const { fetchRevolutSensitiveCardDetails } = await import("./revolut");
+          const details = await fetchRevolutSensitiveCardDetails(revolutCardId);
+          return res.json({
+            provider: "revolut",
+            number: details.pan,
+            cvc: details.cvv,
+            expMonth: details.expiryMonth,
+            expYear: details.expiryYear,
+            last4: details.pan ? details.pan.slice(-4) : null,
+            isTestMode: false,
+          });
+        } catch (revErr: any) {
+          console.warn(`[expenses/me/card-details] Revolut reveal failed for cardholder ${ch.id}: ${revErr?.message}`);
+          // Common cause: token lacks READ_SENSITIVE_CARD_DATA scope.
+          // Surface a useful message instead of a 500.
+          return res.json({
+            provider: "revolut",
+            revolut: true,
+            message: /403|forbidden|scope|permission/i.test(revErr?.message || "")
+              ? "Revolut API token doesn't have permission to reveal card details. Enable the 'sensitive card data' scope in Revolut Business → APIs → permissions, then re-bootstrap."
+              : `Couldn't fetch card details from Revolut: ${revErr?.message}`,
+          });
+        }
+      }
+
       const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
       if (!card) return res.status(404).json({ error: "No card found" });
 

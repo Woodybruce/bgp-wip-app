@@ -16,6 +16,7 @@ import { expenses, stripeCardholders, users } from "@shared/schema";
 import { eq, and, lt, isNotNull, sql } from "drizzle-orm";
 import { sendWhatsAppText, getWhatsAppConfig } from "./whatsapp";
 import { FALLBACK_APPROVER_EMAILS } from "./expense-approval";
+import { backfillRecentRevolutTransactions } from "./revolut";
 
 const fmt = (p: number) => `£${(p / 100).toFixed(2)}`;
 
@@ -164,7 +165,31 @@ export function startExpenseCron(): void {
     }
   }, 60 * 60 * 1000);
 
-  console.log("[expense-cron] scheduled — weekly Mon 09:00 UTC + monthly 28th 09:00 UTC");
+  // Revolut safety-net sync — every 10 minutes, pull anything from the
+  // last hour. The webhook is the primary path (live + near-instant),
+  // but we add this so the dashboard never has gaps: webhook downtime,
+  // signature mismatch, late deliveries, or a missed retry all get
+  // caught on the next sweep. Idempotent — upsert won't duplicate rows.
+  const REVOLUT_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+  setInterval(() => {
+    backfillRecentRevolutTransactions({ lookbackMinutes: 60, limit: 200 })
+      .then(r => {
+        if (r.created > 0 || r.updated > 0) {
+          console.log(`[expense-cron] revolut auto-sync: ${r.created} new, ${r.updated} updated, ${r.skipped} skipped (${r.total} fetched)`);
+        }
+      })
+      .catch(e => console.warn("[expense-cron] revolut auto-sync failed:", e?.message));
+  }, REVOLUT_SYNC_INTERVAL_MS);
+
+  // Kick once on startup so a freshly-deployed instance catches up
+  // immediately without waiting for the first 10-minute tick.
+  setTimeout(() => {
+    backfillRecentRevolutTransactions({ lookbackMinutes: 60, limit: 200 })
+      .then(r => console.log(`[expense-cron] revolut startup sync: ${r.created} new, ${r.updated} updated`))
+      .catch(e => console.warn("[expense-cron] revolut startup sync failed:", e?.message));
+  }, 30_000);
+
+  console.log("[expense-cron] scheduled — weekly Mon 09:00 UTC + monthly 28th 09:00 UTC + revolut every 10min");
 }
 
 // Manual fire helpers — exported for admin "run now" endpoints if added.

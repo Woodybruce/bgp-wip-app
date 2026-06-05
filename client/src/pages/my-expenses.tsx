@@ -47,7 +47,7 @@ interface Cardholder {
 }
 interface MyData {
   cardholder: Cardholder | null;
-  card: { id: string; last4: string; status: string } | null;
+  card: { id: string; last4: string; status: string; expiry?: string | null; virtual?: boolean | null; productCode?: string | null } | null;
   expenses: Expense[];
   summary: {
     monthlySpendPence: number;
@@ -82,8 +82,13 @@ export default function MyExpenses() {
   const bulkInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const { data, isLoading, refetch } = useQuery<MyData>({
+  const { data, isLoading } = useQuery<MyData>({
     queryKey: ["/api/expenses/me"],
+    // Live updates — repoll every 60s while the page is open + on
+    // window focus, matching the mobile My Card view. No manual
+    // Refresh button needed.
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const uploadMutation = useMutation({
@@ -220,9 +225,6 @@ export default function MyExpenses() {
           <h1 className="text-2xl font-bold">My Card & Expenses</h1>
           <p className="text-sm text-muted-foreground">{cardholder.userName} · {cardholder.email}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="w-4 h-4 mr-1.5" /> Refresh
-        </Button>
       </div>
 
       {/* Card visual + summary */}
@@ -231,10 +233,14 @@ export default function MyExpenses() {
           <CardContent className="p-6 space-y-6">
             <div className="flex items-start justify-between">
               <div>
-                <div className="text-xs uppercase tracking-wider opacity-70">BGP Virtual Card</div>
+                <div className="text-xs uppercase tracking-wider opacity-70">BGP {card?.virtual === false ? "Physical" : "Virtual"} Card</div>
                 <div className="text-xl font-semibold mt-1">{cardholder.userName}</div>
               </div>
-              {card?.status === "active" ? (
+              {/* Status comes from the cardholder, not a Stripe card row —
+                  Revolut cardholders have no stripe_cards record, so keying
+                  off card?.status falsely showed every Revolut card as
+                  "Frozen". cardholder.status is the source of truth. */}
+              {cardholder.status === "active" ? (
                 <Badge className="bg-emerald-500/20 text-emerald-200 border-emerald-400/30">Active</Badge>
               ) : (
                 <Badge className="bg-amber-500/20 text-amber-200 border-amber-400/30">Frozen</Badge>
@@ -243,8 +249,11 @@ export default function MyExpenses() {
             <div>
               <div className="font-mono text-2xl tracking-widest">•••• •••• •••• {card?.last4 || "0000"}</div>
               <div className="flex gap-6 mt-3 text-xs opacity-80">
-                <div>MONTHLY LIMIT: {fmt(cardholder.monthlyLimit)}</div>
-                <div>DAILY LIMIT: {fmt(cardholder.dailyLimit)}</div>
+                {card?.expiry && (
+                  <div>EXPIRES: {card.expiry}</div>
+                )}
+                <div>MONTHLY: {fmt(cardholder.monthlyLimit)}</div>
+                <div>DAILY: {fmt(cardholder.dailyLimit)}</div>
               </div>
             </div>
             <div className="flex gap-2 pt-2">
@@ -252,7 +261,7 @@ export default function MyExpenses() {
                 size="sm"
                 variant="secondary"
                 onClick={() => setShowCardDetails(true)}
-                disabled={card?.status !== "active"}
+                disabled={cardholder.status !== "active"}
               >
                 <Eye className="w-4 h-4 mr-1.5" /> Show details
               </Button>
@@ -831,6 +840,7 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   const { data, isLoading } = useQuery<{
     last4: string; brand: string; expMonth: number; expYear: number;
     number: string | null; cvc: string | null; isTestMode: boolean;
+    revolut?: boolean; message?: string;
   }>({
     queryKey: ["/api/expenses/me/card-details"],
     enabled: open,
@@ -851,13 +861,19 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         </DialogHeader>
         {isLoading ? (
           <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+        ) : data?.revolut ? (
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              {data.message || "Card details are managed in the Revolut app."}
+            </p>
+            <ol className="space-y-1.5 list-decimal pl-5 text-muted-foreground">
+              <li>Open the <strong>Revolut</strong> app</li>
+              <li>Go to the <strong>Cards</strong> tab</li>
+              <li>Tap your BGP card to view the number, expiry and CVC</li>
+            </ol>
+          </div>
         ) : data ? (
           <div className="space-y-4">
-            {data.isTestMode && (
-              <div className="text-xs p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900">
-                Stripe test mode — these are not real card numbers.
-              </div>
-            )}
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground">Card Number</label>
               <div className="flex items-center gap-2 mt-1">
@@ -904,7 +920,7 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   );
 }
 
-function AppleWalletDialog({ open, onOpenChange, onShowDetails }: { open: boolean; onOpenChange: (v: boolean) => void; onShowDetails: () => void }) {
+function AppleWalletDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void; onShowDetails: () => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -913,23 +929,20 @@ function AppleWalletDialog({ open, onOpenChange, onShowDetails }: { open: boolea
         </DialogHeader>
         <div className="space-y-4 text-sm">
           <p className="text-muted-foreground">
-            One-tap "Add to Wallet" needs a native iOS app (coming later). For now, add the card manually on your iPhone — it takes about 30 seconds.
+            Apple Wallet provisioning happens inside the Revolut app — the BGP dashboard can't add the card for you because Revolut doesn't expose card details to third-party apps (by design).
           </p>
           <ol className="space-y-2 list-decimal pl-5">
-            <li>Open the <strong>Wallet</strong> app on your iPhone</li>
-            <li>Tap the <strong>+</strong> button (top-right)</li>
-            <li>Choose <strong>Debit or Credit Card</strong></li>
-            <li>Tap <strong>Enter Card Details Manually</strong></li>
-            <li>Type the card number, expiry, and CVC from below</li>
-            <li>Approve any verification prompt</li>
+            <li>Open the <strong>Revolut</strong> app on your iPhone</li>
+            <li>Go to the <strong>Cards</strong> tab</li>
+            <li>Tap your <strong>BGP</strong> card</li>
+            <li>Tap <strong>Add to Apple Wallet</strong></li>
           </ol>
-          <div className="text-xs p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900">
-            <strong>Test mode:</strong> If the card is in Stripe test mode, Apple Wallet will reject it. Use the card number directly for online purchases until we go live.
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Once added, Apple Pay works in Safari and any app — and the spend still flows back to BGP automatically via the Revolut webhook.
+          </p>
         </div>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
-          <Button onClick={onShowDetails}>Show card details</Button>
+        <DialogFooter>
+          <Button onClick={() => onOpenChange(false)}>Got it</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
