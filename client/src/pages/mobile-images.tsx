@@ -155,19 +155,6 @@ export default function MobileImages() {
 
   return (
     <div className="pb-24" data-testid="mobile-images">
-      <input
-        ref={uploadInputRef}
-        type="file"
-        // image/* alone misses HEIC on some iOS versions when the file
-        // comes via the share sheet — list the extensions explicitly so
-        // every photo on the Camera Roll is selectable.
-        accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp"
-        multiple
-        className="hidden"
-        onChange={handleUploadChange}
-        data-testid="mobile-images-upload-input"
-      />
-
       <div
         className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
@@ -176,11 +163,14 @@ export default function MobileImages() {
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Images</h1>
-        <button
-          type="button"
-          onClick={() => uploadInputRef.current?.click()}
-          disabled={uploading}
-          className="inline-flex items-center gap-1.5 h-10 px-3 rounded-full bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-60 active:scale-95 transition-transform"
+        {/* iOS Safari is unreliable about firing a hidden-input change event
+            when triggered programmatically with .click(). Using a real
+            <label htmlFor> + sr-only input is the rock-solid pattern — iOS
+            treats the label tap as a direct user gesture on the input. */}
+        <label
+          htmlFor="mobile-images-upload-input"
+          aria-disabled={uploading}
+          className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-full bg-primary text-primary-foreground text-sm font-semibold active:scale-95 transition-transform cursor-pointer ${uploading ? "opacity-60 pointer-events-none" : ""}`}
           data-testid="mobile-images-upload"
         >
           {uploading ? (
@@ -189,7 +179,23 @@ export default function MobileImages() {
             <Camera className="w-4 h-4" />
           )}
           {uploading ? "Uploading…" : "Add photos"}
-        </button>
+        </label>
+        {/* sr-only keeps the input in the DOM + accessible (so iOS treats it
+            as visible enough to deliver the change event) but invisible. */}
+        <input
+          ref={uploadInputRef}
+          id="mobile-images-upload-input"
+          type="file"
+          // image/* alone misses HEIC on some iOS versions when the file
+          // comes via the share sheet — list the extensions explicitly so
+          // every photo on the Camera Roll is selectable.
+          accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp"
+          multiple
+          disabled={uploading}
+          onChange={handleUploadChange}
+          className="sr-only"
+          data-testid="mobile-images-upload-input"
+        />
       </div>
 
       <div className="px-4 mt-3 mb-3">
