@@ -38,7 +38,7 @@ import crypto from "crypto";
 import { db, pool } from "./db";
 import { stripeCardholders, expenses, systemSettings, users } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import { requireAdmin } from "./auth";
+import { requireAdmin, requireAuth } from "./auth";
 
 // ─── Config + token storage ──────────────────────────────────────────────
 
@@ -311,11 +311,23 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
 
   // Idempotent: if we already have an expense for this transaction id,
   // update its state but don't insert a duplicate.
-  const existing = await pool.query<{ id: string; status: string }>(
-    `SELECT id, status FROM expenses WHERE revolut_transaction_id = $1 LIMIT 1`,
+  const existing = await pool.query<{ id: string; status: string; cardholder_id: string | null }>(
+    `SELECT id, status, cardholder_id FROM expenses WHERE revolut_transaction_id = $1 LIMIT 1`,
     [txn.id],
   );
   if (existing.rows[0]) {
+    // Relink orphaned rows: if the row's cardholder_id is NULL but we've
+    // since resolved one (auto-assign mapped the card after the original
+    // insert), backfill it now. This is why the user's mobile page was
+    // empty while desktop admin saw everything: orphan rows existed but
+    // couldn't be filtered to the user's cardholder.
+    if (!existing.rows[0].cardholder_id && cardholderId) {
+      await pool.query(
+        `UPDATE expenses SET cardholder_id = $1, updated_at = NOW() WHERE id = $2`,
+        [cardholderId, existing.rows[0].id],
+      );
+      console.log(`[revolut] relinked orphan expense ${existing.rows[0].id} -> cardholder ${cardholderId}`);
+    }
     // State transitions — completed → posted_to_xero gate, reverted → mark reversed.
     if (txn.state === "reverted") {
       await pool.query(
@@ -702,8 +714,23 @@ export function setupRevolutRoutes(app: Express): void {
   // Backfill — pull transactions from a date and upsert as expense rows.
   // Useful for catching anything the webhook missed, and for first-time
   // sync after the integration goes live.
-  app.post("/api/revolut/sync-transactions", requireAdmin, async (req: Request, res: Response) => {
+  // requireAuth (not requireAdmin) so staff can hit "Sync now" on their
+  // mobile card panel without admin perms. The Revolut API call still
+  // goes via the server's own OAuth token (one per org), so this isn't
+  // a privilege-escalation risk — just lets users refresh their own
+  // feed. Idempotent.
+  app.post("/api/revolut/sync-transactions", requireAuth, async (req: Request, res: Response) => {
     try {
+      // Refresh the card->user mappings BEFORE upserting transactions —
+      // if a user's Revolut card was issued after their initial
+      // stripe_cardholders row was created, the link won't exist yet, and
+      // every txn would land as an orphan (cardholder_id NULL). Running
+      // autoAssign first means upsertExpenseFromTransaction can resolve
+      // the cardholder correctly on the very first try.
+      const assign = await autoAssignRevolutCards().catch(err => {
+        console.warn("[revolut sync] autoAssign failed:", err?.message);
+        return null;
+      });
       const from = req.body?.from ? new Date(req.body.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const params = new URLSearchParams({
         from: from.toISOString(),
@@ -723,8 +750,20 @@ export function setupRevolutRoutes(app: Express): void {
         else if (r.created) created++;
         else updated++;
       }
-      res.json({ ok: true, total: txns.length, created, updated, skipped, from: from.toISOString() });
+      console.log(`[revolut sync] done assigned=${assign?.assigned || 0} alreadyMapped=${assign?.alreadyMapped || 0} unmatched=${assign?.unmatched?.length || 0} txns=${txns.length} created=${created} updated=${updated} skipped=${skipped}`);
+      res.json({
+        ok: true,
+        total: txns.length,
+        created,
+        updated,
+        skipped,
+        cardsAssigned: assign?.assigned || 0,
+        cardsAlreadyMapped: assign?.alreadyMapped || 0,
+        cardsUnmatched: assign?.unmatched || [],
+        from: from.toISOString(),
+      });
     } catch (e: any) {
+      console.error("[revolut sync] crashed:", e?.message);
       res.status(500).json({ error: e?.message });
     }
   });
