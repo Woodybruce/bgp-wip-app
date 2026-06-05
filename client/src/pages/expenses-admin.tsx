@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -90,13 +90,48 @@ export default function ExpensesAdmin() {
     queryKey: ["/api/expenses"],
   });
 
+  // Range selector for the Analysis tab + the by-cardholder + by-category
+  // aggregates. Default 'month' = current calendar month. Custom uses the
+  // free-text from/to inputs (ISO date strings).
+  type Range = "month" | "lastMonth" | "quarter" | "ytd" | "year";
+  const [rangePreset, setRangePreset] = useState<Range>("month");
+
+  const { from: rangeFrom, to: rangeTo, label: rangeLabel } = useMemo(() => {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const startOfRollingYear = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+    const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+    switch (rangePreset) {
+      case "month":      return { from: startOfMonth, to: endOfMonth, label: "This month" };
+      case "lastMonth":  return { from: startOfLastMonth, to: endOfLastMonth, label: "Last month" };
+      case "quarter":    return { from: startOfQuarter, to: now, label: "This quarter" };
+      case "ytd":        return { from: startOfYear, to: now, label: "Year to date" };
+      case "year":       return { from: startOfRollingYear, to: now, label: "Last 12 months" };
+    }
+  }, [rangePreset]);
+
   const { data: summary, refetch: refetchSummary } = useQuery<{
     totalMonthPence: number; totalMonthCount: number;
+    totalRangePence: number; totalRangeCount: number;
     pendingReceipts: number; pendingApproval: number; postedToXero: number; personalFlagged: number;
     cardholderCount: number; activeCards: number;
     byCardholder: Array<{ cardholderId: string; name: string; spentPence: number; monthlyLimit: number; utilisation: number; txCount: number; status: string }>;
     byCategory: Array<{ category: string; count: number; pence: number }>;
-  }>({ queryKey: ["/api/expenses/admin/summary"] });
+    byMonth: Array<{ month: string; count: number; pence: number }>;
+    range: { from: string; to: string };
+  }>({
+    queryKey: ["/api/expenses/admin/summary", rangeFrom.toISOString(), rangeTo.toISOString()],
+    queryFn: async () => {
+      const url = `/api/expenses/admin/summary?from=${encodeURIComponent(rangeFrom.toISOString())}&to=${encodeURIComponent(rangeTo.toISOString())}`;
+      const r = await fetch(url, { credentials: "include" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+  });
 
   const freezeMutation = useMutation({
     mutationFn: async (args: { id: string; status: "active" | "inactive" }) => {
@@ -211,12 +246,30 @@ export default function ExpensesAdmin() {
           drilldown so all three views are reachable without scrolling. */}
       <Card>
         <Tabs defaultValue="spend">
-          <CardHeader className="pb-0">
-            <TabsList className="grid grid-cols-3 w-full max-w-xl">
-              <TabsTrigger value="spend">Spend by cardholder</TabsTrigger>
-              <TabsTrigger value="cardholders">Cardholders ({cardholders.length})</TabsTrigger>
-              <TabsTrigger value="recent">Recent expenses ({expenses.length})</TabsTrigger>
-            </TabsList>
+          <CardHeader className="pb-0 space-y-3">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <TabsList className="grid grid-cols-4 w-full max-w-2xl">
+                <TabsTrigger value="spend">Spend by cardholder</TabsTrigger>
+                <TabsTrigger value="cardholders">Cardholders ({cardholders.length})</TabsTrigger>
+                <TabsTrigger value="recent">Recent ({expenses.length})</TabsTrigger>
+                <TabsTrigger value="analysis">Analysis</TabsTrigger>
+              </TabsList>
+              {/* Date range — shared across Spend by cardholder + Analysis
+                  tabs. 'This month' is the default so the existing tile
+                  values don't shift. */}
+              <Select value={rangePreset} onValueChange={(v) => setRangePreset(v as Range)}>
+                <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="expenses-range">
+                  <SelectValue placeholder="Range" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="month">This month</SelectItem>
+                  <SelectItem value="lastMonth">Last month</SelectItem>
+                  <SelectItem value="quarter">This quarter</SelectItem>
+                  <SelectItem value="ytd">Year to date</SelectItem>
+                  <SelectItem value="year">Last 12 months</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
 
       <TabsContent value="spend" className="m-0">
@@ -479,6 +532,117 @@ export default function ExpensesAdmin() {
                 </tbody>
               </table>
             </div>
+          )}
+        </CardContent>
+      </TabsContent>
+
+      <TabsContent value="analysis" className="m-0">
+        <CardContent className="p-6 space-y-6">
+          {!summary ? (
+            <div className="py-12 text-center text-sm text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></div>
+          ) : (
+            <>
+              {/* Headline numbers for the selected range. */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{rangeLabel} spend</div>
+                  <div className="text-xl font-semibold mt-0.5">{fmt(summary.totalRangePence)}</div>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Transactions</div>
+                  <div className="text-xl font-semibold mt-0.5">{summary.totalRangeCount}</div>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Avg per tx</div>
+                  <div className="text-xl font-semibold mt-0.5">{summary.totalRangeCount > 0 ? fmt(Math.round(summary.totalRangePence / summary.totalRangeCount)) : "—"}</div>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Personal flagged</div>
+                  <div className="text-xl font-semibold mt-0.5">{summary.personalFlagged}</div>
+                </div>
+              </div>
+
+              {/* Spend by category. Bar widths are proportional to the
+                  biggest category — gives an at-a-glance read on which
+                  buckets dominate without a charting library. */}
+              <section>
+                <h3 className="text-sm font-semibold mb-2">Spend by category</h3>
+                {summary.byCategory.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No expenses in this range.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {summary.byCategory.map((c) => {
+                      const max = summary.byCategory[0].pence;
+                      const pct = max > 0 ? Math.round((c.pence / max) * 100) : 0;
+                      return (
+                        <div key={c.category} className="flex items-center gap-3 text-xs">
+                          <div className="w-48 truncate">{c.category}</div>
+                          <div className="flex-1 h-5 bg-muted rounded relative overflow-hidden">
+                            <div className="absolute inset-y-0 left-0 bg-primary/70" style={{ width: `${pct}%` }} />
+                            <div className="absolute inset-0 flex items-center px-2 text-[10px] text-foreground/80">{c.count} tx</div>
+                          </div>
+                          <div className="font-mono w-20 text-right">{fmt(c.pence)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              {/* Spend over time — monthly bars across the range. Empty
+                  months are folded out by the server, so 'This month' and
+                  'Last month' presets show a single bar, while longer
+                  ranges show a proper trend. */}
+              <section>
+                <h3 className="text-sm font-semibold mb-2">Spend over time</h3>
+                {summary.byMonth.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No expenses in this range.</p>
+                ) : (
+                  <div className="flex items-end gap-2 h-32">
+                    {summary.byMonth.map((m) => {
+                      const max = Math.max(...summary.byMonth.map((x) => x.pence));
+                      const heightPct = max > 0 ? Math.max(2, Math.round((m.pence / max) * 100)) : 2;
+                      const [year, month] = m.month.split("-");
+                      const label = new Date(Number(year), Number(month) - 1, 1).toLocaleString("en-GB", { month: "short", year: "2-digit" });
+                      return (
+                        <div key={m.month} className="flex-1 flex flex-col items-center gap-1 group" title={`${label}: ${fmt(m.pence)} (${m.count} tx)`}>
+                          <div className="text-[9px] font-mono text-muted-foreground opacity-0 group-hover:opacity-100">{fmt(m.pence)}</div>
+                          <div className="w-full bg-primary/60 rounded-t hover:bg-primary transition-colors" style={{ height: `${heightPct}%` }} />
+                          <div className="text-[10px] text-muted-foreground whitespace-nowrap">{label}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              {/* By cardholder — same data as the Spend by cardholder
+                  tab but laid out as a flat ranking with bars. Useful
+                  for the 'who spent what' question in one glance. */}
+              <section>
+                <h3 className="text-sm font-semibold mb-2">By cardholder</h3>
+                {summary.byCardholder.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No spend in this range.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {summary.byCardholder.filter(c => c.spentPence > 0).map((c) => {
+                      const max = summary.byCardholder[0].spentPence;
+                      const pct = max > 0 ? Math.round((c.spentPence / max) * 100) : 0;
+                      return (
+                        <div key={c.cardholderId} className="flex items-center gap-3 text-xs">
+                          <div className="w-40 truncate">{c.name}</div>
+                          <div className="flex-1 h-5 bg-muted rounded relative overflow-hidden">
+                            <div className="absolute inset-y-0 left-0 bg-emerald-500/70" style={{ width: `${pct}%` }} />
+                            <div className="absolute inset-0 flex items-center px-2 text-[10px] text-foreground/80">{c.txCount} tx</div>
+                          </div>
+                          <div className="font-mono w-20 text-right">{fmt(c.spentPence)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </>
           )}
         </CardContent>
       </TabsContent>
