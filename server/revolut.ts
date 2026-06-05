@@ -626,6 +626,74 @@ export async function unfreezeRevolutCard(cardId: string): Promise<void> {
   await api<unknown>(`/cards/${encodeURIComponent(cardId)}/unfreeze`, { method: "POST" });
 }
 
+// ─── Card ↔ cardholder resolver ──────────────────────────────────────────
+//
+// The Revolut card id lives in two places — stripe_cardholders.revolut_card_id
+// (written by Auto-assign AND manual map) and stripe_cards.stripe_card_id
+// (written by Auto-assign only — the column name is legacy). Show-details and
+// the freeze sweep both used to read only from stripe_cards, which meant a
+// cardholder mapped via the manual-map endpoint looked like "no card mapped"
+// to the dashboard even though their swipes flowed in fine via the
+// cardholders.revolut_card_id path. This helper closes that gap: it reads
+// cardholders first (source of truth, always populated), falls back to
+// stripe_cards, and lazy-writes a stripe_cards row if it's missing — pulling
+// last4/expiry/state from Revolut so the UI's card panel renders correctly.
+
+export async function resolveRevolutCardIdForCardholder(cardholderId: string): Promise<string | null> {
+  // 1. cardholders row (preferred source).
+  const r1 = await pool.query<{ revolut_card_id: string | null }>(
+    `SELECT revolut_card_id FROM stripe_cardholders WHERE id = $1 LIMIT 1`, [cardholderId],
+  );
+  const fromHolder = r1.rows[0]?.revolut_card_id || null;
+
+  // 2. stripe_cards row (legacy / Auto-assign).
+  const r2 = await pool.query<{ stripe_card_id: string | null }>(
+    `SELECT stripe_card_id FROM stripe_cards WHERE cardholder_id = $1 LIMIT 1`, [cardholderId],
+  );
+  const fromCards = r2.rows[0]?.stripe_card_id || null;
+
+  const cardId = fromHolder || fromCards;
+  if (!cardId) return null;
+
+  // Lazy-backfill: if we have the cardholder mapping but no stripe_cards row,
+  // pull metadata from Revolut and write one so the card panel + show-details
+  // path stop reporting "no card mapped".
+  if (fromHolder && !fromCards) {
+    await backfillStripeCardsRow(cardholderId, fromHolder).catch((e) =>
+      console.warn(`[revolut] lazy-backfill stripe_cards failed for ${cardholderId}:`, e?.message),
+    );
+  }
+  return cardId;
+}
+
+async function backfillStripeCardsRow(cardholderId: string, revolutCardId: string): Promise<void> {
+  // Pull the card from Revolut. Failures here are non-fatal — we still
+  // have the card id, the UI just won't have last4/expiry yet (next
+  // Auto-assign run will fill them in).
+  const card = await api<any>(`/cards/${encodeURIComponent(revolutCardId)}`);
+  const lastDigits: string | null = typeof card?.last_digits === "string" ? card.last_digits : null;
+  const state: string = card?.state === "active" ? "active" : (card?.state || "inactive");
+  const expiry: string | null = typeof card?.expiry === "string" ? card.expiry : null;
+  const virtual: boolean | null = typeof card?.virtual === "boolean" ? card.virtual : null;
+  const productCode: string | null = typeof card?.product?.code === "string" ? card.product.code : null;
+  // stripe_card_id is unique; cardholder_id isn't. Upsert on the unique
+  // column so re-assigning a card to a different cardholder updates the
+  // existing row instead of erroring with a unique-constraint violation.
+  await pool.query(
+    `INSERT INTO stripe_cards (cardholder_id, stripe_card_id, last4, status, expiry, virtual, product_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (stripe_card_id) DO UPDATE SET
+       cardholder_id = EXCLUDED.cardholder_id,
+       last4 = EXCLUDED.last4,
+       status = EXCLUDED.status,
+       expiry = EXCLUDED.expiry,
+       virtual = EXCLUDED.virtual,
+       product_code = EXCLUDED.product_code`,
+    [cardholderId, revolutCardId, lastDigits || "", state, expiry, virtual, productCode],
+  );
+  console.log(`[revolut] backfilled stripe_cards row for cardholder ${cardholderId} (last4=${lastDigits || "?"})`);
+}
+
 // ─── Auto-migration: add the columns we depend on ────────────────────────
 
 let _migrated = false;
@@ -883,6 +951,9 @@ export function setupRevolutRoutes(app: Express): void {
             WHERE id = $3`,
           [revolutCardId, revolutHolderId || null, existing[0].id],
         );
+        await backfillStripeCardsRow(existing[0].id, revolutCardId).catch((e) =>
+          console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
+        );
         return res.json({ ok: true, cardholderId: existing[0].id, action: "updated" });
       }
 
@@ -897,6 +968,11 @@ export function setupRevolutRoutes(app: Express): void {
       await pool.query(
         `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2 WHERE id = $3`,
         [revolutCardId, revolutHolderId || null, created.id],
+      );
+      // Mirror to stripe_cards so show-details + the card panel work
+      // immediately (without waiting for the next Auto-assign).
+      await backfillStripeCardsRow(created.id, revolutCardId).catch((e) =>
+        console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
       );
       res.json({ ok: true, cardholderId: created.id, action: "created" });
     } catch (e: any) {

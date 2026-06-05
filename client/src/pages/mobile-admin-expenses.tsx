@@ -472,6 +472,13 @@ function PayrollTab() {
     },
   });
 
+  // Firm-wide Xero health. If disconnected, the auto-post-to-Xero flow on
+  // expense approval is silently no-op-ing — admin needs to reconnect.
+  const { data: xeroStatus } = useQuery<{ connected: boolean; tenantId: string | null; expiresAt: number | null }>({
+    queryKey: ["/api/xero/system-status"],
+    refetchInterval: 60_000,
+  });
+
   const runFreezeMutation = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/expenses/admin/run-month-end-freeze", {})).json(),
     onSuccess: (json: any) => {
@@ -489,6 +496,33 @@ function PayrollTab() {
 
   return (
     <div className="px-4 pb-8 space-y-4">
+      {/* Xero reconnect prompt. The system Xero session powers
+          auto-post-on-approval; if its refresh token gets consumed in a
+          parallel race (now prevented by a mutex in refreshXeroToken, but
+          this banner is the recovery path) every approve-to-Xero call
+          silently no-ops. Tapping the link drops the user into the OAuth
+          flow; the callback writes the new tokens as the system session. */}
+      {xeroStatus && !xeroStatus.connected && (
+        <div className="rounded-2xl border border-red-300 bg-red-50 p-3">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-700 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-red-900">Xero not connected</div>
+              <p className="text-[11px] text-red-800 mt-0.5">
+                Approved expenses are not being posted to Xero because the firm-wide Xero session has expired. Reconnect to resume auto-posting.
+              </p>
+              <a
+                href="/api/xero/connect"
+                className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-red-600 text-white text-[12px] font-semibold active:scale-95 transition-transform"
+                data-testid="m-admin-reconnect-xero"
+              >
+                Reconnect Xero
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Month picker */}
       <div className="flex items-center gap-2">
         <input

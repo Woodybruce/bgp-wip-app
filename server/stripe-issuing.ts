@@ -827,11 +827,8 @@ export function setupStripeIssuingRoutes(app: Express) {
       // otherwise Revolut returns 403 and we surface that as the dialog
       // message so the admin knows to enable the scope.
       if (!ch.stripeCardholderId) {
-        const { rows } = await pool.query<{ stripe_card_id: string | null }>(
-          `SELECT stripe_card_id FROM stripe_cards WHERE cardholder_id = $1 LIMIT 1`,
-          [ch.id],
-        );
-        const revolutCardId = rows[0]?.stripe_card_id;
+        const { resolveRevolutCardIdForCardholder } = await import("./revolut");
+        const revolutCardId = await resolveRevolutCardIdForCardholder(ch.id);
         if (!revolutCardId) {
           return res.json({ provider: "revolut", revolut: true, message: "No Revolut card mapped to your account yet — ask an admin to run Auto-assign on the Cards & Revolut page." });
         }
