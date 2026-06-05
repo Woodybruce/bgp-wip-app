@@ -513,6 +513,23 @@ function PayrollTab() {
     onError: (e: any) => toast({ title: "Scope probe failed", description: e?.message, variant: "destructive" }),
   });
 
+  // Re-authorise Revolut. Hits the server for the consent URL (built
+  // from REVOLUT_CLIENT_ID + the current host's callback path) and opens
+  // it. After approving on Revolut's side, the existing callback handler
+  // swaps the code for a fresh refresh token with whatever scopes the
+  // cert was just granted.
+  const openConsentMutation = useMutation({
+    mutationFn: async () => (await fetch("/api/revolut/consent-url", { credentials: "include" })).json(),
+    onSuccess: (json: any) => {
+      if (json?.consentUrl) {
+        window.location.href = json.consentUrl;
+      } else {
+        toast({ title: "Couldn't build consent URL", description: json?.error || "Unknown error", variant: "destructive" });
+      }
+    },
+    onError: (e: any) => toast({ title: "Couldn't build consent URL", description: e?.message, variant: "destructive" }),
+  });
+
   return (
     <div className="px-4 pb-8 space-y-4">
       {/* Xero reconnect prompt. The system Xero session powers
@@ -588,16 +605,28 @@ function PayrollTab() {
             <p className="text-[11px] text-slate-700 mt-0.5">
               Tap to probe the live token. If "Reveal card PAN" fails with 403, that's why Card Details shows the scope error — re-auth on Revolut Business with READ_SENSITIVE_CARD_DATA added.
             </p>
-            <button
-              type="button"
-              onClick={() => probeScopesMutation.mutate()}
-              disabled={probeScopesMutation.isPending}
-              className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-slate-700 text-white text-[12px] font-semibold active:scale-95 transition-transform disabled:opacity-60"
-              data-testid="m-admin-probe-revolut"
-            >
-              {probeScopesMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AlertCircle className="w-3.5 h-3.5" />}
-              Probe Revolut scopes
-            </button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => probeScopesMutation.mutate()}
+                disabled={probeScopesMutation.isPending}
+                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-slate-700 text-white text-[12px] font-semibold active:scale-95 transition-transform disabled:opacity-60"
+                data-testid="m-admin-probe-revolut"
+              >
+                {probeScopesMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                Probe scopes
+              </button>
+              <button
+                type="button"
+                onClick={() => openConsentMutation.mutate()}
+                disabled={openConsentMutation.isPending}
+                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-slate-900 text-white text-[12px] font-semibold active:scale-95 transition-transform disabled:opacity-60"
+                data-testid="m-admin-reauth-revolut"
+              >
+                {openConsentMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                Re-authorise Revolut
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -890,6 +890,30 @@ export function setupRevolutRoutes(app: Express): void {
     res.json({ checks, allGranted: checks.every(c => c.ok) });
   });
 
+  // Admin-only: returns the Revolut Business consent URL pre-filled with
+  // our client_id + callback redirect_uri. Used by the 'Re-authorise
+  // Revolut' button on the mobile admin Payroll tab — once you've
+  // enabled the missing scope on the cert in Revolut Business →
+  // Settings → APIs, tap the button, approve, and the existing
+  // /api/revolut/callback handler swaps the code for a fresh refresh
+  // token with the new scope grant.
+  //
+  // Note: Revolut Business's consent URL has no `scope=` parameter —
+  // scopes live on the API certificate, not in the OAuth flow.
+  app.get("/api/revolut/consent-url", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const cfg = getConfig();
+      if (!cfg) return res.status(400).json({ error: "Revolut not configured — set REVOLUT_CLIENT_ID, REVOLUT_JWT_PRIVATE_KEY, REVOLUT_JWT_ISSUER" });
+      const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "";
+      const redirectUri = `${proto}://${host}/api/revolut/callback`;
+      const consentUrl = `https://business.revolut.com/app-confirm?client_id=${encodeURIComponent(cfg.clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+      res.json({ consentUrl, redirectUri, clientId: cfg.clientId.slice(0, 6) + "…" });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   app.post("/api/revolut/bootstrap", requireAdmin, async (req: Request, res: Response) => {
     try {
       const code = String(req.body?.code || "").trim();
