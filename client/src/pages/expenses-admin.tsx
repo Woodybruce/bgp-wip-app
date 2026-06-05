@@ -122,6 +122,7 @@ export default function ExpensesAdmin() {
     byCardholder: Array<{ cardholderId: string; name: string; spentPence: number; monthlyLimit: number; utilisation: number; txCount: number; status: string }>;
     byCategory: Array<{ category: string; count: number; pence: number }>;
     byMonth: Array<{ month: string; count: number; pence: number }>;
+    byAttendee: Array<{ contactId: string; name: string; pence: number; count: number }>;
     range: { from: string; to: string };
   }>({
     queryKey: ["/api/expenses/admin/summary", rangeFrom.toISOString(), rangeTo.toISOString()],
@@ -636,6 +637,36 @@ export default function ExpensesAdmin() {
                             <div className="absolute inset-0 flex items-center px-2 text-[10px] text-foreground/80">{c.txCount} tx</div>
                           </div>
                           <div className="font-mono w-20 text-right">{fmt(c.spentPence)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              {/* Who with — entertainment spend grouped by attendee
+                  (CRM contact). The full expense amount is attributed to
+                  each attendee, so this answers 'how much have we spent
+                  entertaining X' rather than a per-head split. Only rows
+                  with attendees appear, so it's naturally scoped to
+                  client/agent/staff entertainment. */}
+              <section>
+                <h3 className="text-sm font-semibold mb-2">Who with (entertainment)</h3>
+                {(!summary.byAttendee || summary.byAttendee.length === 0) ? (
+                  <p className="text-xs text-muted-foreground">No entertainment expenses with named attendees in this range.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {summary.byAttendee.map((a) => {
+                      const max = summary.byAttendee[0].pence;
+                      const pct = max > 0 ? Math.round((a.pence / max) * 100) : 0;
+                      return (
+                        <div key={a.contactId} className="flex items-center gap-3 text-xs">
+                          <div className="w-48 truncate">{a.name}</div>
+                          <div className="flex-1 h-5 bg-muted rounded relative overflow-hidden">
+                            <div className="absolute inset-y-0 left-0 bg-violet-500/70" style={{ width: `${pct}%` }} />
+                            <div className="absolute inset-0 flex items-center px-2 text-[10px] text-foreground/80">{a.count} {a.count === 1 ? "time" : "times"}</div>
+                          </div>
+                          <div className="font-mono w-20 text-right">{fmt(a.pence)}</div>
                         </div>
                       );
                     })}
