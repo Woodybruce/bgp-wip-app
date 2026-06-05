@@ -242,87 +242,10 @@ export async function setCardholderStatus(cardholderId: string, status: "active"
 // EXPENSE_CATEGORY_MAP moved to ./expense-categories (its natural home) so
 // the expense pipeline no longer imports from this legacy Stripe module.
 
-// ─── WEBHOOK ───────────────────────────────────────────────────────────────
-
-export async function handleStripeWebhook(rawBody: Buffer, signature: string): Promise<void> {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!secret) {
-    console.warn("[stripe] STRIPE_WEBHOOK_SECRET not set — skipping signature verification in dev");
-  } else {
-    verifyStripeSignature(rawBody, signature, secret);
-  }
-
-  const event = JSON.parse(rawBody.toString());
-  console.log(`[stripe-webhook] ${event.type}`);
-
-  if (event.type === "issuing_transaction.created" || event.type === "issuing_transaction.updated") {
-    await handleTransaction(event.data.object);
-  }
-
-  if (event.type === "issuing_authorization.request") {
-    // Real-time auth — respond quickly (within 2s) to allow/decline
-    // For now: allow all (spending_controls handles limits at Stripe level)
-    // Future: could check against custom rules here
-    console.log(`[stripe-webhook] auth request for ${event.data.object.amount} — auto-approving`);
-  }
-}
-
-async function handleTransaction(txn: any): Promise<void> {
-  const cardholderId = txn.cardholder;
-  const [ch] = await db
-    .select()
-    .from(stripeCardholders)
-    .where(eq(stripeCardholders.stripeCardholderId, cardholderId))
-    .limit(1);
-
-  if (!ch) {
-    console.warn(`[stripe] Transaction for unknown cardholder ${cardholderId}`);
-    return;
-  }
-
-  const existing = await db
-    .select()
-    .from(expenses)
-    .where(eq(expenses.stripeTransactionId, txn.id))
-    .limit(1);
-
-  if (existing[0]) {
-    // Update only — don't duplicate
-    await db.update(expenses).set({ updatedAt: new Date() }).where(eq(expenses.stripeTransactionId, txn.id));
-    return;
-  }
-
-  await db.insert(expenses).values({
-    cardholderId: ch.id,
-    stripeTransactionId: txn.id,
-    type: "card",
-    status: "pending_receipt",
-    merchant: txn.merchant_data?.name || txn.merchant_data?.network_id || "Unknown merchant",
-    amountPence: Math.abs(txn.amount),
-    currency: txn.currency,
-    transactionDate: new Date(txn.created * 1000),
-    createdBy: ch.userId,
-  });
-
-  // Notify via WhatsApp if the cardholder has a phone
-  if (ch.phone) {
-    try {
-      const { notifyExpensePending } = await import("./expense-notify");
-      await notifyExpensePending({ cardholder: ch, merchant: txn.merchant_data?.name, amountPence: Math.abs(txn.amount), transactionId: txn.id });
-    } catch (e: any) {
-      console.warn(`[stripe] WhatsApp notify failed: ${e?.message}`);
-    }
-  }
-}
-
-function verifyStripeSignature(payload: Buffer, header: string, secret: string) {
-  const parts = Object.fromEntries(header.split(",").map((p) => p.split("=")));
-  const timestamp = parts["t"];
-  const expected = parts["v1"];
-  const signed = `${timestamp}.${payload.toString()}`;
-  const computed = crypto.createHmac("sha256", secret).update(signed).digest("hex");
-  if (computed !== expected) throw new Error("Invalid Stripe webhook signature");
-}
+// ─── WEBHOOK (retired) ───────────────────────────────────────────────────────
+// The Stripe Issuing webhook + transaction→expense handler have been removed.
+// Card spend now arrives via the Revolut webhook (server/revolut.ts). Removing
+// the route closes off any stray Stripe webhook creating phantom expenses.
 
 // ─── ROUTES ────────────────────────────────────────────────────────────────
 
@@ -1563,17 +1486,5 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
-  // Stripe webhook — uses raw body captured by express.json verify callback
-  app.post("/api/stripe/webhook", async (req: Request, res: Response) => {
-    try {
-      const sig = req.headers["stripe-signature"] as string;
-      const rawBody = (req as any).rawBody as Buffer;
-      if (!rawBody) return res.status(400).json({ error: "No raw body" });
-      await handleStripeWebhook(rawBody, sig);
-      res.json({ received: true });
-    } catch (e: any) {
-      console.error("[stripe-webhook] error:", e?.message);
-      res.status(400).json({ error: e?.message });
-    }
-  });
+  // (Stripe webhook route removed — card spend comes via Revolut now.)
 }
