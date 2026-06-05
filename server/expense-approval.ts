@@ -26,6 +26,55 @@ export const FALLBACK_APPROVER_EMAILS = new Set([
   "accounts@brucegillinghampollard.com",   // Wendy McKenzie's actual login
 ]);
 
+// ── Two-stage approval pools (Jun 2026) ──────────────────────────────────────
+// Stage 1 (info check): every expense goes to Wendy OR Layla, random 50/50.
+// Stage 2 (spend sign-off): once stage 1 passes, it goes to one of the
+// directors — Woody / Charlotte / Jack / Rupert — random even split. The
+// submitter is excluded from their own pool. Each "slot" is one person; the
+// inner array is that person's candidate logins (Wendy signs in as accounts@).
+const STAGE1_SLOTS: string[][] = [
+  ["wendy@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"],
+  ["layla@brucegillinghampollard.com"],
+];
+const STAGE2_SLOTS: string[][] = [
+  ["woody@brucegillinghampollard.com"],
+  ["charlotte@brucegillinghampollard.com"],
+  ["jack@brucegillinghampollard.com"],
+  ["rupert@brucegillinghampollard.com"],
+];
+
+async function resolveUserIdByEmails(emails: string[]): Promise<string | null> {
+  for (const e of emails) {
+    const r = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE lower(email) = $1 AND is_active = true LIMIT 1",
+      [e.toLowerCase()],
+    );
+    if (r.rows[0]?.id) return r.rows[0].id;
+  }
+  return null;
+}
+
+// Resolve each slot to a single user id (first existing login), deduped.
+async function resolvePool(slots: string[][]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const slot of slots) {
+    const id = await resolveUserIdByEmails(slot);
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+// Pick a random approver from the stage pool, excluding the submitter so
+// nobody approves their own spend. Falls back to the full pool if excluding
+// the submitter would empty it (shouldn't happen, but never strand a row).
+async function pickStageApprover(stage: 1 | 2, submitterUserId: string | null): Promise<string | null> {
+  const fullPool = await resolvePool(stage === 1 ? STAGE1_SLOTS : STAGE2_SLOTS);
+  if (fullPool.length === 0) return null;
+  const eligible = submitterUserId ? fullPool.filter((id) => id !== submitterUserId) : fullPool;
+  const use = eligible.length > 0 ? eligible : fullPool;
+  return use[Math.floor(Math.random() * use.length)];
+}
+
 // Entertainment categories trigger extra scrutiny — these are the ones
 // that need a business purpose + attendees for HMRC compliance.
 const ENTERTAINMENT_CATEGORIES = new Set([
@@ -139,16 +188,15 @@ export async function submitForApproval(expenseId: string, submitterUserId: stri
     const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1);
     resolvedSubmitter = (ch as any)?.userId || null;
   }
-  const approverUserId = resolvedSubmitter ? await resolveApproverUserId(resolvedSubmitter) : null;
-
-  // Admins with no manager (e.g. the MD) used to auto-approve their own
-  // spend and post straight to Xero. Per Woody (June 2026) that's wrong —
-  // he wants Wendy to sign his expenses off like everyone else's. So they
-  // now route to the Layla/Wendy finance shared inbox (approverUserId null,
-  // which the fallback approvers see) rather than self-approving.
+  // Stage 1: assign to Wendy OR Layla (random 50/50), excluding the
+  // submitter so a finance approver never checks their own expense.
+  const approverUserId = await pickStageApprover(1, resolvedSubmitter || null);
 
   await db.update(expenses).set({
     status: "pending_approval",
+    approvalStage: 1,
+    stage1ApprovedByUserId: null,
+    stage1ApprovedAt: null,
     submitterUserId: resolvedSubmitter || exp.submitterUserId || null,
     submittedForApprovalAt: exp.submittedForApprovalAt || new Date(),
     approverUserId,
@@ -156,6 +204,71 @@ export async function submitForApproval(expenseId: string, submitterUserId: stri
     flagReasons: reasons,
     updatedAt: new Date(),
   }).where(eq(expenses.id, expenseId));
+}
+
+/**
+ * Approve the current stage of an expense. Stage 1 (Wendy/Layla info check)
+ * advances the row to stage 2 and randomly assigns a director; stage 2
+ * (director sign-off) finalises it to `approved`. Returns the outcome so the
+ * route knows whether to post to Xero (only on final approval).
+ */
+export async function approveExpense(
+  approverUserId: string,
+  expenseId: string,
+  notes: string | null,
+): Promise<{ outcome: "advanced" | "approved" | "noop"; stage: number; nextApproverUserId?: string | null }> {
+  const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
+  if (!exp || exp.status !== "pending_approval") return { outcome: "noop", stage: exp?.approvalStage ?? 0 };
+
+  const stage = exp.approvalStage ?? 1;
+
+  if (stage === 1) {
+    // Info check passed → hand to a director for spend sign-off.
+    const nextApprover = await pickStageApprover(2, exp.submitterUserId || null);
+    await db.update(expenses).set({
+      approvalStage: 2,
+      approverUserId: nextApprover,
+      stage1ApprovedByUserId: approverUserId,
+      stage1ApprovedAt: new Date(),
+      approvalNotes: notes ?? exp.approvalNotes,
+      updatedAt: new Date(),
+    }).where(eq(expenses.id, expenseId));
+    return { outcome: "advanced", stage: 2, nextApproverUserId: nextApprover };
+  }
+
+  // Stage 2 → final approval.
+  await db.update(expenses).set({
+    status: "approved",
+    approvedAt: new Date(),
+    approvedByUserId: approverUserId,
+    approvalNotes: notes ?? exp.approvalNotes,
+    updatedAt: new Date(),
+  }).where(eq(expenses.id, expenseId));
+  return { outcome: "approved", stage: 2 };
+}
+
+/**
+ * Backfill: assign a stage-1 approver to any pending_approval row that
+ * predates the two-stage model (approval_stage null or 0, or no approver).
+ * Runs once on boot — cheap and idempotent.
+ */
+export async function backfillApprovalStages(): Promise<number> {
+  const { rows } = await pool.query<{ id: string; submitter_user_id: string | null }>(
+    `SELECT id, submitter_user_id FROM expenses
+      WHERE status = 'pending_approval'
+        AND (approval_stage IS NULL OR approval_stage = 0 OR approver_user_id IS NULL)`,
+  );
+  let fixed = 0;
+  for (const r of rows) {
+    const approver = await pickStageApprover(1, r.submitter_user_id);
+    await pool.query(
+      `UPDATE expenses SET approval_stage = 1, approver_user_id = $1, updated_at = NOW() WHERE id = $2`,
+      [approver, r.id],
+    );
+    fixed++;
+  }
+  if (fixed > 0) console.log(`[expense-approval] backfilled ${fixed} pending row(s) into stage 1`);
+  return fixed;
 }
 
 /** Resolve the approver for a given submitter. Returns the manager's
@@ -187,12 +300,15 @@ export async function resolveApproverUserId(submitterUserId: string): Promise<st
 export async function canApproveExpense(approverUserId: string, expenseId: string): Promise<boolean> {
   const [u] = await db.select().from(users).where(eq(users.id, approverUserId)).limit(1);
   if (!u) return false;
-  if ((u as any).isAdmin) return true;
-  const email = ((u as any).email || "").toLowerCase();
-  if (FALLBACK_APPROVER_EMAILS.has(email)) return true;
+  if ((u as any).isAdmin) return true;          // admin override (covers the directors)
   const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
   if (!exp) return false;
-  return exp.approverUserId === approverUserId;
+  // Two-stage model: you can only approve the row currently assigned to you.
+  if (exp.approverUserId === approverUserId) return true;
+  // Safety net: an unassigned row (assignment failed) is still actionable by
+  // a fallback finance approver so nothing strands.
+  const email = ((u as any).email || "").toLowerCase();
+  return exp.approverUserId == null && FALLBACK_APPROVER_EMAILS.has(email);
 }
 
 /** List of expenses an approver can act on. Includes:
@@ -204,14 +320,17 @@ export async function listPendingForApprover(approverUserId: string) {
   const [u] = await db.select().from(users).where(eq(users.id, approverUserId)).limit(1);
   if (!u) return [];
   const email = ((u as any).email || "").toLowerCase();
-  const isFallback = (u as any).isAdmin || FALLBACK_APPROVER_EMAILS.has(email);
+  // Each approver works their own randomly-assigned queue. Fallback finance
+  // approvers (and admins) also see any unassigned rows so a failed
+  // assignment never disappears.
+  const seesUnassigned = (u as any).isAdmin || FALLBACK_APPROVER_EMAILS.has(email);
 
   const rows = await db
     .select()
     .from(expenses)
     .where(and(
       eq(expenses.status, "pending_approval"),
-      isFallback
+      seesUnassigned
         ? or(eq(expenses.approverUserId, approverUserId), isNull(expenses.approverUserId))!
         : eq(expenses.approverUserId, approverUserId),
     ))

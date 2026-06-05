@@ -3160,6 +3160,15 @@ app.use("/api/branding/assets", express.static(
     console.error("[migrate] HR columns:", err?.message);
   }
 
+  // Two-stage expense approval: route any pre-existing pending_approval rows
+  // into stage 1 (random Wendy/Layla) so nothing is left on the old model.
+  // Best-effort + idempotent; delayed so the column auto-migrate has landed.
+  setTimeout(() => {
+    import("./expense-approval")
+      .then(({ backfillApprovalStages }) => backfillApprovalStages())
+      .catch((err: any) => console.warn("[migrate] approval-stage backfill skipped:", err?.message));
+  }, 15000);
+
   app.all("/api/{*path}", (_req: Request, res: Response) => {
     res.status(404).json({ message: "Not found" });
   });

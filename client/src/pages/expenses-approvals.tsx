@@ -34,6 +34,7 @@ interface PendingExpense {
   submitterName: string | null;
   cardholderName: string | null;
   approverUserId: string | null;
+  approvalStage: number | null;
   submittedForApprovalAt: string | null;
   flaggedForReview: boolean | null;
   flagReasons: string[] | null;
@@ -89,9 +90,11 @@ export default function ExpensesApprovals() {
       const r = await apiRequest("POST", `/api/expenses/${id}/approve`, {});
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (json: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
-      toast({ title: "Approved" });
+      toast(json?.advanced
+        ? { title: "Info check done", description: "Passed to a director for spend sign-off." }
+        : { title: "Approved", description: "Final sign-off — posting to Xero." });
     },
     onError: (e: any) => toast({ title: "Approve failed", description: e?.message, variant: "destructive" }),
   });
@@ -105,11 +108,14 @@ export default function ExpensesApprovals() {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
       setSelected(new Set());
       const approved = json.approved || 0;
+      const advanced = json.advanced || 0;
       const posted = json.posted || 0;
-      toast({
-        title: `${approved} approved`,
-        description: posted > 0 ? `${posted} posted to Xero` : "Xero posting will retry separately",
-      });
+      const bits = [
+        advanced ? `${advanced} passed to directors` : null,
+        approved ? `${approved} fully approved` : null,
+        posted ? `${posted} posted to Xero` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "Done", description: bits || "Nothing to action" });
     },
     onError: (e: any) => toast({ title: "Bulk approve failed", description: e?.message, variant: "destructive" }),
   });
@@ -333,7 +339,12 @@ function ExpenseTable({
               </td>
               <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{fmtDate(r.transactionDate)}</td>
               <td className="px-3 py-2">
-                <div className="font-medium">{r.merchant || "—"}</div>
+                <div className="font-medium flex items-center gap-1.5">
+                  {r.merchant || "—"}
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${r.approvalStage === 2 ? "bg-violet-100 text-violet-700" : "bg-blue-100 text-blue-700"}`}>
+                    {r.approvalStage === 2 ? "Sign-off" : "Info check"}
+                  </span>
+                </div>
                 {r.receiptFilename && (
                   <div className="text-[10px] text-emerald-600 flex items-center gap-0.5 mt-0.5">
                     <Receipt className="w-2.5 h-2.5" /> Receipt

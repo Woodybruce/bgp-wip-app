@@ -243,10 +243,12 @@ function ApprovalsTab() {
 
   const approveMutation = useMutation({
     mutationFn: async (id: string) => (await apiRequest("POST", `/api/expenses/${id}/approve`, {})).json(),
-    onSuccess: () => {
+    onSuccess: (json: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
-      toast({ title: "Approved" });
+      toast(json?.advanced
+        ? { title: "Info check done", description: "Passed to a director for spend sign-off." }
+        : { title: "Approved", description: "Final sign-off — posting to Xero." });
     },
     onError: (e: any) => toast({ title: "Approve failed", description: e?.message, variant: "destructive" }),
   });
@@ -257,8 +259,14 @@ function ApprovalsTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
       const approved = json.approved || 0;
+      const advanced = json.advanced || 0;
       const posted = json.posted || 0;
-      toast({ title: `${approved} approved`, description: posted > 0 ? `${posted} posted to Xero` : "Xero posting will retry separately" });
+      const bits = [
+        advanced ? `${advanced} passed to directors` : null,
+        approved ? `${approved} fully approved` : null,
+        posted ? `${posted} posted to Xero` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "Done", description: bits || "Nothing to action" });
     },
     onError: (e: any) => toast({ title: "Bulk approve failed", description: e?.message, variant: "destructive" }),
   });

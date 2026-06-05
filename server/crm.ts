@@ -1144,6 +1144,9 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS submitter_user_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS submitted_for_approval_at TIMESTAMP`).catch(() => {});
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approver_user_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approval_stage INTEGER DEFAULT 1`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS stage1_approved_by_user_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS stage1_approved_at TIMESTAMP`).catch(() => {});
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP`).catch(() => {});
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_by_user_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approval_notes TEXT`).catch(() => {});

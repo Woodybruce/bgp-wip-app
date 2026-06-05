@@ -1364,22 +1364,25 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!userId) return res.status(401).json({ error: "Not signed in" });
       const expenseId = String(req.params.id);
 
-      const { canApproveExpense } = await import("./expense-approval");
+      const { canApproveExpense, approveExpense } = await import("./expense-approval");
       if (!(await canApproveExpense(userId, expenseId))) {
         return res.status(403).json({ error: "Not authorised to approve this expense" });
       }
 
       const notes = typeof req.body?.notes === "string" ? req.body.notes : null;
-      await db.update(expenses).set({
-        status: "approved",
-        approvedAt: new Date(),
-        approvedByUserId: userId,
-        approvalNotes: notes,
-        updatedAt: new Date(),
-      }).where(eq(expenses.id, expenseId));
+      // Two-stage: stage 1 (Wendy/Layla) advances to a director; stage 2
+      // (director) finalises. Only the final approval posts to Xero.
+      const result = await approveExpense(userId, expenseId, notes);
 
-      // Auto-post to Xero. Failure leaves the row at approved=true so
-      // the post can be retried via /post-to-xero without re-approving.
+      if (result.outcome === "advanced") {
+        return res.json({ success: true, stage: result.stage, advanced: true });
+      }
+      if (result.outcome === "noop") {
+        return res.json({ success: false, message: "Nothing to approve (already actioned)" });
+      }
+
+      // Final approval → auto-post to Xero. Failure leaves the row approved
+      // so the post can be retried via /post-to-xero without re-approving.
       let xeroResult: any = null;
       try {
         const { withSystemXero } = await import("./xero-system-session");
@@ -1390,7 +1393,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         xeroResult = { posted: false, error: e?.message };
       }
 
-      res.json({ success: true, xero: xeroResult });
+      res.json({ success: true, stage: 2, approved: true, xero: xeroResult });
     } catch (e: any) {
       console.error("[expenses] approve error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
@@ -1407,7 +1410,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
       if (ids.length === 0) return res.status(400).json({ error: "ids array required" });
 
-      const { canApproveExpense } = await import("./expense-approval");
+      const { canApproveExpense, approveExpense } = await import("./expense-approval");
       const { withSystemXero } = await import("./xero-system-session");
       const { postExpenseToXero } = await import("./expense-xero-poster");
 
@@ -1417,22 +1420,27 @@ export function setupStripeIssuingRoutes(app: Express) {
           outcomes.push({ id, ok: false, error: "not authorised" });
           continue;
         }
-        await db.update(expenses).set({
-          status: "approved",
-          approvedAt: new Date(),
-          approvedByUserId: userId,
-          updatedAt: new Date(),
-        }).where(eq(expenses.id, id));
+        // Stage 1 advances to a director; stage 2 finalises + posts to Xero.
+        const result = await approveExpense(userId, id, null);
+        if (result.outcome === "advanced") {
+          outcomes.push({ id, ok: true, advanced: true, stage: result.stage });
+          continue;
+        }
+        if (result.outcome === "noop") {
+          outcomes.push({ id, ok: false, error: "already actioned" });
+          continue;
+        }
         try {
           const xero = await withSystemXero((session) => postExpenseToXero({ session, expenseId: id }));
-          outcomes.push({ id, ok: true, xero });
+          outcomes.push({ id, ok: true, approved: true, xero });
         } catch (e: any) {
-          outcomes.push({ id, ok: true, xero: { posted: false, error: e?.message } });
+          outcomes.push({ id, ok: true, approved: true, xero: { posted: false, error: e?.message } });
         }
       }
-      const approved = outcomes.filter(o => o.ok).length;
+      const advanced = outcomes.filter(o => o.advanced).length;
+      const approved = outcomes.filter(o => o.approved).length;
       const posted = outcomes.filter(o => o.xero?.posted).length;
-      res.json({ ok: true, approved, posted, outcomes });
+      res.json({ ok: true, advanced, approved, posted, outcomes });
     } catch (e: any) {
       console.error("[expenses] approve-bulk error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });

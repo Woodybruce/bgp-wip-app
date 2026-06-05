@@ -2964,6 +2964,13 @@ export const expenses = pgTable("expenses", {
   submitterUserId: varchar("submitter_user_id"),
   submittedForApprovalAt: timestamp("submitted_for_approval_at"),
   approverUserId: varchar("approver_user_id"),
+  // Two-stage approval (Jun 2026). Stage 1 = info check by Wendy/Layla
+  // (random 50/50); stage 2 = director spend sign-off by Woody/Charlotte/
+  // Jack/Rupert (random even). status stays 'pending_approval' across both;
+  // approverUserId holds whoever the current stage is randomly assigned to.
+  approvalStage: integer("approval_stage").default(1),               // 1 = finance check, 2 = director sign-off
+  stage1ApprovedByUserId: varchar("stage1_approved_by_user_id"),     // who did the stage-1 info check
+  stage1ApprovedAt: timestamp("stage1_approved_at"),
   approvedAt: timestamp("approved_at"),
   approvedByUserId: varchar("approved_by_user_id"),
   approvalNotes: text("approval_notes"),
