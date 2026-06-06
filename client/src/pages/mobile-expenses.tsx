@@ -325,8 +325,12 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAiError(null);
     setAiApplied(false);
     setAiUserReply("");
-    // Always fire on sheet open unless already locked in Xero.
+    // Always fire on sheet open unless already locked in Xero — or
+    // already flagged personal (a personal expense is deducted from
+    // payroll, never posted to a Xero nominal, so AI classification
+    // is wasted work).
     if (expense.xeroExpenseId) return;
+    if (expense.isPersonal) return;
     runClassify(expense.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expense?.id]);
@@ -473,13 +477,36 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         </SheetHeader>
 
         <div className="px-4 py-4 space-y-5 pb-32">
+          {/* Personal toggle — first thing in the form so a mis-tap on
+              the row is the first thing you can fix. When on, skips AI
+              classify (a personal expense never posts to a Xero nominal,
+              so there's nothing for AI to categorise). */}
+          {!isPosted && (
+            <div className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-3 py-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <UserX className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">Personal expense</div>
+                  <div className="text-[11px] text-muted-foreground leading-tight">
+                    {isPersonal ? "Deducted from payroll · no AI needed" : "Off — business expense, posts to Xero"}
+                  </div>
+                </div>
+              </div>
+              <Switch
+                checked={isPersonal}
+                onCheckedChange={setIsPersonal}
+                data-testid="m-toggle-personal"
+              />
+            </div>
+          )}
+
           {/* ─── AI suggestion banner ───────────────────────────────────
               Fires when the sheet opens for a receipt that hasn't been
               categorised yet. Server pulls the user's calendar + CRM
               contacts + the parsed receipt and proposes a full set of
               fields. High-confidence suggestions auto-apply; medium /
               low need user confirmation. */}
-          {(aiLoading || aiSuggestion || aiError) && (
+          {(aiLoading || aiSuggestion || aiError) && !isPersonal && (
             <div className="rounded-2xl border border-violet-200 bg-violet-50 dark:bg-violet-950/30 dark:border-violet-900 p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-900 flex items-center justify-center shrink-0">
@@ -899,25 +926,6 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             )}
           </div>
 
-          {/* Personal toggle — two-way so a mis-tap can be flipped back
-              before saving. Replaces the old one-way "Mark as personal"
-              button so the answer always survives Save. */}
-          {!isPosted && (
-            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2.5">
-              <div className="flex items-center gap-2">
-                <UserX className="w-4 h-4 text-muted-foreground" />
-                <div>
-                  <div className="text-sm font-medium">Personal expense</div>
-                  <div className="text-[11px] text-muted-foreground leading-tight">On = deducted from payroll</div>
-                </div>
-              </div>
-              <Switch
-                checked={isPersonal}
-                onCheckedChange={setIsPersonal}
-                data-testid="m-toggle-personal"
-              />
-            </div>
-          )}
         </div>
 
         {/* Sticky Save bar at the bottom */}
