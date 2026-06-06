@@ -2612,6 +2612,34 @@ export const insertPropertyPathwayRunSchema = createInsertSchema(propertyPathway
 export type InsertPropertyPathwayRun = z.infer<typeof insertPropertyPathwayRunSchema>;
 export type PropertyPathwayRun = typeof propertyPathwayRuns.$inferSelect;
 
+// ─── Portfolios (Jun 2026) ───────────────────────────────────────────────
+// A named bundle of Property Pathway runs that Nick & Jonny assemble to
+// review several assets as one opportunity. The combined outputs (summary
+// table, portfolio Excel, portfolio Why Buy deck) all read from the runs
+// linked here. Runs are linked via portfolioRuns with an `enabled` flag so
+// a run can be toggled in/out of the combined outputs without unlinking it.
+export const portfolios = pgTable("portfolios", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const portfolioRuns = pgTable("portfolio_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  portfolioId: varchar("portfolio_id").notNull().references(() => portfolios.id, { onDelete: "cascade" }),
+  runId: varchar("run_id").notNull().references(() => propertyPathwayRuns.id, { onDelete: "cascade" }),
+  // Toggle a run in/out of the combined outputs without removing it.
+  enabled: boolean("enabled").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  addedAt: timestamp("added_at").defaultNow(),
+});
+
+export type Portfolio = typeof portfolios.$inferSelect;
+export type PortfolioRun = typeof portfolioRuns.$inferSelect;
+
 export const excelModelRunVersions = pgTable("excel_model_run_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   modelRunId: varchar("model_run_id").notNull(),

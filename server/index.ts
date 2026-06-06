@@ -3005,6 +3005,8 @@ app.use("/api/branding/assets", express.static(
   setupCrmRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
+  const { registerPortfolioRoutes } = await import("./portfolios");
+  registerPortfolioRoutes(app);
   const { registerActivityRoutes } = await import("./activity-routes");
   registerActivityRoutes(app);
   const { registerIngestRoutes } = await import("./ingest-routes");
