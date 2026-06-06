@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
@@ -539,6 +540,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
   const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
+  const [isPersonal, setIsPersonal] = useState(false);
 
   // Re-seed the form whenever a new expense opens.
   useEffect(() => {
@@ -550,6 +552,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     setAttendeeIds((expense.attendeeContacts || []).map(c => c.id));
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
+    setIsPersonal(!!expense.isPersonal);
   }, [expense?.id]);
 
   const showEntertainmentFields = ENTERTAINMENT_CATEGORIES.has(category);
@@ -565,6 +568,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
         businessPurpose: businessPurpose || null,
         relatedPropertyId: relatedPropertyId || null,
         relatedDealId: relatedDealId || null,
+        isPersonal,
       };
       await apiRequest("PATCH", `/api/expenses/${expense.id}`, payload);
       await apiRequest("PUT", `/api/expenses/${expense.id}/attendees`, { contactIds: attendeeIds });
@@ -589,6 +593,21 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
           <div className="text-xs text-muted-foreground">
             Amount: <span className="font-mono font-medium">{fmt(expense.amountPence)}</span>
             {isPosted && <span className="ml-3 text-emerald-600">Posted to Xero — cannot edit core fields</span>}
+          </div>
+
+          {/* Personal/business toggle — lets you undo an accidental "Personal" tag. */}
+          <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2">
+            <div>
+              <Label htmlFor="exp-is-personal" className="text-sm font-medium">Personal expense</Label>
+              <p className="text-[11px] text-muted-foreground">On = deducted from payroll. Off = business expense, goes to Xero.</p>
+            </div>
+            <Switch
+              id="exp-is-personal"
+              checked={isPersonal}
+              onCheckedChange={setIsPersonal}
+              disabled={isPosted}
+              data-testid="toggle-expense-personal"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
