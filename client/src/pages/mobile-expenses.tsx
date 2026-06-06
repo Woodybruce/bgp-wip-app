@@ -56,6 +56,7 @@ interface Expense {
   // Identifies a real Revolut card swipe (vs a receipt-photo or manual
   // entry). Null = the expense was NOT created by the Revolut feed.
   revolutTransactionId?: string | null;
+  stripeTransactionId?: string | null;
   type?: string | null;
   attendeeContacts?: { id: string; name: string | null }[];
 }
@@ -1365,16 +1366,24 @@ export default function MobileExpenses() {
                   </div>
                   <StatusBadge status={e.status} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => askDelete(e)}
-                  disabled={deleteMutation.isPending}
-                  className="shrink-0 p-3 text-muted-foreground active:text-red-600 active:bg-red-50 rounded-r-xl disabled:opacity-50"
-                  aria-label="Delete expense"
-                  data-testid={`mobile-expense-delete-${e.id}`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {/* Delete only for non-card expenses. Revolut (and legacy
+                    Stripe) swipes are a financial record — money actually
+                    moved, so the row stays on the ledger no matter what.
+                    Manual receipt uploads + cash claims can still be removed. */}
+                {!e.revolutTransactionId && !e.stripeTransactionId ? (
+                  <button
+                    type="button"
+                    onClick={() => askDelete(e)}
+                    disabled={deleteMutation.isPending}
+                    className="shrink-0 p-3 text-muted-foreground active:text-red-600 active:bg-red-50 rounded-r-xl disabled:opacity-50"
+                    aria-label="Delete expense"
+                    data-testid={`mobile-expense-delete-${e.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <div className="shrink-0 w-10" aria-hidden />
+                )}
               </div>
             ))}
           </div>

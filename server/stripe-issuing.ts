@@ -566,6 +566,20 @@ export function setupStripeIssuingRoutes(app: Express) {
     try {
       const id = String(req.params.id);
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+
+      // Card-feed transactions (Revolut, or legacy Stripe) are a financial
+      // record of money that actually moved — they must never be deleted by
+      // anyone. The ledger has to show what happened, even if a receipt is
+      // missing or it's been marked personal. Only expenses created OUTSIDE
+      // the card feed (manual receipt uploads, cash claims) can be removed.
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.revolutTransactionId || exp.stripeTransactionId) {
+        return res.status(403).json({
+          error: "This is a card transaction and can't be deleted — the spend actually happened and has to stay on the ledger. Mark it personal or add a receipt instead.",
+        });
+      }
+
       await db.delete(expenseAttendees).where(eq(expenseAttendees.expenseId, id));
       await db.delete(expenseReceipts).where(eq(expenseReceipts.expenseId, id));
       await db.delete(expenses).where(eq(expenses.id, id));
