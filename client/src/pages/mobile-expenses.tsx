@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
   X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
@@ -261,6 +262,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [attendeesText, setAttendeesText] = useState("");
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
+  const [isPersonal, setIsPersonal] = useState(false);
 
   // AI suggestion state — populated on sheet open if the expense has a
   // receipt but isn't yet categorised. Server cross-references the
@@ -318,6 +320,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAttendeesText(expense.attendees || "");
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
+    setIsPersonal(!!expense.isPersonal);
     setAiSuggestion(null);
     setAiError(null);
     setAiApplied(false);
@@ -354,6 +357,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         attendees: attendeesText || null,
         relatedPropertyId: relatedPropertyId || null,
         relatedDealId: relatedDealId || null,
+        isPersonal,
       };
       await apiRequest("PATCH", `/api/expenses/${expense.id}`, payload);
       await apiRequest("PUT", `/api/expenses/${expense.id}/attendees`, { contactIds: attendeeIds });
@@ -411,19 +415,6 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAddingEmail(a.email);
     addAttendeeMutation.mutate(a);
   };
-
-  const personalMutation = useMutation({
-    mutationFn: async () => {
-      if (!expense) throw new Error("No expense");
-      await apiRequest("PATCH", `/api/expenses/${expense.id}/mark-personal`, {});
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      toast({ title: "Marked as personal" });
-      onClose();
-    },
-    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
-  });
 
   // Picker state — typeahead for contacts/deals/properties
   const [contactSearch, setContactSearch] = useState("");
@@ -908,18 +899,24 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             )}
           </div>
 
-          {/* Mark personal */}
+          {/* Personal toggle — two-way so a mis-tap can be flipped back
+              before saving. Replaces the old one-way "Mark as personal"
+              button so the answer always survives Save. */}
           {!isPosted && (
-            <button
-              type="button"
-              onClick={() => personalMutation.mutate()}
-              disabled={personalMutation.isPending}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border border-dashed border-border text-xs text-muted-foreground active:bg-muted"
-              data-testid="m-mark-personal"
-            >
-              <UserX className="w-3.5 h-3.5" />
-              Mark as personal (not a business expense)
-            </button>
+            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <UserX className="w-4 h-4 text-muted-foreground" />
+                <div>
+                  <div className="text-sm font-medium">Personal expense</div>
+                  <div className="text-[11px] text-muted-foreground leading-tight">On = deducted from payroll</div>
+                </div>
+              </div>
+              <Switch
+                checked={isPersonal}
+                onCheckedChange={setIsPersonal}
+                data-testid="m-toggle-personal"
+              />
+            </div>
           )}
         </div>
 
