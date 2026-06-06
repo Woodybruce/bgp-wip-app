@@ -256,6 +256,46 @@ export function registerPortfolioRoutes(app: Express) {
     }
   });
 
+  // Serve a generated portfolio output (Excel / PDF) from file_storage.
+  app.get("/api/portfolios/files/:filename", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { getFile } = await import("./file-storage");
+      // Outputs are always stored under this prefix; take only the
+      // basename from the request so a slash can't escape the prefix.
+      const filename = String(req.params.filename).replace(/[^a-z0-9._-]/gi, "");
+      const file = await getFile(`portfolio-outputs/${filename}`);
+      if (!file) return res.status(404).json({ error: "File not found" });
+      res.setHeader("Content-Type", file.contentType || "application/octet-stream");
+      res.setHeader("Content-Disposition", `inline; filename="${file.originalName || "portfolio"}"`);
+      res.send(file.data);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Combined document generators (Excel + Why Buy). These merge each
+  // enabled run's existing per-property artifact into one portfolio file.
+  // Implemented in portfolio-outputs.ts (next build) — for now they
+  // return a clear in-progress response (200, not 404) so the buttons
+  // give useful feedback rather than erroring. The summary-table view
+  // above is fully live.
+  app.post("/api/portfolios/:id/generate/:kind", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const kind = String(req.params.kind);
+      const data = await getPortfolioWithRuns(String(req.params.id));
+      if (!data) return res.status(404).json({ error: "Portfolio not found" });
+      const enabled = data.items.filter(i => i.enabled);
+      if (enabled.length === 0) return res.status(400).json({ error: "No assets enabled in this portfolio" });
+
+      const mod = await import("./portfolio-outputs");
+      if (kind === "excel") return res.json(await mod.generatePortfolioExcel(String(req.params.id)));
+      if (kind === "why-buy") return res.json(await mod.generatePortfolioWhyBuy(String(req.params.id)));
+      return res.status(400).json({ error: `Unknown output kind: ${kind}` });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Remove a run from the portfolio entirely.
   app.delete("/api/portfolios/:id/runs/:runId", requireAuth, async (req: Request, res: Response) => {
     try {

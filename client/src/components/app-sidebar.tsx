@@ -89,6 +89,7 @@ const coreNavBase = [
   // Tracker / Investment / WIP Report), so the standalone sidebar entry
   // was dropped — it duplicated the Deals view.
   { title: "Deals", url: "/deals", icon: BarChart3 },
+  { title: "Portfolios", url: "/portfolios", icon: Layers },
   { title: "Requirements", url: "/requirements", icon: FileText },
   // Work-in-progress modules (AML, Tenant Rep, hunters, Landlord Intel,
   // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
