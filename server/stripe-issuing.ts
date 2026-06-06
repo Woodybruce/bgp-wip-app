@@ -1399,6 +1399,61 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Approve & post to Xero (one-click)
+  // Diagnostic — why does the Approvals queue look empty for X? Hits the
+  // same listPendingForApprover() pipeline the inbox uses but also returns
+  // the fallback-pool user lookup so you can see whether Wendy/Layla
+  // exist in `users` with the expected emails, whether their is_active
+  // flag is on, and how many rows are currently pending. Built for the
+  // "Wendy doesn't see anything to approve" loop.
+  app.get("/api/expenses/admin/approval-diagnostic", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { FALLBACK_APPROVER_EMAILS } = await import("./expense-approval");
+      const expectedEmails = Array.from(FALLBACK_APPROVER_EMAILS);
+      const fallbackUsers = await pool.query<{ id: string; name: string | null; email: string | null; is_active: boolean | null; is_admin: boolean | null }>(
+        `SELECT id, name, email, is_active, is_admin FROM users WHERE lower(email) = ANY($1::text[])`,
+        [expectedEmails.map(e => e.toLowerCase())],
+      );
+
+      const pending = await pool.query<{ id: string; status: string; approver_user_id: string | null; submitter_user_id: string | null; submitted_for_approval_at: Date | null; merchant: string | null; amount_pence: number }>(
+        `SELECT id, status, approver_user_id, submitter_user_id, submitted_for_approval_at, merchant, amount_pence
+         FROM expenses
+         WHERE status = 'pending_approval'
+         ORDER BY submitted_for_approval_at DESC NULLS LAST
+         LIMIT 200`,
+      );
+
+      const approverIds = Array.from(new Set(pending.rows.map(r => r.approver_user_id).filter(Boolean) as string[]));
+      const approvers = approverIds.length > 0
+        ? (await pool.query<{ id: string; name: string | null; email: string | null }>(
+            `SELECT id, name, email FROM users WHERE id = ANY($1::text[])`, [approverIds],
+          )).rows
+        : [];
+      const approverById = new Map(approvers.map(a => [a.id, a]));
+
+      const byApprover = new Map<string, { id: string | null; name: string | null; email: string | null; count: number }>();
+      for (const r of pending.rows) {
+        const id = r.approver_user_id || "__unassigned__";
+        if (!byApprover.has(id)) {
+          const a = r.approver_user_id ? approverById.get(r.approver_user_id) : null;
+          byApprover.set(id, { id: r.approver_user_id, name: a?.name || (r.approver_user_id ? "(user not found)" : "unassigned"), email: a?.email || null, count: 0 });
+        }
+        byApprover.get(id)!.count++;
+      }
+
+      res.json({
+        expectedFallbackEmails: expectedEmails,
+        fallbackUsersInDb: fallbackUsers.rows,
+        missingFromDb: expectedEmails.filter(e => !fallbackUsers.rows.some(u => (u.email || "").toLowerCase() === e.toLowerCase())),
+        totalPendingApproval: pending.rows.length,
+        pendingByApprover: Array.from(byApprover.values()).sort((a, b) => b.count - a.count),
+        samplePending: pending.rows.slice(0, 10),
+      });
+    } catch (e: any) {
+      console.error("[expenses] approval-diagnostic error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Approval inbox — what the current user is allowed to act on.
   // Approvers see: rows where approver_user_id matches them, plus (if
   // they're in the fallback pool or admin) rows where approver_user_id
