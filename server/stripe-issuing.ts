@@ -766,19 +766,24 @@ export function setupStripeIssuingRoutes(app: Express) {
         attendeeContacts: attendeesByExpense.get(e.id) || [],
       }));
 
-      // Month-to-date spend ON THE CARD. Excludes cash claims (type=cash
-      // with no revolutTransactionId) so the card panel doesn't conflate
-      // ad-hoc receipt-photo expenses with real Revolut card swipes —
-      // that was making the panel show '£72.05 spent on card' when the
-      // card hadn't actually been swiped at all.
+      // Month-to-date business spend. Matches what the user sees in the
+      // list immediately below the figure: every non-personal, non-rejected
+      // expense in the current calendar month. The previous version tried
+      // to be cleverer ('only count actual Revolut card swipes, not
+      // receipt-photo uploads') but produced numbers that didn't match the
+      // visible list — Trainline, ParkingSpace etc were all Revolut-feed
+      // rows yet the total only counted one of them. If we ever want a
+      // separate 'confirmed card swipes' metric, that's a different number
+      // alongside this one — the row badges already distinguish source.
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
       const monthly = myExpenses.filter(e => {
-        if (!e.transactionDate || e.isPersonal) return false;
+        if (!e.transactionDate) return false;
+        if (e.isPersonal) return false;
+        if (e.status === "rejected") return false;
         if (new Date(e.transactionDate) < startOfMonth) return false;
-        const isCardSpend = !!(e as any).revolutTransactionId || e.type === "card";
-        return isCardSpend;
+        return true;
       });
       const monthlySpend = monthly.reduce((sum, e) => sum + (e.amountPence || 0), 0);
       const pendingReceipts = myExpenses.filter(e => e.status === "pending_receipt").length;
