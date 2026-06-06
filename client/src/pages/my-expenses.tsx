@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { ToastAction } from "@/components/ui/toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
@@ -120,11 +121,32 @@ export default function MyExpenses() {
   const markPersonalMutation = useMutation({
     mutationFn: async (id: string) => {
       const r = await apiRequest("PATCH", `/api/expenses/${id}/mark-personal`, {});
-      return r.json();
+      return { id, body: await r.json() };
     },
-    onSuccess: () => {
+    onSuccess: ({ id }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      toast({ title: "Marked as personal", description: "Will be deducted from payroll." });
+      // Mis-tap is the common case — offer a one-click undo via the toast
+      // action so the fix doesn't require opening Edit.
+      toast({
+        title: "Marked as personal",
+        description: "Will be deducted from payroll.",
+        action: (
+          <ToastAction
+            altText="Undo mark as personal"
+            onClick={async () => {
+              try {
+                await apiRequest("PATCH", `/api/expenses/${id}`, { isPersonal: false });
+                queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+                toast({ title: "Reverted to business expense" });
+              } catch (e: any) {
+                toast({ title: "Undo failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
     },
     onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
   });

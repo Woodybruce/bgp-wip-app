@@ -107,7 +107,10 @@ function getRedirectUri(req: Request): string {
 const refreshLocks = new Map<string, Promise<string | null>>();
 
 export async function refreshXeroToken(session: any): Promise<string | null> {
-  if (!session.xeroTokens) return null;
+  // Callers can pass null/undefined deliberately to mean "no user session —
+  // try the system-wide Xero session instead". xeroApiWithFallback handles
+  // that fallback; here we just bail cleanly so it can take over.
+  if (!session || !session.xeroTokens) return null;
 
   if (Date.now() < session.xeroTokens.expiresAt - 60000) {
     return session.xeroTokens.accessToken;
@@ -192,16 +195,24 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
 // Write paths stay session-scoped via xeroApi() — when an invoice gets
 // posted we want it attributed to the user who triggered it.
 export async function xeroApiWithFallback(session: any, path: string, options: RequestInit = {}): Promise<any> {
-  try {
-    return await xeroApi(session, path, options);
-  } catch (err: any) {
-    if (!String(err?.message || "").includes("Not connected")) throw err;
-    // Caller has no Xero — try the system-wide session.
-    const { getSystemXeroSession } = await import("./xero-system-session");
-    const sys = await getSystemXeroSession();
-    if (!sys) throw new Error("Not connected to Xero");
-    return xeroApi(sys, path, options);
+  // session=null is the explicit "background caller, use the firm session"
+  // signal (used by expense-categories etc). Skip the user-session attempt
+  // entirely in that case rather than letting it throw and recover.
+  if (session) {
+    try {
+      return await xeroApi(session, path, options);
+    } catch (err: any) {
+      if (!String(err?.message || "").includes("Not connected")) throw err;
+      // fall through to the system session
+    }
   }
+  // Use withSystemXero so any token refresh that happens during the call
+  // gets persisted back to system_settings (otherwise we'd re-refresh
+  // every time, burning through refresh tokens unnecessarily).
+  const { withSystemXero } = await import("./xero-system-session");
+  const result = await withSystemXero((sysSession) => xeroApi(sysSession, path, options));
+  if (result === null) throw new Error("Not connected to Xero");
+  return result;
 }
 
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
