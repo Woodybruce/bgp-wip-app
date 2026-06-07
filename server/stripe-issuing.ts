@@ -1349,6 +1349,67 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // ─── DEBUG: dump the raw fields the 'This month' filter actually sees ──
+  // One-shot diagnostic — hit /api/expenses/me/debug and read the rows to
+  // verify whether the suspicious 'This month £8.05' issue was bad data
+  // (revolutTransactionId null despite the Revolut badge showing) or bad
+  // filter logic. Safe to leave in (auth-gated, read-only); delete once the
+  // root cause is understood.
+  app.get("/api/expenses/me/debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId;
+      if (!userId) return res.status(401).json({ error: "Not logged in" });
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
+      if (!ch) return res.json({ cardholder: null, rows: [] });
+
+      const rows = await db.select({
+        id: expenses.id,
+        merchant: expenses.merchant,
+        amountPence: expenses.amountPence,
+        transactionDate: expenses.transactionDate,
+        status: expenses.status,
+        type: expenses.type,
+        isPersonal: expenses.isPersonal,
+        revolutTransactionId: expenses.revolutTransactionId,
+        receiptFilename: expenses.receiptFilename,
+        category: expenses.category,
+      }).from(expenses)
+        .where(eq(expenses.cardholderId, ch.id))
+        .orderBy(desc(expenses.transactionDate))
+        .limit(20);
+
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      const annotated = rows.map(r => {
+        const inMonth = r.transactionDate ? new Date(r.transactionDate) >= startOfMonth : false;
+        const oldFilterCounted = !!(
+          r.transactionDate && !r.isPersonal && inMonth &&
+          (!!r.revolutTransactionId || r.type === "card")
+        );
+        const newFilterCounted = !!(
+          r.transactionDate && !r.isPersonal && inMonth && r.status !== "rejected"
+        );
+        return { ...r, inMonth, oldFilterCounted, newFilterCounted };
+      });
+
+      const oldTotal = annotated.filter(r => r.oldFilterCounted).reduce((s, r) => s + (r.amountPence || 0), 0);
+      const newTotal = annotated.filter(r => r.newFilterCounted).reduce((s, r) => s + (r.amountPence || 0), 0);
+
+      res.json({
+        cardholderId: ch.id,
+        today: new Date().toISOString(),
+        startOfMonth: startOfMonth.toISOString(),
+        oldTotalPence: oldTotal,
+        newTotalPence: newTotal,
+        rows: annotated,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Per-user: what's currently blocking my card (so the mobile + desktop
   // app can show a banner "Your card is frozen because of these N
   // expenses"). Returns the rows the freeze sweep would catch right now.
