@@ -113,3 +113,15 @@ Migration 0034 run against prod. Clean:
 - 2 Google tenant-rep deals (Beauty Pie + Ronning Menswear) flipped to 'tenant'
 - Partial unique index `crm_deals_one_live_landlord_per_unit_idx` created — rule now ENFORCED
 Tally: landlord 188 · tenant 2. Tenant-rep tagging is opt-in going forward.
+
+## Stage 2 part 3 — APPLIED 2026-06-08 (back-fill property_unit_id via bridge)
+
+Migration 0035 run against prod. UPDATE 29. Result:
+- 29 tenancy rows now have property_unit_id (the new physical link)
+- 169 still NULL — long-tail manual reconciliation (Path B), unblocked from Stage 3
+- All 29 were populated by copying through available_units (the only viable bridge,
+  since name-matching returned 0)
+
+Stage 2 is now COMPLETE: structure live, back-fill done where automatable, one-live-deal
+rule enforced, tenant-rep distinction made. Stage 3 (unified Add-Unit + deal-at-SOL,
+code change) is next.
