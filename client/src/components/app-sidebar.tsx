@@ -80,7 +80,7 @@ import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
-import { History } from "lucide-react";
+import { History, ClipboardCheck } from "lucide-react";
 
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -308,9 +308,23 @@ export function AppSidebar() {
   // it lives in the Unfinished group along with the other modules being
   // polished.
   const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly || user?.isAdmin);
-  const coreNav = isLandsec
-    ? [...coreNavFiltered, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
+  // Surface an "Approvals" entry (with a count badge) for anyone who actually
+  // has expenses assigned to them to approve — Wendy/Layla (Stage 1) and the
+  // directors (Stage 2). Without this there was no nav route to the approvals
+  // inbox, so approvers couldn't find their queue even though items were
+  // correctly assigned. /expenses/approvals is not admin-gated, so this works
+  // for Wendy's non-admin "Accounts" login too.
+  const { data: pendingApprovals } = useQuery<any[]>({
+    queryKey: ["/api/expenses/pending-approval"],
+    refetchInterval: 60_000,
+  });
+  const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
+  const coreWithApprovals = approvalCount > 0
+    ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
     : coreNavFiltered;
+  const coreNav = isLandsec
+    ? [...coreWithApprovals, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
+    : coreWithApprovals;
   // Drop Reporting from Unfinished when it's already promoted into Core for
   // Landsec, so it doesn't appear twice in the sidebar.
   const unfinishedNavCleaned = isLandsec
