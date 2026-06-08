@@ -7,10 +7,10 @@
 -- counts mean data-cleanup-first; small means we can refactor straight away.
 -- NOTE: adjust the terminal-status list in check 11 to your real codes.
 -- ============================================================================
-SELECT check, value FROM (
+SELECT metric, value FROM (
 
   -- ---- baseline ----
-  SELECT 1 AS ord, '0 · property_units rows'                        AS check, (SELECT count(*) FROM property_units)::text AS value
+  SELECT 1 AS ord, '0 · property_units rows'                        AS metric, (SELECT count(*) FROM property_units)::text AS value
   UNION ALL SELECT 2,  '0 · tenancy_schedule_units rows',           (SELECT count(*) FROM tenancy_schedule_units)::text
   UNION ALL SELECT 3,  '0 · available_units rows',                  (SELECT count(*) FROM available_units)::text
   UNION ALL SELECT 4,  '0 · leasing_schedule_units rows',           (SELECT count(*) FROM leasing_schedule_units)::text
