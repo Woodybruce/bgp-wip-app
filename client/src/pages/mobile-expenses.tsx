@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
   X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
@@ -56,6 +57,7 @@ interface Expense {
   // Identifies a real Revolut card swipe (vs a receipt-photo or manual
   // entry). Null = the expense was NOT created by the Revolut feed.
   revolutTransactionId?: string | null;
+  stripeTransactionId?: string | null;
   type?: string | null;
   attendeeContacts?: { id: string; name: string | null }[];
 }
@@ -162,9 +164,8 @@ function MobileCardDetailsSheet({ open, onClose }: { open: boolean; onClose: () 
   return (
     <Sheet open={open} onOpenChange={(v) => { if (!v) { onClose(); setRevealed(false); } }}>
       <SheetContent side="bottom" className="h-[90vh] p-0 rounded-t-2xl">
-        <SheetHeader className="px-4 pt-4 pb-2 flex flex-row items-center justify-between border-b">
+        <SheetHeader className="px-4 pt-4 pb-2 border-b">
           <SheetTitle className="text-base">Card Details</SheetTitle>
-          <button onClick={onClose} className="p-1 -mr-1 active:bg-muted rounded-full" aria-label="Close"><X className="w-5 h-5" /></button>
         </SheetHeader>
         <div className="p-4 space-y-4">
           {isLoading ? (
@@ -261,6 +262,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [attendeesText, setAttendeesText] = useState("");
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
+  const [isPersonal, setIsPersonal] = useState(false);
 
   // AI suggestion state — populated on sheet open if the expense has a
   // receipt but isn't yet categorised. Server cross-references the
@@ -318,12 +320,17 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     setAttendeesText(expense.attendees || "");
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
+    setIsPersonal(!!expense.isPersonal);
     setAiSuggestion(null);
     setAiError(null);
     setAiApplied(false);
     setAiUserReply("");
-    // Always fire on sheet open unless already locked in Xero.
+    // Always fire on sheet open unless already locked in Xero — or
+    // already flagged personal (a personal expense is deducted from
+    // payroll, never posted to a Xero nominal, so AI classification
+    // is wasted work).
     if (expense.xeroExpenseId) return;
+    if (expense.isPersonal) return;
     runClassify(expense.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expense?.id]);
@@ -354,6 +361,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         attendees: attendeesText || null,
         relatedPropertyId: relatedPropertyId || null,
         relatedDealId: relatedDealId || null,
+        isPersonal,
       };
       await apiRequest("PATCH", `/api/expenses/${expense.id}`, payload);
       await apiRequest("PUT", `/api/expenses/${expense.id}/attendees`, { contactIds: attendeeIds });
@@ -412,19 +420,6 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
     addAttendeeMutation.mutate(a);
   };
 
-  const personalMutation = useMutation({
-    mutationFn: async () => {
-      if (!expense) throw new Error("No expense");
-      await apiRequest("PATCH", `/api/expenses/${expense.id}/mark-personal`, {});
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      toast({ title: "Marked as personal" });
-      onClose();
-    },
-    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
-  });
-
   // Picker state — typeahead for contacts/deals/properties
   const [contactSearch, setContactSearch] = useState("");
   const [dealSearch, setDealSearch] = useState("");
@@ -482,13 +477,36 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         </SheetHeader>
 
         <div className="px-4 py-4 space-y-5 pb-32">
+          {/* Personal toggle — first thing in the form so a mis-tap on
+              the row is the first thing you can fix. When on, skips AI
+              classify (a personal expense never posts to a Xero nominal,
+              so there's nothing for AI to categorise). */}
+          {!isPosted && (
+            <div className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-3 py-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <UserX className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">Personal expense</div>
+                  <div className="text-[11px] text-muted-foreground leading-tight">
+                    {isPersonal ? "Deducted from payroll · no AI needed" : "Off — business expense, posts to Xero"}
+                  </div>
+                </div>
+              </div>
+              <Switch
+                checked={isPersonal}
+                onCheckedChange={setIsPersonal}
+                data-testid="m-toggle-personal"
+              />
+            </div>
+          )}
+
           {/* ─── AI suggestion banner ───────────────────────────────────
               Fires when the sheet opens for a receipt that hasn't been
               categorised yet. Server pulls the user's calendar + CRM
               contacts + the parsed receipt and proposes a full set of
               fields. High-confidence suggestions auto-apply; medium /
               low need user confirmation. */}
-          {(aiLoading || aiSuggestion || aiError) && (
+          {(aiLoading || aiSuggestion || aiError) && !isPersonal && (
             <div className="rounded-2xl border border-violet-200 bg-violet-50 dark:bg-violet-950/30 dark:border-violet-900 p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-900 flex items-center justify-center shrink-0">
@@ -908,19 +926,6 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             )}
           </div>
 
-          {/* Mark personal */}
-          {!isPosted && (
-            <button
-              type="button"
-              onClick={() => personalMutation.mutate()}
-              disabled={personalMutation.isPending}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border border-dashed border-border text-xs text-muted-foreground active:bg-muted"
-              data-testid="m-mark-personal"
-            >
-              <UserX className="w-3.5 h-3.5" />
-              Mark as personal (not a business expense)
-            </button>
-          )}
         </div>
 
         {/* Sticky Save bar at the bottom */}
@@ -977,6 +982,10 @@ export default function MobileExpenses() {
     queryKey: ["/api/expenses/me/blocking"],
     refetchInterval: 60_000,
   });
+
+  // Admin gate: drives the Mine/Team scope toggle in the header. The
+  // /m/team-expenses tile is gone from Home — admins switch contexts here.
+  const { data: me } = useQuery<{ isAdmin?: boolean }>({ queryKey: ["/api/auth/me"] });
 
   const uploadMutation = useMutation({
     mutationFn: async ({ id, file }: { id: string; file: File }) => {
@@ -1138,6 +1147,15 @@ export default function MobileExpenses() {
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
+        {/* Admin-only Mine/Team scope toggle. Replaces the standalone
+            "Team" tile that used to live on the mobile home — now
+            admins flip context here without leaving the Expenses page. */}
+        {me?.isAdmin && (
+          <div className="flex rounded-full bg-muted p-0.5 text-[12px] font-medium" data-testid="m-exp-scope-toggle">
+            <span className="px-3 py-1 rounded-full bg-background shadow-sm">Mine</span>
+            <Link href="/m/team-expenses" className="px-3 py-1 rounded-full text-muted-foreground active:bg-background/60">Team</Link>
+          </div>
+        )}
       </div>
 
       {/* Frozen banner — appears when the month-end sweep has frozen this
@@ -1353,16 +1371,24 @@ export default function MobileExpenses() {
                   </div>
                   <StatusBadge status={e.status} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => askDelete(e)}
-                  disabled={deleteMutation.isPending}
-                  className="shrink-0 p-3 text-muted-foreground active:text-red-600 active:bg-red-50 rounded-r-xl disabled:opacity-50"
-                  aria-label="Delete expense"
-                  data-testid={`mobile-expense-delete-${e.id}`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {/* Delete only for non-card expenses. Revolut (and legacy
+                    Stripe) swipes are a financial record — money actually
+                    moved, so the row stays on the ledger no matter what.
+                    Manual receipt uploads + cash claims can still be removed. */}
+                {!e.revolutTransactionId && !e.stripeTransactionId ? (
+                  <button
+                    type="button"
+                    onClick={() => askDelete(e)}
+                    disabled={deleteMutation.isPending}
+                    className="shrink-0 p-3 text-muted-foreground active:text-red-600 active:bg-red-50 rounded-r-xl disabled:opacity-50"
+                    aria-label="Delete expense"
+                    data-testid={`mobile-expense-delete-${e.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <div className="shrink-0 w-10" aria-hidden />
+                )}
               </div>
             ))}
           </div>

@@ -422,17 +422,40 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   };
 
   const handleLongPress = useRef<NodeJS.Timeout | null>(null);
-  const handleTouchStart = () => {
+  // Track where the touch started so we can cancel the long-press if the
+  // finger moves more than a few pixels — otherwise scrolling through a
+  // long ChatBGP reply triggers a copy every time, since the finger sits
+  // on a bubble for >400ms while the page is moving.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const LONG_PRESS_MS = 600;
+  const MOVE_TOLERANCE_PX = 10;
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    touchStart.current = t ? { x: t.clientX, y: t.clientY } : null;
     handleLongPress.current = setTimeout(() => {
       // AI messages have no Edit/Delete affordances — long-press just copies
       // the whole bubble. User messages still show the menu so Edit/Delete
       // stay reachable.
       if (!isUser) handleCopy();
       else setShowActions(true);
-    }, 400);
+    }, LONG_PRESS_MS);
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStart.current || !handleLongPress.current) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    if (dx * dx + dy * dy > MOVE_TOLERANCE_PX * MOVE_TOLERANCE_PX) {
+      clearTimeout(handleLongPress.current);
+      handleLongPress.current = null;
+    }
   };
   const handleTouchEnd = () => {
     if (handleLongPress.current) clearTimeout(handleLongPress.current);
+    handleLongPress.current = null;
+    touchStart.current = null;
   };
 
   const renderAttachments = () => {
@@ -508,6 +531,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             <div
               className="relative"
               onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
             >
@@ -544,6 +568,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
           <div
             className="relative"
             onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
             onTouchCancel={handleTouchEnd}
           >

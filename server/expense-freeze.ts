@@ -17,10 +17,10 @@
 // path and reversible by hand if needed.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { db, pool } from "./db";
+import { db } from "./db";
 import { expenses, stripeCardholders, users } from "@shared/schema";
-import { and, eq, isNull, lt, ne, isNotNull } from "drizzle-orm";
-import { freezeRevolutCard, unfreezeRevolutCard } from "./revolut";
+import { and, eq, lt, ne } from "drizzle-orm";
+import { freezeRevolutCard, unfreezeRevolutCard, resolveRevolutCardIdForCardholder } from "./revolut";
 
 // £10 floor — Trainline, parking, etc. just nag, don't freeze.
 const MIN_AMOUNT_PENCE = 1000;
@@ -84,19 +84,9 @@ export async function getBlockingExpenses(cardholderId: string): Promise<Blockin
     }));
 }
 
-// ─── Revolut card id resolver ─────────────────────────────────────────────
-//
-// stripe_cards.stripe_card_id holds the Revolut card id (legacy column
-// name — the schema predates the Stripe→Revolut migration). Returns
-// null if the cardholder isn't mapped to a Revolut card yet.
-
-async function getRevolutCardIdFor(cardholderId: string): Promise<string | null> {
-  const { rows } = await pool.query<{ stripe_card_id: string | null }>(
-    `SELECT stripe_card_id FROM stripe_cards WHERE cardholder_id = $1 LIMIT 1`,
-    [cardholderId],
-  );
-  return rows[0]?.stripe_card_id || null;
-}
+// Card id lookup goes through revolut.ts so we get the cardholders-row
+// preferred + stripe_cards fallback behaviour and the lazy backfill.
+const getRevolutCardIdFor = (cardholderId: string) => resolveRevolutCardIdForCardholder(cardholderId);
 
 // ─── Freeze one cardholder ───────────────────────────────────────────────
 //

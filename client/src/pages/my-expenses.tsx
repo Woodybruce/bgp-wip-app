@@ -3,6 +3,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { ToastAction } from "@/components/ui/toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
@@ -119,11 +121,32 @@ export default function MyExpenses() {
   const markPersonalMutation = useMutation({
     mutationFn: async (id: string) => {
       const r = await apiRequest("PATCH", `/api/expenses/${id}/mark-personal`, {});
-      return r.json();
+      return { id, body: await r.json() };
     },
-    onSuccess: () => {
+    onSuccess: ({ id }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      toast({ title: "Marked as personal", description: "Will be deducted from payroll." });
+      // Mis-tap is the common case — offer a one-click undo via the toast
+      // action so the fix doesn't require opening Edit.
+      toast({
+        title: "Marked as personal",
+        description: "Will be deducted from payroll.",
+        action: (
+          <ToastAction
+            altText="Undo mark as personal"
+            onClick={async () => {
+              try {
+                await apiRequest("PATCH", `/api/expenses/${id}`, { isPersonal: false });
+                queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+                toast({ title: "Reverted to business expense" });
+              } catch (e: any) {
+                toast({ title: "Undo failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
     },
     onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
   });
@@ -539,6 +562,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
   const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
+  const [isPersonal, setIsPersonal] = useState(false);
 
   // Re-seed the form whenever a new expense opens.
   useEffect(() => {
@@ -550,6 +574,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     setAttendeeIds((expense.attendeeContacts || []).map(c => c.id));
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
+    setIsPersonal(!!expense.isPersonal);
   }, [expense?.id]);
 
   const showEntertainmentFields = ENTERTAINMENT_CATEGORIES.has(category);
@@ -565,6 +590,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
         businessPurpose: businessPurpose || null,
         relatedPropertyId: relatedPropertyId || null,
         relatedDealId: relatedDealId || null,
+        isPersonal,
       };
       await apiRequest("PATCH", `/api/expenses/${expense.id}`, payload);
       await apiRequest("PUT", `/api/expenses/${expense.id}/attendees`, { contactIds: attendeeIds });
@@ -589,6 +615,21 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
           <div className="text-xs text-muted-foreground">
             Amount: <span className="font-mono font-medium">{fmt(expense.amountPence)}</span>
             {isPosted && <span className="ml-3 text-emerald-600">Posted to Xero — cannot edit core fields</span>}
+          </div>
+
+          {/* Personal/business toggle — lets you undo an accidental "Personal" tag. */}
+          <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2">
+            <div>
+              <Label htmlFor="exp-is-personal" className="text-sm font-medium">Personal expense</Label>
+              <p className="text-[11px] text-muted-foreground">On = deducted from payroll. Off = business expense, goes to Xero.</p>
+            </div>
+            <Switch
+              id="exp-is-personal"
+              checked={isPersonal}
+              onCheckedChange={setIsPersonal}
+              disabled={isPosted}
+              data-testid="toggle-expense-personal"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -929,7 +970,7 @@ function AppleWalletDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         </DialogHeader>
         <div className="space-y-4 text-sm">
           <p className="text-muted-foreground">
-            Apple Wallet provisioning happens inside the Revolut app — the BGP dashboard can't add the card for you because Revolut doesn't expose card details to third-party apps (by design).
+            Apple Wallet provisioning needs iOS-native PassKit + an issuer-certified flow that's only built into the Revolut iOS app — no web app can add a card on your behalf. Add it once via Revolut on your phone; spend then still flows back to BGP via the webhook.
           </p>
           <ol className="space-y-2 list-decimal pl-5">
             <li>Open the <strong>Revolut</strong> app on your iPhone</li>

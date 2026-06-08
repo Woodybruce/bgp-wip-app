@@ -626,6 +626,74 @@ export async function unfreezeRevolutCard(cardId: string): Promise<void> {
   await api<unknown>(`/cards/${encodeURIComponent(cardId)}/unfreeze`, { method: "POST" });
 }
 
+// ─── Card ↔ cardholder resolver ──────────────────────────────────────────
+//
+// The Revolut card id lives in two places — stripe_cardholders.revolut_card_id
+// (written by Auto-assign AND manual map) and stripe_cards.stripe_card_id
+// (written by Auto-assign only — the column name is legacy). Show-details and
+// the freeze sweep both used to read only from stripe_cards, which meant a
+// cardholder mapped via the manual-map endpoint looked like "no card mapped"
+// to the dashboard even though their swipes flowed in fine via the
+// cardholders.revolut_card_id path. This helper closes that gap: it reads
+// cardholders first (source of truth, always populated), falls back to
+// stripe_cards, and lazy-writes a stripe_cards row if it's missing — pulling
+// last4/expiry/state from Revolut so the UI's card panel renders correctly.
+
+export async function resolveRevolutCardIdForCardholder(cardholderId: string): Promise<string | null> {
+  // 1. cardholders row (preferred source).
+  const r1 = await pool.query<{ revolut_card_id: string | null }>(
+    `SELECT revolut_card_id FROM stripe_cardholders WHERE id = $1 LIMIT 1`, [cardholderId],
+  );
+  const fromHolder = r1.rows[0]?.revolut_card_id || null;
+
+  // 2. stripe_cards row (legacy / Auto-assign).
+  const r2 = await pool.query<{ stripe_card_id: string | null }>(
+    `SELECT stripe_card_id FROM stripe_cards WHERE cardholder_id = $1 LIMIT 1`, [cardholderId],
+  );
+  const fromCards = r2.rows[0]?.stripe_card_id || null;
+
+  const cardId = fromHolder || fromCards;
+  if (!cardId) return null;
+
+  // Lazy-backfill: if we have the cardholder mapping but no stripe_cards row,
+  // pull metadata from Revolut and write one so the card panel + show-details
+  // path stop reporting "no card mapped".
+  if (fromHolder && !fromCards) {
+    await backfillStripeCardsRow(cardholderId, fromHolder).catch((e) =>
+      console.warn(`[revolut] lazy-backfill stripe_cards failed for ${cardholderId}:`, e?.message),
+    );
+  }
+  return cardId;
+}
+
+async function backfillStripeCardsRow(cardholderId: string, revolutCardId: string): Promise<void> {
+  // Pull the card from Revolut. Failures here are non-fatal — we still
+  // have the card id, the UI just won't have last4/expiry yet (next
+  // Auto-assign run will fill them in).
+  const card = await api<any>(`/cards/${encodeURIComponent(revolutCardId)}`);
+  const lastDigits: string | null = typeof card?.last_digits === "string" ? card.last_digits : null;
+  const state: string = card?.state === "active" ? "active" : (card?.state || "inactive");
+  const expiry: string | null = typeof card?.expiry === "string" ? card.expiry : null;
+  const virtual: boolean | null = typeof card?.virtual === "boolean" ? card.virtual : null;
+  const productCode: string | null = typeof card?.product?.code === "string" ? card.product.code : null;
+  // stripe_card_id is unique; cardholder_id isn't. Upsert on the unique
+  // column so re-assigning a card to a different cardholder updates the
+  // existing row instead of erroring with a unique-constraint violation.
+  await pool.query(
+    `INSERT INTO stripe_cards (cardholder_id, stripe_card_id, last4, status, expiry, virtual, product_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (stripe_card_id) DO UPDATE SET
+       cardholder_id = EXCLUDED.cardholder_id,
+       last4 = EXCLUDED.last4,
+       status = EXCLUDED.status,
+       expiry = EXCLUDED.expiry,
+       virtual = EXCLUDED.virtual,
+       product_code = EXCLUDED.product_code`,
+    [cardholderId, revolutCardId, lastDigits || "", state, expiry, virtual, productCode],
+  );
+  console.log(`[revolut] backfilled stripe_cards row for cardholder ${cardholderId} (last4=${lastDigits || "?"})`);
+}
+
 // ─── Auto-migration: add the columns we depend on ────────────────────────
 
 let _migrated = false;
@@ -780,6 +848,156 @@ export function setupRevolutRoutes(app: Express): void {
 
   // Exchange an OAuth authorisation code for a refresh token. Run this
   // once after consent — the code is single-use.
+  // Admin-only: probes the current Revolut access token by calling each
+  // scope-gated endpoint we depend on and reports pass/fail per scope.
+  // Built for the "card details says 403, what scope is missing?" loop —
+  // tells you exactly which of the four scopes the token has so you can
+  // re-do the OAuth consent with the missing one.
+  app.get("/api/revolut/probe-scopes", requireAdmin, async (_req: Request, res: Response) => {
+    const checks: Array<{ scope: string; label: string; ok: boolean; status: number | null; error: string | null }> = [];
+
+    const run = async (scope: string, label: string, path: string, method: "GET" | "POST" = "GET") => {
+      try {
+        await api<unknown>(path, { method });
+        checks.push({ scope, label, ok: true, status: 200, error: null });
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        const m = msg.match(/(\d{3})/);
+        const status = m ? Number(m[1]) : null;
+        // 403 → scope missing; 404 → scope OK but the resource doesn't exist
+        // (e.g. no cards); anything else surfaces verbatim.
+        const ok = !(status === 403 || /forbidden|permission|scope/i.test(msg));
+        checks.push({ scope, label, ok, status, error: ok ? null : msg.slice(0, 200) });
+      }
+    };
+
+    // Read-only probes only — never call freeze/unfreeze here since a
+    // failed restore would leave a real card frozen.
+    await run("READ", "Read accounts", `/accounts`);
+    await run("READ", "List cards", `/cards`);
+    try {
+      const cards = await api<any[]>(`/cards`).catch(() => [] as any[]);
+      const probeCardId = Array.isArray(cards) && cards[0]?.id;
+      if (probeCardId) {
+        await run("READ_SENSITIVE_CARD_DATA", "Reveal card PAN / CVV / expiry", `/cards/${encodeURIComponent(probeCardId)}/sensitive-details`);
+      } else {
+        checks.push({ scope: "READ_SENSITIVE_CARD_DATA", label: "Reveal card PAN / CVV / expiry", ok: false, status: null, error: "no card to probe against" });
+      }
+    } catch (e: any) {
+      console.warn("[revolut] scope probe card-lookup failed:", e?.message);
+    }
+
+    res.json({ checks, allGranted: checks.every(c => c.ok) });
+  });
+
+  // Admin-only: returns the Revolut Business consent URL pre-filled with
+  // our client_id + callback redirect_uri. Used by the 'Re-authorise
+  // Revolut' button on the mobile admin Payroll tab — once you've
+  // enabled the missing scope on the cert in Revolut Business →
+  // Settings → APIs, tap the button, approve, and the existing
+  // /api/revolut/callback handler swaps the code for a fresh refresh
+  // token with the new scope grant.
+  //
+  // Note: Revolut Business's consent URL has no `scope=` parameter —
+  // scopes live on the API certificate, not in the OAuth flow.
+  app.get("/api/revolut/consent-url", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const cfg = getConfig();
+      if (!cfg) return res.status(400).json({ error: "Revolut not configured — set REVOLUT_CLIENT_ID, REVOLUT_JWT_PRIVATE_KEY, REVOLUT_JWT_ISSUER" });
+      const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "";
+      const redirectUri = `${proto}://${host}/api/revolut/callback`;
+      const consentUrl = `https://business.revolut.com/app-confirm?client_id=${encodeURIComponent(cfg.clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+      res.json({ consentUrl, redirectUri, clientId: cfg.clientId.slice(0, 6) + "…" });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Diagnostic — Revolut's "code invalid/expired" is famously ambiguous.
+  // It returns the same message when the auth code legitimately expired
+  // (60-120s lifetime), when the JWT issuer doesn't match the cert's
+  // configured JWT URL, when the client_id is wrong, when the private
+  // key in Railway doesn't match the public cert uploaded to Revolut,
+  // and when the env var has its PEM newlines mangled. This endpoint
+  // checks each of those without burning an auth code.
+  app.get("/api/revolut/diagnose", requireAdmin, async (_req: Request, res: Response) => {
+    const out: any = {};
+    out.env = {
+      REVOLUT_CLIENT_ID: process.env.REVOLUT_CLIENT_ID ? `${process.env.REVOLUT_CLIENT_ID.slice(0, 8)}…${process.env.REVOLUT_CLIENT_ID.slice(-4)}` : null,
+      REVOLUT_JWT_ISSUER: process.env.REVOLUT_JWT_ISSUER || null,
+      REVOLUT_ENV: process.env.REVOLUT_ENV || "(unset → defaults to sandbox)",
+      REVOLUT_JWT_PRIVATE_KEY_set: !!process.env.REVOLUT_JWT_PRIVATE_KEY,
+      REVOLUT_JWT_PRIVATE_KEY_len: process.env.REVOLUT_JWT_PRIVATE_KEY?.length || 0,
+      // First line of the PEM — instantly tells us whether the wrong
+      // file (a CERTIFICATE) was pasted instead of a PRIVATE KEY.
+      REVOLUT_JWT_PRIVATE_KEY_firstLine: (process.env.REVOLUT_JWT_PRIVATE_KEY || "").replace(/\\n/g, "\n").split("\n").find(l => l.trim().length > 0) || null,
+    };
+
+    const cfg = getConfig();
+    if (!cfg) {
+      out.config = { ok: false, reason: "getConfig() returned null — one of CLIENT_ID/PRIVATE_KEY/ISSUER missing" };
+      return res.json(out);
+    }
+    out.config = { ok: true, env: cfg.env, issuer: cfg.issuer, clientIdPrefix: cfg.clientId.slice(0, 8) };
+
+    // Private-key sanity: does the PEM parse? If newlines were mangled
+    // in Railway (raw "\n" vs actual newlines vs missing header line),
+    // node's crypto rejects it before any HTTP call.
+    try {
+      const k = crypto.createPrivateKey(cfg.privateKeyPem);
+      out.privateKey = {
+        parses: true,
+        type: k.asymmetricKeyType,
+        bits: (k as any).asymmetricKeyDetails?.modulusLength || null,
+        sha256: crypto.createHash("sha256").update(k.export({ type: "pkcs8", format: "der" })).digest("hex").slice(0, 16) + "…",
+      };
+    } catch (e: any) {
+      out.privateKey = { parses: false, error: e?.message };
+    }
+
+    // JWT signing dry-run: build the same JWT the exchange uses and
+    // surface the decoded payload so we can eyeball iss/sub/aud.
+    try {
+      const jwt = signClientAssertion(cfg);
+      const [, payloadB64] = jwt.split(".");
+      const payload = JSON.parse(Buffer.from(payloadB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString());
+      out.jwt = { signed: true, header: { alg: "RS256", typ: "JWT" }, payload, length: jwt.length };
+    } catch (e: any) {
+      out.jwt = { signed: false, error: e?.message };
+    }
+
+    // Already-bootstrapped probe: if we have a refresh token, try a
+    // /accounts call — non-destructive, no code burned. Tells us
+    // whether the JWT+cert pair are actually accepted by Revolut.
+    const rt = await readSetting<string>(SETTINGS_KEYS.refreshToken);
+    if (rt) {
+      try {
+        const accounts = await api<any[]>(`/accounts`);
+        out.liveProbe = { ok: true, accounts: Array.isArray(accounts) ? accounts.length : 0 };
+      } catch (e: any) {
+        out.liveProbe = { ok: false, error: e?.message };
+      }
+    } else {
+      out.liveProbe = { ok: false, reason: "no refresh_token stored yet — bootstrap not complete" };
+    }
+
+    // Outbound IP — Revolut Business requires the cert's Production IP
+    // Whitelist to include the egress IP of whatever's calling them.
+    // Railway gives different containers different egress IPs; we ask an
+    // IP-echo service so the admin can paste the right value into the
+    // whitelist on Revolut Business → APIs → cert → Production IP.
+    try {
+      const ipRes = await fetch("https://api.ipify.org?format=json", { signal: AbortSignal.timeout(5000) });
+      const ipJson = await ipRes.json() as { ip?: string };
+      out.egressIp = { ip: ipJson.ip || null, note: "Add this IP to Revolut → APIs → cert → Production IP whitelist. Railway egress IPs are dynamic — consider their Static Egress IP add-on if this changes often." };
+    } catch (e: any) {
+      out.egressIp = { ip: null, error: e?.message };
+    }
+
+    res.json(out);
+  });
+
   app.post("/api/revolut/bootstrap", requireAdmin, async (req: Request, res: Response) => {
     try {
       const code = String(req.body?.code || "").trim();
@@ -835,10 +1053,33 @@ export function setupRevolutRoutes(app: Express): void {
       res.json({
         ok: true,
         webhook: created,
+        signingSecret: created?.signing_secret || null,
         action: created?.signing_secret
           ? `Now set REVOLUT_WEBHOOK_SECRET=${created.signing_secret} in env (only chance to see it).`
           : "Webhook created. Capture the signing secret from the Revolut dev portal and set REVOLUT_WEBHOOK_SECRET.",
       });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // List existing webhooks — useful when the signing secret toast was
+  // missed and you need to delete + re-register to get a fresh one.
+  app.get("/api/revolut/webhooks", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const list = await api<any[]>(`/webhooks`, {}, "2.0");
+      res.json({ webhooks: list });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Delete a webhook by Revolut id. Pair with re-register to recover a
+  // lost signing secret (Revolut only shows it once on creation).
+  app.delete("/api/revolut/webhooks/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      await api<unknown>(`/webhooks/${encodeURIComponent(String(req.params.id))}`, { method: "DELETE" }, "2.0");
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
@@ -883,6 +1124,9 @@ export function setupRevolutRoutes(app: Express): void {
             WHERE id = $3`,
           [revolutCardId, revolutHolderId || null, existing[0].id],
         );
+        await backfillStripeCardsRow(existing[0].id, revolutCardId).catch((e) =>
+          console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
+        );
         return res.json({ ok: true, cardholderId: existing[0].id, action: "updated" });
       }
 
@@ -897,6 +1141,11 @@ export function setupRevolutRoutes(app: Express): void {
       await pool.query(
         `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2 WHERE id = $3`,
         [revolutCardId, revolutHolderId || null, created.id],
+      );
+      // Mirror to stripe_cards so show-details + the card panel work
+      // immediately (without waiting for the next Auto-assign).
+      await backfillStripeCardsRow(created.id, revolutCardId).catch((e) =>
+        console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
       );
       res.json({ ok: true, cardholderId: created.id, action: "created" });
     } catch (e: any) {

@@ -5,7 +5,7 @@ import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
-  Receipt, Image as ImageIcon, Users,
+  Receipt, Image as ImageIcon,
 } from "lucide-react";
 
 type BriefingData = { briefing: string; generatedAt: string };
@@ -206,12 +206,11 @@ export default function MobileHome() {
         </Link>
       )}
 
-      {/* Quick links. Admins get a "Team" tile for firm-wide spend + approvals. */}
+      {/* Quick links. Admins reach firm-wide spend + approvals via the
+          Mine/Team toggle inside the Expenses page — keeps one entry
+          point on the home grid for the daily flow. */}
       <div className="grid grid-cols-4 gap-2">
-        {[
-          ...QUICK_LINKS,
-          ...(user?.isAdmin ? [{ label: "Team", icon: Users, to: "/m/team-expenses", tint: "bg-amber-100 text-amber-700" }] : []),
-        ].map(q => (
+        {QUICK_LINKS.map(q => (
           <Link key={q.to} href={q.to} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-link-${q.label.toLowerCase()}`}>
             <span className={`w-9 h-9 rounded-full flex items-center justify-center ${q.tint}`}><q.icon className="w-4 h-4" /></span>
             <span className="text-[11px] font-medium">{q.label}</span>

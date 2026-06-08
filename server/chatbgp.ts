@@ -2197,7 +2197,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "advance_property_pathway",
-      description: "Run the next stage (or a specific stage) of a Property Pathway investigation. Stages: 1=Initial Search (email/SharePoint/CRM/LandReg/folder tree), 2=Brand Intelligence, 3=Review summary, 4=Property Intelligence (titles/planning/KYC), 5=Investigation Board ready, 6=Business Plan (Claude drafts plan from all prior findings; user must agree before moving on), 7=Excel Model (generated from agreed plan; refined in Excel add-in; user must agree), 8=Studios (Street View + Retail Context Plan + area/brand imagery), 9=Why Buy PDF. Always summarise what was found after each stage and ask the user before advancing.",
+      description: "Kick off the next stage (or a specific stage) of a Property Pathway. Returns IMMEDIATELY — the stage runs in the background; the user watches progress on the watchUrl page. Safe to call multiple times in one turn for different runIds, so a portfolio of pathways can be progressed in parallel without timing out the chat. Stages: 1=Initial Search, 2=Brand Intel, 3=Review summary, 4=Property Intel (titles/planning/KYC), 5=Investigation Board, 6=Business Plan (user must agree before moving on), 7=Excel Model (refined in Excel add-in, user must agree), 8=Studios, 9=Why Buy PDF. After kicking off the stage, briefly tell the user it's running and link the watchUrl — do NOT wait or call again on the same run.",
       parameters: {
         type: "object",
         properties: {
@@ -11867,17 +11867,30 @@ export function setupChatBGPRoutes(app: Express) {
         const [existing] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
         if (!existing) return { data: { error: "Pathway run not found" } };
         const targetStage = stage ?? existing.currentStage;
-        const updated = await runStage(runId, targetStage, req);
-        const sres: any = updated.stageResults;
-        const summary = sres?.[`stage${targetStage}`]?.summary || sres?.stage3?.summary || `Stage ${targetStage} completed`;
+
+        // Background the actual work — pathway stages take minutes
+        // (Land Registry + planning + AI plan + Excel model), and we
+        // were running them synchronously inside the chat turn, which
+        // blocks the SSE stream long enough that the client gives up.
+        // Nick & Jonny saw this as "chat keeps timing out". Now we
+        // launch the stage async, return immediately with the watch
+        // URL, and the user lands on the pathway page where progress
+        // streams in via the realtime socket.
+        (async () => {
+          try {
+            await runStage(runId, targetStage, req);
+          } catch (err: any) {
+            console.error(`[advance_property_pathway bg] run ${runId} stage ${targetStage} failed:`, err?.message);
+          }
+        })();
+
         return {
           data: {
-            runId: updated.id,
-            stageRun: targetStage,
-            nextStage: updated.currentStage,
-            status: updated.stageStatus,
-            summary,
-            whyBuyUrl: updated.whyBuyDocumentUrl || null,
+            runId,
+            stageStarted: targetStage,
+            status: "running",
+            watchUrl: `/property-pathway?runId=${runId}`,
+            note: `Stage ${targetStage} kicked off in the background. Progress streams to the watch URL — no need to wait in chat. Multiple pathways can run in parallel.`,
           },
         };
       } catch (err: any) {

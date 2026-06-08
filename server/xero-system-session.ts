@@ -86,6 +86,33 @@ export async function getSystemXeroSession(): Promise<{ xeroTokens: PersistedTok
 }
 
 /**
+ * Wipes the persisted system Xero tokens. Called by refreshXeroToken
+ * when Xero returns `invalid_grant` (the RT was consumed by a parallel
+ * refresh, revoked, or expired) — keeps the system session from
+ * silently retrying a dead token forever and makes the admin Reconnect
+ * banner light up on the next status check.
+ */
+export async function clearSystemXeroSession(): Promise<void> {
+  await ensureTable();
+  await db.execute(sql`DELETE FROM system_settings WHERE key = ${SYSTEM_KEY}`);
+  console.warn("[xero-system] Persisted Xero tokens cleared — admin must reconnect");
+}
+
+/**
+ * Quick health check for the admin UI. Returns whether the system has
+ * a Xero session stored and how stale the access token is so a banner
+ * can prompt the admin to reconnect proactively.
+ */
+export async function getSystemXeroStatus(): Promise<{ connected: boolean; tenantId: string | null; expiresAt: number | null }> {
+  await ensureTable();
+  const result = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${SYSTEM_KEY} LIMIT 1`);
+  const row = (result as any).rows?.[0];
+  if (!row?.value) return { connected: false, tenantId: null, expiresAt: null };
+  const tokens: PersistedTokens = typeof row.value === "string" ? JSON.parse(row.value) : row.value;
+  return { connected: !!tokens.refreshToken, tenantId: tokens.tenantId || null, expiresAt: tokens.expiresAt || null };
+}
+
+/**
  * Convenience wrapper — runs an xeroApi call with the system session,
  * persisting any token refresh that happens during the call.
  */

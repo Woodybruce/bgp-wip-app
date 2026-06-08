@@ -97,48 +97,92 @@ function getRedirectUri(req: Request): string {
   return "https://bgp-wip-app-production-efac.up.railway.app/api/xero/callback";
 }
 
+// Per-refresh-token mutex: Xero rotates refresh tokens (every successful
+// refresh returns a new RT and invalidates the old one). If two parallel
+// jobs both notice the access token expired and both POST the same RT,
+// the first wins and the second hits `invalid_grant: refresh token
+// consumed` — knocking the whole system session offline. Keyed by RT
+// string so concurrent calls on the same token serialise, but different
+// sessions don't block each other.
+const refreshLocks = new Map<string, Promise<string | null>>();
+
 export async function refreshXeroToken(session: any): Promise<string | null> {
-  if (!session.xeroTokens) return null;
+  // Callers can pass null/undefined deliberately to mean "no user session —
+  // try the system-wide Xero session instead". xeroApiWithFallback handles
+  // that fallback; here we just bail cleanly so it can take over.
+  if (!session || !session.xeroTokens) return null;
 
   if (Date.now() < session.xeroTokens.expiresAt - 60000) {
     return session.xeroTokens.accessToken;
+  }
+
+  const rt = session.xeroTokens.refreshToken;
+  if (!rt) return null;
+
+  const inFlight = refreshLocks.get(rt);
+  if (inFlight) {
+    // Another caller is already refreshing this token. Wait for them and
+    // then re-read from session — they will have mutated session.xeroTokens
+    // in place (we share the same session object across withSystemXero calls).
+    await inFlight.catch(() => {});
+    return session.xeroTokens?.accessToken || null;
   }
 
   const clientId = process.env.XERO_CLIENT_ID;
   const clientSecret = process.env.XERO_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
 
-  try {
-    const res = await fetch(XERO_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: session.xeroTokens.refreshToken,
-      }),
-    });
+  const run = (async (): Promise<string | null> => {
+    try {
+      const res = await fetch(XERO_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: rt,
+        }),
+      });
 
-    if (!res.ok) {
-      console.error("[Xero] Token refresh failed:", await res.text());
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("[Xero] Token refresh failed:", errText);
+        // invalid_grant = the RT is dead (consumed by a parallel refresh,
+        // revoked, or expired). Clear the system session so background
+        // jobs stop hammering Xero with a known-bad token and the admin
+        // sees a clear "Reconnect" prompt on the next status check.
+        if (/invalid_grant|refresh token (consumed|expired|revoked)/i.test(errText)) {
+          try {
+            const { clearSystemXeroSession } = await import("./xero-system-session");
+            await clearSystemXeroSession();
+          } catch {/* table may not exist yet on a fresh boot */}
+        }
+        session.xeroTokens = undefined;
+        return null;
+      }
+
+      const data = await res.json();
+      session.xeroTokens = {
+        ...session.xeroTokens,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token || session.xeroTokens.refreshToken,
+        expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
+      };
+      return data.access_token;
+    } catch (err) {
+      console.error("[Xero] Token refresh error:", err);
       session.xeroTokens = undefined;
       return null;
     }
+  })();
 
-    const data = await res.json();
-    session.xeroTokens = {
-      ...session.xeroTokens,
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || session.xeroTokens.refreshToken,
-      expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
-    };
-    return data.access_token;
-  } catch (err) {
-    console.error("[Xero] Token refresh error:", err);
-    session.xeroTokens = undefined;
-    return null;
+  refreshLocks.set(rt, run);
+  try {
+    return await run;
+  } finally {
+    refreshLocks.delete(rt);
   }
 }
 
@@ -151,16 +195,24 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
 // Write paths stay session-scoped via xeroApi() — when an invoice gets
 // posted we want it attributed to the user who triggered it.
 export async function xeroApiWithFallback(session: any, path: string, options: RequestInit = {}): Promise<any> {
-  try {
-    return await xeroApi(session, path, options);
-  } catch (err: any) {
-    if (!String(err?.message || "").includes("Not connected")) throw err;
-    // Caller has no Xero — try the system-wide session.
-    const { getSystemXeroSession } = await import("./xero-system-session");
-    const sys = await getSystemXeroSession();
-    if (!sys) throw new Error("Not connected to Xero");
-    return xeroApi(sys, path, options);
+  // session=null is the explicit "background caller, use the firm session"
+  // signal (used by expense-categories etc). Skip the user-session attempt
+  // entirely in that case rather than letting it throw and recover.
+  if (session) {
+    try {
+      return await xeroApi(session, path, options);
+    } catch (err: any) {
+      if (!String(err?.message || "").includes("Not connected")) throw err;
+      // fall through to the system session
+    }
   }
+  // Use withSystemXero so any token refresh that happens during the call
+  // gets persisted back to system_settings (otherwise we'd re-refresh
+  // every time, burning through refresh tokens unnecessarily).
+  const { withSystemXero } = await import("./xero-system-session");
+  const result = await withSystemXero((sysSession) => xeroApi(sysSession, path, options));
+  if (result === null) throw new Error("Not connected to Xero");
+  return result;
 }
 
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
@@ -251,6 +303,20 @@ export function setupXeroRoutes(app: Express) {
       connected: !!token,
       tenantId: req.session.xeroTokens?.tenantId || null,
     });
+  });
+
+  // Admin-only: shows whether the firm-wide Xero session is healthy.
+  // The system session is the one background jobs (Stripe webhooks,
+  // expense auto-post, month-end imports) use; if it's gone, every
+  // auto-post silently no-ops and the admin needs to reconnect.
+  app.get("/api/xero/system-status", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { getSystemXeroStatus } = await import("./xero-system-session");
+      const status = await getSystemXeroStatus();
+      res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
   });
 
   // Direct-redirect connect endpoint — use this from anchors/links rather than

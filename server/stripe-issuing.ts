@@ -566,6 +566,20 @@ export function setupStripeIssuingRoutes(app: Express) {
     try {
       const id = String(req.params.id);
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+
+      // Card-feed transactions (Revolut, or legacy Stripe) are a financial
+      // record of money that actually moved — they must never be deleted by
+      // anyone. The ledger has to show what happened, even if a receipt is
+      // missing or it's been marked personal. Only expenses created OUTSIDE
+      // the card feed (manual receipt uploads, cash claims) can be removed.
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.revolutTransactionId || exp.stripeTransactionId) {
+        return res.status(403).json({
+          error: "This is a card transaction and can't be deleted — the spend actually happened and has to stay on the ledger. Mark it personal or add a receipt instead.",
+        });
+      }
+
       await db.delete(expenseAttendees).where(eq(expenseAttendees.expenseId, id));
       await db.delete(expenseReceipts).where(eq(expenseReceipts.expenseId, id));
       await db.delete(expenses).where(eq(expenses.id, id));
@@ -752,19 +766,24 @@ export function setupStripeIssuingRoutes(app: Express) {
         attendeeContacts: attendeesByExpense.get(e.id) || [],
       }));
 
-      // Month-to-date spend ON THE CARD. Excludes cash claims (type=cash
-      // with no revolutTransactionId) so the card panel doesn't conflate
-      // ad-hoc receipt-photo expenses with real Revolut card swipes —
-      // that was making the panel show '£72.05 spent on card' when the
-      // card hadn't actually been swiped at all.
+      // Month-to-date business spend. Matches what the user sees in the
+      // list immediately below the figure: every non-personal, non-rejected
+      // expense in the current calendar month. The previous version tried
+      // to be cleverer ('only count actual Revolut card swipes, not
+      // receipt-photo uploads') but produced numbers that didn't match the
+      // visible list — Trainline, ParkingSpace etc were all Revolut-feed
+      // rows yet the total only counted one of them. If we ever want a
+      // separate 'confirmed card swipes' metric, that's a different number
+      // alongside this one — the row badges already distinguish source.
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
       const monthly = myExpenses.filter(e => {
-        if (!e.transactionDate || e.isPersonal) return false;
+        if (!e.transactionDate) return false;
+        if (e.isPersonal) return false;
+        if (e.status === "rejected") return false;
         if (new Date(e.transactionDate) < startOfMonth) return false;
-        const isCardSpend = !!(e as any).revolutTransactionId || e.type === "card";
-        return isCardSpend;
+        return true;
       });
       const monthlySpend = monthly.reduce((sum, e) => sum + (e.amountPence || 0), 0);
       const pendingReceipts = myExpenses.filter(e => e.status === "pending_receipt").length;
@@ -827,11 +846,8 @@ export function setupStripeIssuingRoutes(app: Express) {
       // otherwise Revolut returns 403 and we surface that as the dialog
       // message so the admin knows to enable the scope.
       if (!ch.stripeCardholderId) {
-        const { rows } = await pool.query<{ stripe_card_id: string | null }>(
-          `SELECT stripe_card_id FROM stripe_cards WHERE cardholder_id = $1 LIMIT 1`,
-          [ch.id],
-        );
-        const revolutCardId = rows[0]?.stripe_card_id;
+        const { resolveRevolutCardIdForCardholder } = await import("./revolut");
+        const revolutCardId = await resolveRevolutCardIdForCardholder(ch.id);
         if (!revolutCardId) {
           return res.json({ provider: "revolut", revolut: true, message: "No Revolut card mapped to your account yet — ask an admin to run Auto-assign on the Cards & Revolut page." });
         }
@@ -1333,6 +1349,67 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // ─── DEBUG: dump the raw fields the 'This month' filter actually sees ──
+  // One-shot diagnostic — hit /api/expenses/me/debug and read the rows to
+  // verify whether the suspicious 'This month £8.05' issue was bad data
+  // (revolutTransactionId null despite the Revolut badge showing) or bad
+  // filter logic. Safe to leave in (auth-gated, read-only); delete once the
+  // root cause is understood.
+  app.get("/api/expenses/me/debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId;
+      if (!userId) return res.status(401).json({ error: "Not logged in" });
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
+      if (!ch) return res.json({ cardholder: null, rows: [] });
+
+      const rows = await db.select({
+        id: expenses.id,
+        merchant: expenses.merchant,
+        amountPence: expenses.amountPence,
+        transactionDate: expenses.transactionDate,
+        status: expenses.status,
+        type: expenses.type,
+        isPersonal: expenses.isPersonal,
+        revolutTransactionId: expenses.revolutTransactionId,
+        receiptFilename: expenses.receiptFilename,
+        category: expenses.category,
+      }).from(expenses)
+        .where(eq(expenses.cardholderId, ch.id))
+        .orderBy(desc(expenses.transactionDate))
+        .limit(20);
+
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      const annotated = rows.map(r => {
+        const inMonth = r.transactionDate ? new Date(r.transactionDate) >= startOfMonth : false;
+        const oldFilterCounted = !!(
+          r.transactionDate && !r.isPersonal && inMonth &&
+          (!!r.revolutTransactionId || r.type === "card")
+        );
+        const newFilterCounted = !!(
+          r.transactionDate && !r.isPersonal && inMonth && r.status !== "rejected"
+        );
+        return { ...r, inMonth, oldFilterCounted, newFilterCounted };
+      });
+
+      const oldTotal = annotated.filter(r => r.oldFilterCounted).reduce((s, r) => s + (r.amountPence || 0), 0);
+      const newTotal = annotated.filter(r => r.newFilterCounted).reduce((s, r) => s + (r.amountPence || 0), 0);
+
+      res.json({
+        cardholderId: ch.id,
+        today: new Date().toISOString(),
+        startOfMonth: startOfMonth.toISOString(),
+        oldTotalPence: oldTotal,
+        newTotalPence: newTotal,
+        rows: annotated,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Per-user: what's currently blocking my card (so the mobile + desktop
   // app can show a banner "Your card is frozen because of these N
   // expenses"). Returns the rows the freeze sweep would catch right now.
@@ -1402,6 +1479,61 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Approve & post to Xero (one-click)
+  // Diagnostic — why does the Approvals queue look empty for X? Hits the
+  // same listPendingForApprover() pipeline the inbox uses but also returns
+  // the fallback-pool user lookup so you can see whether Wendy/Layla
+  // exist in `users` with the expected emails, whether their is_active
+  // flag is on, and how many rows are currently pending. Built for the
+  // "Wendy doesn't see anything to approve" loop.
+  app.get("/api/expenses/admin/approval-diagnostic", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { FALLBACK_APPROVER_EMAILS } = await import("./expense-approval");
+      const expectedEmails = Array.from(FALLBACK_APPROVER_EMAILS);
+      const fallbackUsers = await pool.query<{ id: string; name: string | null; email: string | null; is_active: boolean | null; is_admin: boolean | null }>(
+        `SELECT id, name, email, is_active, is_admin FROM users WHERE lower(email) = ANY($1::text[])`,
+        [expectedEmails.map(e => e.toLowerCase())],
+      );
+
+      const pending = await pool.query<{ id: string; status: string; approver_user_id: string | null; submitter_user_id: string | null; submitted_for_approval_at: Date | null; merchant: string | null; amount_pence: number }>(
+        `SELECT id, status, approver_user_id, submitter_user_id, submitted_for_approval_at, merchant, amount_pence
+         FROM expenses
+         WHERE status = 'pending_approval'
+         ORDER BY submitted_for_approval_at DESC NULLS LAST
+         LIMIT 200`,
+      );
+
+      const approverIds = Array.from(new Set(pending.rows.map(r => r.approver_user_id).filter(Boolean) as string[]));
+      const approvers = approverIds.length > 0
+        ? (await pool.query<{ id: string; name: string | null; email: string | null }>(
+            `SELECT id, name, email FROM users WHERE id = ANY($1::text[])`, [approverIds],
+          )).rows
+        : [];
+      const approverById = new Map(approvers.map(a => [a.id, a]));
+
+      const byApprover = new Map<string, { id: string | null; name: string | null; email: string | null; count: number }>();
+      for (const r of pending.rows) {
+        const id = r.approver_user_id || "__unassigned__";
+        if (!byApprover.has(id)) {
+          const a = r.approver_user_id ? approverById.get(r.approver_user_id) : null;
+          byApprover.set(id, { id: r.approver_user_id, name: a?.name || (r.approver_user_id ? "(user not found)" : "unassigned"), email: a?.email || null, count: 0 });
+        }
+        byApprover.get(id)!.count++;
+      }
+
+      res.json({
+        expectedFallbackEmails: expectedEmails,
+        fallbackUsersInDb: fallbackUsers.rows,
+        missingFromDb: expectedEmails.filter(e => !fallbackUsers.rows.some(u => (u.email || "").toLowerCase() === e.toLowerCase())),
+        totalPendingApproval: pending.rows.length,
+        pendingByApprover: Array.from(byApprover.values()).sort((a, b) => b.count - a.count),
+        samplePending: pending.rows.slice(0, 10),
+      });
+    } catch (e: any) {
+      console.error("[expenses] approval-diagnostic error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Approval inbox — what the current user is allowed to act on.
   // Approvers see: rows where approver_user_id matches them, plus (if
   // they're in the fallback pool or admin) rows where approver_user_id
