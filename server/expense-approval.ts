@@ -45,13 +45,39 @@ const STAGE2_SLOTS: string[][] = [
 
 async function resolveUserIdByEmails(emails: string[]): Promise<string | null> {
   for (const e of emails) {
+    // is_active IS NOT FALSE — treat NULL (never-set) as active, so an
+    // approver whose flag was never explicitly set isn't silently dropped
+    // from the rota (that left Layla with zero items while everything went
+    // to Wendy). Prefer an explicitly-active row if there are duplicates.
     const r = await pool.query<{ id: string }>(
-      "SELECT id FROM users WHERE lower(email) = $1 AND is_active = true LIMIT 1",
+      `SELECT id FROM users
+        WHERE lower(email) = $1 AND is_active IS NOT FALSE
+        ORDER BY is_active DESC NULLS LAST
+        LIMIT 1`,
       [e.toLowerCase()],
     );
     if (r.rows[0]?.id) return r.rows[0].id;
   }
   return null;
+}
+
+/** Diagnostic: resolve both stage pools to names so an admin can see exactly
+ *  who's on the rota (and spot anyone missing). */
+export async function describeApproverPools(): Promise<{
+  stage1: Array<{ id: string; name: string | null; email: string | null }>;
+  stage2: Array<{ id: string; name: string | null; email: string | null }>;
+}> {
+  const hydrate = async (ids: string[]) => {
+    if (ids.length === 0) return [];
+    const r = await pool.query<{ id: string; name: string | null; email: string | null }>(
+      `SELECT id, name, email FROM users WHERE id = ANY($1)`,
+      [ids],
+    );
+    // Preserve pool order.
+    return ids.map((id) => r.rows.find((row) => row.id === id) || { id, name: null, email: null });
+  };
+  const [s1, s2] = await Promise.all([resolvePool(STAGE1_SLOTS), resolvePool(STAGE2_SLOTS)]);
+  return { stage1: await hydrate(s1), stage2: await hydrate(s2) };
 }
 
 // Resolve each slot to a single user id (first existing login), deduped.

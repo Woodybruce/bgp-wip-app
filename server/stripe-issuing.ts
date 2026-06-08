@@ -681,6 +681,19 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Diagnostic: who's on the two-stage approval rota right now. Lets an admin
+  // confirm Stage 1 (Wendy/Layla) and Stage 2 (directors) both resolve — if
+  // someone's missing here, they're being silently skipped from routing.
+  app.get("/api/expenses/admin/approver-pools", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { describeApproverPools } = await import("./expense-approval");
+      res.json(await describeApproverPools());
+    } catch (e: any) {
+      console.error("[expenses] approver-pools error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Auto-find an email receipt for a pending expense — searches the
   // cardholder's own mailbox around the transaction time, matches on
   // amount, then attaches + posts. Admin OR the owning cardholder.
