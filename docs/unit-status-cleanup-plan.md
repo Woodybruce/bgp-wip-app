@@ -9,7 +9,28 @@ Owner: Woody. Status: awaiting sign-off before any code changes.
   Available · Negotiating · Solicitors · Exchanged · Completed · Invoiced · Withdrawn.
 - **Marketing model** — separate layer. Status answers "where is the deal?"; a marketing flag + reason answers "is this unit being marketed and why?".
 - **Concurrent deals** — a remarketed Trading unit keeps its tenancy intact and a new letting deal rides its own journey alongside.
+- **Invoiced is internal-only** — visible on Letting Tracker, Deals board, WIP. Never reaches the client-facing Leasing Schedule or property page (those views cap at Completed; the unit drops off the marketing list at that point and just reads "Trading" via occupancy).
+- **One live deal per unit** — competing tenants live as rows in `unit_offers` against the single live deal. When an offer is accepted it promotes to the deal's headline terms. No multi-deal-per-unit logic.
+- **Column ownership** — each shared fact has exactly one owning table; the others read it via the spine link instead of mirroring it (see ownership matrix below).
 - **Sequencing** — plan-and-diagram first; staged additive migration; no big-bang.
+
+## Column ownership matrix
+
+Today these facts are duplicated across 2–4 tables and kept in sync by the mirror engines. Target state: one owner per fact.
+
+| Fact | Owner | Read-through from |
+|------|-------|-------------------|
+| Area (gia/nia/itza) | `tenancy_schedule_units` | available_units, leasing_schedule_units, crm_deals |
+| Passing rent, ERV, marketing rent | `tenancy_schedule_units` | leasing_schedule_units |
+| Lease expiry, break, review, landlord break | `tenancy_schedule_units` | leasing_schedule_units |
+| Rates, service charge, insurance | `tenancy_schedule_units` | available_units |
+| Occupancy, marketing_active, marketing_reason | `tenancy_schedule_units` (new cols) | all four boards |
+| Deal status (the 7), pricing, fee, AML, dates | `crm_deals` | shown on Tracker / Leasing / Deals |
+| Viewings, offers, asking rent, marketing start, agents | `available_units` (Letting Tracker) | — |
+| Zone, positioning, priority, target brands, client updates | `leasing_schedule_units` | — |
+| `tenancyScheduleUnits.targetTenants`, `targetCompanyIds` | **retire** (move to leasing_schedule_units) | — |
+
+The mirror engines stop translating-and-copying these columns and start fanning *one* flag (marketing_active) + serving joins.
 
 ## Target schema (delta only)
 
@@ -46,7 +67,12 @@ available_units, leasing_schedule_units
 - Marketing-flag edits drive Tracker/Leasing visibility (replaces the coarse reverse-mirror).
 - Dual-write retained for safety.
 
-**Stage 4 — flip and delete**
+**Stage 4 — column ownership cleanup**
+- Migrate duplicated columns to read-through joins per the ownership matrix above.
+- Retire `tenancyScheduleUnits.targetTenants` / `targetCompanyIds` (move into leasing_schedule_units).
+- Mirror engines stop column translation; only the marketing_active flag fans out.
+
+**Stage 5 — flip and delete**
 - Bluewater consistency report run: every unit reconciled.
 - Drop `tenancy_schedule_units.status`.
 - Remove dual-write paths.
