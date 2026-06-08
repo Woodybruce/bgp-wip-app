@@ -82,7 +82,7 @@ function AiDailyBriefing() {
         ) : (
           <div className="text-center py-4">
             <p className="text-sm text-muted-foreground">Your AI briefing will appear here</p>
-            <button onClick={() => refetch()} className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary" data-testid="mobile-home-briefing-generate">
+            <button onClick={() => refresh.mutate()} disabled={isFetching} className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary" data-testid="mobile-home-briefing-generate">
               <Sparkles className="w-3.5 h-3.5" /> Generate
             </button>
           </div>
