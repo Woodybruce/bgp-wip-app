@@ -681,6 +681,41 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Diagnostic: status breakdown of all expenses + the contents of the
+  // approval queue (stage + assigned approver). Tells us whether an empty
+  // approvals inbox is "nothing has reached approval yet" (everything still
+  // pending_receipt) vs "assigned to the wrong person".
+  app.get("/api/expenses/admin/approval-debug", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const byStatus = await pool.query(
+        `SELECT status, COUNT(*)::int AS n FROM expenses GROUP BY status ORDER BY n DESC`,
+      );
+      const pending = await pool.query(
+        `SELECT e.id, e.merchant, e.amount_pence, e.status, e.approval_stage,
+                e.approver_user_id, u.name AS approver_name, e.flag_reasons
+           FROM expenses e
+           LEFT JOIN users u ON u.id = e.approver_user_id
+          WHERE e.status = 'pending_approval'
+          ORDER BY e.submitted_for_approval_at DESC NULLS LAST
+          LIMIT 100`,
+      );
+      res.json({
+        statusCounts: byStatus.rows,
+        pendingApprovalCount: pending.rows.length,
+        pendingApproval: pending.rows.map((r: any) => ({
+          merchant: r.merchant,
+          amount: `£${((r.amount_pence || 0) / 100).toFixed(2)}`,
+          stage: r.approval_stage,
+          assignedTo: r.approver_name || (r.approver_user_id ? "(unknown user)" : "(unassigned)"),
+          flags: r.flag_reasons || [],
+        })),
+      });
+    } catch (e: any) {
+      console.error("[expenses] approval-debug error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Diagnostic: who's on the two-stage approval rota right now. Lets an admin
   // confirm Stage 1 (Wendy/Layla) and Stage 2 (directors) both resolve — if
   // someone's missing here, they're being silently skipped from routing.
