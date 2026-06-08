@@ -6037,152 +6037,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const userRow = await pool.query("SELECT name, team, email FROM users WHERE id = $1", [userId]);
-      const userName = userRow.rows[0]?.name || "Team member";
-      const userTeam = userRow.rows[0]?.team || "";
-      const userEmail = userRow.rows[0]?.email || "";
 
-      const tasks = await pool.query(
-        `SELECT * FROM user_tasks WHERE user_id = $1 AND status != 'done' 
-         ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, due_date ASC NULLS LAST`,
-        [userId]
-      );
-      const overdueTasks = tasks.rows.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
-      const todayTasks = tasks.rows.filter((t: any) => {
-        if (!t.due_date) return false;
-        const d = new Date(t.due_date);
-        const now = new Date();
-        return d.toDateString() === now.toDateString();
-      });
-
-      const recentDone = await pool.query(
-        `SELECT * FROM user_tasks WHERE user_id = $1 AND status = 'done' AND completed_at > NOW() - INTERVAL '24 hours'`,
-        [userId]
-      );
-
-      const teamDeals = await pool.query(
-        `SELECT d.id, d.name, d.status, p.name as property_name, tc.name as tenant_name, d.updated_at 
-         FROM crm_deals d
-         LEFT JOIN crm_properties p ON d.property_id = p.id
-         LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
-         WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('WIT')
-         ORDER BY d.updated_at DESC LIMIT 15`,
-        [userTeam]
-      );
-
-      let calendarContext = "";
-      let emailContext = "";
+      // Read-through per-day cache: only the first open of the day generates
+      // (or the 6am cron pre-generates it). ?refresh=1 forces a regenerate —
+      // wired to the card's manual refresh button.
+      const force = req.query.refresh === "1" || req.query.refresh === "true";
+      let msToken: string | null = null;
       try {
         const { getValidMsToken } = await import("./microsoft");
-        const msToken = await getValidMsToken(req);
-        if (msToken) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const tomorrow = new Date(today);
-          tomorrow.setDate(tomorrow.getDate() + 2);
-
-          try {
-            const calRes = await fetch(
-              `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${today.toISOString()}&endDateTime=${tomorrow.toISOString()}&$top=20&$orderby=start/dateTime&$select=subject,start,end,location,organizer,attendees`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (calRes.ok) {
-              const calData = await calRes.json();
-              const events = (calData.value || []).map((e: any) => ({
-                subject: e.subject,
-                start: e.start?.dateTime,
-                end: e.end?.dateTime,
-                location: e.location?.displayName || "",
-                organizer: e.organizer?.emailAddress?.name || "",
-              }));
-              if (events.length > 0) calendarContext = `Today's calendar (${events.length} events):\n${events.map((e: any) => `- ${new Date(e.start).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} ${e.subject}${e.location ? ` (${e.location})` : ""}`).join("\n")}`;
-            }
-          } catch (e: any) { console.log("[ai-briefing] Calendar fetch error:", e.message); }
-
-          try {
-            const emailRes = await fetch(
-              `https://graph.microsoft.com/v1.0/me/messages?$top=10&$orderby=receivedDateTime desc&$select=subject,from,receivedDateTime,isRead,importance,bodyPreview`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (emailRes.ok) {
-              const emailData = await emailRes.json();
-              const emails = (emailData.value || []).filter((e: any) => !e.isRead).slice(0, 8);
-              if (emails.length > 0) emailContext = `Unread emails (${emails.length}):\n${emails.map((e: any) => `- ${e.from?.emailAddress?.name || "Unknown"}: "${e.subject}" — ${(e.bodyPreview || "").slice(0, 80)}`).join("\n")}`;
-            }
-          } catch (e: any) { console.log("[ai-briefing] Email fetch error:", e.message); }
-        }
+        msToken = await getValidMsToken(req);
       } catch (e: any) { console.log("[ai-briefing] MS token fetch error:", e.message); }
 
-      const digestRes = await pool.query(
-        `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('COM', 'INV', 'WIT')
-         AND updated_at < NOW() - INTERVAL '14 days'
-         AND team @> ARRAY[$1]::text[]
-         ORDER BY updated_at ASC LIMIT 5`,
-        [userTeam]
-      );
-      const stuckDeals = digestRes.rows;
-
-      const today = new Date();
-      const todayStr = today.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-
-      const prompt = `You are the AI briefing assistant for ${userName} at Bruce Gillingham Pollard (BGP), a London commercial property agency. Today is ${todayStr}.
-
-Generate a personalised daily briefing. Be concise, actionable, and warm. Structure it as:
-
-1. **Good morning greeting** — Brief, warm, personalised. Reference the day/weather metaphorically if relevant.
-
-2. **Today at a glance** — Quick bullet summary of what's ahead (meetings count, tasks count, urgent items).
-
-3. **Priority actions** — What needs attention RIGHT NOW. Be specific and actionable. Include deadlines.
-
-4. **Deal momentum** — Brief commentary on active deals, highlight any that need attention. Keep it punchy.
-
-5. **Inbox intelligence** — If there are notable unread emails, flag the important ones with suggested actions.
-
-6. **Looking ahead** — Any upcoming deadlines or things to prepare for.
-
-Keep the entire briefing under 400 words. Use a professional but personable tone — like a brilliant PA who knows the business inside out.
-
-Here is ${userName}'s context:
-
-TASKS (${tasks.rows.length} open):
-${overdueTasks.length > 0 ? `OVERDUE (${overdueTasks.length}): ${overdueTasks.map((t: any) => `"${t.title}" (due ${new Date(t.due_date).toLocaleDateString("en-GB")})`).join(", ")}` : "No overdue tasks."}
-${todayTasks.length > 0 ? `DUE TODAY (${todayTasks.length}): ${todayTasks.map((t: any) => `"${t.title}"`).join(", ")}` : ""}
-${tasks.rows.filter((t: any) => t.priority === "urgent" || t.priority === "high").map((t: any) => `[${t.priority.toUpperCase()}] "${t.title}"${t.due_date ? ` (due ${new Date(t.due_date).toLocaleDateString("en-GB")})` : ""}`).join("\n") || "No high-priority tasks."}
-
-COMPLETED YESTERDAY: ${recentDone.rows.length > 0 ? recentDone.rows.map((t: any) => `"${t.title}"`).join(", ") : "None"}
-
-${calendarContext || "No calendar data available."}
-
-${emailContext || "No email data available."}
-
-ACTIVE DEALS (${teamDeals.rows.length} for ${userTeam} team):
-${teamDeals.rows.slice(0, 10).map((d: any) => `- ${d.name} — ${d.status}${d.property_name ? ` @ ${d.property_name}` : ""}${d.tenant_name ? ` (tenant: ${d.tenant_name})` : ""}`).join("\n") || "No active deals."}
-
-${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuckDeals.map((d: any) => `- ${d.name} (${d.status}, last updated ${new Date(d.updated_at).toLocaleDateString("en-GB")})`).join("\n")}` : ""}`;
-
-      const { callClaude } = await import("./utils/anthropic-client");
-      const briefingResult = await callClaude({
-        messages: [{ role: "user", content: prompt }],
-        max_completion_tokens: 1200,
-        temperature: 0.7,
-      });
-      const briefingText = briefingResult?.choices?.[0]?.message?.content || "Unable to generate briefing at this time.";
-
-      res.json({
-        briefing: briefingText,
-        generatedAt: new Date().toISOString(),
-        stats: {
-          openTasks: tasks.rows.length,
-          overdueTasks: overdueTasks.length,
-          todayTasks: todayTasks.length,
-          completedYesterday: recentDone.rows.length,
-          activeDeals: teamDeals.rows.length,
-          stuckDeals: stuckDeals.length,
-          unreadEmails: emailContext ? parseInt(emailContext.match(/\d+/)?.[0] || "0") : 0,
-        }
-      });
+      const { getOrCreateTodaysBriefing } = await import("./daily-briefing");
+      const result = await getOrCreateTodaysBriefing(userId, msToken, { force });
+      res.json(result);
     } catch (e: any) {
       console.error("[ai-briefing] Error:", e.message);
       res.status(500).json({ error: e.message });

@@ -164,6 +164,14 @@ export function startExpenseCron(): void {
       runMonthlyApproverDigest().catch(e => console.error("[expense-cron] monthly digest failed:", e?.message));
     }
 
+    // 06:00 UTC daily — pre-generate everyone's AI Daily Briefing so it's
+    // already cached when they open the app (no 15s regen on each open).
+    if (hour === 6) {
+      import("./daily-briefing")
+        .then(m => m.pregenerateAllBriefings())
+        .catch(e => console.error("[expense-cron] briefing pre-gen failed:", e?.message));
+    }
+
     // 1st of the month 09:00 UTC — month-end card freeze sweep. Anyone
     // with a Revolut card swipe older than 3 days still missing a receipt
     // (and ≥ £10, not personal, not an admin) gets their card frozen

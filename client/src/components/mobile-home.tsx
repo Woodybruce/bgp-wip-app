@@ -20,7 +20,22 @@ function renderBriefingInline(text: string) {
 }
 
 function AiDailyBriefing() {
-  const { data, isLoading, isFetching, refetch } = useQuery<BriefingData>({ queryKey: ["/api/ai-briefing"] });
+  // The briefing is generated once a day (6am cron + server-side cache), so we
+  // keep it fresh for the session rather than re-fetching on every mount.
+  const { data, isLoading } = useQuery<BriefingData>({
+    queryKey: ["/api/ai-briefing"],
+    staleTime: 6 * 60 * 60 * 1000,
+  });
+  // Manual refresh forces a regenerate server-side (?refresh=1) then updates
+  // the cache, so the button genuinely rebuilds the briefing on demand.
+  const refresh = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("GET", "/api/ai-briefing?refresh=1");
+      return r.json();
+    },
+    onSuccess: (fresh: BriefingData) => queryClient.setQueryData(["/api/ai-briefing"], fresh),
+  });
+  const isFetching = refresh.isPending;
   return (
     <section className="rounded-2xl border border-[#E7E5E4] bg-white dark:bg-card overflow-hidden shadow-sm" data-testid="mobile-home-briefing">
       <div className="px-4 py-3 flex items-center justify-between bg-gradient-to-r from-primary/5 to-transparent">
@@ -36,7 +51,8 @@ function AiDailyBriefing() {
           </div>
         </div>
         <button
-          onClick={() => refetch()}
+          onClick={() => refresh.mutate()}
+          disabled={isFetching}
           className="w-8 h-8 rounded-full flex items-center justify-center active:bg-gray-100 shrink-0"
           aria-label="Refresh briefing"
           data-testid="mobile-home-briefing-refresh"
