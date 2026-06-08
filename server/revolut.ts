@@ -402,7 +402,9 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
       const email = rows[0]?.email;
       if (email) {
         const { findMeetingContext } = await import("./expense-calendar-context");
-        const ctx = await findMeetingContext({ userEmail: email, userId: rows[0]?.user_id, when: txnDate });
+        // requireContaining: only attach a meeting the spend actually falls
+        // within — stops random purchases pulling in an unrelated meeting.
+        const ctx = await findMeetingContext({ userEmail: email, userId: rows[0]?.user_id, when: txnDate, requireContaining: true });
         if (ctx) {
           await pool.query(
             `UPDATE expenses

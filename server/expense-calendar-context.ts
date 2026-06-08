@@ -21,6 +21,11 @@ export async function findMeetingContext(args: {
   userId?: string | null;
   when: Date | string | null;
   baseCategory?: string;
+  // When true, only return a meeting the transaction time actually falls
+  // within (plus a small grace) — never the merely-nearest event. Used by the
+  // card-swipe enrichment so a random purchase doesn't grab an unrelated
+  // meeting into its description.
+  requireContaining?: boolean;
 }): Promise<MeetingContext | null> {
   if (!args.userEmail || !args.when) return null;
   const at = new Date(args.when);
@@ -72,17 +77,24 @@ export async function findMeetingContext(args: {
     .filter((e: any) => !e.isAllDay && e.showAs !== "free" && e.subject);
   if (events.length === 0) return null;
 
-  // Prefer an event whose span contains the transaction time; otherwise the
-  // one whose start is closest to it.
+  // Prefer an event whose span contains the transaction time (with a grace:
+  // a card is often charged a little before a meeting "starts" or just after
+  // it ends — 15m before → 30m after).
   const tx = at.getTime();
+  const GRACE_BEFORE = 15 * 60_000;
+  const GRACE_AFTER = 30 * 60_000;
   const containing = events.find((e) => {
     const s = parse(e.start).getTime();
     const en = parse(e.end).getTime();
-    return tx >= s && tx <= en;
+    return tx >= s - GRACE_BEFORE && tx <= en + GRACE_AFTER;
   });
-  const chosen = containing || events
-    .slice()
-    .sort((a, b) => Math.abs(parse(a.start).getTime() - tx) - Math.abs(parse(b.start).getTime() - tx))[0];
+  // requireContaining (card-swipe path) never falls back to the nearest
+  // event — no meeting overlapping the spend means no meeting attached.
+  const chosen = containing || (args.requireContaining
+    ? null
+    : events
+        .slice()
+        .sort((a, b) => Math.abs(parse(a.start).getTime() - tx) - Math.abs(parse(b.start).getTime() - tx))[0]);
   if (!chosen) return null;
 
   const attendeeEmails: string[] = (chosen.attendees || [])

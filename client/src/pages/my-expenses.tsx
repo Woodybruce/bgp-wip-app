@@ -559,6 +559,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
   const [transactionDate, setTransactionDate] = useState("");
   const [category, setCategory] = useState("");
   const [businessPurpose, setBusinessPurpose] = useState("");
+  const [attendeesText, setAttendeesText] = useState("");   // free-text attendees (e.g. auto-filled from calendar)
   const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
@@ -571,6 +572,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     setTransactionDate(expense.transactionDate ? expense.transactionDate.slice(0, 10) : "");
     setCategory(expense.category || "");
     setBusinessPurpose(expense.businessPurpose || "");
+    setAttendeesText(expense.attendees || "");
     setAttendeeIds((expense.attendeeContacts || []).map(c => c.id));
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
@@ -588,6 +590,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
         transactionDate: transactionDate ? new Date(transactionDate).toISOString() : null,
         category: category || null,
         businessPurpose: businessPurpose || null,
+        attendees: attendeesText.trim() || null,
         relatedPropertyId: relatedPropertyId || null,
         relatedDealId: relatedDealId || null,
         isPersonal,
@@ -676,6 +679,26 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
               </p>
             )}
           </div>
+
+          {/* Free-text attendees — auto-filled from the calendar match at
+              swipe time. Editable so a wrong/auto-pulled name can be removed
+              (the "can't see where to delete it" problem). Only shown when
+              there's something there to avoid cluttering manual entries. */}
+          {attendeesText.trim().length > 0 && (
+            <div>
+              <Label htmlFor="exp-attendees-text" className="text-xs flex items-center gap-1.5">
+                <UsersIcon className="w-3 h-3" /> Attendees note (auto-filled from calendar)
+              </Label>
+              <Input
+                id="exp-attendees-text"
+                value={attendeesText}
+                onChange={(e) => setAttendeesText(e.target.value)}
+                placeholder="Edit or clear — e.g. if the wrong meeting was matched"
+                data-testid="input-expense-attendees-text"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">Clear this box and save to remove an incorrectly-matched meeting's attendees.</p>
+            </div>
+          )}
 
           {/* Attendees — multi-pick from crm_contacts. Shown for all
               categories (still useful for staff entertainment + meals),
