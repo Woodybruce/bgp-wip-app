@@ -1862,13 +1862,21 @@ import { pool } from "./db";
     // Promote the three other board members to admin alongside Woody +
     // Layla. Idempotent: re-runs are no-ops once is_admin is already true.
     // Match by name with ILIKE so minor spelling variants in the users
-    // table still pick up.
+    // table still pick up. Wendy signs in as the shared accounts@ mailbox,
+    // so match that email too (her row is named "Accounts", not "Wendy").
     `UPDATE users SET is_admin = true WHERE
        LOWER(name) ILIKE 'jack%barratt%'
        OR LOWER(name) ILIKE 'charlotte%roberts%'
        OR LOWER(name) ILIKE 'rupert%bentley%smith%'
        OR LOWER(name) ILIKE 'wendy%'
-       OR LOWER(name) ILIKE '%mckenzie%'`,
+       OR LOWER(name) ILIKE '%mckenzie%'
+       OR LOWER(email) = 'accounts@brucegillinghampollard.com'`,
+    // Relabel the accounts@ login from the generic "Accounts" to "Wendy
+    // McKenzie" so approvals / audit / toasts read clearly. Only touches the
+    // placeholder name so a deliberate rename later isn't clobbered.
+    `UPDATE users SET name = 'Wendy McKenzie'
+      WHERE LOWER(email) = 'accounts@brucegillinghampollard.com'
+        AND (name IS NULL OR name = '' OR name ILIKE 'accounts')`,
 
     // Ensure Carly Cunliffe (London F&B, reports to Rupert) exists with her
     // contact details. Idempotent: insert only if she isn't already there

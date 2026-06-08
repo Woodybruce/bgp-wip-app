@@ -151,6 +151,13 @@ export default function MobileHome() {
   const visibleBoards = (mobileOverlayItems as any[]).filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
   const boards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url));
   const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
+  // Count-gated approvals link — mirrors the desktop sidebar entry so Wendy/
+  // Layla + directors can reach their queue from the phone.
+  const { data: pendingApprovals } = useQuery<any[]>({
+    queryKey: ["/api/expenses/pending-approval"],
+    refetchInterval: 60_000,
+  });
+  const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const firstName = (user?.name || "").split(" ")[0] || "there";
@@ -219,6 +226,24 @@ export default function MobileHome() {
               </div>
             </div>
           )}
+        </Link>
+      )}
+
+      {/* Approvals — only shown when this user has expenses to sign off. */}
+      {approvalCount > 0 && (
+        <Link
+          href="/expenses/approvals"
+          className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900/40 px-4 py-3 active:bg-amber-100"
+          data-testid="mobile-home-approvals"
+        >
+          <span className="w-9 h-9 rounded-full bg-amber-500/15 text-amber-600 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold">{approvalCount} expense{approvalCount === 1 ? "" : "s"} to approve</div>
+            <div className="text-[11px] text-muted-foreground">Tap to review your approval queue</div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
         </Link>
       )}
 
