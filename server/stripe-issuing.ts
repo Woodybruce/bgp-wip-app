@@ -1015,65 +1015,66 @@ export function setupStripeIssuingRoutes(app: Express) {
         filename: file.originalname,
       });
 
-      // Try to parse the receipt and auto-update the expense
+      // Mark the receipt attached up-front — this must stick even if AI
+      // parsing fails below.
+      const baseUpdates: Record<string, any> = {
+        receiptFilename: file.originalname,
+        receiptUrl: storageKey,
+        updatedAt: new Date(),
+      };
+
+      // Best-effort parse to auto-fill merchant/category/amount. A parse
+      // failure must NOT stop the expense progressing — that was leaving
+      // receipts attached but stuck in "awaiting receipt".
+      let parsed: any = null;
       try {
         const { parseReceiptImage } = await import("./expense-receipt-parser");
-        const parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
-        const updates: Record<string, any> = {
-          receiptFilename: file.originalname,
-          receiptUrl: storageKey,
-          updatedAt: new Date(),
-        };
-        if (parsed.merchant && !exp.merchant) updates.merchant = parsed.merchant;
+        parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
+        if (parsed.merchant && !exp.merchant) baseUpdates.merchant = parsed.merchant;
         if (parsed.category && !exp.category) {
-          updates.category = parsed.category;
+          baseUpdates.category = parsed.category;
           const { getCategoryCode } = await import("./expense-categories");
           const code = await getCategoryCode(parsed.category);
-          if (code) updates.xeroAccountCode = code;
+          if (code) baseUpdates.xeroAccountCode = code;
         }
-        if (parsed.totalPence && !exp.amountPence) updates.amountPence = parsed.totalPence;
-        await db.update(expenses).set(updates).where(eq(expenses.id, expenseId));
-        // Transition to pending_approval via the workflow helper — computes
-        // flag reasons + resolves the approver from users.managerId.
+        if (parsed.totalPence && !exp.amountPence) baseUpdates.amountPence = parsed.totalPence;
+      } catch (e: any) {
+        console.warn("[receipt-upload] parse failed (receipt still logged):", e?.message);
+      }
+
+      await db.update(expenses).set(baseUpdates).where(eq(expenses.id, expenseId));
+
+      // ALWAYS submit for approval once a receipt is attached — whether or
+      // not parsing worked. Missing merchant/category just becomes a flag
+      // for the approver rather than leaving the row stuck.
+      try {
         const { submitForApproval } = await import("./expense-approval");
         const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
         await submitForApproval(expenseId, userIdForSubmit);
-
-        // Auto-post to Xero if confidence is high
-        if (parsed.confidence === "high" && updates.category) {
-          try {
-            const { withSystemXero } = await import("./xero-system-session");
-            const { postExpenseToXero } = await import("./expense-xero-poster");
-            await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
-          } catch (e: any) {
-            console.warn("[receipt-upload] auto-post to Xero failed:", e?.message);
-          }
-        }
-
-        // Month-end freeze hook: this receipt may have cleared the last
-        // blocking expense for the user. Fire-and-forget so we don't
-        // hold the response on a Revolut API call.
-        if (exp.cardholderId) {
-          import("./expense-freeze")
-            .then(m => m.unfreezeIfClear(exp.cardholderId!))
-            .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
-        }
-
-        res.json({ success: true, parsed, autoposted: parsed.confidence === "high" });
       } catch (e: any) {
-        // Receipt saved but parsing failed — let user fix manually
-        await db.update(expenses).set({
-          receiptFilename: file.originalname,
-          receiptUrl: storageKey,
-          updatedAt: new Date(),
-        }).where(eq(expenses.id, expenseId));
-        if (exp.cardholderId) {
-          import("./expense-freeze")
-            .then(m => m.unfreezeIfClear(exp.cardholderId!))
-            .catch(err => console.warn("[receipt-upload] unfreezeIfClear failed:", err?.message));
-        }
-        res.json({ success: true, parsed: null, error: `Saved but parsing failed: ${e?.message}` });
+        console.error("[receipt-upload] submitForApproval failed:", e?.message);
       }
+
+      // Auto-post to Xero only when parsing was high-confidence with a category.
+      if (parsed?.confidence === "high" && baseUpdates.category) {
+        try {
+          const { withSystemXero } = await import("./xero-system-session");
+          const { postExpenseToXero } = await import("./expense-xero-poster");
+          await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
+        } catch (e: any) {
+          console.warn("[receipt-upload] auto-post to Xero failed:", e?.message);
+        }
+      }
+
+      // Month-end freeze hook — this receipt may have cleared the user's
+      // last blocking expense. Fire-and-forget.
+      if (exp.cardholderId) {
+        import("./expense-freeze")
+          .then(m => m.unfreezeIfClear(exp.cardholderId!))
+          .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
+      }
+
+      res.json({ success: true, parsed, autoposted: parsed?.confidence === "high" && !!baseUpdates.category });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
