@@ -103,7 +103,10 @@ const coreNavBase = [
 
 const aiNav = [
   { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
-  { title: "Image Studio", url: "/image-studio", icon: ImageIcon, adminOnly: true },
+  // Shown to all staff. Admins get the full /image-studio power page; the
+  // render swaps non-admins (e.g. CGI partners like Luke) to /m/images, which
+  // works on auth alone — so they finally have web access, not just mobile.
+  { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
 ];
@@ -368,7 +371,16 @@ export function AppSidebar() {
         <NavSection label="Core" items={coreNav} storageKey="core" />
         <QuickAccessSection />
         <SidebarSeparator />
-        <NavSection label="AI Tools" items={user?.isAdmin ? aiNav : aiNav.filter(i => i.url !== "/image-studio")} storageKey="ai" />
+        <NavSection
+          label="AI Tools"
+          items={aiNav.map(i =>
+            // The full /image-studio page is admin-only (it calls admin
+            // endpoints). Non-admins (e.g. CGI partners like Luke) get the
+            // lightweight images page that works on auth alone.
+            i.url === "/image-studio" && !user?.isAdmin ? { ...i, url: "/m/images" } : i
+          )}
+          storageKey="ai"
+        />
         <SidebarSeparator />
         <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
         <SidebarSeparator />
@@ -513,7 +525,9 @@ export const mobileOverlayItems = [
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon, adminOnly: true },
   { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI", adminOnly: true },
-  { title: "Image Studio", url: "/image-studio", icon: ImageIcon, adminOnly: true },
+  // On mobile everyone uses the lightweight images page (works on auth; the
+  // full /image-studio power page is desktop-admin only).
+  { title: "Image Studio", url: "/m/images", icon: ImageIcon },
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Mail", url: "/mail", icon: Mail },
