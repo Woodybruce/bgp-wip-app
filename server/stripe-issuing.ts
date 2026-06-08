@@ -553,7 +553,35 @@ export function setupStripeIssuingRoutes(app: Express) {
         const code = await getCategoryCode(String(updates.category));
         if (code) updates.xeroAccountCode = code;
       }
+      // If isPersonal is flipping from false → true on this PATCH, mirror
+      // the side-effects of the dedicated /mark-personal route so the
+      // row's status, category and Xero code all land in the right place
+      // — otherwise it stays on pending_receipt and sticks in the
+      // "Awaiting receipt" list (the bug Woody hit on the mobile sheet).
+      const flippingToPersonal =
+        updates.isPersonal === true && existing?.isPersonal !== true;
+      if (flippingToPersonal) {
+        updates.category = "Personal (deduct from payroll)";
+        updates.xeroAccountCode = "910";
+      }
+
       await db.update(expenses).set(updates as any).where(eq(expenses.id, id));
+
+      if (flippingToPersonal) {
+        try {
+          const { submitForApproval } = await import("./expense-approval");
+          const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
+          await submitForApproval(id, userIdForSubmit);
+        } catch (e: any) {
+          console.warn("[expenses PATCH] submitForApproval after personal-flip failed:", e?.message);
+        }
+        if (existing?.cardholderId) {
+          import("./expense-freeze")
+            .then(m => m.unfreezeIfClear(existing.cardholderId!))
+            .catch(e => console.warn("[expenses PATCH] unfreezeIfClear after personal-flip failed:", e?.message));
+        }
+      }
+
       res.json({ success: true });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);

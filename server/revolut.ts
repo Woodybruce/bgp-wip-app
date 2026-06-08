@@ -371,14 +371,34 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
   const merchant = txn.merchant?.name || txn.reference || "Card payment";
   const txnDate = new Date(txn.completed_at || txn.created_at || Date.now());
 
+  // Two classes of transaction never need a receipt and should bypass
+  // the Awaiting Receipt queue entirely:
+  //   1. £0 transactions — auth-only or pending pre-auths that haven't
+  //      settled to a real amount. No spend, no receipt.
+  //   2. TfL — contactless tap, no receipt exists to upload.
+  // Both land as 'categorised' (the violet badge) with a category set,
+  // so they sit in Recent but don't pester the user for a receipt.
+  const isZero = amountPence === 0;
+  const isTfl = /\b(tfl|transport for london)\b/i.test(merchant);
+  let initialStatus: string = "pending_receipt";
+  let initialCategory: string | null = null;
+  if (isZero) {
+    initialStatus = "categorised";
+    initialCategory = "Auth / £0";
+  } else if (isTfl) {
+    initialStatus = "categorised";
+    initialCategory = "Travel";
+  }
+
   const [inserted] = await db.insert(expenses).values({
     cardholderId,
     type: "card",
-    status: "pending_receipt",
+    status: initialStatus,
     merchant,
     amountPence,
     currency: currency.toLowerCase(),
     transactionDate: txnDate,
+    category: initialCategory,
     notes: txn.merchant?.category_code ? `Revolut MCC ${txn.merchant.category_code}` : null,
   } as any).returning({ id: expenses.id });
 
