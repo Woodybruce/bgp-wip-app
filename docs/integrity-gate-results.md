@@ -105,3 +105,11 @@ Migration 0033 run against prod. UPDATE 198. Result:
 - Held(3) → Vacant / not-marketed  (provenance unknown — suspected Landsec quirk; correctable later)
 Totals: 170 Trading, 28 Vacant; 25 marketing_active.
 Note: 54 available_units rows vs 25 marketing-active tenancy units — reconcile later.
+
+## Stage 2 part 2 — APPLIED 2026-06-08 (bgp_acting_for + one-live-deal rule)
+
+Migration 0034 run against prod. Clean:
+- crm_deals.bgp_acting_for added (default 'landlord')
+- 2 Google tenant-rep deals (Beauty Pie + Ronning Menswear) flipped to 'tenant'
+- Partial unique index `crm_deals_one_live_landlord_per_unit_idx` created — rule now ENFORCED
+Tally: landlord 188 · tenant 2. Tenant-rep tagging is opt-in going forward.
