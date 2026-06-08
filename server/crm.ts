@@ -6092,18 +6092,24 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         });
       }
 
-      // Per-team scoping for regular agents; same fullView bypass.
+      // Per-team scoping for regular agents; same fullView bypass. A user
+      // always sees rows where THEY are a named agent (so e.g. Alex Todd sees
+      // his own deals even if his users.team is unset or doesn't exactly match
+      // the deal's team tag), plus everything on their own team.
       if (!isAdmin && !fullView) {
-        if (!userTeam) {
-          entries = [];
-        } else {
-          const ut = userTeam.toLowerCase();
-          entries = entries.filter(e => {
-            if (!e.team) return false;
+        const ut = userTeam ? userTeam.toLowerCase() : null;
+        const myName = (currentUser?.name || "").trim().toLowerCase();
+        entries = entries.filter(e => {
+          if (myName && e.agent) {
+            const agents = (e.agent as string).split(",").map((a: string) => a.trim().toLowerCase());
+            if (agents.includes(myName)) return true;
+          }
+          if (ut && e.team) {
             const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
-            return teams.some((t: string) => t === ut);
-          });
-        }
+            if (teams.some((t: string) => t === ut)) return true;
+          }
+          return false;
+        });
       }
 
       res.json({ entries, isAdmin, userTeam });
