@@ -14,11 +14,11 @@ const rows: Array<{
   onSchedule: string;
   notes?: string;
 }> = [
-  // ============ AREA ============
-  { section: "AREA", fact: "NIA sqft",                                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "Yes" },
-  { section: "AREA", fact: "GIA sqft",                                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "",     deals: "read", onSchedule: "Yes" },
-  { section: "AREA", fact: "ITZA sqft",                                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "Yes" },
-  { section: "AREA", fact: "Floor breakdown (bsmt/ground/first/other)", grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "",     deals: "read", onSchedule: "Yes" },
+  // ============ AREA — physical, owned by property_units ============
+  { section: "AREA", fact: "NIA sqft",                                  grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "read", leasing: "read", deals: "read", onSchedule: "Yes", notes: "Physical. Today on tenancy.nia_sqft — migrate to property_units." },
+  { section: "AREA", fact: "GIA sqft",                                  grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "read", leasing: "",     deals: "read", onSchedule: "Yes", notes: "Physical. Today on tenancy.gia_sqft — migrate." },
+  { section: "AREA", fact: "ITZA sqft",                                 grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "read", leasing: "read", deals: "read", onSchedule: "Yes", notes: "Physical. Today on tenancy.itza_sqft — migrate." },
+  { section: "AREA", fact: "Floor breakdown (bsmt/ground/first/other)", grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "read", leasing: "",     deals: "read", onSchedule: "Yes", notes: "Physical. Detailed area split today on tenancy." },
 
   // ============ RENT — four flavours, never collapsed ============
   { section: "RENT", fact: "Passing rent pa (current tenant)",          grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes", notes: "Only changes on deal Complete. Sum = rent roll." },
@@ -51,17 +51,17 @@ const rows: Array<{
   { section: "OCCUPANCY & MARKETING", fact: "Marketing reason",        grain: "unit 1:1", owner: "tenancy (NEW)",    tenancy: "edit", tracker: "read", leasing: "read", deals: "",     onSchedule: "Yes" },
   { section: "OCCUPANCY & MARKETING", fact: "Marketing start date",    grain: "unit 1:1", owner: "available_units",  tenancy: "",     tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes" },
   { section: "OCCUPANCY & MARKETING", fact: "Available date (occupation)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "edit", leasing: "read", deals: "",  onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "EPC rating",              grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Use class / permitted use", grain: "unit 1:1", owner: "tenancy",        tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Condition (Shell/CatA/CatB/Fitted...)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "", leasing: "", deals: "", onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "EPC rating",              grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes", notes: "Physical. Duplicated on property_units + available_units + tenancy today." },
+  { section: "OCCUPANCY & MARKETING", fact: "Use class / permitted use", grain: "unit 1:1", owner: "property_units",  tenancy: "read", tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes", notes: "Physical/planning attribute. On property_units + available_units + tenancy today." },
+  { section: "OCCUPANCY & MARKETING", fact: "Condition (Shell/CatA/CatB/Fitted...)", grain: "unit 1:1", owner: "property_units", tenancy: "", tracker: "edit", leasing: "", deals: "", onSchedule: "Yes", notes: "Physical. On property_units + available_units today." },
   { section: "OCCUPANCY & MARKETING", fact: "Location / UK region",    grain: "unit 1:1", owner: "available_units",  tenancy: "",     tracker: "edit", leasing: "",     deals: "",     onSchedule: "No" },
   { section: "OCCUPANCY & MARKETING", fact: "Restrictions (free-text for ads)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "", leasing: "", deals: "", onSchedule: "No" },
 
-  // ============ UNIT ADDRESS — lives ONLY on tenancy ============
-  { section: "UNIT ADDRESS", fact: "Address line",                     grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "No" },
-  { section: "UNIT ADDRESS", fact: "Postcode",                         grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "No" },
-  { section: "UNIT ADDRESS", fact: "UPRN",                             grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
-  { section: "UNIT ADDRESS", fact: "Free-text address fallback (non-PAF)", grain: "unit 1:1", owner: "tenancy",      tenancy: "edit", tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  // ============ UNIT ADDRESS — physical, owned by property_units (already there) ============
+  { section: "UNIT ADDRESS", fact: "Address line",                     grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "read", leasing: "read", deals: "read", onSchedule: "No", notes: "Already on property_units.unit_address." },
+  { section: "UNIT ADDRESS", fact: "Postcode",                         grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "read", leasing: "read", deals: "read", onSchedule: "No", notes: "Already on property_units.unit_postcode." },
+  { section: "UNIT ADDRESS", fact: "UPRN",                             grain: "unit 1:1", owner: "property_units",    tenancy: "read", tracker: "",     leasing: "",     deals: "read", onSchedule: "No", notes: "Already on property_units.unit_uprn." },
+  { section: "UNIT ADDRESS", fact: "Free-text address fallback (non-PAF)", grain: "unit 1:1", owner: "property_units", tenancy: "read", tracker: "",    leasing: "",     deals: "read", onSchedule: "No", notes: "Already on property_units.unit_address_free_text." },
 
   // ============ TENANT (sitting / current) ============
   { section: "TENANT", fact: "Tenant company (current sitting tenant)", grain: "unit 1:1", owner: "tenancy",         tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
@@ -81,7 +81,8 @@ const rows: Array<{
   { section: "DEAL", fact: "Internal team",                            grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "read", deals: "edit", onSchedule: "Yes" },
   { section: "DEAL", fact: "Internal agents on deal",                  grain: "deal 1:many", owner: "crm_deals",     tenancy: "",     tracker: "filter (me)", leasing: "read", deals: "edit", onSchedule: "Yes" },
   { section: "DEAL", fact: "Target date",                              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "No" },
-  { section: "DEAL", fact: "Instructed / exchanged / completed / invoiced dates", grain: "deal 1:1", owner: "crm_deals", tenancy: "", tracker: "read", leasing: "read (to Completed)", deals: "edit", onSchedule: "Yes" },
+  { section: "DEAL", fact: "Date of entry (deal createdAt)",           grain: "deal 1:1", owner: "crm_deals (auto)",  tenancy: "",     tracker: "read", leasing: "",     deals: "read", onSchedule: "Yes", notes: "Already on crm_deals.created_at — surface + make sortable. 'How long open?'" },
+  { section: "DEAL", fact: "Instructed (BGP put on deal) / target / exchanged / completed / invoiced dates", grain: "deal 1:1", owner: "crm_deals", tenancy: "", tracker: "read", leasing: "read (to Completed)", deals: "edit", onSchedule: "Yes", notes: "instructed_at ≠ created_at ≠ solicitor_instructed_at — keep distinct." },
   { section: "DEAL", fact: "Pricing / yield (investment)",             grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
 
   // ============ DEAL CONTACTS ============
@@ -106,6 +107,12 @@ const rows: Array<{
   { section: "COMPLIANCE", fact: "MLRO documentation status",          grain: "deal 1:many", owner: "kyc/crm",       tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
   { section: "COMPLIANCE", fact: "AI AML triage / compliance gaps",    grain: "deal 1:1", owner: "kyc/crm",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
   { section: "COMPLIANCE", fact: "MLRO risk-assessment PDF",           grain: "deal 1:1", owner: "kyc/crm",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+
+  // ============ SOLICITOR SUB-JOURNEY (exists in schema, invisible in UI today) ============
+  { section: "SOLICITOR", fact: "Solicitor firm + contact",            grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No", notes: "solicitor_firm / solicitor_contact." },
+  { section: "SOLICITOR", fact: "Solicitor instructed date",           grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No", notes: "solicitor_instructed_at." },
+  { section: "SOLICITOR", fact: "Draft lease received / comments returned / engrossment dates", grain: "deal 1:1", owner: "crm_deals", tenancy: "", tracker: "", leasing: "", deals: "edit", onSchedule: "No", notes: "draft_lease_received_at / comments_returned_at / engrossment_at — drive Solicitors-stage progress." },
+  { section: "SOLICITOR", fact: "Solicitor notes",                     grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No", notes: "solicitor_notes." },
 
   // ============ INVOICING / XERO ============
   { section: "INVOICING (Xero)", fact: "Xero billing entity per party (L/T/V/P)", grain: "deal 1:many", owner: "crm_deals", tenancy: "", tracker: "", leasing: "", deals: "edit", onSchedule: "No", notes: "ContactID + name for each party." },
@@ -182,6 +189,7 @@ async function main() {
     "TENANT":                "FFFEE2E2",
     "DEAL":                  "FFE0E7FF",
     "DEAL CONTACTS":         "FFE7E5E4",
+    "SOLICITOR":             "FFEDE9FE",
     "FEES":                  "FFFAE8FF",
     "COMPLIANCE":            "FFFEE2E2",
     "INVOICING (Xero)":      "FFD1FAE5",
@@ -265,10 +273,13 @@ async function main() {
     ["No (red)", "DETAIL-VIEW ONLY — the schedules never show this. The facts the list views were hiding."],
     ["", ""],
     ["RULES", ""],
-    ["", "Each fact has exactly one owner. Other surfaces read it via the spine link (tenancy_unit_id / deal_id)."],
+    ["", "TWO-LAYER SPINE: property_units owns PHYSICAL facts (address, area, EPC, condition, use class) — permanent, survives lease changes. tenancy_schedule_units owns LEASE/INCOME facts. Everyone reads through."],
+    ["", "Each fact has exactly one owner. Other surfaces read it via the spine link (unit_id → property_units, tenancy_unit_id → tenancy, deal_id → crm_deals)."],
+    ["", "GAP: tenancy_schedule_units has no FK to property_units yet — must be added + back-filled (see integrity-gate-report.sql query 4)."],
     ["", "FOUR rents, all distinct: passing · ERV · quoting · agreed. Never collapsed."],
     ["", "The Leasing Schedule IS the client view — there is no separate client property page."],
     ["", "Letting Tracker is mostly a read-through view; editing happens at the source of truth."],
+    ["", "Deal is born at Solicitors (WIP form), NOT on Add-Unit. Add-Unit writes property_units + tenancy_schedule_units."],
   ];
   for (const [term, means] of legendRows) {
     const r = legend.addRow({ term, means });
