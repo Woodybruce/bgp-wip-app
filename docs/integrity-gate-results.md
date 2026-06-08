@@ -58,3 +58,7 @@ Source query: `integrity-gate-oneshot.sql`.
 - **B. Everything**: link all 1101 leasing rows + all 190 deals. Large, mostly
   manual.
 - **C. Phased**: A now, leasing schedule onboarding as a later phase.
+
+## Decision
+
+Scope = **B (everything, including Landsec)**, chosen 2026-06-08. "Linked" means: link every row that maps to a unit; building/portfolio-level deals (investment/agency/requirements with no unit) get an explicit "not unit-scoped" flag rather than a forced link. Next: `linkage-proposal.sql` sizes the auto-matchable vs manual burden.
