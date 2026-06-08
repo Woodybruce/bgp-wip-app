@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="1700" height="1420" viewBox="0 0 1700 1420" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<svg width="1700" height="1820" viewBox="0 0 1700 1820" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
   <defs>
     <marker id="g" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,0 L9,4 L0,8 Z" fill="#15803D"/>
@@ -12,7 +12,7 @@
     </marker>
   </defs>
 
-  <rect width="1700" height="1420" fill="#FAF9F7"/>
+  <rect width="1700" height="1820" fill="#FAF9F7"/>
 
   <text x="60" y="54" font-size="30" font-weight="700" fill="#1F2937">BGP — Unit Status Architecture <tspan fill="#15803D">(target state)</tspan></text>
   <text x="60" y="85" font-size="15" fill="#6B7280">One deal vocabulary across all four boards · occupancy and marketing live on separate axes · a unit can be Trading AND on the market at the same time.</text>
@@ -38,8 +38,8 @@
       <text x="660" y="222">▸</text>
       <text x="678" y="222" font-weight="700">Invoiced</text>
     </g>
-    <text x="104" y="248" font-size="12" fill="#15803D">…or → Withdrawn</text>
-    <text x="104" y="272" font-size="11.5" fill="#6B7280">stored on <tspan font-family="monospace" fill="#374151">crm_deals.status</tspan>  ·  same names everywhere  ·  WIP filter ≥ Negotiating  ·  Deals board filter ≥ Solicitors</text>
+    <text x="104" y="248" font-size="12" fill="#15803D">…or → Withdrawn       <tspan fill="#B45309" font-weight="700">Invoiced = BGP-internal only (Tracker / Deals / WIP) — client side caps at Completed</tspan></text>
+    <text x="104" y="272" font-size="11.5" fill="#6B7280">stored on <tspan font-family="monospace" fill="#374151">crm_deals.status</tspan>  ·  one live deal per unit  ·  competing tenants live as rows in <tspan font-family="monospace" fill="#374151">unit_offers</tspan></text>
 
     <!-- axis 2 -->
     <rect x="855" y="166" width="785" height="120" rx="10" fill="#EFF6FF" stroke="#93C5FD"/>
@@ -98,7 +98,7 @@
     <text x="622" y="608" font-size="13" fill="#6B7280">filter</text>
     <text x="710" y="608" font-size="13" font-weight="600" fill="#1F2937" font-family="monospace">marketing_active = true · property = X</text>
     <text x="622" y="636" font-size="13" fill="#6B7280">shows</text>
-    <text x="710" y="636" font-size="13" font-weight="600" fill="#B45309">deal status pill (the 7) · marketing reason</text>
+    <text x="710" y="636" font-size="13" font-weight="600" fill="#B45309">deal status pill (capped at Completed) · reason</text>
     <text x="622" y="664" font-size="13" fill="#6B7280">output</text>
     <text x="710" y="664" font-size="13" fill="#1F2937">bespoke client Excel · client property page</text>
     <text x="622" y="708" font-size="12" fill="#9CA3AF">Same row data as the tracker — different scope.</text>
@@ -180,8 +180,63 @@
       <text x="82" y="1294" font-weight="700" fill="#7C3AED">STAGE 3 — engine collapse</text>
       <text x="82" y="1314">Replace unit-mirror.ts inline maps with the shared mapping. One module. Old reverse-mirror to <tspan font-family="monospace">status</tspan> still runs for safety.</text>
 
-      <text x="82" y="1348" font-weight="700" fill="#7C3AED">STAGE 4 — flip &amp; delete</text>
-      <text x="82" y="1368">Verify Bluewater consistency. Drop the old <tspan font-family="monospace">status</tspan> column on tenancy. Remove dual-write. Diagram becomes the new ground truth.</text>
+      <text x="82" y="1348" font-weight="700" fill="#7C3AED">STAGE 4 — column ownership cleanup</text>
+      <text x="82" y="1368">Duplicated columns become read-through joins per the matrix below. Mirrors stop translating columns; only the marketing_active flag fans out.</text>
+
+      <text x="82" y="1402" font-weight="700" fill="#7C3AED">STAGE 5 — flip &amp; delete</text>
+      <text x="82" y="1422">Verify Bluewater consistency. Drop the old <tspan font-family="monospace">status</tspan> column on tenancy. Remove dual-write. Diagram becomes the new ground truth.</text>
+    </g>
+  </g>
+
+  <!-- ============ COLUMN OWNERSHIP MATRIX ============ -->
+  <g>
+    <rect x="60" y="1470" width="1580" height="320" rx="12" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/>
+    <text x="82" y="1504" font-size="17" font-weight="700" fill="#1F2937">Column ownership — one owner per fact, the rest read through joins</text>
+    <text x="82" y="1526" font-size="12.5" fill="#6B7280">Today these are duplicated across 2–4 tables and held in sync by the mirrors. Target: each row has exactly one source of truth.</text>
+
+    <!-- header -->
+    <line x1="82" y1="1548" x2="1618" y2="1548" stroke="#E5E7EB"/>
+    <text x="92" y="1568" font-size="12" font-weight="700" fill="#6B7280">FACT</text>
+    <text x="620" y="1568" font-size="12" font-weight="700" fill="#6B7280">OWNER (single source of truth)</text>
+    <text x="1200" y="1568" font-size="12" font-weight="700" fill="#6B7280">READ THROUGH FROM</text>
+    <line x1="82" y1="1578" x2="1618" y2="1578" stroke="#E5E7EB"/>
+
+    <g font-size="12.5" fill="#1F2937">
+      <text x="92" y="1600">Area (gia / nia / itza)</text>
+      <text x="620" y="1600" font-family="monospace" fill="#0F766E">tenancy_schedule_units</text>
+      <text x="1200" y="1600" fill="#6B7280">available_units · leasing_schedule · crm_deals</text>
+
+      <text x="92" y="1622">Passing rent · ERV · marketing rent</text>
+      <text x="620" y="1622" font-family="monospace" fill="#0F766E">tenancy_schedule_units</text>
+      <text x="1200" y="1622" fill="#6B7280">leasing_schedule_units</text>
+
+      <text x="92" y="1644">Lease expiry · break · review · landlord break</text>
+      <text x="620" y="1644" font-family="monospace" fill="#0F766E">tenancy_schedule_units</text>
+      <text x="1200" y="1644" fill="#6B7280">leasing_schedule_units</text>
+
+      <text x="92" y="1666">Rates · service charge · insurance</text>
+      <text x="620" y="1666" font-family="monospace" fill="#0F766E">tenancy_schedule_units</text>
+      <text x="1200" y="1666" fill="#6B7280">available_units</text>
+
+      <text x="92" y="1688">Occupancy · marketing_active · marketing_reason</text>
+      <text x="620" y="1688" font-family="monospace" fill="#0F766E">tenancy_schedule_units</text>
+      <text x="1200" y="1688" fill="#6B7280">all four boards</text>
+
+      <text x="92" y="1710">Deal status (the 7) · pricing · fee · AML · dates</text>
+      <text x="620" y="1710" font-family="monospace" fill="#1D4ED8">crm_deals</text>
+      <text x="1200" y="1710" fill="#6B7280">Tracker · Leasing · Deals (pill)</text>
+
+      <text x="92" y="1732">Viewings · offers · asking rent · marketing start</text>
+      <text x="620" y="1732" font-family="monospace" fill="#7C3AED">available_units (Letting Tracker)</text>
+      <text x="1200" y="1732" fill="#6B7280">—</text>
+
+      <text x="92" y="1754">Zone · positioning · priority · target brands · updates</text>
+      <text x="620" y="1754" font-family="monospace" fill="#B45309">leasing_schedule_units</text>
+      <text x="1200" y="1754" fill="#6B7280">—</text>
+
+      <text x="92" y="1776" fill="#9CA3AF" font-style="italic">tenancyScheduleUnits.targetTenants / targetCompanyIds</text>
+      <text x="620" y="1776" fill="#DC2626" font-weight="700">RETIRE — move to leasing_schedule_units</text>
+      <text x="1200" y="1776" fill="#6B7280">Stage 4</text>
     </g>
   </g>
 </svg>
