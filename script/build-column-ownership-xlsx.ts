@@ -11,141 +11,138 @@ const rows: Array<{
   tracker: string;
   leasing: string;
   deals: string;
-  clientPage: string;
   onSchedule: string;
   notes?: string;
 }> = [
   // ============ AREA ============
-  { section: "AREA", fact: "NIA sqft",                                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", clientPage: "read", onSchedule: "Yes" },
-  { section: "AREA", fact: "GIA sqft",                                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "Yes" },
-  { section: "AREA", fact: "ITZA sqft",                                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", clientPage: "read", onSchedule: "Yes" },
-  { section: "AREA", fact: "Floor breakdown (bsmt/ground/first/other)", grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "Yes" },
+  { section: "AREA", fact: "NIA sqft",                                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "Yes" },
+  { section: "AREA", fact: "GIA sqft",                                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "",     deals: "read", onSchedule: "Yes" },
+  { section: "AREA", fact: "ITZA sqft",                                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "Yes" },
+  { section: "AREA", fact: "Floor breakdown (bsmt/ground/first/other)", grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "",     deals: "read", onSchedule: "Yes" },
 
   // ============ RENT — four flavours, never collapsed ============
-  { section: "RENT", fact: "Passing rent pa (current tenant)",          grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes", notes: "Only changes on deal Complete. Sum = rent roll." },
-  { section: "RENT", fact: "ERV pa (BGP & client valuation view)",      grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes", notes: "Agreed between BGP & client. Visible to all." },
-  { section: "RENT", fact: "Quoting rent pa (asking, to market)",       grain: "unit 1:1", owner: "tenancy (NEW)",    tenancy: "edit", tracker: "edit", leasing: "read", deals: "read", clientPage: "read", onSchedule: "Yes", notes: "Defaults to ERV when marketing on; editable." },
-  { section: "RENT", fact: "Agreed deal rent pa (final number hit)",    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "read", deals: "edit", clientPage: "",     onSchedule: "Yes", notes: "Final agreed rent. Can differ from all 3 above. Becomes passing on Complete. (= 'Headline rent' on deal detail)" },
-  { section: "RENT", fact: "Net effective rent pa",                     grain: "derived",  owner: "derived",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No",  notes: "Derived from agreed rent − rent free / lease length." },
-  { section: "RENT", fact: "Rent psf",                                  grain: "derived",  owner: "derived",          tenancy: "✓",    tracker: "✓",    leasing: "✓",    deals: "✓",    clientPage: "✓",    onSchedule: "Yes" },
-  { section: "RENT", fact: "Price psf (investment)",                    grain: "derived",  owner: "derived",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
-  { section: "RENT", fact: "Price ITZA (retail)",                       grain: "derived",  owner: "derived",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
-  { section: "RENT", fact: "Turnover rent payable / %",                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "RENT", fact: "Rent free (months / £)",                    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "RENT", fact: "Capital contribution / capex",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "RENT", fact: "Rent review profile (open/fixed/RPI)",      grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
+  { section: "RENT", fact: "Passing rent pa (current tenant)",          grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes", notes: "Only changes on deal Complete. Sum = rent roll." },
+  { section: "RENT", fact: "ERV pa (BGP & client valuation view)",      grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "",     onSchedule: "Yes", notes: "Agreed between BGP & client. Visible to all." },
+  { section: "RENT", fact: "Quoting rent pa (asking, to market)",       grain: "unit 1:1", owner: "tenancy (NEW)",    tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "Yes", notes: "Defaults to ERV when marketing on; editable on tenancy." },
+  { section: "RENT", fact: "Agreed deal rent pa (final number hit)",    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "read", deals: "edit", onSchedule: "Yes", notes: "Final agreed rent. Can differ from passing / ERV / quoting. Becomes passing on Complete. (= 'Headline rent' on deal detail)" },
+  { section: "RENT", fact: "Net effective rent pa",                     grain: "derived",  owner: "derived",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No",  notes: "Read on deal detail; computed FROM agreed deal rent − rent free / lease length." },
+  { section: "RENT", fact: "Rent psf",                                  grain: "derived",  owner: "derived",          tenancy: "✓",    tracker: "✓",    leasing: "✓",    deals: "✓",    onSchedule: "Yes" },
+  { section: "RENT", fact: "Price psf (investment)",                    grain: "derived",  owner: "derived",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "RENT", fact: "Price ITZA (retail)",                       grain: "derived",  owner: "derived",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "RENT", fact: "Turnover rent payable / %",                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "edit", onSchedule: "Yes" },
+  { section: "RENT", fact: "Rent free (months / £)",                    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "RENT", fact: "Capital contribution / capex",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "RENT", fact: "Rent review profile (open/fixed/RPI)",      grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
 
   // ============ LEASE DATES & TERMS ============
-  { section: "LEASE DATES", fact: "Lease start",                        grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "LEASE DATES", fact: "Lease expiry",                       grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "LEASE DATES", fact: "Tenant break date",                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "LEASE DATES", fact: "Landlord break date",               grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "LEASE DATES", fact: "Next rent review date",             grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "LEASE DATES", fact: "Term years",                        grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "LEASE DATES", fact: "Unexpired term (to break / expiry)",grain: "derived",  owner: "derived",          tenancy: "✓",    tracker: "",     leasing: "✓",    deals: "",     clientPage: "✓",    onSchedule: "Yes" },
-  { section: "LEASE DATES", fact: "Lease length on new deal",          grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "LEASE DATES", fact: "Break option on new deal",          grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
+  { section: "LEASE DATES", fact: "Lease start",                        grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "",     onSchedule: "Yes" },
+  { section: "LEASE DATES", fact: "Lease expiry",                       grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "LEASE DATES", fact: "Tenant break date",                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "LEASE DATES", fact: "Landlord break date",               grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "LEASE DATES", fact: "Next rent review date",             grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "LEASE DATES", fact: "Term years",                        grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "",     onSchedule: "Yes" },
+  { section: "LEASE DATES", fact: "Unexpired term (to break / expiry)",grain: "derived",  owner: "derived",          tenancy: "✓",    tracker: "",     leasing: "✓",    deals: "",     onSchedule: "Yes" },
+  { section: "LEASE DATES", fact: "Lease length on new deal",          grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "LEASE DATES", fact: "Break option on new deal",          grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "",     deals: "edit", onSchedule: "No" },
 
   // ============ OCCUPANCY & MARKETING ============
-  { section: "OCCUPANCY & MARKETING", fact: "Occupancy (Vacant/Trading/HO/LEP/Archived)", grain: "unit 1:1", owner: "tenancy (NEW)", tenancy: "edit", tracker: "", leasing: "", deals: "", clientPage: "read", onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Marketing active (bool)", grain: "unit 1:1", owner: "tenancy (NEW)",    tenancy: "edit", tracker: "filter", leasing: "filter", deals: "", clientPage: "", onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Marketing reason",        grain: "unit 1:1", owner: "tenancy (NEW)",    tenancy: "edit", tracker: "read", leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Marketing start date",    grain: "unit 1:1", owner: "available_units",  tenancy: "",     tracker: "edit", leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Available date (occupation)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "edit", leasing: "read", deals: "",  clientPage: "read", onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "EPC rating",              grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Use class / permitted use", grain: "unit 1:1", owner: "tenancy",        tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Condition (Shell/CatA/CatB/Fitted...)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "edit", leasing: "", deals: "", clientPage: "read", onSchedule: "Yes" },
-  { section: "OCCUPANCY & MARKETING", fact: "Location / UK region",    grain: "unit 1:1", owner: "available_units",  tenancy: "",     tracker: "edit", leasing: "",     deals: "",     clientPage: "",     onSchedule: "No" },
-  { section: "OCCUPANCY & MARKETING", fact: "Restrictions (free-text for ads)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "edit", leasing: "", deals: "", clientPage: "read", onSchedule: "No" },
+  { section: "OCCUPANCY & MARKETING", fact: "Occupancy (Vacant/Trading/HO/LEP/Archived)", grain: "unit 1:1", owner: "tenancy (NEW)", tenancy: "edit", tracker: "", leasing: "", deals: "", onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "Marketing active (bool)", grain: "unit 1:1", owner: "tenancy (NEW)",    tenancy: "edit", tracker: "filter", leasing: "filter", deals: "", onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "Marketing reason",        grain: "unit 1:1", owner: "tenancy (NEW)",    tenancy: "edit", tracker: "read", leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "Marketing start date",    grain: "unit 1:1", owner: "available_units",  tenancy: "",     tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "Available date (occupation)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "edit", leasing: "read", deals: "",  onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "EPC rating",              grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "Use class / permitted use", grain: "unit 1:1", owner: "tenancy",        tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "Condition (Shell/CatA/CatB/Fitted...)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "", leasing: "", deals: "", onSchedule: "Yes" },
+  { section: "OCCUPANCY & MARKETING", fact: "Location / UK region",    grain: "unit 1:1", owner: "available_units",  tenancy: "",     tracker: "edit", leasing: "",     deals: "",     onSchedule: "No" },
+  { section: "OCCUPANCY & MARKETING", fact: "Restrictions (free-text for ads)", grain: "unit 1:1", owner: "available_units", tenancy: "", tracker: "", leasing: "", deals: "", onSchedule: "No" },
 
-  // ============ UNIT ADDRESS ============
-  { section: "UNIT ADDRESS", fact: "Address line",                     grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "read", deals: "edit", clientPage: "read", onSchedule: "No" },
-  { section: "UNIT ADDRESS", fact: "Postcode",                         grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "read", deals: "edit", clientPage: "read", onSchedule: "No" },
-  { section: "UNIT ADDRESS", fact: "UPRN",                             grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "UNIT ADDRESS", fact: "Free-text address fallback (non-PAF)", grain: "unit 1:1", owner: "tenancy",      tenancy: "edit", tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
+  // ============ UNIT ADDRESS — lives ONLY on tenancy ============
+  { section: "UNIT ADDRESS", fact: "Address line",                     grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "No" },
+  { section: "UNIT ADDRESS", fact: "Postcode",                         grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "read", onSchedule: "No" },
+  { section: "UNIT ADDRESS", fact: "UPRN",                             grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "UNIT ADDRESS", fact: "Free-text address fallback (non-PAF)", grain: "unit 1:1", owner: "tenancy",      tenancy: "edit", tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
 
   // ============ TENANT (sitting / current) ============
-  { section: "TENANT", fact: "Tenant company (current sitting tenant)", grain: "unit 1:1", owner: "tenancy",         tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "read (if Trading)", onSchedule: "Yes" },
-  { section: "TENANT", fact: "Trading name",                           grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "TENANT", fact: "Tenant mix / category",                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "TENANT", fact: "Credit rating",                          grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
+  { section: "TENANT", fact: "Tenant company (current sitting tenant)", grain: "unit 1:1", owner: "tenancy",         tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "TENANT", fact: "Trading name",                           grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "TENANT", fact: "Tenant mix / category",                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "TENANT", fact: "Credit rating",                          grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
 
   // ============ DEAL — core ============
-  { section: "DEAL", fact: "Deal / group name",                        grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Deal type / asset class",                  grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "Yes" },
-  { section: "DEAL", fact: "Tenure (freehold/leasehold)",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Deal status (the 7)",                      grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "pill", leasing: "pill (cap @ Completed)", deals: "pill", clientPage: "pill (cap @ Completed)", onSchedule: "Yes" },
-  { section: "DEAL", fact: "Counterparty: Tenant (deal)",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "read", deals: "edit", clientPage: "",     onSchedule: "Yes" },
-  { section: "DEAL", fact: "Counterparty: Landlord (deal)",            grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Counterparty: Vendor (deal)",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Counterparty: Purchaser (deal)",           grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Internal team",                            grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "read", deals: "edit", clientPage: "",     onSchedule: "Yes" },
-  { section: "DEAL", fact: "Internal agents on deal",                  grain: "deal 1:many", owner: "crm_deals",     tenancy: "",     tracker: "filter (me)", leasing: "read", deals: "edit", clientPage: "", onSchedule: "Yes" },
-  { section: "DEAL", fact: "Target date",                              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Instructed / exchanged / completed / invoiced dates", grain: "deal 1:1", owner: "crm_deals", tenancy: "", tracker: "read", leasing: "read (to Completed)", deals: "edit", clientPage: "", onSchedule: "Yes" },
-  { section: "DEAL", fact: "Pricing / yield (investment)",             grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Deal learning / insights (on Complete)",   grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL", fact: "Comments (free-text)",                     grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
+  { section: "DEAL", fact: "Deal / group name",                        grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL", fact: "Deal type / asset class",                  grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "Yes" },
+  { section: "DEAL", fact: "Tenure (freehold/leasehold)",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL", fact: "Deal status (the 7)",                      grain: "deal 1:1", owner: "crm_deals",        tenancy: "pill", tracker: "pill", leasing: "pill (cap @ Completed)", deals: "pill", onSchedule: "Yes" },
+  { section: "DEAL", fact: "Counterparty: Tenant (deal)",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "read", deals: "edit", onSchedule: "Yes" },
+  { section: "DEAL", fact: "Counterparty: Landlord (deal)",            grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL", fact: "Counterparty: Vendor (deal)",              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL", fact: "Counterparty: Purchaser (deal)",           grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL", fact: "Internal team",                            grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "read", deals: "edit", onSchedule: "Yes" },
+  { section: "DEAL", fact: "Internal agents on deal",                  grain: "deal 1:many", owner: "crm_deals",     tenancy: "",     tracker: "filter (me)", leasing: "read", deals: "edit", onSchedule: "Yes" },
+  { section: "DEAL", fact: "Target date",                              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL", fact: "Instructed / exchanged / completed / invoiced dates", grain: "deal 1:1", owner: "crm_deals", tenancy: "", tracker: "read", leasing: "read (to Completed)", deals: "edit", onSchedule: "Yes" },
+  { section: "DEAL", fact: "Pricing / yield (investment)",             grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
 
   // ============ DEAL CONTACTS ============
-  { section: "DEAL CONTACTS", fact: "Client contact",                  grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL CONTACTS", fact: "Vendor agent",                    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL CONTACTS", fact: "Acquisition agent",               grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL CONTACTS", fact: "Purchaser agent",                 grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "DEAL CONTACTS", fact: "Leasing agent",                   grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
+  { section: "DEAL CONTACTS", fact: "Client contact",                  grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL CONTACTS", fact: "Vendor agent",                    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL CONTACTS", fact: "Acquisition agent",               grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL CONTACTS", fact: "Purchaser agent",                 grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "DEAL CONTACTS", fact: "Leasing agent",                   grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
 
   // ============ FEES ============
-  { section: "FEES", fact: "Total fee £",                              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "Yes" },
-  { section: "FEES", fact: "Agency fee %",                             grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "FEES", fact: "Fee agreement signed (Y/N) + URL",         grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "Yes" },
-  { section: "FEES", fact: "BGP house % (locked 15%)",                 grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
-  { section: "FEES", fact: "Agent fee allocations (split, %-or-£)",    grain: "deal 1:many", owner: "crm_deals",     tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No", notes: "Sub-table: one row per agent, sums to 85%." },
+  { section: "FEES", fact: "Total fee £",                              grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "Yes" },
+  { section: "FEES", fact: "Agency fee %",                             grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "FEES", fact: "Fee agreement signed (Y/N) + URL",         grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "Yes" },
+  { section: "FEES", fact: "BGP house % (locked 15%)",                 grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "read", leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "FEES", fact: "Agent fee allocations (split, %-or-£)",    grain: "deal 1:many", owner: "crm_deals",     tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "No", notes: "Sub-table: one row per agent, sums to 85%." },
 
   // ============ COMPLIANCE / KYC / AML ============
-  { section: "COMPLIANCE", fact: "AML check completed (YES/NO/N-A)",   grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "Yes", notes: "The gate. Compliance flag on tracker row." },
-  { section: "COMPLIANCE", fact: "Compliance override (ack gaps at SOL)", grain: "deal 1:1", owner: "crm_deals",     tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "COMPLIANCE", fact: "KYC record per party (MLR scope)",   grain: "deal 1:many", owner: "kyc/crm",       tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No", notes: "Sub-table per counterparty." },
-  { section: "COMPLIANCE", fact: "Source-of-funds (SoF) analysis",     grain: "deal 1:many", owner: "kyc/crm",       tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "COMPLIANCE", fact: "MLRO documentation status",          grain: "deal 1:many", owner: "kyc/crm",       tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
-  { section: "COMPLIANCE", fact: "AI AML triage / compliance gaps",    grain: "deal 1:1", owner: "kyc/crm",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
-  { section: "COMPLIANCE", fact: "MLRO risk-assessment PDF",           grain: "deal 1:1", owner: "kyc/crm",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
+  { section: "COMPLIANCE", fact: "AML check completed (YES/NO/N-A)",   grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "Yes", notes: "The gate. Compliance flag on tracker row." },
+  { section: "COMPLIANCE", fact: "Compliance override (ack gaps at SOL)", grain: "deal 1:1", owner: "crm_deals",     tenancy: "",     tracker: "edit", leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "COMPLIANCE", fact: "KYC record per party (MLR scope)",   grain: "deal 1:many", owner: "kyc/crm",       tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No", notes: "Sub-table per counterparty." },
+  { section: "COMPLIANCE", fact: "Source-of-funds (SoF) analysis",     grain: "deal 1:many", owner: "kyc/crm",       tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "COMPLIANCE", fact: "MLRO documentation status",          grain: "deal 1:many", owner: "kyc/crm",       tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "COMPLIANCE", fact: "AI AML triage / compliance gaps",    grain: "deal 1:1", owner: "kyc/crm",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "COMPLIANCE", fact: "MLRO risk-assessment PDF",           grain: "deal 1:1", owner: "kyc/crm",          tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
 
   // ============ INVOICING / XERO ============
-  { section: "INVOICING (Xero)", fact: "Xero billing entity per party (L/T/V/P)", grain: "deal 1:many", owner: "crm_deals", tenancy: "", tracker: "", leasing: "", deals: "edit", clientPage: "", onSchedule: "No", notes: "ContactID + name for each party." },
-  { section: "INVOICING (Xero)", fact: "Xero account number",          grain: "deal 1:1", owner: "crm_deals/xero",   tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
-  { section: "INVOICING (Xero)", fact: "PO number",                    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "INVOICING (Xero)", fact: "Billing address",              grain: "deal 1:1", owner: "crm_deals/xero",   tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
+  { section: "INVOICING (Xero)", fact: "Xero billing entity per party (L/T/V/P)", grain: "deal 1:many", owner: "crm_deals", tenancy: "", tracker: "", leasing: "", deals: "edit", onSchedule: "No", notes: "ContactID + name for each party." },
+  { section: "INVOICING (Xero)", fact: "Xero account number",          grain: "deal 1:1", owner: "crm_deals/xero",   tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "INVOICING (Xero)", fact: "PO number",                    grain: "deal 1:1", owner: "crm_deals",        tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "INVOICING (Xero)", fact: "Billing address",              grain: "deal 1:1", owner: "crm_deals/xero",   tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
 
   // ============ BRAND PROFILES ============
-  { section: "BRAND", fact: "Tenant brand profile / history / reputation",   grain: "company", owner: "companies",  tenancy: "",     tracker: "",     leasing: "read", deals: "read", clientPage: "",     onSchedule: "No" },
-  { section: "BRAND", fact: "Landlord brand profile / history / reputation", grain: "company", owner: "companies",  tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
+  { section: "BRAND", fact: "Tenant brand profile / history / reputation",   grain: "company", owner: "companies",  tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
+  { section: "BRAND", fact: "Landlord brand profile / history / reputation", grain: "company", owner: "companies",  tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
 
   // ============ HISTORY / AUDIT / ACTIVITY ============
-  { section: "HISTORY / AUDIT", fact: "Status-change timeline (+ reason)", grain: "deal 1:many", owner: "crm audit", tenancy: "",   tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No", notes: "Sub-table." },
-  { section: "HISTORY / AUDIT", fact: "Field-level audit log (before/after)", grain: "deal 1:many", owner: "crm audit", tenancy: "", tracker: "",   leasing: "",     deals: "read", clientPage: "",     onSchedule: "No", notes: "Sub-table." },
-  { section: "HISTORY / AUDIT", fact: "AI activity feed (emails + meetings)", grain: "external", owner: "graph/AI",  tenancy: "",     tracker: "",     leasing: "",     deals: "read", clientPage: "",     onSchedule: "No" },
+  { section: "HISTORY / AUDIT", fact: "Status-change timeline (+ reason)", grain: "deal 1:many", owner: "crm audit", tenancy: "",   tracker: "",     leasing: "",     deals: "read", onSchedule: "No", notes: "Sub-table." },
+  { section: "HISTORY / AUDIT", fact: "Field-level audit log (before/after)", grain: "deal 1:many", owner: "crm audit", tenancy: "", tracker: "",   leasing: "",     deals: "read", onSchedule: "No", notes: "Sub-table." },
+  { section: "HISTORY / AUDIT", fact: "AI activity feed (emails + meetings)", grain: "external", owner: "graph/AI",  tenancy: "",     tracker: "",     leasing: "",     deals: "read", onSchedule: "No" },
 
   // ============ FILES ============
-  { section: "FILES", fact: "Deal folder / SharePoint files",          grain: "external", owner: "sharepoint",       tenancy: "",     tracker: "",     leasing: "",     deals: "edit", clientPage: "",     onSchedule: "No" },
-  { section: "FILES", fact: "Marketing collateral (photos/floorplans/EPC docs)", grain: "unit 1:many", owner: "files/blob", tenancy: "", tracker: "edit", leasing: "read", deals: "", clientPage: "read", onSchedule: "No" },
+  { section: "FILES", fact: "Deal folder / SharePoint files",          grain: "external", owner: "sharepoint",       tenancy: "",     tracker: "",     leasing: "",     deals: "edit", onSchedule: "No" },
+  { section: "FILES", fact: "Marketing collateral (photos/floorplans/EPC docs)", grain: "unit 1:many", owner: "files/blob", tenancy: "", tracker: "edit", leasing: "read", deals: "edit", onSchedule: "Yes" },
 
   // ============ SUB-TABLES: VIEWINGS & OFFERS ============
-  { section: "VIEWINGS (sub-table)", fact: "Viewing: company · contact · date · time · attendees · outcome · notes", grain: "unit 1:many", owner: "unit_viewings", tenancy: "", tracker: "edit", leasing: "", deals: "", clientPage: "", onSchedule: "No", notes: "Tracker shows count; detail shows records." },
-  { section: "OFFERS (sub-table)", fact: "Offer: company · contact · date · rent · rent-free · term · break · incentives · premium · fit-out · comments", grain: "unit 1:many", owner: "unit_offers", tenancy: "", tracker: "edit", leasing: "", deals: "", clientPage: "", onSchedule: "No", notes: "Competing tenants live here. Accepted offer promotes to deal terms." },
+  { section: "VIEWINGS (sub-table)", fact: "Viewing: company · contact · date · time · attendees · outcome · notes", grain: "unit 1:many", owner: "unit_viewings", tenancy: "", tracker: "edit", leasing: "read", deals: "", onSchedule: "Yes", notes: "Tracker shows count; detail shows records." },
+  { section: "OFFERS (sub-table)", fact: "Offer: company · contact · date · rent · rent-free · term · break · incentives · premium · fit-out · comments", grain: "unit 1:many", owner: "unit_offers", tenancy: "", tracker: "edit", leasing: "read", deals: "", onSchedule: "Yes", notes: "Competing tenants live here. Accepted offer promotes to deal terms." },
 
-  // ============ CLIENT-STRATEGY (leasing only) ============
-  { section: "CLIENT-STRATEGY", fact: "Zone / positioning",            grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",     tracker: "",     leasing: "edit", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "CLIENT-STRATEGY", fact: "Priority",                      grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",     tracker: "",     leasing: "edit", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "CLIENT-STRATEGY", fact: "Target brands / optimum target", grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",    tracker: "",     leasing: "edit", deals: "",     clientPage: "",     onSchedule: "Yes", notes: "Retires tenancy.targetTenants/targetCompanyIds." },
-  { section: "CLIENT-STRATEGY", fact: "Client updates (narrative)",    grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",     tracker: "",     leasing: "edit", deals: "",     clientPage: "read", onSchedule: "Yes" },
+  // ============ CLIENT-STRATEGY (leasing-led, editable from tracker too) ============
+  { section: "CLIENT-STRATEGY", fact: "Zone / positioning",            grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",     tracker: "",     leasing: "edit", deals: "",     onSchedule: "Yes" },
+  { section: "CLIENT-STRATEGY", fact: "Priority",                      grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",     tracker: "",     leasing: "edit", deals: "",     onSchedule: "Yes" },
+  { section: "CLIENT-STRATEGY", fact: "Target brands / optimum target", grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",    tracker: "edit", leasing: "edit", deals: "",     onSchedule: "Yes", notes: "Retires tenancy.targetTenants/targetCompanyIds." },
+  { section: "CLIENT-STRATEGY", fact: "Client updates (narrative)",    grain: "unit 1:1", owner: "leasing_schedule", tenancy: "",     tracker: "edit", leasing: "edit", deals: "",     onSchedule: "Yes" },
 
   // ============ RATES & SERVICE CHARGE ============
-  { section: "RATES & SC", fact: "Rateable value",                     grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "",     deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "RATES & SC", fact: "Rates payable pa",                   grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "RATES & SC", fact: "Service charge pa",                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "edit", leasing: "read", deals: "",     clientPage: "read", onSchedule: "Yes" },
-  { section: "RATES & SC", fact: "Service charge cap",                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "RATES & SC", fact: "Insurance pa",                       grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     clientPage: "",     onSchedule: "Yes" },
-  { section: "RATES & SC", fact: "Occupancy cost %",                   grain: "derived",  owner: "derived",          tenancy: "",     tracker: "",     leasing: "✓",    deals: "",     clientPage: "",     onSchedule: "Yes" },
+  { section: "RATES & SC", fact: "Rateable value",                     grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "",     deals: "",     onSchedule: "Yes" },
+  { section: "RATES & SC", fact: "Rates payable pa",                   grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "RATES & SC", fact: "Service charge pa",                  grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "RATES & SC", fact: "Service charge cap",                 grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "",     leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "RATES & SC", fact: "Insurance pa",                       grain: "unit 1:1", owner: "tenancy",          tenancy: "edit", tracker: "read", leasing: "read", deals: "",     onSchedule: "Yes" },
+  { section: "RATES & SC", fact: "Occupancy cost %",                   grain: "derived",  owner: "derived",          tenancy: "",     tracker: "✓",    leasing: "✓",    deals: "",     onSchedule: "Yes" },
 ];
 
 async function main() {
@@ -166,9 +163,8 @@ async function main() {
     { header: "Letting Tracker",  key: "tracker",    width: 16 },
     { header: "Leasing Schedule", key: "leasing",    width: 20 },
     { header: "Deals Board / Deal detail", key: "deals", width: 20 },
-    { header: "Client Property Page", key: "clientPage", width: 20 },
     { header: "On a schedule?",   key: "onSchedule", width: 14 },
-    { header: "Notes",            key: "notes",      width: 58 },
+    { header: "Notes",            key: "notes",      width: 62 },
   ];
 
   const header = ws.getRow(1);
@@ -215,7 +211,7 @@ async function main() {
     if (r.section === lastSection) row.getCell("section").value = "";
     lastSection = r.section;
 
-    for (const key of ["tenancy", "tracker", "leasing", "deals", "clientPage"] as const) {
+    for (const key of ["tenancy", "tracker", "leasing", "deals"] as const) {
       const cell = row.getCell(key);
       const v = String(cell.value ?? "").trim();
       cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
@@ -223,14 +219,12 @@ async function main() {
       if (verbColours[verb]) cell.font = { bold: true, color: { argb: verbColours[verb] } };
     }
 
-    // Grain colour
     const g = row.getCell("grain");
     g.alignment = { horizontal: "center", vertical: "middle" };
     if (String(g.value).includes("1:many")) g.font = { bold: true, color: { argb: "FFB45309" } };
     else if (String(g.value) === "derived") g.font = { italic: true, color: { argb: "FF6B7280" } };
     else if (String(g.value) === "external" || String(g.value) === "company") g.font = { italic: true, color: { argb: "FF7C3AED" } };
 
-    // On-a-schedule colour: No = red so detail-only facts pop
     const os = row.getCell("onSchedule");
     os.alignment = { horizontal: "center", vertical: "middle" };
     os.font = String(os.value) === "No"
@@ -243,7 +237,7 @@ async function main() {
     row.alignment = { vertical: "middle" };
   }
 
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 11 } };
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 10 } };
 
   // ===== Legend sheet =====
   const legend = wb.addWorksheet("Legend");
@@ -268,13 +262,13 @@ async function main() {
     ["", ""],
     ["On a schedule?", ""],
     ["Yes", "Appears on a schedule / list view (tenancy, letting tracker, leasing)."],
-    ["No (red)", "DETAIL-VIEW ONLY — the schedules never show this. These are the facts the list views were hiding."],
+    ["No (red)", "DETAIL-VIEW ONLY — the schedules never show this. The facts the list views were hiding."],
     ["", ""],
     ["RULES", ""],
     ["", "Each fact has exactly one owner. Other surfaces read it via the spine link (tenancy_unit_id / deal_id)."],
     ["", "FOUR rents, all distinct: passing · ERV · quoting · agreed. Never collapsed."],
-    ["", "'Deals Board' column covers the deal DETAIL view, which holds far more than the board card."],
-    ["", "Edit any cell to change the design. Owner + Grain columns drive the schema/migration."],
+    ["", "The Leasing Schedule IS the client view — there is no separate client property page."],
+    ["", "Letting Tracker is mostly a read-through view; editing happens at the source of truth."],
   ];
   for (const [term, means] of legendRows) {
     const r = legend.addRow({ term, means });
@@ -284,7 +278,7 @@ async function main() {
   const out = "docs/unit-column-ownership.xlsx";
   await wb.xlsx.writeFile(out);
   const detailOnly = rows.filter((r) => r.onSchedule === "No").length;
-  console.log(`wrote ${out} — ${rows.length} facts, ${detailOnly} detail-only (not on any schedule)`);
+  console.log(`wrote ${out} — ${rows.length} facts, ${detailOnly} detail-only`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
