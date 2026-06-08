@@ -96,3 +96,12 @@ Migration 0032 run against prod Railway Postgres. Verified present:
 - `tenancy_schedule_units`: property_unit_id, occupancy_status, marketing_active, marketing_reason
 - `crm_deals`: deal_scope (default 'unit')
 All columns NULL/default, no back-fill yet, no behaviour change. Stage 2 next.
+
+## Stage 2 part 1 — APPLIED 2026-06-08 (back-fill occupancy/marketing)
+
+Migration 0033 run against prod. UPDATE 198. Result:
+- Occupied(170) → Trading / not-marketed
+- Vacant(9), Marketing(8), Under Offer(8) → Vacant / marketing_active=true / reason=Vacant
+- Held(3) → Vacant / not-marketed  (provenance unknown — suspected Landsec quirk; correctable later)
+Totals: 170 Trading, 28 Vacant; 25 marketing_active.
+Note: 54 available_units rows vs 25 marketing-active tenancy units — reconcile later.
