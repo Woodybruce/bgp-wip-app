@@ -89,3 +89,10 @@ Unlinked-deal `deal_type`: **170 New Letting**, 1 Purchase, 1 Investment Acquisi
   population is tiny, which validates the flag but means it's not where the volume is.
 - **None of this changes the target structure** — it validates it. The structure is what
   lets these orphans be attributed at all.
+
+## Stage 1 — APPLIED to production 2026-06-08
+
+Migration 0032 run against prod Railway Postgres. Verified present:
+- `tenancy_schedule_units`: property_unit_id, occupancy_status, marketing_active, marketing_reason
+- `crm_deals`: deal_scope (default 'unit')
+All columns NULL/default, no back-fill yet, no behaviour change. Stage 2 next.
