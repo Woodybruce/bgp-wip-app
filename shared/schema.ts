@@ -833,6 +833,11 @@ export const crmDeals = pgTable("crm_deals", {
   propertyId: varchar("property_id"),
   unitId: varchar("unit_id"), // → property_units.id (one unit may have many deals over time)
   tenancyUnitId: varchar("tenancy_unit_id"), // → tenancy_schedule_units.id (canonical spine)
+  // 'unit' | 'building' | 'portfolio'. Building/portfolio deals
+  // (investment acquisitions, consultancy mandates) keep
+  // tenancyUnitId NULL by design — set scope here rather than
+  // forcing a fake unit link. Migration 0032.
+  dealScope: text("deal_scope").default("unit"),
   landlordId: varchar("landlord_id"),
   landlordContactId: varchar("landlord_contact_id"),
   dealType: text("deal_type"),
@@ -2414,6 +2419,17 @@ export const tenancyScheduleUnits = pgTable("tenancy_schedule_units", {
   lettingTrackerUnitId: varchar("letting_tracker_unit_id"),
   inLeasingSchedule: boolean("in_leasing_schedule").default(false),
   sortOrder: integer("sort_order").default(0),
+  // ── Stage 1 unit-spine additions (migration 0032). Additive only;
+  // population happens in Stage 2. See docs/target-structure.md.
+  // propertyUnitId is the missing physical→lease link the two-layer
+  // spine needs. occupancy splits "is the unit let?" from deal status;
+  // marketing_active drives Tracker/Leasing visibility independently.
+  propertyUnitId: varchar("property_unit_id"),
+  // occupancy_status (not "occupancy") — two other tables already use
+  // `occupancy` for a numeric %; the suffix avoids confusion.
+  occupancyStatus: text("occupancy_status"),
+  marketingActive: boolean("marketing_active").default(false),
+  marketingReason: text("marketing_reason"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

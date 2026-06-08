@@ -62,3 +62,37 @@ Source query: `integrity-gate-oneshot.sql`.
 ## Decision
 
 Scope = **B (everything, including Landsec)**, chosen 2026-06-08. "Linked" means: link every row that maps to a unit; building/portfolio-level deals (investment/agency/requirements with no unit) get an explicit "not unit-scoped" flag rather than a forced link. Next: `linkage-proposal.sql` sizes the auto-matchable vs manual burden.
+
+## Linkage proposal results (2026-06-08)
+
+| category | auto_unique | ambiguous | no_match / build-level | total |
+|----------|-------------|-----------|------------------------|-------|
+| A available_units orphans → tenancy | 0 | 0 | 25 | 25 |
+| B leasing_schedule orphans → tenancy | 0 | 0 | 903 | 903 |
+| C crm_deals unlinked (has unit_id / none) | 37 | — | 137 | 174 |
+| D tenancy without physical → property_units | 0 | 0 | 115 (must create) | 115 |
+
+Unlinked-deal `deal_type`: **170 New Letting**, 1 Purchase, 1 Investment Acquisition,
+1 Consultancy, 1 null.
+
+### Reading
+- **Name-based auto-matching is a dead end.** Zero normalised name matches in A, B, D.
+  The tables use different unit-naming schemes (or non-overlapping property_id sets).
+  Reconciliation is a manual / heuristic project, not a scripted UPDATE.
+- **But a better bridge exists:** every available_units row already has `unit_id` →
+  property_units (0 missing). Once `tenancy.property_unit_id` is populated, units can be
+  matched sibling-to-sibling *through property_units* instead of by name. That's the
+  reconciliation key to build on — not names.
+- **Deals are mostly unit-scoped, not building-level.** 170/174 unlinked are New Letting
+  — they're letting deals that lost their unit link, a DATA problem. Only ~4 (Purchase,
+  Investment Acq, Consultancy, null) are genuinely unit-less → the `deal_scope='building'`
+  population is tiny, which validates the flag but means it's not where the volume is.
+- **None of this changes the target structure** — it validates it. The structure is what
+  lets these orphans be attributed at all.
+
+## Stage 1 — APPLIED to production 2026-06-08
+
+Migration 0032 run against prod Railway Postgres. Verified present:
+- `tenancy_schedule_units`: property_unit_id, occupancy_status, marketing_active, marketing_reason
+- `crm_deals`: deal_scope (default 'unit')
+All columns NULL/default, no back-fill yet, no behaviour change. Stage 2 next.
