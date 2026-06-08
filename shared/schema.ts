@@ -838,6 +838,10 @@ export const crmDeals = pgTable("crm_deals", {
   // tenancyUnitId NULL by design — set scope here rather than
   // forcing a fake unit link. Migration 0032.
   dealScope: text("deal_scope").default("unit"),
+  // 'landlord' | 'tenant'. Same process for both — set up property,
+  // capture AML/fees — but Letting Tracker filters to landlord-rep
+  // only. Migration 0034.
+  bgpActingFor: text("bgp_acting_for").default("landlord"),
   landlordId: varchar("landlord_id"),
   landlordContactId: varchar("landlord_contact_id"),
   dealType: text("deal_type"),
