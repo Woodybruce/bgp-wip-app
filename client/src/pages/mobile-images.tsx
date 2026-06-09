@@ -10,7 +10,7 @@
 // apply, look again.
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
-  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2,
+  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2, Folder, FolderPlus,
 } from "lucide-react";
 import { ToastAction } from "@/components/ui/toast";
 import { Link } from "wouter";
@@ -36,6 +36,22 @@ interface StudioImage {
   height: number | null;
   createdAt: string;
 }
+
+// A user-made folder is just an Image Studio collection with no `kind`
+// (pathway / property / brand collections are auto-generated and filtered
+// out of this view). Folders — like the photos themselves — live in the
+// shared Image Studio library, so everyone on the team sees them.
+interface Collection {
+  id: string;
+  name: string;
+  kind: string | null;
+  image_count: number;
+  cover_thumbnail: string | null; // full data URL, or null
+}
+
+// What a drop lands on: another photo (→ make a new folder) or an existing
+// folder tile (→ drop the photo straight in).
+type DropTarget = { type: "image" | "folder"; id: string } | null;
 
 const QUICK_PROMPTS = [
   "Re-light at golden-hour dusk",
@@ -160,8 +176,155 @@ export default function MobileImages() {
     });
   }, [images, search]);
 
+  // ─── Folders (shared Image Studio collections) ─────────────────────────
+  // Only ad-hoc, user-made folders (kind === null) — pathway/property/brand
+  // collections are auto-managed elsewhere and would just be noise here.
+  const { data: allCollections = [] } = useQuery<Collection[]>({
+    queryKey: ["/api/image-studio/collections"],
+  });
+  const folders = useMemo(
+    () => allCollections.filter((c) => c.kind == null),
+    [allCollections],
+  );
+
+  // imageIds waiting for the user to name a brand-new folder (set when a
+  // photo is dropped onto another photo).
+  const [pendingGroup, setPendingGroup] = useState<string[] | null>(null);
+  // id of the folder whose contents are open in the bottom sheet.
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+
+  const createGroupMutation = useMutation({
+    mutationFn: async ({ name, imageIds }: { name: string; imageIds: string[] }) => {
+      const created = await apiRequest("POST", "/api/image-studio/collections", { name });
+      const collection = (await created.json()) as { id: string };
+      await apiRequest("POST", `/api/image-studio/collections/${collection.id}/images`, { imageIds });
+      return collection;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      setPendingGroup(null);
+      toast({ title: "Folder created", description: "Everyone on the team can see it." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't create folder", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const addToFolderMutation = useMutation({
+    mutationFn: async ({ folderId, imageIds }: { folderId: string; imageIds: string[] }) => {
+      await apiRequest("POST", `/api/image-studio/collections/${folderId}/images`, { imageIds });
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", vars.folderId] });
+      const name = folders.find((f) => f.id === vars.folderId)?.name;
+      toast({ title: name ? `Added to ${name}` : "Added to folder" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't add to folder", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  // ─── Long-press to drag, drop to group ─────────────────────────────────
+  // HTML5 drag-and-drop is a no-op on touch, so we run our own pointer
+  // gesture: hold a tile ~250ms to pick it up, drag it over another tile,
+  // release to act. A short hold-then-release (no real drag) falls through
+  // to the normal tap so browsing still works.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const dragImageRef = useRef<StudioImage | null>(null);
+  const pressTimer = useRef<number | null>(null);
+  const startPos = useRef<{ x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget>(null);
+
+  // While a drag is live we must stop the page from scrolling under the
+  // finger. React's onTouchMove is passive (can't preventDefault), so attach
+  // a non-passive listener directly and gate it on draggingRef.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const block = (e: TouchEvent) => { if (draggingRef.current) e.preventDefault(); };
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => el.removeEventListener("touchmove", block);
+  }, []);
+
+  const clearPressTimer = () => {
+    if (pressTimer.current != null) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+  };
+
+  const finishDrag = () => {
+    draggingRef.current = false;
+    dragImageRef.current = null;
+    setDragId(null);
+    setGhostPos(null);
+    setDropTarget(null);
+    clearPressTimer();
+  };
+
+  const onTilePointerDown = (e: React.PointerEvent, img: StudioImage) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const { clientX, clientY, pointerId } = e;
+    const target = e.currentTarget as HTMLElement;
+    suppressClick.current = false;
+    startPos.current = { x: clientX, y: clientY };
+    clearPressTimer();
+    pressTimer.current = window.setTimeout(() => {
+      draggingRef.current = true;
+      dragImageRef.current = img;
+      setDragId(img.id);
+      setGhostPos({ x: clientX, y: clientY });
+      try { target.setPointerCapture(pointerId); } catch {}
+      if (navigator.vibrate) navigator.vibrate(12);
+    }, 250);
+  };
+
+  const onTilePointerMove = (e: React.PointerEvent) => {
+    if (!draggingRef.current) {
+      // Moved before the hold landed → it's a scroll, not a drag. Bail.
+      if (startPos.current && pressTimer.current != null) {
+        if (Math.abs(e.clientX - startPos.current.x) > 8 || Math.abs(e.clientY - startPos.current.y) > 8) {
+          clearPressTimer();
+        }
+      }
+      return;
+    }
+    setGhostPos({ x: e.clientX, y: e.clientY });
+    const under = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const dropEl = under?.closest("[data-drop-id]") as HTMLElement | null;
+    const id = dropEl?.getAttribute("data-drop-id") || null;
+    const type = dropEl?.getAttribute("data-drop-type") as "image" | "folder" | null;
+    if (id && type && !(type === "image" && id === dragImageRef.current?.id)) {
+      setDropTarget({ type, id });
+    } else {
+      setDropTarget(null);
+    }
+  };
+
+  const onTilePointerUp = () => {
+    const wasDragging = draggingRef.current;
+    const dragged = dragImageRef.current;
+    const target = dropTarget;
+    if (wasDragging) suppressClick.current = true; // don't open the edit sheet on release
+    finishDrag();
+    if (wasDragging && dragged && target) {
+      if (target.type === "folder") {
+        addToFolderMutation.mutate({ folderId: target.id, imageIds: [dragged.id] });
+      } else if (target.type === "image" && target.id !== dragged.id) {
+        setPendingGroup([dragged.id, target.id]);
+      }
+    }
+  };
+
+  const handleTileClick = (img: StudioImage) => {
+    if (suppressClick.current) { suppressClick.current = false; return; }
+    setSelected(img);
+  };
+
   return (
-    <div className="pb-24" data-testid="mobile-images">
+    <div ref={rootRef} className="pb-24" data-testid="mobile-images">
       <div
         className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
@@ -218,6 +381,47 @@ export default function MobileImages() {
         </div>
       </div>
 
+      {/* Folders — tap to open, or drop a photo on one to file it. */}
+      {folders.length > 0 && (
+        <div className="px-3 mb-3">
+          <h2 className="px-1 mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Folders
+          </h2>
+          <div className="grid grid-cols-2 gap-2">
+            {folders.map((f) => {
+              const isDropTarget = dropTarget?.type === "folder" && dropTarget.id === f.id;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  data-drop-id={f.id}
+                  data-drop-type="folder"
+                  onClick={() => setOpenFolderId(f.id)}
+                  className={`flex items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left bg-white dark:bg-card active:bg-muted/40 transition-shadow ${
+                    isDropTarget ? "border-primary ring-2 ring-primary shadow-lg" : "border-border/60"
+                  }`}
+                  data-testid={`mobile-folder-${f.id}`}
+                >
+                  <div className="w-11 h-11 rounded-lg overflow-hidden bg-muted shrink-0 flex items-center justify-center">
+                    {f.cover_thumbnail ? (
+                      <img src={f.cover_thumbnail} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <Folder className="w-5 h-5 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">{f.name}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {f.image_count} {f.image_count === 1 ? "photo" : "photos"}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center pt-16">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -236,12 +440,24 @@ export default function MobileImages() {
         </div>
       ) : (
         <div className="px-3 grid grid-cols-2 gap-2">
-          {filtered.map((img) => (
+          {filtered.map((img) => {
+            const isDragging = dragId === img.id;
+            const isDropTarget = dropTarget?.type === "image" && dropTarget.id === img.id;
+            return (
             <button
               key={img.id}
               type="button"
-              onClick={() => setSelected(img)}
-              className="aspect-square overflow-hidden rounded-xl bg-muted active:opacity-80 text-left relative"
+              data-drop-id={img.id}
+              data-drop-type="image"
+              onClick={() => handleTileClick(img)}
+              onPointerDown={(e) => onTilePointerDown(e, img)}
+              onPointerMove={onTilePointerMove}
+              onPointerUp={onTilePointerUp}
+              onPointerCancel={finishDrag}
+              style={{ touchAction: "pan-y" }}
+              className={`aspect-square overflow-hidden rounded-xl bg-muted active:opacity-80 text-left relative transition-all ${
+                isDragging ? "opacity-40 scale-95" : ""
+              } ${isDropTarget ? "ring-2 ring-primary shadow-lg scale-[1.02]" : ""}`}
               data-testid={`mobile-image-${img.id}`}
             >
               <img
@@ -271,13 +487,202 @@ export default function MobileImages() {
                   <Sparkles className="w-2.5 h-2.5" /> AI
                 </span>
               )}
+              {isDropTarget && (
+                <div className="absolute inset-0 bg-primary/30 backdrop-blur-[1px] flex items-center justify-center">
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-primary text-primary-foreground text-[11px] font-semibold shadow">
+                    <FolderPlus className="w-3.5 h-3.5" /> New folder
+                  </span>
+                </div>
+              )}
             </button>
-          ))}
+            );
+          })}
+        </div>
+      )}
+
+      {dragId && (
+        <p className="text-center text-[11px] text-muted-foreground mt-4 px-6">
+          Drop on another photo to group them, or onto a folder to file it.
+        </p>
+      )}
+
+      {/* Floating preview that tracks the finger while dragging. */}
+      {ghostPos && dragId && (
+        <div
+          className="fixed z-[150] w-20 h-20 rounded-xl overflow-hidden shadow-2xl ring-2 ring-primary pointer-events-none -translate-x-1/2 -translate-y-1/2"
+          style={{ left: ghostPos.x, top: ghostPos.y }}
+        >
+          <img src={`/api/image-studio/${dragId}/thumb`} alt="" className="w-full h-full object-cover" />
         </div>
       )}
 
       <ImageEditSheet image={selected} onClose={() => setSelected(null)} />
+      <NameFolderSheet
+        open={!!pendingGroup}
+        count={pendingGroup?.length || 0}
+        busy={createGroupMutation.isPending}
+        onCancel={() => setPendingGroup(null)}
+        onCreate={(name) => pendingGroup && createGroupMutation.mutate({ name, imageIds: pendingGroup })}
+      />
+      <FolderSheet
+        collectionId={openFolderId}
+        onClose={() => setOpenFolderId(null)}
+        onOpenImage={(img) => { setOpenFolderId(null); setSelected(img); }}
+      />
     </div>
+  );
+}
+
+// Bottom sheet that asks for a folder name when two photos are dropped
+// together. Kept dead simple — name in, Create out.
+function NameFolderSheet({
+  open, count, busy, onCancel, onCreate,
+}: {
+  open: boolean; count: number; busy: boolean; onCancel: () => void; onCreate: (name: string) => void;
+}) {
+  const [name, setName] = useState("");
+  useEffect(() => { if (open) setName(""); }, [open]);
+  const submit = () => { const n = name.trim(); if (n) onCreate(n); };
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onCancel()}>
+      <SheetContent side="bottom" className="rounded-t-3xl p-0">
+        <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40">
+          <FolderPlus className="w-5 h-5 text-primary" />
+          <h2 className="text-base font-semibold flex-1">New folder</h2>
+          <button type="button" onClick={onCancel} className="p-2 -mr-2 rounded-full active:bg-gray-100" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Grouping {count} photos. Everyone on the team will see this folder.
+          </p>
+          <Input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            placeholder="Folder name e.g. 'High Street frontages'"
+            className="h-12 text-base rounded-xl"
+            data-testid="mobile-folder-name-input"
+          />
+          <Button
+            type="button"
+            onClick={submit}
+            disabled={!name.trim() || busy}
+            className="w-full h-12 text-base font-semibold gap-2"
+            data-testid="mobile-folder-create"
+          >
+            {busy ? <><Loader2 className="w-5 h-5 animate-spin" /> Creating…</> : <><FolderPlus className="w-5 h-5" /> Create folder</>}
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// Opens a folder's contents. Tap a photo to edit it; remove one from the
+// folder with its X (the photo itself stays in the library); delete the
+// whole folder from the header.
+function FolderSheet({
+  collectionId, onClose, onOpenImage,
+}: {
+  collectionId: string | null; onClose: () => void; onOpenImage: (img: StudioImage) => void;
+}) {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<{ id: string; name: string; images: any[] }>({
+    queryKey: ["/api/image-studio/collections", collectionId],
+    enabled: !!collectionId,
+  });
+
+  const toStudioImage = (r: any): StudioImage => ({
+    id: r.id, fileName: r.file_name, category: r.category, description: r.description,
+    tags: r.tags, source: r.source, propertyId: r.property_id, brandName: r.brand_name,
+    width: r.width, height: r.height, createdAt: r.created_at,
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (imageId: string) => {
+      if (!collectionId) return;
+      await apiRequest("DELETE", `/api/image-studio/collections/${collectionId}/images/${imageId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", collectionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't remove", description: e?.message, variant: "destructive" }),
+  });
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: async () => {
+      if (!collectionId) return;
+      await apiRequest("DELETE", `/api/image-studio/collections/${collectionId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      toast({ title: "Folder deleted", description: "The photos themselves are still in your library." });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Couldn't delete folder", description: e?.message, variant: "destructive" }),
+  });
+
+  const images = data?.images || [];
+
+  return (
+    <Sheet open={!!collectionId} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="bottom" className="h-[90dvh] p-0 rounded-t-3xl flex flex-col">
+        <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
+          <Folder className="w-5 h-5 text-primary shrink-0" />
+          <h2 className="text-base font-semibold flex-1 truncate">{data?.name || "Folder"}</h2>
+          <button
+            type="button"
+            onClick={() => { if (window.confirm("Delete this folder? The photos stay in your library.")) deleteFolderMutation.mutate(); }}
+            disabled={deleteFolderMutation.isPending}
+            className="p-2 rounded-full active:bg-gray-100 text-red-600"
+            aria-label="Delete folder"
+            data-testid="mobile-folder-delete"
+          >
+            {deleteFolderMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+          </button>
+          <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-gray-100" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          {isLoading ? (
+            <div className="flex items-center justify-center pt-16">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : images.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center mt-10">This folder is empty.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {images.map((r) => (
+                <div key={r.id} className="aspect-square overflow-hidden rounded-xl bg-muted relative">
+                  <button
+                    type="button"
+                    onClick={() => onOpenImage(toStudioImage(r))}
+                    className="block w-full h-full active:opacity-80"
+                    data-testid={`mobile-folder-image-${r.id}`}
+                  >
+                    <img src={`/api/image-studio/${r.id}/thumb`} alt={r.description || r.file_name} className="w-full h-full object-cover" loading="lazy" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeMutation.mutate(r.id)}
+                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white inline-flex items-center justify-center active:bg-black/80"
+                    aria-label="Remove from folder"
+                    data-testid={`mobile-folder-remove-${r.id}`}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
