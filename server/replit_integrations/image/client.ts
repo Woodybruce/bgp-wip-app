@@ -11,11 +11,11 @@ export const ai = new GoogleGenAI({
 
 /**
  * Generate an image and return as base64 data URL.
- * Uses gemini-2.5-flash-image model via Replit AI Integrations.
+ * Uses gemini-3-pro-image-preview model via Replit AI Integrations.
  */
 export async function generateImage(prompt: string): Promise<string> {
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
+    model: "gemini-3-pro-image-preview",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       responseModalities: [Modality.TEXT, Modality.IMAGE],
