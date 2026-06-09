@@ -202,6 +202,12 @@ export default function ImageStudio() {
   const [uploadAddress, setUploadAddress] = useState("");
   const [uploadBrandName, setUploadBrandName] = useState("");
   const [uploadPropertyType, setUploadPropertyType] = useState("");
+  // Upload dialog "Add to folder" picker. uploadFolderId set ⇒ file into that
+  // existing collection; otherwise a non-empty uploadFolderName ⇒ create a new
+  // folder by that name and file into it.
+  const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
+  const [uploadFolderName, setUploadFolderName] = useState("");
+  const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
 
   const [activeSection, setActiveSection] = useState<"library" | "brands">("library");
   const [selectMode, setSelectMode] = useState(false);
@@ -307,19 +313,40 @@ export default function ImageStudio() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: async (formData: FormData) => {
+    mutationFn: async ({ formData, folder }: { formData: FormData; folder?: { id?: string | null; name?: string } | null }) => {
       const res = await fetch("/api/image-studio/upload", {
         method: "POST",
         headers: getAuthHeaders(),
         body: formData,
       });
       if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      const data = await res.json();
+      // File the freshly-uploaded images into a folder if one was chosen
+      // (existing collection by id, or a brand-new one by name).
+      if (folder && (folder.id || folder.name?.trim())) {
+        const rows = Array.isArray(data) ? data : (data?.results || []);
+        const imageIds = rows.map((r: any) => r.id).filter(Boolean);
+        if (imageIds.length) {
+          let collectionId = folder.id || null;
+          if (!collectionId && folder.name?.trim()) {
+            const created = await apiRequest("POST", "/api/image-studio/collections", { name: folder.name.trim() });
+            collectionId = (await created.json()).id;
+          }
+          if (collectionId) {
+            await apiRequest("POST", `/api/image-studio/collections/${collectionId}/images`, { imageIds });
+          }
+        }
+      }
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
       setUploadDialogOpen(false);
+      setUploadFolderId(null);
+      setUploadFolderName("");
       toast({ title: "Upload Complete", description: "Images uploaded successfully" });
     },
     onError: (e: Error) => toast({ title: "Upload Failed", description: e.message, variant: "destructive" }),
@@ -755,9 +782,14 @@ export default function ImageStudio() {
       if (uploadBrandName) formData.append("brandName", uploadBrandName);
       if (uploadBrandSector && uploadBrandSector !== "none") formData.append("brandSector", uploadBrandSector);
       if (uploadPropertyType) formData.append("propertyType", uploadPropertyType);
-      uploadMutation.mutate(formData);
+      uploadMutation.mutate({
+        formData,
+        folder: uploadFolderId
+          ? { id: uploadFolderId }
+          : (uploadFolderName.trim() ? { name: uploadFolderName } : null),
+      });
     },
-    [uploadCategory, uploadArea, uploadTags, uploadAddress, uploadBrandName, uploadBrandSector, uploadPropertyType, uploadMutation]
+    [uploadCategory, uploadArea, uploadTags, uploadAddress, uploadBrandName, uploadBrandSector, uploadPropertyType, uploadFolderId, uploadFolderName, uploadMutation]
   );
 
   // Page-level drag-and-drop. Drop a JPEG / PNG / WebP anywhere on the
@@ -787,7 +819,7 @@ export default function ImageStudio() {
       formData.append("category", dropCategory);
       formData.append("area", "");
       formData.append("tags", "");
-      uploadMutation.mutate(formData);
+      uploadMutation.mutate({ formData, folder: null });
     },
     [selectedCategory, uploadMutation, toast]
   );
@@ -2005,7 +2037,7 @@ export default function ImageStudio() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+      <Dialog open={uploadDialogOpen} onOpenChange={(o) => { setUploadDialogOpen(o); if (!o) { setUploadFolderId(null); setUploadFolderName(""); setFolderDropdownOpen(false); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2026,6 +2058,59 @@ export default function ImageStudio() {
                 </SelectContent>
               </Select>
             </div>
+            {(() => {
+              const q = uploadFolderName.trim().toLowerCase();
+              const matches = q
+                ? collections.filter((c: any) => displayCollectionName(c.name).toLowerCase().includes(q)).slice(0, 8)
+                : [];
+              const exact = collections.some((c: any) => displayCollectionName(c.name).toLowerCase() === q);
+              return (
+                <div className="relative">
+                  <Label>Add to folder (optional)</Label>
+                  <Input
+                    placeholder="Search folders, or type a new name…"
+                    value={uploadFolderName}
+                    onChange={(e) => { setUploadFolderName(e.target.value); setUploadFolderId(null); setFolderDropdownOpen(true); }}
+                    onFocus={() => setFolderDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setFolderDropdownOpen(false), 150)}
+                    data-testid="input-upload-folder"
+                  />
+                  {uploadFolderId ? (
+                    <p className="text-[11px] text-green-600 mt-1">Filing into existing folder</p>
+                  ) : uploadFolderName.trim() ? (
+                    <p className="text-[11px] text-muted-foreground mt-1">Will create a new folder “{uploadFolderName.trim()}”</p>
+                  ) : null}
+                  {folderDropdownOpen && q && (
+                    <div className="absolute z-50 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-md border bg-popover shadow-md">
+                      {matches.map((c: any) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setUploadFolderId(c.id); setUploadFolderName(displayCollectionName(c.name)); setFolderDropdownOpen(false); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center gap-2"
+                          data-testid={`upload-folder-option-${c.id}`}
+                        >
+                          <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="truncate">{displayCollectionName(c.name)}</span>
+                          <span className="ml-auto text-xs text-muted-foreground">{c.image_count || 0}</span>
+                        </button>
+                      ))}
+                      {!exact && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setUploadFolderId(null); setFolderDropdownOpen(false); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center gap-2 border-t"
+                          data-testid="upload-folder-create-new"
+                        >
+                          <Plus className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Create new folder “{uploadFolderName.trim()}”</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div>
               <Label>Address (optional)</Label>
               <Input
