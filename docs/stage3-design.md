@@ -97,3 +97,24 @@ Rollback = flip the env var off. No DB migration needed for the code change itse
 - Filter/sort parity across boards (Workstream P, runs in parallel)
 - Property_unit_id reconciliation UI for the 169 NULL tenancy rows (separate workstream)
 - Engine-collapse (Stage 4), read-through joins (Stage 5), drop legacy status (Stage 6)
+
+## Implementation split
+
+Stage 3 splits cleanly into two independently-shippable pieces:
+
+- **Stage 3a — server flag-gate of auto-deal creation.** Single-point change in
+  `server/routes.ts` (POST /api/available-units). When `UNIFIED_ADD_UNIT=1`, skip the
+  silent pre-SOL deal insert. SOL promotion already handles the no-prior-deal case
+  (routes.ts:4471–4474 — `if (unit.dealId) update else create`). Both existing
+  Add-Unit dialogs continue to work unchanged. Null-safety audit: every reader of
+  `unit.dealId` already uses the null-safe `? : null` pattern. **APPLIED in code on the
+  branch 2026-06-08. Flag still off in prod env — no behaviour change until flipped.**
+
+- **Stage 3b — unified `AddUnitDialog`.** Replaces `UnitFormDialog` (Tracker) and
+  `AddTenancyUnitForm` (Tenancy Schedule) with one shared component. Calls
+  `POST /api/available-units` when `marketing_active=true`, `POST /api/tenancy-schedule/unit`
+  when false. Old dialogs stay as deprecated code until Stage 4. **Not yet built —
+  deserves a fresh head; deal-at-SOL promise depends on 3a flag being flipped first.**
+
+Order of operations: ship 3a → flip flag on staging → flip flag on prod (Tracker stops
+auto-creating ghost deals) → build 3b → ship 3b → flip client flag → deprecate old dialogs.

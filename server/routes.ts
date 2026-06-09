@@ -3373,7 +3373,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Auto-create a backing CRM deal so every tracker row has a source of
       // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
       // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
-      if (!unit.dealId) {
+      //
+      // STAGE 3a (unit spine cleanup): when UNIFIED_ADD_UNIT=1, skip this
+      // entirely. Deals are then born only at Solicitors promotion (the
+      // existing WIP flow at /api/available-units/:id/create-deal, which
+      // already handles a missing prior deal via its else-branch).
+      // Leaves all the other side-effects above (property_units master,
+      // available_units row, leasing_schedule_units row, tenancy spine
+      // mirror) untouched — only the silent pre-SOL deal goes away.
+      const UNIFIED_ADD_UNIT = process.env.UNIFIED_ADD_UNIT === "1";
+      if (!UNIFIED_ADD_UNIT && !unit.dealId) {
         try {
           const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
           // Landlord linkage: prefer the value the user picked on the
