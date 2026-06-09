@@ -262,6 +262,11 @@ export default function ImageStudio() {
   const [aiEditImageId, setAiEditImageId] = useState<string | null>(null);
   const [aiEditImageName, setAiEditImageName] = useState("");
   const [imageVersions, setImageVersions] = useState<Record<string, number>>({});
+  // Bulk "AI Touch Up" — apply one prompt across all selected images
+  // (e.g. the same colour-grade over several angles of a street).
+  const [bulkAiOpen, setBulkAiOpen] = useState(false);
+  const [bulkAiPrompt, setBulkAiPrompt] = useState("");
+  const [bulkAiProgress, setBulkAiProgress] = useState<{ running: boolean; done: number; total: number; failed: number }>({ running: false, done: 0, total: 0, failed: 0 });
 
   // Bulk tag state
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
@@ -667,6 +672,44 @@ export default function ImageStudio() {
       toast({ title: "Edit failed", description: err.message, variant: "destructive" });
     },
   });
+
+  // Apply the same AI touch-up to every selected image, one at a time so
+  // each stays a separate sub-45s request (no batch timeout) and we don't
+  // hammer the image providers. Same prompt ⇒ same provider/treatment, so
+  // a set of street angles comes back consistently graded.
+  const runBulkAiEdit = async () => {
+    const ids = [...selectedIds];
+    const prompt = bulkAiPrompt.trim();
+    if (!ids.length || !prompt) return;
+    setBulkAiProgress({ running: true, done: 0, total: ids.length, failed: 0 });
+    let done = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await apiRequest("POST", "/api/image-studio/ai-edit", { imageId: id, editPrompt: prompt });
+        setImageVersions(prev => ({ ...prev, [id]: Date.now() }));
+      } catch {
+        failed++;
+      }
+      done++;
+      setBulkAiProgress({ running: true, done, total: ids.length, failed });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+    }
+    setBulkAiProgress({ running: false, done, total: ids.length, failed });
+    queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+    const ok = done - failed;
+    toast({
+      title: failed ? `Done — ${ok}/${ids.length} touched up` : `Touched up ${ids.length} images`,
+      description: failed ? `${failed} failed — try those again.` : "Same enhancement applied across the set.",
+      variant: failed ? "destructive" : undefined,
+    });
+    if (!failed) {
+      setBulkAiOpen(false);
+      setBulkAiPrompt("");
+      setSelectMode(false);
+      setSelectedIds(new Set());
+    }
+  };
 
   const revertMutation = useMutation({
     mutationFn: async (imageId: string) => {
@@ -1366,6 +1409,15 @@ export default function ImageStudio() {
                   >
                     <FolderPlus className="h-4 w-4 mr-1" />
                     Add to Collection
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setBulkAiPrompt(""); setBulkAiProgress({ running: false, done: 0, total: 0, failed: 0 }); setBulkAiOpen(true); }}
+                    data-testid="button-bulk-ai-edit"
+                  >
+                    <Sparkles className="h-4 w-4 mr-1" />
+                    AI Touch Up
                   </Button>
                   <div className="flex items-center gap-1.5">
                     <Select value={bulkCategory} onValueChange={setBulkCategory}>
@@ -2749,6 +2801,58 @@ export default function ImageStudio() {
                 <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Processing...</>
               ) : (
                 <><Sparkles className="h-4 w-4 mr-1" /> Apply Touch Up</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkAiOpen} onOpenChange={(o) => { if (!bulkAiProgress.running) setBulkAiOpen(o); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5" /> AI Touch Up · {selectedIds.size} images
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              The same enhancement is applied to every selected image — handy for a set of
+              street angles you want graded consistently.
+            </p>
+            <div>
+              <Label>What changes would you like?</Label>
+              <Textarea
+                placeholder="e.g. Re-light at golden-hour dusk, warmer tone, clean blue sky, remove parked cars"
+                value={bulkAiPrompt}
+                onChange={(e) => setBulkAiPrompt(e.target.value)}
+                rows={3}
+                disabled={bulkAiProgress.running}
+                data-testid="input-bulk-ai-edit-prompt"
+              />
+            </div>
+            {bulkAiProgress.running ? (
+              <p className="text-sm flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Editing {bulkAiProgress.done + 1} of {bulkAiProgress.total}… (~25s each, please keep this open)
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Each image is edited in turn (~25s each), so {selectedIds.size} images takes a few minutes.
+                Originals are kept — every image can still be undone individually.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkAiOpen(false)} disabled={bulkAiProgress.running} data-testid="button-bulk-ai-cancel">Cancel</Button>
+            <Button
+              onClick={runBulkAiEdit}
+              disabled={!bulkAiPrompt.trim() || bulkAiProgress.running || selectedIds.size === 0}
+              data-testid="button-bulk-ai-submit"
+            >
+              {bulkAiProgress.running ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-1" /> {bulkAiProgress.done}/{bulkAiProgress.total}…</>
+              ) : (
+                <><Sparkles className="h-4 w-4 mr-1" /> Apply to {selectedIds.size}</>
               )}
             </Button>
           </DialogFooter>
