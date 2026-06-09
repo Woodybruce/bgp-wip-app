@@ -673,14 +673,24 @@ export default function ImageStudio() {
       const res = await apiRequest("POST", `/api/image-studio/${imageId}/revert`);
       return res.json();
     },
-    onSuccess: (_data, imageId) => {
+    onSuccess: (data, imageId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      const remaining = Number(data?.undoLevelsRemaining || 0);
       setImageVersions(prev => {
         const next = { ...prev };
-        delete next[imageId];
+        if (remaining > 0) {
+          // More amendments to peel back — keep the Undo button visible and
+          // bump the cache-bust token so the restored version shows.
+          next[imageId] = Date.now();
+        } else {
+          delete next[imageId];
+        }
         return next;
       });
-      toast({ title: "Reverted", description: "Image restored to original" });
+      toast({
+        title: "Undone",
+        description: remaining > 0 ? "Reverted the last edit" : "Back to the original image",
+      });
     },
     onError: (err: any) => {
       toast({ title: "Revert failed", description: err.message, variant: "destructive" });
