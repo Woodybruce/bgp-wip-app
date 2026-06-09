@@ -3055,6 +3055,28 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
   });
 
   // Collections CRUD
+  // IDs of images that sit in a hand-made folder (mirrors the client's
+  // isUserFolder filter: no kind, no CRM link, no auto-folder name prefix).
+  // The mobile gallery uses this to show only *unfiled* photos by default.
+  app.get("/api/image-studio/filed-image-ids", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT DISTINCT ci.image_id
+          FROM image_studio_collection_images ci
+          JOIN image_studio_collections c ON c.id = ci.collection_id
+         WHERE c.kind IS NULL
+           AND c.property_id IS NULL
+           AND c.company_id IS NULL
+           AND c.name NOT LIKE 'Pathway · %'
+           AND c.name NOT LIKE 'Brand · %'
+           AND c.name NOT LIKE 'Property · %'
+      `);
+      res.json({ imageIds: result.rows.map((r) => r.image_id) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/image-studio/collections", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { name, description } = req.body;
