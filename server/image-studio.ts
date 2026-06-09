@@ -219,6 +219,40 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
 const IMAGE_DIR = path.join(process.cwd(), "uploads", "image-studio");
 if (!fs.existsSync(IMAGE_DIR)) fs.mkdirSync(IMAGE_DIR, { recursive: true });
 
+// ─── AI touch-up undo stack ───────────────────────────────────────────────
+// Each AI edit pushes the pre-edit version onto a per-image stack so Revert
+// undoes ONE amendment at a time (rather than a single snapshot that jumps
+// straight back to the original). Files are named
+// `undo-<imageId>-<timestamp>-<rand>.png`; the zero-padded ms timestamp is a
+// fixed width, so a lexical filename sort is chronological (oldest → newest).
+// Disk-only, like the original single-snapshot scheme — these don't survive a
+// redeploy, same as before.
+const MAX_UNDO_LEVELS = 15;
+function undoStackPaths(imageId: string): string[] {
+  try {
+    return fs.readdirSync(IMAGE_DIR)
+      .filter((f) => f.startsWith(`undo-${imageId}-`) && f.endsWith(".png"))
+      .sort()
+      .map((f) => path.join(IMAGE_DIR, f));
+  } catch {
+    return [];
+  }
+}
+function pushUndoSnapshot(imageId: string, buffer: Buffer): void {
+  try {
+    const p = path.join(IMAGE_DIR, `undo-${imageId}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}.png`);
+    fs.writeFileSync(p, buffer);
+    // Cap the history so a heavily-iterated image doesn't grow without bound.
+    const stack = undoStackPaths(imageId);
+    while (stack.length > MAX_UNDO_LEVELS) {
+      const oldest = stack.shift();
+      if (oldest) { try { fs.unlinkSync(oldest); } catch {} }
+    }
+  } catch (e: any) {
+    console.warn(`[image-studio] pushUndoSnapshot failed: ${e?.message}`);
+  }
+}
+
 // ─── Durable image storage ────────────────────────────────────────────────
 // Railway redeploys wipe the uploads/ directory, so any image only stored
 // on disk disappears and AI Touch Up / AI Tag break with 'Image file not
@@ -445,11 +479,10 @@ async function runAiEditInBackground(
       : isAtmospheric ? "gemini" : "openai"
     ).toLowerCase();
 
-    // Undo snapshot (PNG) — keeps the Revert button working even when
-    // the edit ran without a connected client.
-    const undoPath = path.join(IMAGE_DIR, `undo-${imageId}.png`);
+    // Push the pre-edit version onto the undo stack so Revert can step back
+    // through each amendment one at a time.
     const undoBuffer = (image.mimeType === "image/png") ? sourceBuffer : await sharp(sourceBuffer).png().toBuffer();
-    fs.writeFileSync(undoPath, undoBuffer);
+    pushUndoSnapshot(imageId, undoBuffer);
 
     const base64 = sourceBuffer.toString("base64");
     const inputMime = image.mimeType || "image/jpeg";
@@ -1929,10 +1962,10 @@ export function registerImageStudioRoutes(app: Express) {
       const sourceBuffer = await readPersistedImage(image.localPath);
       if (!sourceBuffer) return res.status(400).json({ error: "Image file not found. The original image was lost on a deploy — re-capture / re-upload the source image and try again." });
 
-      // Save undo snapshot (normalised to PNG) so the user can revert this edit
-      const undoPath = path.join(IMAGE_DIR, `undo-${imageId}.png`);
+      // Push the pre-edit version onto the undo stack so each amendment can
+      // be reverted one at a time (not jumped straight back to the original).
       const undoBuffer = (image.mimeType === "image/png") ? sourceBuffer : await sharp(sourceBuffer).png().toBuffer();
-      fs.writeFileSync(undoPath, undoBuffer);
+      pushUndoSnapshot(imageId, undoBuffer);
 
       const base64 = sourceBuffer.toString("base64");
       const inputMime = image.mimeType || "image/jpeg";
@@ -2121,10 +2154,17 @@ export function registerImageStudioRoutes(app: Express) {
   app.post("/api/image-studio/:id/revert", requireAuth, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const undoPath = path.join(IMAGE_DIR, `undo-${id}.png`);
-      if (!fs.existsSync(undoPath)) return res.status(404).json({ error: "No undo snapshot available for this image" });
+      // Pop the most-recent snapshot off the stack (newest is last). Fall back
+      // to the legacy single-snapshot file for images edited before this change.
+      const stack = undoStackPaths(id);
+      let undoFile = stack.length ? stack[stack.length - 1] : null;
+      if (!undoFile) {
+        const legacy = path.join(IMAGE_DIR, `undo-${id}.png`);
+        if (fs.existsSync(legacy)) undoFile = legacy;
+      }
+      if (!undoFile) return res.status(404).json({ error: "No undo snapshot available for this image" });
 
-      const undoBuffer = fs.readFileSync(undoPath);
+      const undoBuffer = fs.readFileSync(undoFile);
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
       if (!image) return res.status(404).json({ error: "Image not found" });
 
@@ -2135,7 +2175,18 @@ export function registerImageStudioRoutes(app: Express) {
       const { thumbnail, width, height } = await generateThumbnail(undoBuffer);
       const oldPath = image.localPath;
 
-      const cleanedTags = (image.tags || []).filter(t => !["AI Edited", "gemini", "local", "openai"].includes(t));
+      // Drop just this snapshot, then see whether earlier amendments remain.
+      // Only when the stack is empty have we walked all the way back to the
+      // original — that's when we clear the AI flags so the Revert button
+      // hides. Otherwise the image is still an edited version (one step back)
+      // and stays revertible.
+      try { fs.unlinkSync(undoFile); } catch {}
+      const remaining = undoStackPaths(id).length;
+      const backToOriginal = remaining === 0;
+
+      const cleanedTags = backToOriginal
+        ? (image.tags || []).filter(t => !["AI Edited", "gemini", "local", "openai"].includes(t))
+        : (image.tags || []);
       const [updated] = await db.update(imageStudioImages).set({
         mimeType: "image/png",
         fileSize: undoBuffer.length,
@@ -2144,13 +2195,14 @@ export function registerImageStudioRoutes(app: Express) {
         thumbnailData: thumbnail,
         localPath: filePath,
         tags: cleanedTags,
-        source: image.source === "ai-edited" ? "uploaded" : (image.source || "uploaded"),
+        source: backToOriginal
+          ? (image.source === "ai-edited" ? "uploaded" : (image.source || "uploaded"))
+          : "ai-edited",
       }).where(eq(imageStudioImages.id, id)).returning();
 
       if (oldPath && oldPath !== filePath) { try { fs.unlinkSync(oldPath); } catch {} }
-      try { fs.unlinkSync(undoPath); } catch {}
 
-      res.json(updated);
+      res.json({ ...updated, undoLevelsRemaining: remaining });
     } catch (e: any) {
       console.error("[image-studio] revert error:", e.message);
       res.status(500).json({ error: e.message });
