@@ -135,3 +135,30 @@ pending_receipt rows:
 - 4 × TfL £1.50 → categorised / "Travel"
 - 1 × Mortimers Cafe £7.80 (was stuck personal) → approved / "Personal (deduct from payroll)"
 Awaiting list trimmed from 16 → 7 real receipts.
+
+## Stage 3 — IN PROGRESS (code on branch, flags off in prod)
+
+### Stage 3a — server: flag-gate auto-deal-on-Add-Unit
+`server/routes.ts` POST /api/available-units now skips the silent
+auto-deal-creation block when `UNIFIED_ADD_UNIT=1`. SOL promotion
+already handles the no-prior-deal case via its else-branch. Every
+reader of unit.dealId is already null-safe. Code on branch; flag
+off in prod = no behaviour change yet.
+
+### Stage 3b — client: unified Add-Unit dialog
+New `client/src/components/unified-add-unit-dialog.tsx`. One dialog,
+two modes (tracker / tenancy), 'Being marketed' toggle picks
+destination endpoint. Intentionally smaller than legacy
+UnitFormDialog — heavy fields move to SOL promotion. Mounted on
+Letting Tracker + Tenancy Schedule behind
+`VITE_UNIFIED_ADD_UNIT=1` (independent of server flag).
+Old dialogs stay as fallback. Typecheck clean.
+
+### To activate in prod
+1. Set `UNIFIED_ADD_UNIT=1` and `VITE_UNIFIED_ADD_UNIT=1` in Railway
+   service variables.
+2. Trigger redeploy (env change usually does it automatically).
+3. Smoke-test Add Unit on both Letting Tracker and a Property's
+   Tenancy Schedule. Toggle marketing on/off, verify the unit
+   appears on the right board(s).
+4. To roll back: unset the env vars and redeploy.
