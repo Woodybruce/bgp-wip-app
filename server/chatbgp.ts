@@ -6090,7 +6090,7 @@ async function executeCrmToolRaw(
       console.log("[chatbgp] Generating image with Nano Banana:", fullPrompt.substring(0, 100));
       // Same model-fallback chain as image-studio.ts — try the current
       // preview model first, then fall back if the API rejects it.
-      const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+      const MODELS = ["gemini-3-pro-image-preview", "gemini-3-pro-image", "gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
       let response: any = null;
       let lastErr: any = null;
       for (const model of MODELS) {

@@ -450,7 +450,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
   }
 }
 
-const GEMINI_IMAGE_MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+const GEMINI_IMAGE_MODELS = ["gemini-3-pro-image-preview", "gemini-3-pro-image", "gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
 
 async function generateImageWithGemini(element: any): Promise<void> {
   const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;

@@ -75,7 +75,7 @@ async function generateWithGemini(prompt: string, _size: string): Promise<Buffer
     if (baseUrl) aiOpts.httpOptions = { apiVersion: "", baseUrl };
     const ai = new GoogleGenAI(aiOpts);
 
-    const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+    const MODELS = ["gemini-3-pro-image-preview", "gemini-3-pro-image", "gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
     for (const model of MODELS) {
       try {
         console.log(`[image-studio] Gemini generate: trying ${model}`);
@@ -171,7 +171,7 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
     if (baseUrl) aiOpts.httpOptions = { apiVersion: "", baseUrl };
     const ai = new GoogleGenAI(aiOpts);
 
-    const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+    const MODELS = ["gemini-3-pro-image-preview", "gemini-3-pro-image", "gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
     for (const model of MODELS) {
       try {
         console.log(`[image-studio] Gemini edit: trying ${model}`);
