@@ -53,6 +53,16 @@ import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { Checkbox } from "@/components/ui/checkbox";
 
+// Auto-generated collections are stored with a type prefix
+// ("Property · ", "Brand · ", "Pathway · ") so they read sensibly in the
+// DB and in flat lists. In the Collections grid they're already grouped by
+// kind under a section header, so the prefix is redundant and just eats the
+// width of the real name — strip it for display only (no data change).
+const COLLECTION_PREFIX = /^(Property|Brand|Pathway) · /;
+function displayCollectionName(name?: string | null): string {
+  return (name || "").replace(COLLECTION_PREFIX, "");
+}
+
 const CATEGORIES = [
   "All",
   "Brands",
@@ -1370,7 +1380,7 @@ export default function ImageStudio() {
                     ← Collections
                   </button>
                   <span className="text-muted-foreground">/</span>
-                  <h3 className="text-lg font-semibold" data-testid="text-collection-name">{viewingCollection?.name || "Loading..."}</h3>
+                  <h3 className="text-lg font-semibold" data-testid="text-collection-name" title={viewingCollection?.name || undefined}>{viewingCollection ? displayCollectionName(viewingCollection.name) : "Loading..."}</h3>
                   {viewingCollection?.description && (
                     <span className="text-sm text-muted-foreground ml-2">{viewingCollection.description}</span>
                   )}
@@ -1584,7 +1594,7 @@ export default function ImageStudio() {
                           </div>
                         </div>
                         <div className="p-3">
-                          <p className="font-medium text-sm truncate">{col.name}</p>
+                          <p className="font-medium text-sm truncate" title={col.name}>{displayCollectionName(col.name)}</p>
                           {col.description && (
                             <p className="text-xs text-muted-foreground truncate mt-0.5">{col.description}</p>
                           )}
@@ -1915,7 +1925,7 @@ export default function ImageStudio() {
                   <SelectContent>
                     {collections.map((col: any) => (
                       <SelectItem key={col.id} value={col.id}>
-                        {col.name} ({col.image_count || 0} images)
+                        {displayCollectionName(col.name)} ({col.image_count || 0} images)
                       </SelectItem>
                     ))}
                   </SelectContent>
