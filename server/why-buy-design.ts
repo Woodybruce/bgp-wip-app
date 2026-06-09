@@ -10,6 +10,7 @@
 import type { Express, Request, Response } from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { buildBrief } from "./why-buy-gamma";
@@ -17,6 +18,13 @@ import { preferencesPromptFor } from "./document-preferences";
 import { applyEdit, type EditType } from "./html-edit";
 
 const PREFERENCES_SCOPE = "why_buy";
+
+// Fingerprint of the brief a deck version was generated from — lets the
+// in-app pane flag when the pathway data has drifted since the latest
+// version was made (stale deck → offer a one-click regenerate).
+function briefHash(brief: string): string {
+  return crypto.createHash("sha256").update(brief).digest("hex");
+}
 
 // BGP logo — embedded into the deck. We keep the STORED html using short
 // __BGP_LOGO_*__ placeholders (Claude reliably preserves a short token across
@@ -158,6 +166,34 @@ export function setupWhyBuyDesignRoutes(app: Express) {
     }
   });
 
+  // Staleness — is the latest version built from data that has since
+  // changed? Registered BEFORE the /:id route so "stale" isn't captured as
+  // an id. Compares a fingerprint of the current brief to the hash stored
+  // when the latest version was generated. Versions with no stored hash
+  // (generated before this feature) report not-stale, so we never nag a
+  // hand-edited legacy deck into a destructive regenerate.
+  app.get("/api/property-pathway/:runId/why-buy-design/stale", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT brief_hash FROM why_buy_designs WHERE run_id = $1 ORDER BY version DESC LIMIT 1`,
+        [req.params.runId]
+      );
+      if (!rows[0]) return res.json({ hasDeck: false, stale: false });
+      const latestHash: string | null = rows[0].brief_hash || null;
+      if (!latestHash) return res.json({ hasDeck: true, stale: false });
+      let currentHash: string;
+      try {
+        const built = await buildBrief(req.params.runId);
+        currentHash = briefHash(built.brief);
+      } catch {
+        return res.json({ hasDeck: true, stale: false });
+      }
+      res.json({ hasDeck: true, stale: latestHash !== currentHash });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Get a specific version (full HTML)
   app.get("/api/property-pathway/:runId/why-buy-design/:id", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -218,9 +254,9 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       const version = next.rows[0].v;
 
       const inserted = await pool.query(
-        `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_snapshot, created_by_user_id)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id, version, created_at`,
-        [req.params.runId, version, "Initial generation from brief", html, JSON.stringify({ title: built.title, address: built.address }), userId]
+        `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_snapshot, brief_hash, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id, version, created_at`,
+        [req.params.runId, version, "Initial generation from brief", html, JSON.stringify({ title: built.title, address: built.address }), briefHash(built.brief), userId]
       );
       res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at });
     } catch (e: any) {
@@ -239,10 +275,14 @@ export function setupWhyBuyDesignRoutes(app: Express) {
 
       // Find the base HTML — caller-provided id wins, else latest.
       let baseRows = baseVersionId
-        ? await pool.query("SELECT html, version FROM why_buy_designs WHERE id = $1 AND run_id = $2", [baseVersionId, req.params.runId])
-        : await pool.query("SELECT html, version FROM why_buy_designs WHERE run_id = $1 ORDER BY version DESC LIMIT 1", [req.params.runId]);
+        ? await pool.query("SELECT html, version, brief_hash FROM why_buy_designs WHERE id = $1 AND run_id = $2", [baseVersionId, req.params.runId])
+        : await pool.query("SELECT html, version, brief_hash FROM why_buy_designs WHERE run_id = $1 ORDER BY version DESC LIMIT 1", [req.params.runId]);
       if (!baseRows.rows[0]) return res.status(400).json({ error: "No base design — generate first" });
       const baseHtml = baseRows.rows[0].html;
+      // Iterations are design edits, not data changes — carry the base
+      // version's brief fingerprint forward so manual tweaks don't reset
+      // staleness tracking.
+      const baseHash = baseRows.rows[0].brief_hash || null;
 
       // House preferences also flow into iterations so the team's
       // accumulated direction stays in scope as the deck evolves — the
@@ -269,9 +309,9 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       );
       const version = next.rows[0].v;
       const inserted = await pool.query(
-        `INSERT INTO why_buy_designs (run_id, version, prompt, html, created_by_user_id)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id, version, created_at`,
-        [req.params.runId, version, prompt, html, userId]
+        `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_hash, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, version, created_at`,
+        [req.params.runId, version, prompt, html, baseHash, userId]
       );
       res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at });
     } catch (e: any) {
@@ -296,11 +336,12 @@ export function setupWhyBuyDesignRoutes(app: Express) {
     try {
       const userId = req.session?.userId || (req as any).tokenUserId || null;
       const baseRows = await pool.query(
-        "SELECT html FROM why_buy_designs WHERE id = $1 AND run_id = $2",
+        "SELECT html, brief_hash FROM why_buy_designs WHERE id = $1 AND run_id = $2",
         [req.params.id, req.params.runId],
       );
       if (!baseRows.rows[0]) return res.status(404).json({ error: "version not found" });
       const baseHtml = baseRows.rows[0].html as string;
+      const baseHash = baseRows.rows[0].brief_hash || null;
 
       const result = applyEdit(baseHtml, String(editId), type as EditType, value);
       if (!result.changed) {
@@ -317,9 +358,9 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       const version = next.rows[0].v;
       const editLabel = type === "image" ? `Swapped image: ${editId}` : `Edited text: ${editId}`;
       const inserted = await pool.query(
-        `INSERT INTO why_buy_designs (run_id, version, prompt, html, created_by_user_id)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id, version, created_at`,
-        [req.params.runId, version, editLabel, result.html, userId],
+        `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_hash, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, version, created_at`,
+        [req.params.runId, version, editLabel, result.html, baseHash, userId],
       );
       res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at, label: editLabel });
     } catch (e: any) {
@@ -372,9 +413,9 @@ export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ doc
     );
     const version = next.rows[0].v;
     const inserted = await pool.query(
-      `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_snapshot)
-       VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`,
-      [runId, version, "Stage 9 — Pathway auto-generation", html, JSON.stringify({ title: built.title, address: built.address })]
+      `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_snapshot, brief_hash)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id`,
+      [runId, version, "Stage 9 — Pathway auto-generation", html, JSON.stringify({ title: built.title, address: built.address }), briefHash(built.brief)]
     );
     designVersionId = inserted.rows[0].id;
   } catch (e: any) {

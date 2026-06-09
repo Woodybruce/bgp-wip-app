@@ -3289,6 +3289,9 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
   const [iteratePrompt, setIteratePrompt] = useState("");
   const [busy, setBusy] = useState<"generate" | "iterate" | "edit" | null>(null);
   const [pickerEditId, setPickerEditId] = useState<string | null>(null);
+  // True when the pathway data has changed since the latest deck version was
+  // generated (see /why-buy-design/stale). Drives the regenerate banner.
+  const [stale, setStale] = useState(false);
   // Zoom for the iframe preview. 1.0 = native; values below 1 shrink the
   // deck so the whole thing (all slides) fits in the preview box, values
   // above 1 magnify a slice. Clamped to 0.4–2.0 so the controls can't
@@ -3299,14 +3302,27 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
   const reload = useCallback(async () => {
     try {
       const r = await fetch(`/api/property-pathway/${runId}/why-buy-design`);
-      if (!r.ok) return;
-      const data = await r.json();
-      setVersions(data);
-      if (!activeId && data.length > 0) setActiveId(data[0].id);
+      if (r.ok) {
+        const data = await r.json();
+        setVersions(data);
+        if (!activeId && data.length > 0) setActiveId(data[0].id);
+      }
+    } catch { /* ignore */ }
+    try {
+      const sr = await fetch(`/api/property-pathway/${runId}/why-buy-design/stale`);
+      if (sr.ok) setStale(!!(await sr.json()).stale);
     } catch { /* ignore */ }
   }, [runId, activeId]);
 
+  // Re-check on mount and whenever the tab regains focus — catches the
+  // common case of correcting the pathway via ChatBGP elsewhere, then
+  // coming back to find the deck flagged stale.
   useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    const onFocus = () => { reload(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reload]);
 
   // PATCH a single editable element. Auto-save: server returns a new
   // version, we switch to it. Undo = go back one.
@@ -3426,6 +3442,7 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
       const d = await r.json();
       await reload();
       setActiveId(d.id);
+      setStale(false);
       toast({ title: "Deck generated", description: `Version ${d.version} ready` });
     } catch (e: any) {
       toast({ title: "Generation failed", description: e?.message || "", variant: "destructive" });
@@ -3530,6 +3547,19 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
           )}
         </div>
       </div>
+
+      {stale && versions.length > 0 && (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-800 dark:bg-amber-950/30">
+          <div className="flex items-center gap-2 text-[11px] text-amber-800 dark:text-amber-200">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>Pathway data has changed since this deck was generated. Regenerate to refresh it — a fresh generation replaces manual deck edits (older versions stay in the dropdown).</span>
+          </div>
+          <Button size="sm" variant="outline" onClick={generate} disabled={busy !== null} className="h-7 shrink-0 border-amber-400 text-xs">
+            {busy === "generate" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1 h-3.5 w-3.5" />}
+            Regenerate
+          </Button>
+        </div>
+      )}
 
       {versions.length === 0 ? (
         <div className="text-xs text-muted-foreground italic text-center py-6">

@@ -371,6 +371,10 @@ import { pool } from "./db";
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS why_buy_designs_run_idx ON why_buy_designs (run_id, version DESC)`,
+    // brief_hash = fingerprint of the brief the deck version was generated
+    // from, so the in-app pane can flag a deck as stale when the pathway
+    // data has drifted since.
+    `ALTER TABLE why_buy_designs ADD COLUMN IF NOT EXISTS brief_hash TEXT`,
     // Pension contributions — Royal London CSV import per pay run.
     `CREATE TABLE IF NOT EXISTS pension_contributions (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
