@@ -768,7 +768,7 @@ export default function ImageStudio() {
   const handleFilesDrop = useCallback(
     (files: FileList | File[]) => {
       const imageFiles = Array.from(files).filter(f =>
-        f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name)
+        f.type.startsWith("image/") || /\.(jpe?g|jfif|png|webp|gif|tiff?|avif|heic|heif)$/i.test(f.name)
       );
       if (imageFiles.length === 0) {
         toast({

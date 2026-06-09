@@ -290,7 +290,8 @@ const imageUpload = multer({
     // sheet) as application/octet-stream. Trust a known image extension
     // — the HEIC→JPEG conversion downstream catches anything that isn't
     // really an image and reports a clear error.
-    if (/\.(heic|heif|jpe?g|png|webp|gif|tiff?)$/i.test(name)) return cb(null, true);
+    // .jfif is just JPEG (common from Windows / Outlook); .avif is HEIF-family.
+    if (/\.(heic|heif|jpe?g|jfif|png|webp|gif|tiff?|avif)$/i.test(name)) return cb(null, true);
     cb(new Error(`File type not supported (mime=${mime || "unknown"}, name=${name || "unnamed"})`));
   },
 });
@@ -401,8 +402,15 @@ async function ensureTable() {
 }
 
 async function generateThumbnail(buffer: Buffer): Promise<{ thumbnail: string; width: number; height: number }> {
-  const metadata = await sharp(buffer).metadata();
-  const thumbBuffer = await sharp(buffer)
+  // limitInputPixels:false so large scans / panoramas / floor-plan exports
+  // don't trip sharp's ~268MP guard and fail the whole upload. failOn:"none"
+  // lets sharp best-effort a slightly-truncated or odd-profile file instead
+  // of throwing. .rotate() bakes in EXIF orientation so portrait photos
+  // aren't sideways in the thumbnail.
+  const opts = { limitInputPixels: false, failOn: "none" as const };
+  const metadata = await sharp(buffer, opts).metadata();
+  const thumbBuffer = await sharp(buffer, opts)
+    .rotate()
     .resize(400, 400, { fit: "cover", position: "centre" })
     .jpeg({ quality: 70 })
     .toBuffer();
@@ -1278,7 +1286,10 @@ export function registerImageStudioRoutes(app: Express) {
           const isHeic = /heic|heif/i.test(workingMime) || /\.heic$|\.heif$/i.test(original);
           if (isHeic) {
             try {
-              workingBuffer = await sharp(file.buffer).jpeg({ quality: 92 }).toBuffer();
+              workingBuffer = await sharp(file.buffer, { limitInputPixels: false, failOn: "none" })
+                .rotate()
+                .jpeg({ quality: 92 })
+                .toBuffer();
               workingMime = "image/jpeg";
               console.log(`[image-studio/upload] file=${original} HEIC → JPEG conversion ok (${workingBuffer.length} bytes)`);
             } catch (heicErr: any) {
