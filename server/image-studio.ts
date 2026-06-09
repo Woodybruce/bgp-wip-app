@@ -65,7 +65,7 @@ async function generateWithDallE3(prompt: string, size: string): Promise<Buffer 
   }
 }
 
-async function generateWithGemini(prompt: string, _size: string): Promise<Buffer | null> {
+async function generateWithGemini(prompt: string, size: string): Promise<Buffer | null> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
   if (!apiKey) return null;
@@ -82,10 +82,16 @@ async function generateWithGemini(prompt: string, _size: string): Promise<Buffer
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90000);
         try {
+          // Gemini 3 Pro Image renders native 4K + honours aspect ratio; the
+          // 2.5 fallbacks don't accept imageConfig, so only send it to gemini-3.
+          const config: any = { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any };
+          if (model.startsWith("gemini-3")) {
+            config.imageConfig = { imageSize: "4K", aspectRatio: size === "portrait" ? "9:16" : size === "square" ? "1:1" : "16:9" };
+          }
           const response = await ai.models.generateContent({
             model,
             contents: [{ role: "user", parts: [{ text: prompt }] }],
-            config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
+            config,
           });
           clearTimeout(timeout);
 
@@ -178,6 +184,10 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90000);
         try {
+          // Gemini 3 Pro Image can output edits at up to 4K. No aspectRatio —
+          // edits must preserve the source framing. 2.5 fallbacks skip imageConfig.
+          const config: any = { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any };
+          if (model.startsWith("gemini-3")) config.imageConfig = { imageSize: "4K" };
           const response = await ai.models.generateContent({
             model,
             contents: [{
@@ -187,7 +197,7 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
                 { text: prompt },
               ],
             }],
-            config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
+            config,
           });
           clearTimeout(timeout);
 
@@ -439,10 +449,9 @@ async function runAiEditInBackground(
     const sourceBuffer = await readPersistedImage(image.localPath);
     if (!sourceBuffer) throw new Error("Image file not found on disk");
 
-    const isAtmospheric = /\b(lighting|lit|dusk|dawn|night|evening|morning|sunset|sunrise|golden hour|mood|moody|weather|rain|snow|fog|cloud(y|s)?|sunny|overcast|colour\s*grade|color\s*grade|warmth|tone|bright(er|en)?|darken|saturat\w*|contrast|hdr|polish|enhance|sharpen|filter)\b/i.test(editPrompt);
     const preferred = (typeof preferProvider === "string" && preferProvider
       ? preferProvider
-      : isAtmospheric ? "gemini" : "openai"
+      : "gemini"
     ).toLowerCase();
 
     // Undo snapshot (PNG) — keeps the Revert button working even when
@@ -1908,17 +1917,14 @@ export function registerImageStudioRoutes(app: Express) {
       const trimmedEdit = (editPrompt || "").trim();
       if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
       if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
-      // Provider selection:
-      //   1. If caller explicitly passed preferProvider, honour it.
-      //   2. Otherwise, pick by prompt keywords — Gemini for atmospheric
-      //      tweaks (lighting/mood/weather/colour grade), OpenAI for
-      //      everything else. gpt-image-1 is the stronger default for
-      //      placemaking CGI work (compositional adds, text on signage,
-      //      multi-element placement). Gemini is the fallback either way.
-      const isAtmospheric = /\b(lighting|lit|dusk|dawn|night|evening|morning|sunset|sunrise|golden hour|mood|moody|weather|rain|snow|fog|cloud(y|s)?|sunny|overcast|colour\s*grade|color\s*grade|warmth|tone|bright(er|en)?|darken|saturat\w*|contrast|hdr|polish|enhance|sharpen|filter)\b/i.test(trimmedEdit);
+      // Provider selection: honour an explicit preferProvider, otherwise
+      // default to Gemini (Nano Banana Pro) — now the strongest option for
+      // both atmospheric tweaks and placemaking CGI work (compositional
+      // adds, signage text, multi-element placement). OpenAI gpt-image-1 is
+      // the fallback.
       const preferred = (typeof preferProvider === "string" && preferProvider
         ? preferProvider
-        : isAtmospheric ? "gemini" : "openai"
+        : "gemini"
       ).toLowerCase();
 
       const userId = req.session?.userId || (req as any).tokenUserId;
