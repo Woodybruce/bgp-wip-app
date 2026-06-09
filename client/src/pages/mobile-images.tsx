@@ -45,8 +45,19 @@ interface Collection {
   id: string;
   name: string;
   kind: string | null;
+  property_id: string | null;
+  company_id: string | null;
   image_count: number;
   cover_thumbnail: string | null; // full data URL, or null
+}
+
+// Auto-generated folders (pathway runs, brand + property umbrellas) carry a
+// `kind`, a CRM link, or a "Pathway · / Brand · / Property · " name prefix.
+// Older pathway rows predate the `kind` column but always keep the name
+// prefix, so we match on all three. Everything left is a hand-made folder.
+const SYSTEM_FOLDER_NAME = /^(Pathway|Brand|Property) · /;
+function isUserFolder(c: Collection): boolean {
+  return c.kind == null && !c.property_id && !c.company_id && !SYSTEM_FOLDER_NAME.test(c.name);
 }
 
 // What a drop lands on: another photo (→ make a new folder) or an existing
@@ -183,7 +194,7 @@ export default function MobileImages() {
     queryKey: ["/api/image-studio/collections"],
   });
   const folders = useMemo(
-    () => allCollections.filter((c) => c.kind == null),
+    () => allCollections.filter(isUserFolder),
     [allCollections],
   );
 
@@ -701,7 +712,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
     queryKey: ["/api/image-studio/collections"],
     enabled: open,
   });
-  const folders = useMemo(() => collections.filter((c) => c.kind == null), [collections]);
+  const folders = useMemo(() => collections.filter(isUserFolder), [collections]);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   useEffect(() => { if (open) { setCreating(false); setNewName(""); } }, [open]);
