@@ -454,8 +454,14 @@ export default function MobileImages() {
               onPointerMove={onTilePointerMove}
               onPointerUp={onTilePointerUp}
               onPointerCancel={finishDrag}
-              style={{ touchAction: "pan-y" }}
-              className={`aspect-square overflow-hidden rounded-xl bg-muted active:opacity-80 text-left relative transition-all ${
+              onContextMenu={(e) => e.preventDefault()}
+              style={{
+                touchAction: "pan-y",
+                userSelect: "none",
+                WebkitUserSelect: "none",
+                WebkitTouchCallout: "none",
+              } as React.CSSProperties}
+              className={`aspect-square overflow-hidden rounded-xl bg-muted active:opacity-80 text-left relative transition-all select-none ${
                 isDragging ? "opacity-40 scale-95" : ""
               } ${isDropTarget ? "ring-2 ring-primary shadow-lg scale-[1.02]" : ""}`}
               data-testid={`mobile-image-${img.id}`}
@@ -463,8 +469,9 @@ export default function MobileImages() {
               <img
                 src={`/api/image-studio/${img.id}/thumb`}
                 alt={img.description || img.fileName}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover pointer-events-none select-none"
                 loading="lazy"
+                draggable={false}
               />
               {(img.tags || []).includes("ai-pending") ? (
                 <>
@@ -686,10 +693,140 @@ function FolderSheet({
   );
 }
 
+// Tap-driven path to grouping (works on every device — no drag needed):
+// from an open photo, pick an existing folder or spin up a new one.
+function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose: () => void; imageId: string }) {
+  const { toast } = useToast();
+  const { data: collections = [] } = useQuery<Collection[]>({
+    queryKey: ["/api/image-studio/collections"],
+    enabled: open,
+  });
+  const folders = useMemo(() => collections.filter((c) => c.kind == null), [collections]);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  useEffect(() => { if (open) { setCreating(false); setNewName(""); } }, [open]);
+
+  const addMutation = useMutation({
+    mutationFn: async (folderId: string) => {
+      await apiRequest("POST", `/api/image-studio/collections/${folderId}/images`, { imageIds: [imageId] });
+      return folderId;
+    },
+    onSuccess: (folderId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", folderId] });
+      toast({ title: "Added to folder" });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Couldn't add", description: e?.message, variant: "destructive" }),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const r = await apiRequest("POST", "/api/image-studio/collections", { name });
+      const c = (await r.json()) as { id: string };
+      await apiRequest("POST", `/api/image-studio/collections/${c.id}/images`, { imageIds: [imageId] });
+      return c;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      toast({ title: "Folder created", description: "Everyone on the team can see it." });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Couldn't create folder", description: e?.message, variant: "destructive" }),
+  });
+
+  const submitNew = () => { const n = newName.trim(); if (n) createMutation.mutate(n); };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="bottom" className="h-[70dvh] p-0 rounded-t-3xl flex flex-col">
+        <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
+          <Folder className="w-5 h-5 text-primary" />
+          <h2 className="text-base font-semibold flex-1">Add to folder</h2>
+          <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-gray-100" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {creating ? (
+            <div className="space-y-3 p-1">
+              <Input
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submitNew(); }}
+                placeholder="Folder name e.g. 'High Street frontages'"
+                className="h-12 text-base rounded-xl"
+                data-testid="mobile-folder-pick-name"
+              />
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" className="h-12 flex-1" onClick={() => setCreating(false)}>
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  className="h-12 flex-1 gap-2 font-semibold"
+                  onClick={submitNew}
+                  disabled={!newName.trim() || createMutation.isPending}
+                  data-testid="mobile-folder-pick-create"
+                >
+                  {createMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <FolderPlus className="w-5 h-5" />}
+                  Create
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="w-full flex items-center gap-3 rounded-xl border border-dashed border-primary/50 px-3 py-3 text-left active:bg-muted/40 text-primary"
+                data-testid="mobile-folder-pick-new"
+              >
+                <FolderPlus className="w-5 h-5" />
+                <span className="text-sm font-semibold">New folder…</span>
+              </button>
+              {folders.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center mt-6">No folders yet — make one above.</p>
+              ) : (
+                folders.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => addMutation.mutate(f.id)}
+                    disabled={addMutation.isPending}
+                    className="w-full flex items-center gap-3 rounded-xl border border-border/60 px-3 py-2.5 text-left bg-white dark:bg-card active:bg-muted/40 disabled:opacity-60"
+                    data-testid={`mobile-folder-pick-${f.id}`}
+                  >
+                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-muted shrink-0 flex items-center justify-center">
+                      {f.cover_thumbnail ? (
+                        <img src={f.cover_thumbnail} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <Folder className="w-5 h-5 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{f.name}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {f.image_count} {f.image_count === 1 ? "photo" : "photos"}
+                      </div>
+                    </div>
+                  </button>
+                ))
+              )}
+            </>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose: () => void }) {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState("");
   const [attachOpen, setAttachOpen] = useState(false);
+  const [folderPickOpen, setFolderPickOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -934,6 +1071,16 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
               <Button
                 type="button"
                 variant="outline"
+                onClick={() => setFolderPickOpen(true)}
+                className="h-12"
+                aria-label="Add to a folder"
+                data-testid="mobile-image-folder"
+              >
+                <FolderPlus className="w-4 h-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
                 onClick={() => setAttachOpen(true)}
                 className="h-12"
                 aria-label="Attach to property, brand or pathway"
@@ -985,6 +1132,11 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
             <AttachPickerSheet
               open={attachOpen}
               onClose={() => setAttachOpen(false)}
+              imageId={image.id}
+            />
+            <FolderPickerSheet
+              open={folderPickOpen}
+              onClose={() => setFolderPickOpen(false)}
               imageId={image.id}
             />
             <ImageZoomLightbox
