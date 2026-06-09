@@ -2479,7 +2479,7 @@ function ManualTitleDialog({
         <DialogHeader>
           <DialogTitle>Set the official title for {run.address}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           <p className="text-[12px] text-muted-foreground">
             Pick a candidate from the list below or type/paste the title number you have from another source. The override is mirrored onto the linked CRM property and locks Stage 1 from overwriting it on a re-run.
           </p>
