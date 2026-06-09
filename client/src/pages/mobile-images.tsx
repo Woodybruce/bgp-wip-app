@@ -166,15 +166,24 @@ export default function MobileImages() {
     setAnyPending(hasPending);
   }, [images]);
 
+  // Image ids that already live in a hand-made folder — used to keep the
+  // default grid showing only *unfiled* photos.
+  const { data: filed } = useQuery<{ imageIds: string[] }>({
+    queryKey: ["/api/image-studio/filed-image-ids"],
+  });
+  const filedSet = useMemo(() => new Set(filed?.imageIds || []), [filed]);
+
   // Mobile gallery is intentionally scoped to photos that came off the
   // phone — keeps the grid tight and focused on Woody's own captures
   // instead of the 6k+ brand library. Everything is still saved to the
   // central Image Studio (just filtered on the way out). Trashed images
-  // are also filtered here so soft-deleted ones vanish immediately.
+  // are also filtered here so soft-deleted ones vanish immediately. Photos
+  // already filed into a folder drop out of this default view too.
   const filtered = useMemo(() => {
     const own = images.filter((i) =>
       ((i.tags || []).includes("phone-upload") || i.category === "Phone Uploads")
       && !(i.tags || []).includes("trashed")
+      && !filedSet.has(i.id)
     );
     const q = search.trim().toLowerCase();
     if (!q) return own;
@@ -185,7 +194,7 @@ export default function MobileImages() {
       ].filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q);
     });
-  }, [images, search]);
+  }, [images, search, filedSet]);
 
   // ─── Folders (shared Image Studio collections) ─────────────────────────
   // Only ad-hoc, user-made folders (kind === null) — pathway/property/brand
@@ -213,6 +222,7 @@ export default function MobileImages() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
       setPendingGroup(null);
       toast({ title: "Folder created", description: "Everyone on the team can see it." });
     },
@@ -228,12 +238,59 @@ export default function MobileImages() {
     onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", vars.folderId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
       const name = folders.find((f) => f.id === vars.folderId)?.name;
       toast({ title: name ? `Added to ${name}` : "Added to folder" });
     },
     onError: (e: any) => {
       toast({ title: "Couldn't add to folder", description: e?.message, variant: "destructive" });
     },
+  });
+
+  // ─── Inline folder view ────────────────────────────────────────────────
+  // Tapping a folder swaps the default (unfiled) grid for that folder's
+  // contents, right here in the page — no pop-out sheet.
+  const openFolder = useMemo(
+    () => folders.find((f) => f.id === openFolderId) || null,
+    [folders, openFolderId],
+  );
+  const { data: folderData, isLoading: folderLoading } = useQuery<{ id: string; name: string; images: any[] }>({
+    queryKey: ["/api/image-studio/collections", openFolderId],
+    enabled: !!openFolderId,
+  });
+  const folderImages = folderData?.images || [];
+
+  const toStudioImage = (r: any): StudioImage => ({
+    id: r.id, fileName: r.file_name, category: r.category, description: r.description,
+    tags: r.tags, source: r.source, propertyId: r.property_id, brandName: r.brand_name,
+    width: r.width, height: r.height, createdAt: r.created_at,
+  });
+
+  const removeFromFolderMutation = useMutation({
+    mutationFn: async (imageId: string) => {
+      if (!openFolderId) return;
+      await apiRequest("DELETE", `/api/image-studio/collections/${openFolderId}/images/${imageId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", openFolderId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't remove", description: e?.message, variant: "destructive" }),
+  });
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: async () => {
+      if (!openFolderId) return;
+      await apiRequest("DELETE", `/api/image-studio/collections/${openFolderId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
+      toast({ title: "Folder deleted", description: "The photos themselves are still in your library." });
+      setOpenFolderId(null);
+    },
+    onError: (e: any) => toast({ title: "Couldn't delete folder", description: e?.message, variant: "destructive" }),
   });
 
   // ─── Long-press to drag, drop to group ─────────────────────────────────
@@ -340,27 +397,54 @@ export default function MobileImages() {
         className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
       >
-        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-gray-100">
-          <ChevronLeft className="w-6 h-6" />
-        </Link>
-        <h1 className="text-2xl font-semibold flex-1">Images</h1>
-        {/* iOS Safari is unreliable about firing a hidden-input change event
-            when triggered programmatically with .click(). Using a real
-            <label htmlFor> + sr-only input is the rock-solid pattern — iOS
-            treats the label tap as a direct user gesture on the input. */}
-        <label
-          htmlFor="mobile-images-upload-input"
-          aria-disabled={uploading}
-          className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-full bg-primary text-primary-foreground text-sm font-semibold active:scale-95 transition-transform cursor-pointer ${uploading ? "opacity-60 pointer-events-none" : ""}`}
-          data-testid="mobile-images-upload"
-        >
-          {uploading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Camera className="w-4 h-4" />
-          )}
-          {uploading ? "Uploading…" : "Add photos"}
-        </label>
+        {openFolder ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setOpenFolderId(null)}
+              className="p-2 -ml-2 rounded-full active:bg-gray-100"
+              aria-label="Back to all photos"
+              data-testid="mobile-folder-back"
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+            <h1 className="text-2xl font-semibold flex-1 truncate">{openFolder.name}</h1>
+            <button
+              type="button"
+              onClick={() => { if (window.confirm("Delete this folder? The photos stay in your library.")) deleteFolderMutation.mutate(); }}
+              disabled={deleteFolderMutation.isPending}
+              className="p-2 -mr-2 rounded-full active:bg-gray-100 text-red-600"
+              aria-label="Delete folder"
+              data-testid="mobile-folder-delete"
+            >
+              {deleteFolderMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+            </button>
+          </>
+        ) : (
+          <>
+            <Link href="/" className="p-2 -ml-2 rounded-full active:bg-gray-100">
+              <ChevronLeft className="w-6 h-6" />
+            </Link>
+            <h1 className="text-2xl font-semibold flex-1">Images</h1>
+            {/* iOS Safari is unreliable about firing a hidden-input change event
+                when triggered programmatically with .click(). Using a real
+                <label htmlFor> + sr-only input is the rock-solid pattern — iOS
+                treats the label tap as a direct user gesture on the input. */}
+            <label
+              htmlFor="mobile-images-upload-input"
+              aria-disabled={uploading}
+              className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-full bg-primary text-primary-foreground text-sm font-semibold active:scale-95 transition-transform cursor-pointer ${uploading ? "opacity-60 pointer-events-none" : ""}`}
+              data-testid="mobile-images-upload"
+            >
+              {uploading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Camera className="w-4 h-4" />
+              )}
+              {uploading ? "Uploading…" : "Add photos"}
+            </label>
+          </>
+        )}
         {/* sr-only keeps the input in the DOM + accessible (so iOS treats it
             as visible enough to deliver the change event) but invisible. */}
         <input
@@ -379,6 +463,46 @@ export default function MobileImages() {
         />
       </div>
 
+      {openFolder ? (
+        folderLoading ? (
+          <div className="flex items-center justify-center pt-16">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : folderImages.length === 0 ? (
+          <div className="px-4 mt-8 text-center">
+            <Folder className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">This folder is empty.</p>
+            <p className="text-[11px] text-muted-foreground/70 mt-1">
+              Open a photo and tap the folder button to add it here, or drag one onto this folder.
+            </p>
+          </div>
+        ) : (
+          <div className="px-3 mt-3 grid grid-cols-2 gap-2">
+            {folderImages.map((r) => (
+              <div key={r.id} className="aspect-square overflow-hidden rounded-xl bg-muted relative">
+                <button
+                  type="button"
+                  onClick={() => setSelected(toStudioImage(r))}
+                  className="block w-full h-full active:opacity-80"
+                  data-testid={`mobile-folder-image-${r.id}`}
+                >
+                  <img src={`/api/image-studio/${r.id}/thumb`} alt={r.description || r.file_name} className="w-full h-full object-cover" loading="lazy" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeFromFolderMutation.mutate(r.id)}
+                  className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white inline-flex items-center justify-center active:bg-black/80"
+                  aria-label="Remove from folder"
+                  data-testid={`mobile-folder-remove-${r.id}`}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+      <>
       <div className="px-4 mt-3 mb-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -441,11 +565,17 @@ export default function MobileImages() {
         <div className="px-4 mt-8 text-center">
           <ImageIcon className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
           <p className="text-sm text-muted-foreground">
-            {search ? "No phone photos match that search" : "No photos uploaded from your phone yet"}
+            {search
+              ? "No phone photos match that search"
+              : folders.length > 0
+                ? "All your photos are filed into folders"
+                : "No photos uploaded from your phone yet"}
           </p>
           {!search && (
             <p className="text-[11px] text-muted-foreground/70 mt-1">
-              Tap Add photos to take one or pick several — AI edits land here too.
+              {folders.length > 0
+                ? "Open a folder above to see them, or tap Add photos for more."
+                : "Tap Add photos to take one or pick several — AI edits land here too."}
             </p>
           )}
         </div>
@@ -517,6 +647,8 @@ export default function MobileImages() {
           })}
         </div>
       )}
+      </>
+      )}
 
       {dragId && (
         <p className="text-center text-[11px] text-muted-foreground mt-4 px-6">
@@ -541,11 +673,6 @@ export default function MobileImages() {
         busy={createGroupMutation.isPending}
         onCancel={() => setPendingGroup(null)}
         onCreate={(name) => pendingGroup && createGroupMutation.mutate({ name, imageIds: pendingGroup })}
-      />
-      <FolderSheet
-        collectionId={openFolderId}
-        onClose={() => setOpenFolderId(null)}
-        onOpenImage={(img) => { setOpenFolderId(null); setSelected(img); }}
       />
     </div>
   );
@@ -599,111 +726,6 @@ function NameFolderSheet({
   );
 }
 
-// Opens a folder's contents. Tap a photo to edit it; remove one from the
-// folder with its X (the photo itself stays in the library); delete the
-// whole folder from the header.
-function FolderSheet({
-  collectionId, onClose, onOpenImage,
-}: {
-  collectionId: string | null; onClose: () => void; onOpenImage: (img: StudioImage) => void;
-}) {
-  const { toast } = useToast();
-  const { data, isLoading } = useQuery<{ id: string; name: string; images: any[] }>({
-    queryKey: ["/api/image-studio/collections", collectionId],
-    enabled: !!collectionId,
-  });
-
-  const toStudioImage = (r: any): StudioImage => ({
-    id: r.id, fileName: r.file_name, category: r.category, description: r.description,
-    tags: r.tags, source: r.source, propertyId: r.property_id, brandName: r.brand_name,
-    width: r.width, height: r.height, createdAt: r.created_at,
-  });
-
-  const removeMutation = useMutation({
-    mutationFn: async (imageId: string) => {
-      if (!collectionId) return;
-      await apiRequest("DELETE", `/api/image-studio/collections/${collectionId}/images/${imageId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", collectionId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
-    },
-    onError: (e: any) => toast({ title: "Couldn't remove", description: e?.message, variant: "destructive" }),
-  });
-
-  const deleteFolderMutation = useMutation({
-    mutationFn: async () => {
-      if (!collectionId) return;
-      await apiRequest("DELETE", `/api/image-studio/collections/${collectionId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
-      toast({ title: "Folder deleted", description: "The photos themselves are still in your library." });
-      onClose();
-    },
-    onError: (e: any) => toast({ title: "Couldn't delete folder", description: e?.message, variant: "destructive" }),
-  });
-
-  const images = data?.images || [];
-
-  return (
-    <Sheet open={!!collectionId} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="bottom" className="h-[90dvh] p-0 rounded-t-3xl flex flex-col">
-        <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
-          <Folder className="w-5 h-5 text-primary shrink-0" />
-          <h2 className="text-base font-semibold flex-1 truncate">{data?.name || "Folder"}</h2>
-          <button
-            type="button"
-            onClick={() => { if (window.confirm("Delete this folder? The photos stay in your library.")) deleteFolderMutation.mutate(); }}
-            disabled={deleteFolderMutation.isPending}
-            className="p-2 rounded-full active:bg-gray-100 text-red-600"
-            aria-label="Delete folder"
-            data-testid="mobile-folder-delete"
-          >
-            {deleteFolderMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
-          </button>
-          <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-gray-100" aria-label="Close">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-3">
-          {isLoading ? (
-            <div className="flex items-center justify-center pt-16">
-              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : images.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center mt-10">This folder is empty.</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {images.map((r) => (
-                <div key={r.id} className="aspect-square overflow-hidden rounded-xl bg-muted relative">
-                  <button
-                    type="button"
-                    onClick={() => onOpenImage(toStudioImage(r))}
-                    className="block w-full h-full active:opacity-80"
-                    data-testid={`mobile-folder-image-${r.id}`}
-                  >
-                    <img src={`/api/image-studio/${r.id}/thumb`} alt={r.description || r.file_name} className="w-full h-full object-cover" loading="lazy" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeMutation.mutate(r.id)}
-                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white inline-flex items-center justify-center active:bg-black/80"
-                    aria-label="Remove from folder"
-                    data-testid={`mobile-folder-remove-${r.id}`}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
 // Tap-driven path to grouping (works on every device — no drag needed):
 // from an open photo, pick an existing folder or spin up a new one.
 function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose: () => void; imageId: string }) {
@@ -725,6 +747,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
     onSuccess: (folderId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", folderId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
       toast({ title: "Added to folder" });
       onClose();
     },
@@ -740,6 +763,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
       toast({ title: "Folder created", description: "Everyone on the team can see it." });
       onClose();
     },
