@@ -2187,6 +2187,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           propertyId: { type: "string", description: "Optional CRM property id if this already has a record" },
           confirmedTitleNumber: { type: "string", description: "The Land Registry title number the USER has explicitly picked from the candidates returned by an earlier call. Only set this after the user has confirmed which title to base the pathway on." },
           skipLandRegConfirmation: { type: "boolean", description: "Set true ONLY when (a) LandReg returned no candidates and the user explicitly said to proceed without a title, or (b) the user has explicitly said 'skip the land reg check'. Never set this on the first call." },
+          forceNew: { type: "boolean", description: "Set true ONLY when the user explicitly wants a brand-new, fresh pathway for an address that ALREADY has one (e.g. 'start a new one from scratch', 'ignore the existing investigation'). Bypasses the dedupe that would otherwise reuse the existing run for this address. Pass it on every call in that flow (the LandReg lookup call AND the confirmedTitleNumber call). Leave unset by default so we never spawn accidental duplicates." },
         },
         required: ["address"],
       },
@@ -11715,26 +11716,34 @@ export function setupChatBGPRoutes(app: Express) {
         const postcode = tcArgs.postcode ? String(tcArgs.postcode).trim() : null;
         const confirmedTitleNumber = tcArgs.confirmedTitleNumber ? String(tcArgs.confirmedTitleNumber).trim().toUpperCase() : null;
         const skipLandReg = !!tcArgs.skipLandRegConfirmation;
+        const forceNew = !!tcArgs.forceNew;
 
-        // Dedupe (same logic as POST /api/property-pathway/start) — same postcode
-        // or aggressively-normalised address wins. Prevents duplicate runs when
-        // ChatBGP spawns a new investigation for an address we already track.
+        // Dedupe — mirrors POST /api/property-pathway/start. Require an
+        // ADDRESS match (postcode is a tie-breaker only); postcode alone is
+        // far too loose — buildings sharing a postcode (e.g. 3-4 and 5 The
+        // Pavement, or several units on one SW1Y 4DG) would otherwise collapse
+        // into a single run + CRM link. `forceNew` skips dedupe entirely so the
+        // user can deliberately start a fresh investigation for an address that
+        // already has one.
         const normaliseAddr = (s: string) =>
           s.trim().toLowerCase().replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-").replace(/[.,]/g, "").replace(/\s+/g, " ");
         const normalisedAddr = normaliseAddr(address);
         const normalisedPostcode = (postcode || "").replace(/\s+/g, "").toUpperCase();
-        const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
-        const match = existing.find((r) => {
-          const rAddr = normaliseAddr(r.address || "");
-          const rPostcode = (r.postcode || "").replace(/\s+/g, "").toUpperCase();
-          if (normalisedPostcode && rPostcode) return rPostcode === normalisedPostcode;
-          return rAddr === normalisedAddr;
-        });
-        if (match) {
-          return {
-            data: { runId: match.id, address: match.address, currentStage: match.currentStage, existing: true, nextStep: `Existing investigation reused. Call advance_property_pathway to continue from stage ${match.currentStage}.` },
-            action: { type: "navigate", path: `/property-pathway?runId=${match.id}` },
-          };
+        if (!forceNew) {
+          const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
+          const match = existing.find((r) => {
+            const rAddr = normaliseAddr(r.address || "");
+            const rPostcode = (r.postcode || "").replace(/\s+/g, "").toUpperCase();
+            if (rAddr !== normalisedAddr) return false;
+            if (normalisedPostcode && rPostcode && rPostcode !== normalisedPostcode) return false;
+            return true;
+          });
+          if (match) {
+            return {
+              data: { runId: match.id, address: match.address, currentStage: match.currentStage, existing: true, nextStep: `Existing investigation reused for this address. Call advance_property_pathway to continue from stage ${match.currentStage}. If the user explicitly wants a fresh investigation from scratch instead, call start_property_pathway again with forceNew: true.` },
+              action: { type: "navigate", path: `/property-pathway?runId=${match.id}` },
+            };
+          }
         }
 
         // ── LAND REGISTRY GATE ──────────────────────────────────────────
