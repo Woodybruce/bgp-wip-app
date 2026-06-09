@@ -125,3 +125,13 @@ Migration 0035 run against prod. UPDATE 29. Result:
 Stage 2 is now COMPLETE: structure live, back-fill done where automatable, one-live-deal
 rule enforced, tenant-rep distinction made. Stage 3 (unified Add-Unit + deal-at-SOL,
 code change) is next.
+
+## Mobile Expenses fixes — APPLIED 2026-06-08
+
+Code: PATCH /api/expenses/:id now advances status on isPersonal flip; Revolut
+ingestion auto-categorises £0 + TfL at source. One-shot cleanup of existing
+pending_receipt rows:
+- 4 × £0 (Anthropic ×2, Google, Microsoft Store) → categorised / "Auth / £0"
+- 4 × TfL £1.50 → categorised / "Travel"
+- 1 × Mortimers Cafe £7.80 (was stuck personal) → approved / "Personal (deduct from payroll)"
+Awaiting list trimmed from 16 → 7 real receipts.
