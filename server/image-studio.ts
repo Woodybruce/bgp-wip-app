@@ -184,10 +184,11 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90000);
         try {
-          // Gemini 3 Pro Image can output edits at up to 4K. No aspectRatio —
-          // edits must preserve the source framing. 2.5 fallbacks skip imageConfig.
+          // Edits run at the model's default resolution. Requesting 4K here
+          // pushed Gemini 3 Pro past the ~45s request timeout (→ 504 + a
+          // headers-already-sent crash on the late response). 4K stays on the
+          // from-scratch generate path, which is less latency-sensitive.
           const config: any = { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any };
-          if (model.startsWith("gemini-3")) config.imageConfig = { imageSize: "4K" };
           const response = await ai.models.generateContent({
             model,
             contents: [{
@@ -2019,9 +2020,15 @@ export function registerImageStudioRoutes(app: Express) {
         try { fs.unlinkSync(oldPath); } catch {}
       }
 
+      // The edit is now saved. If the request already timed out (504) while a
+      // slow provider finished, the response is gone — skip it (writing would
+      // throw ERR_HTTP_HEADERS_SENT). The client picks up the saved edit on
+      // its next refresh.
+      if (res.headersSent) return;
       res.json({ ...updated, provider });
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
+      if (res.headersSent) return;
       res.status(500).json({ error: e.message });
     }
   });
@@ -2911,6 +2918,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         console.warn(`[capture-enhance] AI enhancement failed for ${location}, returning raw only`);
       }
 
+      if (res.headersSent) return;
       res.json({
         raw: rawRecord,
         enhanced: enhancedRecord,
@@ -2920,6 +2928,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
       });
     } catch (e: any) {
       console.error("[capture-enhance] Error:", e.message);
+      if (res.headersSent) return;
       res.status(500).json({ error: e.message });
     }
   });
