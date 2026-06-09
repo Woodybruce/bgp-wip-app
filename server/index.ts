@@ -2901,6 +2901,11 @@ app.use((req, res, next) => {
     // paginated Graph API calls. Routinely 45s+. Don't 504 it mid-pass
     // and leave half the users unsynced.
     timeoutMs = 180000;
+  } else if (req.path.includes('/image-studio/upload') || req.path.includes('/image-studio/capture-pdf')) {
+    // A batch of iPhone HEICs is decoded via pure-JS (WASM) libheif and
+    // resized with sharp — ~3s/photo, so 20 of them blows past 45s. PDFs
+    // are rasterised page-by-page. Give both room to finish.
+    timeoutMs = 180000;
   }
   const timeout = setTimeout(() => {
     if (!res.headersSent) {

@@ -1418,6 +1418,18 @@ export default function ImageStudio() {
                   )}
                   <div className="flex-1" />
                   <Button
+                    size="sm"
+                    onClick={() => {
+                      // Pre-target this folder so uploaded photos file straight in.
+                      setUploadFolderId(viewingCollectionId);
+                      setUploadFolderName(viewingCollection ? displayCollectionName(viewingCollection.name) : "");
+                      setUploadDialogOpen(true);
+                    }}
+                    data-testid="button-upload-to-collection"
+                  >
+                    <Upload className="h-4 w-4 mr-1" /> Upload here
+                  </Button>
+                  <Button
                     variant="destructive"
                     size="sm"
                     onClick={() => {
