@@ -1286,12 +1286,16 @@ export function registerImageStudioRoutes(app: Express) {
           const isHeic = /heic|heif/i.test(workingMime) || /\.heic$|\.heif$/i.test(original);
           if (isHeic) {
             try {
-              workingBuffer = await sharp(file.buffer, { limitInputPixels: false, failOn: "none" })
-                .rotate()
-                .jpeg({ quality: 92 })
-                .toBuffer();
+              // sharp's prebuilt binaries ship WITHOUT a HEIC/HEIF decoder
+              // (libheif codec licensing), so sharp(file.buffer) throws
+              // "Support for this compression format has not been built in"
+              // on every iPhone photo. Decode with the pure-JS WASM libheif
+              // (heic-convert) instead, then hand the JPEG to sharp as normal.
+              const heicConvert = (await import("heic-convert")).default;
+              const jpeg = await heicConvert({ buffer: file.buffer, format: "JPEG", quality: 0.92 });
+              workingBuffer = Buffer.from(jpeg);
               workingMime = "image/jpeg";
-              console.log(`[image-studio/upload] file=${original} HEIC → JPEG conversion ok (${workingBuffer.length} bytes)`);
+              console.log(`[image-studio/upload] file=${original} HEIC → JPEG (heic-convert) ok (${workingBuffer.length} bytes)`);
             } catch (heicErr: any) {
               throw new Error(`HEIC conversion failed (${heicErr?.message}). On iPhone, Settings > Camera > Formats > Most Compatible avoids this.`);
             }
