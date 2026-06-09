@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { UnifiedAddUnitDialog, UNIFIED_ADD_UNIT_ENABLED } from "@/components/unified-add-unit-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -450,6 +451,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
   const [showAddUnit, setShowAddUnit] = useState(false);
+  const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -711,7 +713,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
               {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
             </Button>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
               <Plus className="w-3 h-3 mr-1" />Add Unit
             </Button>
             {!onFullBoard && (
@@ -760,7 +762,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
           <Button
@@ -862,6 +864,14 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
           </div>
         ))}
       </div>
+
+      {/* Stage 3b — unified Add-Unit dialog (behind VITE_UNIFIED_ADD_UNIT). */}
+      <UnifiedAddUnitDialog
+        open={unifiedAddOpen}
+        onOpenChange={setUnifiedAddOpen}
+        mode="tenancy"
+        fixedPropertyId={propertyId}
+      />
 
       {showAddUnit && (
         <AddTenancyUnitForm

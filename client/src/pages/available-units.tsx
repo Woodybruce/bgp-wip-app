@@ -33,6 +33,7 @@ import { useState, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
+import { UnifiedAddUnitDialog, UNIFIED_ADD_UNIT_ENABLED } from "@/components/unified-add-unit-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
@@ -319,6 +320,7 @@ export default function AvailableUnitsPage() {
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
   const [deleteItem, setDeleteItem] = useState<AvailableUnit | null>(null);
   const [matchItem, setMatchItem] = useState<AvailableUnit | null>(null);
@@ -1021,7 +1023,20 @@ export default function AvailableUnitsPage() {
             {teamUnits.length} unit{teamUnits.length !== 1 ? "s" : ""}
           </p>
         </div>
-        <Button onClick={() => { setForm(emptyForm); setCreateOpen(true); }} data-testid="button-add-unit">
+        <Button
+          onClick={() => {
+            // Stage 3b feature flag — when on, the new unified dialog opens
+            // instead of the legacy UnitFormDialog. Old dialog stays code-
+            // present for fallback / Stage 4 cleanup.
+            if (UNIFIED_ADD_UNIT_ENABLED) {
+              setUnifiedAddOpen(true);
+            } else {
+              setForm(emptyForm);
+              setCreateOpen(true);
+            }
+          }}
+          data-testid="button-add-unit"
+        >
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
       </div>
@@ -1703,6 +1718,13 @@ export default function AvailableUnitsPage() {
         </ScrollableTable>
       </Card>
       )}
+
+      {/* Stage 3b — unified Add-Unit dialog (behind VITE_UNIFIED_ADD_UNIT). */}
+      <UnifiedAddUnitDialog
+        open={unifiedAddOpen}
+        onOpenChange={setUnifiedAddOpen}
+        mode="tracker"
+      />
 
       <UnitFormDialog
         open={createOpen}
