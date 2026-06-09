@@ -2910,6 +2910,12 @@ app.use((req, res, next) => {
     // resized with sharp — ~3s/photo, so 20 of them blows past 45s. PDFs
     // are rasterised page-by-page. Give both room to finish.
     timeoutMs = 180000;
+  } else if (req.path.includes('/image-studio/ai-edit') || req.path.includes('/image-studio/ai-generate') || req.path.includes('/image-studio/capture-and-enhance')) {
+    // Gemini image edit/generate runs to its own 90s abort (editWithGemini),
+    // so the route has to outlast it — the 45s default was 504ing mid-edit and
+    // leaving an ERR_HTTP_HEADERS_SENT crash when the late response landed.
+    // (We also drop 4K on edits to keep them quick; this is the safety margin.)
+    timeoutMs = 120000;
   }
   const timeout = setTimeout(() => {
     if (!res.headersSent) {
