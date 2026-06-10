@@ -429,7 +429,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     return Math.round(headline * (termMonths - freeMonths) / termMonths);
   })();
 
-  const numericFields: { label: string; value: number | null | undefined; format?: "currency" | "number" | "percent" }[] = [
+  const numericFields: { label: string; value: number | string | null | undefined; format?: "currency" | "number" | "percent" }[] = [
     { label: "Pricing", value: deal.pricing, format: "currency" },
     { label: "Headline Rent", value: deal.rentPa, format: "currency" },
     { label: "Net Effective Rent", value: netEffectiveRent, format: "currency" },

@@ -210,16 +210,23 @@ function parseTable(lines: string[]): JSX.Element | null {
 
   return (
     <div className="overflow-x-auto my-2">
-      <table>
+      {/* w-max lets the table take its natural width and scroll inside the
+          wrapper — without it the 340px chat panel starves the columns and
+          the bubble's break-words wraps cells letter-by-letter. */}
+      <table className="w-max min-w-full">
         <thead>
           <tr>
-            {headers.map((h, i) => <th key={i}>{parseInline(h, `th-${i}`)}</th>)}
+            {headers.map((h, i) => (
+              <th key={i} className="whitespace-nowrap text-left align-bottom">{parseInline(h, `th-${i}`)}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((row, ri) => (
             <tr key={ri}>
-              {row.map((cell, ci) => <td key={ci}>{parseInline(cell, `td-${ri}-${ci}`)}</td>)}
+              {row.map((cell, ci) => (
+                <td key={ci} className="break-normal align-top max-w-[280px]">{parseInline(cell, `td-${ri}-${ci}`)}</td>
+              ))}
             </tr>
           ))}
         </tbody>

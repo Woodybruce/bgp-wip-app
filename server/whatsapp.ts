@@ -465,11 +465,15 @@ export function setupWhatsAppRoutes(app: Express) {
 
   app.post("/api/whatsapp/webhook", async (req: Request, res: Response) => {
     const config = getWhatsAppConfig();
-    if (config.appSecret) {
-      if (!verifyWebhookSignature(req, config.appSecret)) {
-        console.warn("WhatsApp webhook signature verification failed");
-        return res.sendStatus(403);
-      }
+    // Fail closed: without an app secret we can't verify the payload came
+    // from Meta, so reject rather than ingest unsigned posts.
+    if (!config.appSecret) {
+      console.warn("WhatsApp webhook rejected: app secret not configured — set it to re-enable inbound messages");
+      return res.sendStatus(403);
+    }
+    if (!verifyWebhookSignature(req, config.appSecret)) {
+      console.warn("WhatsApp webhook signature verification failed");
+      return res.sendStatus(403);
     }
 
     res.sendStatus(200);

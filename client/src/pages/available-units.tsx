@@ -67,27 +67,10 @@ const LOCATION_COLORS: Record<string, string> = {
   "Wales": "bg-red-600",
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  REP: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
-  AVA: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  NEG: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  SOL: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  EXC: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
-  COM: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  WIT: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
-  INV: "bg-emerald-200 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200",
-};
-
-const STATUS_LABEL_COLORS: Record<string, string> = {
-  REP: "bg-violet-500",
-  AVA: "bg-emerald-500",
-  NEG: "bg-blue-500",
-  SOL: "bg-amber-500",
-  EXC: "bg-violet-600",
-  COM: "bg-green-500",
-  WIT: "bg-gray-500",
-  INV: "bg-emerald-600",
-};
+// Status colours come from the shared module so the tracker, Deals board
+// and property summary all paint the same code the same hue (these used
+// to be three diverging local palettes).
+import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS, DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@/lib/deal-status-colors";
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
   "E": "bg-blue-500",
@@ -623,9 +606,11 @@ export default function AvailableUnitsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) =>
-      apiRequest("PATCH", `/api/available-units/${id}`, data),
-    onSuccess: () => {
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      const res = await apiRequest("PATCH", `/api/available-units/${id}`, data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       // Master fields (floor/sqft/useClass/condition/epcRating/unitName) flow to
       // property_units server-side, so refresh that cache too.
@@ -636,7 +621,11 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property"] });
       setEditItem(null);
-      toast({ title: "Unit updated" });
+      if (data?.mirrorWarning) {
+        toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      } else {
+        toast({ title: "Unit updated" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -671,25 +660,38 @@ export default function AvailableUnitsPage() {
 
   const bulkStatusMutation = useMutation({
     mutationFn: async ({ ids, status }: { ids: string[]; status: string }) => {
-      await Promise.all(ids.map(id => apiRequest("PATCH", `/api/available-units/${id}`, { marketingStatus: status })));
+      const results = await Promise.all(ids.map(async id => {
+        const res = await apiRequest("PATCH", `/api/available-units/${id}`, { marketingStatus: status });
+        return res.json();
+      }));
+      return results;
     },
-    onSuccess: () => {
+    onSuccess: (results: any[]) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       // Status PATCH triggers the 4-way mirror server-side — refresh the
       // sibling boards so Deals + Leasing Schedule + Tenancy reflect.
       invalidateDealCaches();
       setSelectedIds(new Set());
-      toast({ title: "Status updated" });
+      const warned = results.find(r => r?.mirrorWarning);
+      if (warned) {
+        toast({ title: "Cross-board sync warning", description: warned.mirrorWarning, variant: "destructive" });
+      } else {
+        toast({ title: "Status updated" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const dealInlineUpdate = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: unknown }) => {
-      await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+      const res = await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       invalidateDealCaches();
+      if (data?.mirrorWarning) {
+        toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      }
     },
     onError: (e: any) => toast({ title: "Error saving", description: e.message, variant: "destructive" }),
   });
@@ -835,7 +837,7 @@ export default function AvailableUnitsPage() {
       // dropdown shows a real value for older flipped deals.
       dealType: (existingDeal?.dealType === "Letting" ? "New Letting" : existingDeal?.dealType) || "New Letting",
       team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
-      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "",
+      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "",
       tenantId: existingDeal?.tenantId || "",
       tenantName: crmCompanies.find(c => c.id === existingDeal?.tenantId)?.name || "",
       tenantEntityId: (existingDeal as any)?.tenantEntityId || "",
@@ -875,7 +877,7 @@ export default function AvailableUnitsPage() {
     } else {
       // No existing split — fall back to picked agent at 85%; FeeAllocationEditor
       // auto-injects BGP House at 15% to make a complete 100%.
-      const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "";
+      const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "";
       setWipFeeRows(initialAgent ? [{
         agentName: initialAgent,
         allocationType: "percentage",

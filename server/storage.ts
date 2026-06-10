@@ -1072,8 +1072,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCrmDeal(id: string): Promise<void> {
+    const { tenancyScheduleUnits } = await import("@shared/schema");
     await db.transaction(async (tx) => {
       await tx.update(crmRequirementsLeasing).set({ dealId: null }).where(eq(crmRequirementsLeasing.dealId, id));
+      // Unlink (not delete) the unit-spine rows pointing at this deal —
+      // otherwise the Letting Tracker / rent roll keep a dangling deal_id
+      // and their rows silently drop off the status mirror.
+      await tx.update(availableUnits).set({ dealId: null }).where(eq(availableUnits.dealId, id));
+      await tx.update(tenancyScheduleUnits).set({ dealId: null }).where(eq(tenancyScheduleUnits.dealId, id));
       await tx.delete(crmDealLeads).where(eq(crmDealLeads.dealId, id));
       await tx.delete(crmCompanyDeals).where(eq(crmCompanyDeals.dealId, id));
       await tx.delete(crmContactDeals).where(eq(crmContactDeals.dealId, id));
@@ -1327,10 +1333,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteAvailableUnit(id: string): Promise<void> {
-    const { unitMarketingFiles } = await import("@shared/schema");
+    const { unitMarketingFiles, unitViewings, unitOffers, tenancyScheduleUnits } = await import("@shared/schema");
     const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
     await db.transaction(async (tx) => {
       await tx.delete(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
+      await tx.delete(unitViewings).where(eq(unitViewings.unitId, id));
+      await tx.delete(unitOffers).where(eq(unitOffers.unitId, id));
+      // Clear the rent roll's back-reference so it doesn't point at a
+      // deleted tracker row.
+      await tx.update(tenancyScheduleUnits).set({ lettingTrackerUnitId: null }).where(eq(tenancyScheduleUnits.lettingTrackerUnitId, id));
       await tx.delete(availableUnits).where(eq(availableUnits.id, id));
     });
     for (const f of files) {

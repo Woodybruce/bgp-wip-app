@@ -3530,12 +3530,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Three-way status mirror: when the marketing status changes on the
       // Letting Tracker, propagate to the linked crm_deal and to the
       // leasing-schedule row that shares this unit's tenancy_unit_id.
+      let mirrorWarning: string | null = null;
       if ("marketingStatus" in partial) {
         try {
           const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
           await mirrorFromAvailableUnit(req.params.id, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
         } catch (e: any) {
           console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
+          mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
         }
       }
 
@@ -3559,7 +3561,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ).catch((e: any) => console.warn("[available-units] tenancy_unit_id re-stamp failed:", e?.message));
       }
 
-      res.json(unit);
+      res.json(mirrorWarning ? { ...(unit as any), mirrorWarning } : unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to update unit" });
@@ -3568,7 +3570,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteAvailableUnit(req.params.id);
+      // Add Unit auto-creates a stub deal at AVA alongside the unit row.
+      // If that deal is still at AVA when the unit is deleted, remove it
+      // too — otherwise it lingers on the boards with no unit behind it.
+      // Deals that progressed past AVA are kept (real pipeline history)
+      // and just lose their unit link via deleteAvailableUnit.
+      const unitId = String(req.params.id);
+      const unitRow = await storage.getAvailableUnit(unitId);
+      await storage.deleteAvailableUnit(unitId);
+      if (unitRow?.dealId) {
+        try {
+          const linkedDeal = await storage.getCrmDeal(unitRow.dealId);
+          const { legacyToCode } = await import("@shared/deal-status");
+          if (linkedDeal && legacyToCode(linkedDeal.status) === "AVA") {
+            await storage.deleteCrmDeal(unitRow.dealId);
+          }
+        } catch (e: any) {
+          console.warn(`[available-units DELETE] stub deal cleanup failed for ${unitRow.dealId}:`, e?.message);
+        }
+      }
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });

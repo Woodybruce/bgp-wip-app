@@ -258,42 +258,47 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     // Four-way status mirror: status changes propagate to available_units,
     // crm_deals (bucket-aware so EXC isn't dragged back to SOL) and the
     // tenancy spine (Occupied/Vacant).
+    let mirrorWarning: string | null = null;
     if ("status" in body) {
       try {
         const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
         await mirrorFromLeasingSchedule(req.params.id, body.status, { pool, reason: "leasing_schedule.PUT" });
       } catch (e: any) {
         console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
+        mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Deals board failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
       }
     }
 
-    // Push lease-date edits back to the canonical tenancy row. Reads on
-    // the Leasing Schedule pull dates via the live_lease_* overlay from
-    // tenancy, so without this round-trip the user could edit a date
-    // here and find it masked by the (stale) tenancy date on next load.
+    // Push lease-date and rent edits back to the canonical tenancy row.
+    // Reads on the Leasing Schedule pull these via the live_* overlay from
+    // tenancy, so without this round-trip the user could edit a value
+    // here and find it masked by the (stale) tenancy value on next load.
+    // Rent maps to passing_rent_pa — the rent roll's actual rent.
     // Best-effort; the join requires a tenancy_unit_id link.
-    const dateFieldMap: Record<string, string> = {
+    const tenancyFieldMap: Record<string, string> = {
       lease_expiry: "lease_expiry",
       lease_break:  "break_date",
       rent_review:  "next_review_date",
+      rent_pa:      "passing_rent_pa",
     };
-    const dateUpdates: Array<{ col: string; val: any }> = [];
-    for (const [src, tgt] of Object.entries(dateFieldMap)) {
-      if (src in body) dateUpdates.push({ col: tgt, val: body[src] === "" ? null : body[src] });
+    const tenancyUpdates: Array<{ col: string; val: any }> = [];
+    for (const [src, tgt] of Object.entries(tenancyFieldMap)) {
+      if (src in body) tenancyUpdates.push({ col: tgt, val: body[src] === "" ? null : body[src] });
     }
-    if (dateUpdates.length > 0 && existingUnit.tenancy_unit_id) {
+    if (tenancyUpdates.length > 0 && existingUnit.tenancy_unit_id) {
       try {
-        const sets = dateUpdates.map((u, i) => `${u.col} = $${i + 2}`).join(", ");
+        const sets = tenancyUpdates.map((u, i) => `${u.col} = $${i + 2}`).join(", ");
         await pool.query(
           `UPDATE tenancy_schedule_units SET ${sets}, updated_at = NOW() WHERE id = $1`,
-          [existingUnit.tenancy_unit_id, ...dateUpdates.map(u => u.val)],
+          [existingUnit.tenancy_unit_id, ...tenancyUpdates.map(u => u.val)],
         );
       } catch (e: any) {
-        console.warn(`[leasing] date mirror to tenancy failed for ${req.params.id}:`, e?.message);
+        console.warn(`[leasing] tenancy mirror failed for ${req.params.id}:`, e?.message);
+        mirrorWarning = mirrorWarning || `Saved, but syncing dates/rent to the tenancy schedule failed (${e?.message || "unknown error"}).`;
       }
     }
 
-    res.json(result.rows[0]);
+    res.json(mirrorWarning ? { ...result.rows[0], mirrorWarning } : result.rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

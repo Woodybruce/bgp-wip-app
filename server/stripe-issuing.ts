@@ -649,11 +649,16 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
-  // Manually post a finalised expense to Xero (used after receipt parsing if auto-post failed)
+  // Manually post a finalised expense to Xero (used after receipt parsing
+  // if auto-post failed). Uses the system Xero session like every other
+  // post path, so the retry works regardless of whether the clicking
+  // admin has personally connected Xero in their browser session.
   app.post("/api/expenses/:id/post-to-xero", requireAdmin, async (req: Request, res: Response) => {
     try {
+      const { withSystemXero } = await import("./xero-system-session");
       const { postExpenseToXero } = await import("./expense-xero-poster");
-      const result = await postExpenseToXero({ session: req.session, expenseId: String(req.params.id) });
+      const result = await withSystemXero((session) => postExpenseToXero({ session, expenseId: String(req.params.id) }));
+      if (!result) return res.status(400).json({ error: "Xero not connected — admin needs to connect Xero on the Subscriptions page" });
       res.json({ success: true, ...result });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
@@ -1790,22 +1795,6 @@ export function setupStripeIssuingRoutes(app: Express) {
       res.json({ success: true });
     } catch (e: any) {
       console.error("[expenses] reject error:", e?.message, e?.stack);
-      res.status(500).json({ error: e?.message });
-    }
-  });
-
-  // Legacy direct-post-to-Xero — keeps working for admin retries on
-  // approved rows whose initial Xero post failed.
-  app.post("/api/expenses/:id/post-to-xero", requireAdmin, async (req: Request, res: Response) => {
-    try {
-      const expenseId = String(req.params.id);
-      const { withSystemXero } = await import("./xero-system-session");
-      const { postExpenseToXero } = await import("./expense-xero-poster");
-      const result = await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
-      if (!result) return res.status(400).json({ error: "Xero not connected — admin needs to connect Xero on the Subscriptions page" });
-      res.json({ success: true, ...result });
-    } catch (e: any) {
-      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

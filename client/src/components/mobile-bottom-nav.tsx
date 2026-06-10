@@ -19,7 +19,7 @@ export function MobileBottomNav() {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-50 bg-[#FAF9F7] dark:bg-background border-t border-[#E7E5E4] md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       data-testid="mobile-bottom-nav"
     >
@@ -32,14 +32,12 @@ export function MobileBottomNav() {
               key={item.label}
               onClick={() => navigate(item.path)}
               className={`flex flex-col items-center justify-center gap-0.5 min-w-[56px] min-h-[44px] px-2 py-1.5 rounded-lg transition-colors ${
-                active
-                  ? "text-[#1C1917] dark:text-white"
-                  : "text-muted-foreground"
+                active ? "text-foreground" : "text-muted-foreground"
               }`}
               data-testid={`bottom-nav-${item.label.toLowerCase()}`}
             >
-              <Icon className={`w-[22px] h-[22px] ${active ? "text-[#1C1917] dark:text-white" : ""}`} />
-              <span className={`text-[10px] font-semibold ${active ? "text-[#1C1917] dark:text-white" : ""}`}>
+              <Icon className="w-[22px] h-[22px]" />
+              <span className="text-[10px] font-semibold">
                 {item.label}
               </span>
             </button>

@@ -611,7 +611,7 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
                 </a>
               )}
               <div className="text-xs text-muted-foreground">{member.property_count} {member.property_count === 1 ? "property" : "properties"} on this client</div>
-              <Link href={`/hr/staff/${member.user_id}`} className="text-xs text-indigo-500 hover:underline inline-block">Open full HR profile →</Link>
+              <Link href={`/hr?person=${member.user_id}`} className="text-xs text-indigo-500 hover:underline inline-block">Open full HR profile →</Link>
             </div>
           </div>
 

@@ -2729,6 +2729,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, req.body.propertyId);
         if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
       }
+      // Normalise legacy status labels ("HOTs", "Under Offer"…) to the
+      // canonical 10-code set so new deals never persist non-canonical
+      // statuses that boards/filters can't see.
+      if (typeof req.body?.status === "string") {
+        const { legacyToCode } = await import("../shared/deal-status");
+        const canonical = legacyToCode(req.body.status);
+        if (canonical) req.body.status = canonical;
+      }
       const parsed = insertCrmDealSchema.parse(req.body);
       const deal = await storage.createCrmDeal(parsed);
 
@@ -2842,6 +2850,20 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
+      // Populated when a best-effort cross-board mirror fails — returned on
+      // the response so the client can surface a sync warning instead of
+      // the drift staying invisible in server logs.
+      let mirrorWarning: string | null = null;
+
+      // Normalise status to a canonical code before anything reads or
+      // writes it — clients still send legacy labels ("HOTs", "Under
+      // Offer"…) and storing those raw makes the deal invisible to any
+      // board/filter comparing against the 10-code set.
+      if (typeof req.body?.status === "string") {
+        const { legacyToCode } = await import("../shared/deal-status");
+        const canonical = legacyToCode(req.body.status);
+        if (canonical) req.body.status = canonical;
+      }
 
       // Same tenancy-token resolve as POST — picker can hand us a
       // "__tenancy__<id>" for rows that didn't have a property_units
@@ -3085,6 +3107,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           await mirrorFromDeal(deal.id, deal.status as string, { pool, reason: "crm_deals.PUT" });
         } catch (e: any) {
           console.warn(`[deals] status mirror failed for ${deal.id}:`, e?.message);
+          mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
         }
         // Mirror to investment_tracker if a row is linked back to this deal.
         // Investment Tracker shares the canonical 10-code enum with Deals, so
@@ -3209,13 +3232,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const statusChanged = req.body.status && oldDeal && oldCode !== newCode;
       const nowComplete = ["EXC", "COM"].includes(newCode || "");
 
-      // Once a deal has moved past listing (SOL onwards), drop any available_units row tied to it
-      const POST_LISTING_CODES = ["SOL", "EXC", "COM", "INV"];
-      if (statusChanged && POST_LISTING_CODES.includes(newCode || "")) {
-        try {
-          await db.delete(availableUnits).where(eq(availableUnits.dealId, deal.id));
-        } catch (_) {}
-      }
+      // NOTE: deals moving past listing (SOL+) used to hard-delete the linked
+      // available_units row here, which made the unit's lifecycle depend on
+      // which board drove the change (the tracker's own flip-to-SOL kept the
+      // row). The mirror above now keeps the unit's marketing_status in
+      // lockstep instead; the Letting Tracker hides post-NEG rows by default
+      // and the property-page summary counts SOL/COM rows deliberately.
 
       if (statusChanged && nowComplete) {
         if (isInvestmentTeam) {
@@ -3470,7 +3492,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // via POST /api/kyc/run-all-checks { dealId, bothSides: true } from
       // deals.tsx inline-edit handler — see commit ee7f9e5. No server-side
       // trigger here to avoid double-running the orchestrator on every save.
-      res.json(deal);
+      res.json(mirrorWarning ? { ...deal, mirrorWarning } : deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
@@ -7638,21 +7660,11 @@ Rules:
 
       const usedDealIds = new Set<string>();
 
-      let entries: any[] = wipRows.map(r => {
-        const projectKey = (r.project || "").toLowerCase().trim();
-        const refKey = (r.ref || "").toLowerCase().trim();
-        const matchedDeal = findDealExcel(projectKey) || findDealExcel(refKey);
-        if (matchedDeal) usedDealIds.add(matchedDeal.id);
-        const tenantName = matchedDeal?.tenantId ? compMap.get(matchedDeal.tenantId) || null : null;
-        return {
-          id: r.id, dealId: matchedDeal?.id || null, dealType: matchedDeal?.dealType || null,
-          ref: r.ref, groupName: r.groupName, project: r.project, tenant: r.tenant || tenantName,
-          team: r.team, agent: r.agent, assetClass: matchedDeal?.assetClass || null,
-          amtWip: r.amtWip || 0, amtInvoice: r.amtInvoice || 0, month: r.month,
-          dealStatus: r.dealStatus, stage: r.stage, invoiceNo: r.invoiceNo,
-          fiscalYear: r.fiscalYear, source: "spreadsheet" as const,
-        };
-      });
+      // The legacy spreadsheet wip_rows source was retired (referencing it
+      // here threw "wipRows is not defined" and 500'd every export). The
+      // workbook is built entirely from CRM deals below, matching the live
+      // /api/wip view.
+      let entries: any[] = [];
 
       const unmatchedDeals = deals.filter(d => {
         if (usedDealIds.has(d.id)) return false;

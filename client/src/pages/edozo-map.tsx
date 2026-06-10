@@ -7020,7 +7020,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                 <section className="border-t pt-3">
                   {goadPanelContext?.pathwayRun ? (
                     <a
-                      href={`/property-pathway/${goadPanelContext.pathwayRun.id}`}
+                      href={`/property-pathway?runId=${goadPanelContext.pathwayRun.id}`}
                       className="block w-full text-center text-[11px] bg-emerald-600 text-white rounded px-2 py-1.5 hover:bg-emerald-700"
                       data-testid="goad-panel-open-pathway"
                     >
@@ -7047,7 +7047,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                             const run = await resp.json();
                             if (run?.id || run?.runId) {
                               const id = run.id || run.runId;
-                              window.location.href = `/property-pathway/${id}`;
+                              window.location.href = `/property-pathway?runId=${id}`;
                               return;
                             }
                           }

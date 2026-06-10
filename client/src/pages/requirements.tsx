@@ -742,7 +742,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { setSearch(""); setGroupFilter("all"); setStatusFilter("all"); setColumnFilters({}); }}
+            onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); }}
             data-testid="button-clear-leasing-filters"
           >
             <X className="w-3.5 h-3.5 mr-1" />
