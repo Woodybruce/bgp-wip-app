@@ -743,6 +743,12 @@ export async function callClaude(params: any): Promise<any> {
       const client = attempt === 0 ? anthropic : getAnthropicClient(false);
       if (attempt > 0) claudeParams.model = model;
       response = await client.messages.create(claudeParams);
+      // Spend metering — exact token usage from the response, priced
+      // server-side. Fire-and-forget; never blocks the call.
+      try {
+        const { logAiUsage } = await import("./api-usage");
+        logAiUsage({ provider: "anthropic", model: claudeParams.model, feature: params.feature || "chatbgp", usage: (response as any)?.usage });
+      } catch {}
       break;
     } catch (err: any) {
       lastErr = err;
@@ -861,6 +867,12 @@ export async function callClaudeStreaming(
       });
 
       const finalMessage = await stream.finalMessage();
+
+      // Spend metering — same as callClaude, on the streamed final message.
+      try {
+        const { logAiUsage } = await import("./api-usage");
+        logAiUsage({ provider: "anthropic", model: (finalMessage as any)?.model, feature: "chatbgp-stream", usage: (finalMessage as any)?.usage });
+      } catch {}
 
       // Also extract any tool_use blocks (shouldn't happen for final response, but handle gracefully)
       for (const block of finalMessage.content) {

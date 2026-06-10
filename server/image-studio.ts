@@ -1,5 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { requireAuth } from "./auth";
+import { logAiUsage } from "./api-usage";
 import { pool } from "./db";
 import { db } from "./db";
 import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets, propertyPathwayRuns } from "@shared/schema";
@@ -58,6 +59,7 @@ async function generateWithDallE3(prompt: string, size: string): Promise<Buffer 
       response_format: "b64_json",
     });
     if (!response.data[0]?.b64_json) return null;
+    logAiUsage({ provider: "openai", model: "dall-e-3", feature: "image-studio-generate", images: 1 });
     return Buffer.from(response.data[0].b64_json, "base64");
   } catch (e: any) {
     console.warn("[image-studio] DALL-E 3 failed:", e.message);
@@ -98,6 +100,7 @@ async function generateWithGemini(prompt: string, size: string): Promise<Buffer 
           if (response && typeof response === "object" && "candidates" in response) {
             const candidate = (response as any).candidates?.[0];
             const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
+            if (imagePart) logAiUsage({ provider: "google", model, feature: "image-studio-generate", images: 1 });
             if (imagePart?.inlineData?.data) {
               console.log(`[image-studio] Gemini generate: success with ${model}`);
               return Buffer.from(imagePart.inlineData.data, "base64");
@@ -164,6 +167,7 @@ async function editWithOpenAI(prompt: string, imageBuffer: Buffer, inputMime: st
     const b64 = response?.data?.[0]?.b64_json;
     if (b64) {
       console.log(`[image-studio] OpenAI edit: success with gpt-image-1`);
+      logAiUsage({ provider: "openai", model: "gpt-image-1", feature: "image-studio-edit", images: 1 });
       return Buffer.from(b64, "base64");
     }
     return null;
@@ -217,6 +221,7 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
             const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
             if (imagePart?.inlineData?.data) {
               console.log(`[image-studio] Gemini edit: success with ${model}`);
+              logAiUsage({ provider: "google", model, feature: "image-studio-edit", images: 1 });
               return Buffer.from(imagePart.inlineData.data, "base64");
             }
           }
@@ -2342,6 +2347,7 @@ export function registerImageStudioRoutes(app: Express) {
             { type: "text", text: `Analyze this image for a London commercial property agency (BGP). Return JSON only:\n{"description": "one sentence", "tags": ["tag1","tag2"], "category": "one of: Properties, Areas, Marketing, Events, Headshots, Floor Plans, Interiors, Exteriors, Street Views, Generated, Other", "area": "London area or null"}` },
           ] }],
         });
+        logAiUsage({ provider: "anthropic", model: "claude-sonnet-4-6", feature: "image-studio-tag", usage: (response as any)?.usage });
         const text = response.content[0].type === "text" ? response.content[0].text : "";
         const m = text.match(/\{[\s\S]*\}/);
         if (!m) { aiTagJob.failed++; continue; }

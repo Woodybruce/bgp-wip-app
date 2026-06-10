@@ -266,6 +266,78 @@ function CommissionSection({ commissions }: { commissions: NonNullable<Financial
   );
 }
 
+// App + AI running costs — what the app itself spends on Claude / Gemini /
+// gpt-image / ScraperAPI, metered from each provider's own usage figures.
+function AppCostsSection() {
+  const { data } = useQuery<{
+    monthUsd: number; fytdUsd: number; monthCalls: number; monthTokens: number;
+    monthUnpricedImages: number;
+    byProvider: Array<{ provider: string; model: string; calls: number; input_tokens: number; output_tokens: number; images: number; usd: number }>;
+    byFeature: Array<{ feature: string; calls: number; usd: number }>;
+    scraperapi: { requestCount: number | null; requestLimit: number | null; subscriptionName: string | null } | null;
+    meteredFrom: string;
+  }>({
+    queryKey: ["/api/app-costs"],
+    staleTime: 10 * 60 * 1000,
+  });
+
+  if (!data) return null;
+  const usd = (n: number) => `$${(n || 0).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span>App &amp; AI running costs</span>
+          <span className="text-xs font-normal text-muted-foreground">
+            {usd(data.monthUsd)} this month · {usd(data.fytdUsd)} FYTD
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">By provider (this month)</p>
+            <div className="space-y-0.5">
+              {data.byProvider.length === 0 && <p className="text-sm text-muted-foreground">No AI calls metered yet — data accrues from the next deploy onwards.</p>}
+              {data.byProvider.map((p, i) => (
+                <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                  <span className="truncate pr-3">
+                    {p.provider} <span className="text-muted-foreground text-xs">· {p.model} · {p.calls.toLocaleString()} call(s){p.images ? ` · ${p.images} image(s)` : ""}</span>
+                  </span>
+                  <span className="font-mono shrink-0">{usd(p.usd)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">By feature (this month)</p>
+            <div className="space-y-0.5">
+              {data.byFeature.map((f, i) => (
+                <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                  <span className="truncate pr-3">{f.feature} <span className="text-muted-foreground text-xs">· {f.calls.toLocaleString()} call(s)</span></span>
+                  <span className="font-mono shrink-0">{usd(f.usd)}</span>
+                </div>
+              ))}
+            </div>
+            {data.scraperapi && (
+              <p className="text-xs text-muted-foreground pt-2">
+                ScraperAPI: {data.scraperapi.requestCount?.toLocaleString() ?? "?"} / {data.scraperapi.requestLimit?.toLocaleString() ?? "?"} credits used
+                {data.scraperapi.subscriptionName ? ` (${data.scraperapi.subscriptionName})` : ""}.
+              </p>
+            )}
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground border-t pt-2">
+          {data.meteredFrom}
+          {data.monthUnpricedImages > 0 ? ` ${data.monthUnpricedImages} image generation(s) this month aren't priced — set AI_IMAGE_COST_USD_GEMINI / AI_IMAGE_COST_USD_OPENAI to include them.` : ""}
+          {" "}{data.monthTokens > 0 ? `${(data.monthTokens / 1_000_000).toFixed(1)}M tokens this month.` : ""}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function FinancePage() {
   const { data, isLoading, isFetching, refetch, error } = useQuery<Financials>({
     queryKey: ["/api/xero/financials"],
@@ -560,6 +632,9 @@ export default function FinancePage() {
           )}
         </div>
       </div>
+
+      {/* What the app itself costs to run (AI + data APIs) */}
+      <AppCostsSection />
 
       {data.fetchedAt && (
         <p className="text-[11px] text-muted-foreground">Snapshot fetched {new Date(data.fetchedAt).toLocaleTimeString("en-GB")} · cached 15 min · Refresh forces a live pull.</p>
