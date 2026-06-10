@@ -3,16 +3,27 @@
 // aged debtors. Data comes from /api/xero/financials (system Xero session,
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
-import { RefreshCw, Landmark, TrendingUp, Banknote, AlertTriangle, ExternalLink } from "lucide-react";
+import { RefreshCw, Landmark, TrendingUp, Banknote, AlertTriangle, ExternalLink, Briefcase } from "lucide-react";
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
+
+interface WipForecast {
+  pipeline: Record<"NEG" | "SOL" | "EXC", { total: number; count: number }>;
+  weights: Record<string, number>;
+  weightedPipeline: number;
+  unweightedPipeline: number;
+  toInvoice: { total: number; count: number; deals: Array<{ id: string; name: string; fee: number; completedAt: string | null; agent: string | null }> };
+  invoicedAwaitingPayment: number;
+  earlyPipeline: { total: number; count: number };
+}
 
 interface Financials {
   notConnected?: boolean;
@@ -34,6 +45,15 @@ interface Financials {
     top: Array<{ contact: string; number: string; due: string; amount: number }>;
     invoiceCount: number;
   };
+  wip?: WipForecast | null;
+  projection?: { actuals: number; toInvoice: number; weightedPipeline: number; total: number };
+  paid?: {
+    totalPaid: number;
+    count: number;
+    recent: Array<{ label: string; dealId: string | null; number: string; amount: number; paidOn: string | null }>;
+    commissions: Array<{ agent: string; amount: number; deals: number }>;
+    unmatchedCount: number;
+  } | null;
   fetchedAt?: string;
 }
 
@@ -53,6 +73,109 @@ function StatCard({ label, value, sub, negative }: { label: string; value: strin
         {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+// Pipeline + forecast from the WIP board, cross-referenced against Xero
+// invoices. Rendered on its own so it still shows when Xero needs a
+// reconnect (it's built from the CRM, not the Xero API).
+function WipSection({ wip, projection }: { wip: WipForecast; projection?: Financials["projection"] }) {
+  const stages: Array<{ code: "EXC" | "SOL" | "NEG"; label: string }> = [
+    { code: "EXC", label: "Exchanged" },
+    { code: "SOL", label: "At solicitors" },
+    { code: "NEG", label: "Negotiating" },
+  ];
+  const proj = projection;
+  const projParts = proj ? [
+    { label: "Actual income", value: proj.actuals, color: "bg-emerald-500" },
+    { label: "To invoice", value: proj.toInvoice, color: "bg-sky-500" },
+    { label: "Weighted pipeline", value: proj.weightedPipeline, color: "bg-violet-500" },
+  ].filter(p => p.value > 0) : [];
+  const projTotal = proj?.total || 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Completed — to invoice"
+          value={money(wip.toInvoice.total)}
+          sub={`${wip.toInvoice.count} deal(s) with no Xero invoice`}
+          negative={wip.toInvoice.total > 0}
+        />
+        {stages.map(s => (
+          <StatCard
+            key={s.code}
+            label={`${s.label} pipeline`}
+            value={money(wip.pipeline[s.code]?.total)}
+            sub={`${wip.pipeline[s.code]?.count || 0} deal(s) · weighted ${Math.round((wip.weights[s.code] || 0) * 100)}%`}
+          />
+        ))}
+      </div>
+
+      {proj && projTotal > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><Briefcase className="w-4 h-4" /> Projected year</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex h-8 w-full rounded-md overflow-hidden border">
+              {projParts.map((p, i) => (
+                <div
+                  key={i}
+                  className={`${p.color} h-full`}
+                  style={{ width: `${Math.max((p.value / projTotal) * 100, 1.5)}%` }}
+                  title={`${p.label}: ${money(p.value)}`}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              {projParts.map((p, i) => (
+                <span key={i} className="inline-flex items-center gap-1.5">
+                  <span className={`w-2.5 h-2.5 rounded-sm ${p.color}`} />
+                  {p.label} <span className="font-mono font-medium">{money(p.value)}</span>
+                </span>
+              ))}
+              <span className="ml-auto font-semibold">Projected total {money(projTotal)}</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Actual Xero income FY-to-date + completed-but-uninvoiced fees + pipeline weighted EXC 90% · SOL 75% · NEG 50%.
+              Unweighted pipeline {money(wip.unweightedPipeline)}; early-stage deals (pre-negotiation) excluded: {money(wip.earlyPipeline.total)} across {wip.earlyPipeline.count}.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {wip.toInvoice.deals.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500" /> Completed, not yet invoiced</span>
+              <Badge variant="secondary" className="text-[10px]">{wip.toInvoice.count} deal(s) · {money(wip.toInvoice.total)}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-0.5">
+            {wip.toInvoice.deals.map(deal => (
+              <Link key={deal.id} href={`/deals/${deal.id}`}>
+                <div className="flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer" data-testid={`finance-uninvoiced-${deal.id}`}>
+                  <span className="truncate pr-3">
+                    {deal.name}
+                    <span className="text-muted-foreground text-xs">
+                      {deal.agent ? ` · ${deal.agent}` : ""}{deal.completedAt ? ` · completed ${formatDate(deal.completedAt)}` : ""}
+                    </span>
+                  </span>
+                  <span className="font-mono shrink-0">{money(deal.fee)}</span>
+                </div>
+              </Link>
+            ))}
+            {wip.invoicedAwaitingPayment > 0 && (
+              <p className="text-[11px] text-muted-foreground pt-2">
+                Plus {money(wip.invoicedAwaitingPayment)} invoiced on completed deals still awaiting payment (in debtors above).
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -91,7 +214,7 @@ export default function FinancePage() {
 
   if (data.notConnected || data.needsReconnect) {
     return (
-      <div className="max-w-2xl mx-auto p-6 space-y-4">
+      <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
         <h1 className="text-2xl font-semibold tracking-tight">Company Finance</h1>
         <Card>
           <CardContent className="p-6 space-y-3">
@@ -106,6 +229,9 @@ export default function FinancePage() {
             </Button>
           </CardContent>
         </Card>
+        {/* The pipeline half comes from the CRM, so it works regardless of
+            the Xero connection state. */}
+        {data.wip && <WipSection wip={data.wip} />}
       </div>
     );
   }
@@ -146,6 +272,66 @@ export default function FinancePage() {
           sub={d ? `${money(d.overdue)} overdue` : undefined}
         />
       </div>
+
+      {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
+      {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
+
+      {/* Paid this FY + commissions on a paid basis (Wendy's rule:
+          commission is earned when the invoice is PAID, not raised). */}
+      {data.paid && (data.paid.count > 0 || data.paid.commissions.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span>Paid this year</span>
+                <Badge variant="secondary" className="text-[10px]">{data.paid.count} invoice(s) · {money(data.paid.totalPaid)} ex VAT</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-0.5">
+              {data.paid.recent.map((p, i) => {
+                const row = (
+                  <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
+                    <span className="truncate pr-3">
+                      {p.label}
+                      <span className="text-muted-foreground text-xs">
+                        {p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}
+                      </span>
+                    </span>
+                    <span className="font-mono shrink-0">{money(p.amount)}</span>
+                  </div>
+                );
+                return p.dealId
+                  ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link>
+                  : <div key={i}>{row}</div>;
+              })}
+              {data.paid.unmatchedCount > 0 && (
+                <p className="text-[11px] text-muted-foreground pt-2">
+                  {data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Commissions earned — paid basis</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-0.5">
+              {data.paid.commissions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No commissions triggered yet this financial year.</p>
+              ) : data.paid.commissions.map((c, i) => (
+                <div key={i} className="flex items-center justify-between text-sm py-1" data-testid={`finance-commission-${i}`}>
+                  <span className="truncate pr-3">{c.agent} <span className="text-muted-foreground text-xs">· {c.deals} deal(s)</span></span>
+                  <span className="font-mono shrink-0">{money(c.amount)}</span>
+                </div>
+              ))}
+              <p className="text-[11px] text-muted-foreground pt-2">
+                Agent's share of the deal fee (from the deal's fee split), triggered when the deal's invoice is fully paid in Xero this FY. BGP House share excluded.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Monthly P&L chart */}
       {(data.monthly?.length || 0) > 1 && (
