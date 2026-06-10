@@ -380,6 +380,37 @@ async function buildPaidPanel(paidInvoices: any[]): Promise<any> {
   };
 }
 
+// ── Company card spend (Revolut expenses module) ────────────────────────
+// Pulls the admin spend workflow onto the one dashboard: month + FYTD card
+// spend (business, non-rejected) and the two action queues.
+async function buildSpendSnapshot(fyStartIso: string): Promise<any> {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const { rows } = await pool.query(
+    `SELECT
+       COALESCE(SUM(amount_pence) FILTER (
+         WHERE COALESCE(transaction_date::timestamptz, created_at) >= $1::timestamptz
+           AND COALESCE(is_personal, false) = false AND status <> 'rejected'), 0)::bigint AS fytd_pence,
+       COALESCE(SUM(amount_pence) FILTER (
+         WHERE COALESCE(transaction_date::timestamptz, created_at) >= $2::timestamptz
+           AND COALESCE(is_personal, false) = false AND status <> 'rejected'), 0)::bigint AS month_pence,
+       COUNT(*) FILTER (WHERE status = 'pending_receipt')::int AS pending_receipts,
+       COALESCE(SUM(amount_pence) FILTER (WHERE status = 'pending_receipt'), 0)::bigint AS pending_receipts_pence,
+       COUNT(*) FILTER (WHERE status = 'pending_approval')::int AS pending_approvals,
+       COALESCE(SUM(amount_pence) FILTER (WHERE status = 'pending_approval'), 0)::bigint AS pending_approvals_pence
+     FROM expenses`,
+    [fyStartIso, monthStart],
+  );
+  const r = rows[0] || {};
+  const toPounds = (p: any) => Math.round(Number(p || 0) / 100);
+  return {
+    monthSpend: toPounds(r.month_pence),
+    fytdSpend: toPounds(r.fytd_pence),
+    pendingReceipts: { count: Number(r.pending_receipts || 0), total: toPounds(r.pending_receipts_pence) },
+    pendingApprovals: { count: Number(r.pending_approvals || 0), total: toPounds(r.pending_approvals_pence) },
+  };
+}
+
 export function registerXeroFinancialRoutes(app: Express): void {
   app.get("/api/xero/financials", requireAdmin, async (req: Request, res: Response) => {
     try {
@@ -397,6 +428,10 @@ export function registerXeroFinancialRoutes(app: Express): void {
         console.warn("[xero-financials] commission engine failed:", e?.message);
         return null;
       });
+      const spend = await buildSpendSnapshot(commissions?.fyStart || `${new Date().getUTCFullYear()}-05-01`).catch((e: any) => {
+        console.warn("[xero-financials] spend snapshot failed:", e?.message);
+        return null;
+      });
 
       let payload: any;
       try {
@@ -412,16 +447,18 @@ export function registerXeroFinancialRoutes(app: Express): void {
             detail: msg,
             wip,
             commissions,
+            spend,
           });
         }
         throw e;
       }
       if (!payload) {
-        return res.json({ notConnected: true, message: "Xero isn't connected — connect it on the Subscriptions page first.", wip, commissions });
+        return res.json({ notConnected: true, message: "Xero isn't connected — connect it on the Subscriptions page first.", wip, commissions, spend });
       }
 
       payload.wip = wip;
       payload.commissions = commissions;
+      payload.spend = spend;
       payload.paid = await buildPaidPanel(payload.paidInvoices || []).catch((e: any) => {
         console.warn("[xero-financials] paid panel failed:", e?.message);
         return null;

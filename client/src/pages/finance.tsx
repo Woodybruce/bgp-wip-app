@@ -53,6 +53,12 @@ interface Financials {
     recent: Array<{ label: string; dealId: string | null; number: string; amount: number; paidOn: string | null }>;
     unmatchedCount: number;
   } | null;
+  spend?: {
+    monthSpend: number;
+    fytdSpend: number;
+    pendingReceipts: { count: number; total: number };
+    pendingApprovals: { count: number; total: number };
+  } | null;
   commissions?: {
     fyStart: string;
     statements: Array<{
@@ -412,6 +418,35 @@ export default function FinancePage() {
       {/* Commission statements — Woody's tiered scheme */}
       {data.commissions && data.commissions.statements.length > 0 && (
         <CommissionSection commissions={data.commissions} />
+      )}
+
+      {/* Company card spend — the Expenses workflow's headline numbers,
+          with jump-offs into the queues. */}
+      {data.spend && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatCard label="Card spend this month" value={money(data.spend.monthSpend)} sub="Business spend, ex personal" />
+          <StatCard label="Card spend FYTD" value={money(data.spend.fytdSpend)} />
+          <Link href="/expenses">
+            <div className="cursor-pointer h-full">
+              <StatCard
+                label="Receipts missing"
+                value={String(data.spend.pendingReceipts.count)}
+                sub={`${money(data.spend.pendingReceipts.total)} unreceipted → Expenses`}
+                negative={data.spend.pendingReceipts.count > 0}
+              />
+            </div>
+          </Link>
+          <Link href="/expenses/approvals">
+            <div className="cursor-pointer h-full">
+              <StatCard
+                label="Awaiting approval"
+                value={String(data.spend.pendingApprovals.count)}
+                sub={`${money(data.spend.pendingApprovals.total)} queued → Approvals`}
+                negative={data.spend.pendingApprovals.count > 0}
+              />
+            </div>
+          </Link>
+        </div>
       )}
 
       {/* Monthly P&L chart */}

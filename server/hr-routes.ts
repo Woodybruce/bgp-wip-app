@@ -750,27 +750,36 @@ export function setupHrRoutes(app: Express) {
         xeroError = xErr.message;
       }
 
-      // Calculate commission tiers (pro-rate if mid-year starter)
-      const startDate = profile.start_date ? new Date(profile.start_date) : null;
-      let effectiveSalary = salary;
-      if (startDate && startDate > schemeYearStart) {
-        const daysInYear = 365;
-        const daysWorked = Math.floor((schemeYearEnd.getTime() - startDate.getTime()) / 86400000);
-        const fraction = Math.min(daysWorked / daysInYear, 1);
-        effectiveSalary = Math.round(salary * fraction);
+      // ── Unified commission engine ───────────────────────────────────────
+      // All commission numbers come from server/commission-engine.ts so the
+      // HR tab and the Finance dashboard can never disagree. Confirmed rules
+      // (Woody, 10 Jun 2026): billings on a FEE-DUE basis (earlier of
+      // exchange/completion, FY from 1 May), strict Xero fully-PAID payable
+      // gate (AUTHORISED is not paid), salary_history pro-rata for mid-year
+      // rises. This endpoint keeps its legacy response shape.
+      const { buildCommissionStatementForUser, tierCommission: engineTier } = await import("./commission-engine");
+      const { statement } = await buildCommissionStatementForUser(userId);
+
+      // Effective salary: engine's salary_history-weighted figure when HR
+      // has one; otherwise the legacy mid-year-starter pro-rata on
+      // salary_current.
+      let effectiveSalary: number;
+      if (statement?.salary != null && statement.salary > 0) {
+        effectiveSalary = Math.round(statement.salary * 100);
+      } else {
+        const startDate = profile.start_date ? new Date(profile.start_date) : null;
+        effectiveSalary = salary;
+        if (startDate && startDate > schemeYearStart) {
+          const daysWorked = Math.floor((schemeYearEnd.getTime() - startDate.getTime()) / 86400000);
+          effectiveSalary = Math.round(salary * Math.min(daysWorked / 365, 1));
+        }
       }
 
       const t1 = effectiveSalary * 2;  // 30% above this
       const t2 = effectiveSalary * 3;  // 40% above this
       const t3 = effectiveSalary * 4;  // 50% above this
 
-      const tierCommission = (pence: number) => {
-        let c = 0;
-        if (pence > t1) c += (Math.min(pence, t2) - t1) * 0.30;
-        if (pence > t2) c += (Math.min(pence, t3) - t2) * 0.40;
-        if (pence > t3) c += (pence - t3) * 0.50;
-        return Math.round(c);
-      };
+      const tierCommission = (pence: number) => Math.round(engineTier(pence, effectiveSalary));
 
       // ── WIP / pipeline from crm_deals ───────────────────────────────────────
       // Per-deal share: prefer explicit deal_fee_allocations row for this agent,
@@ -834,79 +843,43 @@ export function setupHrRoutes(app: Express) {
           .sort((a: any, b: any) => b.fee - a.fee)
           .slice(0, 10);
 
-        // Awaiting payment: COM (delivered, not invoiced) or INV (invoiced
-        // but Xero hasn't seen it as paid yet — admin marks paid in Xero,
-        // commission flips from "expected" to "earned").
-        awaitingPayment = dealRows
-          .filter((r: any) => r.status === "COM" || r.status === "INV")
-          .map((r: any) => ({
-            id: r.id,
-            name: r.name,
-            fee: Math.round((parseFloat(r.my_portion) || 0) * 100),
-            status: r.status,
-            date: r.dt ? new Date(r.dt).toISOString().slice(0, 10) : null,
-            invoicedAt: r.invoiced_at ? new Date(r.invoiced_at).toISOString().slice(0, 10) : null,
-          }))
-          .sort((a: any, b: any) => b.fee - a.fee);
+        // awaitingPayment now comes from the commission engine below —
+        // fee-due deals whose Xero invoices aren't fully paid yet.
       } catch (wErr: any) {
         // Non-fatal — show billings even if deals query fails (e.g. schema drift).
         console.error("[hr] commission WIP query failed:", wErr.message);
       }
 
-      // ── Invoiced + Paid billed totals from crm_deals ─────────────────────
-      // Source of truth = crm_deals + deal_fee_allocations (mirrors Xero).
-      // We compute two figures:
-      //   - invoicedPence: the agent's share of fees on deals at status INV
-      //     in this scheme year. Drives the tier waterfall.
-      //   - paidPence: subset where Xero shows the underlying invoice as paid.
-      //     Used when the user toggles ?paidOnly=true on the dashboard.
-      // Date filter on the scheme year uses invoiced_at first, then a
-      // fallback chain so historic INV rows without invoiced_at still
-      // attribute correctly. Same agent_user_id OR name fallback we use
-      // on the active-deals + commission-summary readers.
+      // ── Billed totals from the unified engine ───────────────────────────
+      // Fee-due basis (earlier of exchange/completion this scheme year) is
+      // the EARNED figure; the PAID slice requires every Xero invoice on
+      // the deal to be fully PAID — AUTHORISED doesn't count. The legacy
+      // `invoiced` response key now carries the fee-due figure so older
+      // clients keep working.
       const paidOnly = req.query?.paidOnly === "true" || req.query?.paidOnly === "1";
-      let invoicedPence = 0;
-      let paidPence = 0;
-      try {
-        const { rows: dealRows } = await pool.query(
-          `WITH my_invoiced AS (
-             SELECT d.id, d.fee,
-                    CASE
-                      WHEN dfa.percentage   IS NOT NULL THEN d.fee * dfa.percentage / 100.0
-                      WHEN dfa.fixed_amount IS NOT NULL THEN dfa.fixed_amount
-                      ELSE 0
-                    END AS my_portion
-               FROM crm_deals d
-               INNER JOIN deal_fee_allocations dfa
-                  ON dfa.deal_id = d.id
-                 AND (dfa.agent_user_id = $4
-                      OR (dfa.agent_user_id IS NULL AND LOWER(dfa.agent_name) = LOWER($1)))
-              WHERE d.status = 'INV'
-                AND COALESCE(d.invoiced_at, d.completed_at, d.exchanged_at) BETWEEN $2 AND $3
-           )
-           SELECT
-             COALESCE(SUM(mi.my_portion), 0)::text AS invoiced_pounds,
-             COALESCE(SUM(CASE
-               WHEN EXISTS (SELECT 1 FROM xero_invoices xi
-                             WHERE xi.deal_id = mi.id
-                               AND xi.status IN ('PAID','AUTHORISED'))
-               THEN mi.my_portion ELSE 0
-             END), 0)::text AS paid_pounds
-           FROM my_invoiced mi`,
-          [trackingName, schemeYearStart.toISOString(), schemeYearEnd.toISOString(), userId]
-        );
-        invoicedPence = Math.round(parseFloat(dealRows[0]?.invoiced_pounds || "0") * 100);
-        paidPence     = Math.round(parseFloat(dealRows[0]?.paid_pounds || "0") * 100);
-      } catch (iErr: any) {
-        console.warn("[hr] commission invoiced read failed (non-fatal):", iErr?.message);
-      }
+      const feeDuePence = Math.round((statement?.billings ?? 0) * 100);
+      const paidPence = Math.round((statement?.billingsPaid ?? 0) * 100);
+      const invoicedPence = feeDuePence;
 
-      // Primary billed for the tier waterfall — toggle between Invoiced (the
-      // default) and Paid-only. Commission rules: deal counts in the FY when
-      // invoiced; actual cash payout at month-end payroll when BGP gets paid.
-      const primaryBilledPence = paidOnly ? paidPence : invoicedPence;
-      const wipTotal = wipByStage.neg + wipByStage.sol + wipByStage.exc + wipByStage.com;
-      const forecastPence = primaryBilledPence + wipTotal;
+      awaitingPayment = (statement?.allDeals || [])
+        .filter(d => !d.clientPaid)
+        .map(d => ({
+          id: d.id,
+          name: d.name,
+          fee: Math.round(d.billing * 100),
+          status: d.status || "",
+          date: d.feeDue,
+          invoicedAt: null,
+        }))
+        .sort((a: any, b: any) => b.fee - a.fee);
+
+      // Primary billed for the tier waterfall — toggle between fee-due (the
+      // default, "earned") and Paid-only ("payable"). EXC/COM deals already
+      // sit inside billings on the fee-due basis, so the incremental
+      // pipeline is NEG/SOL only — counting exc/com again would double it.
+      const primaryBilledPence = paidOnly ? paidPence : feeDuePence;
+      const wipTotal = wipByStage.neg + wipByStage.sol;
+      const forecastPence = feeDuePence + wipTotal;
       const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
 
@@ -941,32 +914,25 @@ export function setupHrRoutes(app: Express) {
       // tier of the pipeline. Helps surveyors see exactly what's at stake.
       const scenarios = [
         {
-          key: "earned",
-          label: "Earned (Xero paid)",
-          totalPence: billedPence,
-          commission: commissionEarned,
-          deltaCommission: commissionEarned,
+          key: "paid",
+          label: "Payable now (client has paid)",
+          totalPence: paidPence,
+          commission: tierCommission(paidPence),
+          deltaCommission: tierCommission(paidPence),
         },
         {
-          key: "com",
-          label: "+ Completed deals collected",
-          totalPence: billedPence + wipByStage.com,
-          commission: tierCommission(billedPence + wipByStage.com),
-          deltaCommission: tierCommission(billedPence + wipByStage.com) - commissionEarned,
+          key: "feeDue",
+          label: "+ awaiting client payment collects",
+          totalPence: feeDuePence,
+          commission: tierCommission(feeDuePence),
+          deltaCommission: tierCommission(feeDuePence) - tierCommission(paidPence),
         },
         {
-          key: "exc",
-          label: "+ Exchanged closes",
-          totalPence: billedPence + wipByStage.com + wipByStage.exc,
-          commission: tierCommission(billedPence + wipByStage.com + wipByStage.exc),
-          deltaCommission: tierCommission(billedPence + wipByStage.com + wipByStage.exc) - tierCommission(billedPence + wipByStage.com),
-        },
-        {
-          key: "neg",
+          key: "pipeline",
           label: "+ NEG / SOL converts",
           totalPence: forecastPence,
           commission: commissionForecast,
-          deltaCommission: commissionForecast - tierCommission(billedPence + wipByStage.com + wipByStage.exc),
+          deltaCommission: commissionForecast - tierCommission(feeDuePence),
         },
       ];
 
@@ -986,7 +952,10 @@ export function setupHrRoutes(app: Express) {
         wipByStage,
         paidOnly,
         sources: {
+          // `invoiced` is the legacy key name — it now carries the fee-due
+          // basis figure (earlier of exchange/completion this scheme year).
           invoiced: { billedPence: invoicedPence },
+          feeDue:   { billedPence: feeDuePence },
           paid:     { billedPence: paidPence },
           wip:      { neg: wipByStage.neg, sol: wipByStage.sol, exc: wipByStage.exc, com: wipByStage.com, total: wipTotal },
         },

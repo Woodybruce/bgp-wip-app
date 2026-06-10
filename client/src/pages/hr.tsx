@@ -801,7 +801,7 @@ function CommissionTab({ userId }: { userId: string }) {
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Showing commission against</div>
                   <div className="font-medium text-sm">
-                    {paidOnly ? "Paid invoices only" : "Invoiced this year"}
+                    {paidOnly ? "Client has paid (payable)" : "Fee due this year (earned)"}
                   </div>
                 </div>
                 <div className="inline-flex rounded-md border bg-card overflow-hidden">
@@ -811,7 +811,7 @@ function CommissionTab({ userId }: { userId: string }) {
                     className={`px-3 py-1.5 text-xs font-medium transition-colors ${!paidOnly ? "bg-primary text-primary-foreground" : "hover:bg-muted/60"}`}
                     data-testid="commission-toggle-invoiced"
                   >
-                    Invoiced
+                    Fee due
                   </button>
                   <button
                     type="button"
@@ -825,7 +825,7 @@ function CommissionTab({ userId }: { userId: string }) {
               </div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1.5 border-t">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Invoiced this year</span>
+                  <span className="text-muted-foreground">Fee due this year</span>
                   <span className="tabular-nums font-medium">{fmtSalary(data.sources.invoiced.billedPence)}</span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -837,14 +837,14 @@ function CommissionTab({ userId }: { userId: string }) {
                   <span className="tabular-nums font-medium">{fmtSalary(data.sources.wip.total)}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Awaiting payment</span>
+                  <span className="text-muted-foreground">Awaiting client payment</span>
                   <span className="tabular-nums font-medium">
                     {fmtSalary(Math.max(data.sources.invoiced.billedPence - data.sources.paid.billedPence, 0))}
                   </span>
                 </div>
               </div>
               <div className="text-[10px] text-muted-foreground italic pt-1.5 border-t">
-                Source: Deals Board + Letting Tracker (mirrors Xero). Deals count toward the FY when invoiced; commission pays at month-end payroll once BGP has been paid.
+                Source: unified commission engine (same numbers as the Finance dashboard). A deal counts toward the FY when its fee falls due — the earlier of exchange / completion — and commission pays at month-end payroll once BGP has been paid in full.
               </div>
             </div>
           )}
