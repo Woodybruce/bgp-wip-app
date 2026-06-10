@@ -18,6 +18,7 @@ import { xeroApi } from "./xero";
 import { withSystemXero } from "./xero-system-session";
 import { pool } from "./db";
 import { legacyToCode, type DealStatusCode } from "../shared/deal-status";
+import { buildCommissionStatements } from "./commission-engine";
 
 const CACHE_TTL_MS = 15 * 60_000;
 let cache: { at: number; payload: any } | null = null;
@@ -338,19 +339,15 @@ async function buildWipForecast(): Promise<any> {
   };
 }
 
-// ── Paid panel: collected cash + commissions on a PAID basis ────────────
-// Commission is earned when the invoice is PAID (Wendy's rule), so this
-// matches Xero's paid invoices back to deals via xero_invoices, then to
-// each deal's fee-allocation splits. A deal counts once its invoice is
-// fully paid this FY; the agent amount is their split of the deal fee
-// (fee splits are ex-VAT, so we compare against invoice SubTotal).
+// ── Paid panel: cash collected this FY, matched back to deals ───────────
+// (Commission maths lives in commission-engine.ts — this panel is just
+// the "what's been paid, when" view Wendy asked for.)
 async function buildPaidPanel(paidInvoices: any[]): Promise<any> {
-  if (!paidInvoices?.length) return { totalPaid: 0, count: 0, recent: [], commissions: [], unmatchedCount: 0 };
+  if (!paidInvoices?.length) return { totalPaid: 0, count: 0, recent: [], unmatchedCount: 0 };
   const ids = paidInvoices.map(p => p.xeroInvoiceId).filter(Boolean);
   const linkRes = ids.length
     ? await pool.query(
-        `SELECT xi.xero_invoice_id AS "xeroInvoiceId", xi.deal_id AS "dealId",
-                d.name AS "dealName", d.fee::float AS fee
+        `SELECT xi.xero_invoice_id AS "xeroInvoiceId", xi.deal_id AS "dealId", d.name AS "dealName"
            FROM xero_invoices xi
            JOIN crm_deals d ON d.id = xi.deal_id
           WHERE xi.xero_invoice_id = ANY($1)`,
@@ -358,29 +355,10 @@ async function buildPaidPanel(paidInvoices: any[]): Promise<any> {
       )
     : { rows: [] as any[] };
   const linkByInvoice = new Map(linkRes.rows.map((r: any) => [r.xeroInvoiceId, r]));
-  const paidDealIds = Array.from(new Set(linkRes.rows.map((r: any) => r.dealId)));
-
-  const allocRes = paidDealIds.length
-    ? await pool.query(
-        `SELECT deal_id AS "dealId", agent_name AS "agentName", allocation_type AS "allocationType",
-                percentage::float AS percentage, fixed_amount::float AS "fixedAmount", is_bgp_house AS "isBgpHouse"
-           FROM deal_fee_allocations
-          WHERE deal_id = ANY($1)`,
-        [paidDealIds],
-      )
-    : { rows: [] as any[] };
-  const allocsByDeal = new Map<string, any[]>();
-  for (const a of allocRes.rows) {
-    if (!allocsByDeal.has(a.dealId)) allocsByDeal.set(a.dealId, []);
-    allocsByDeal.get(a.dealId)!.push(a);
-  }
 
   let totalPaid = 0;
   let unmatchedCount = 0;
   const recent: any[] = [];
-  const commissionByAgent = new Map<string, { amount: number; deals: Set<string> }>();
-  const countedDeals = new Set<string>();
-
   for (const p of paidInvoices) {
     totalPaid += p.subTotal || 0;
     const link = linkByInvoice.get(p.xeroInvoiceId);
@@ -392,35 +370,12 @@ async function buildPaidPanel(paidInvoices: any[]): Promise<any> {
       amount: p.subTotal,
       paidOn: p.paidOn,
     });
-    // Commission triggers once per deal per FY, on the first fully-paid
-    // invoice — the agent's split of the deal fee.
-    if (link && !countedDeals.has(link.dealId)) {
-      countedDeals.add(link.dealId);
-      const fee = Number(link.fee) || 0;
-      for (const a of allocsByDeal.get(link.dealId) || []) {
-        if (a.isBgpHouse) continue;
-        const amount = a.fixedAmount != null && a.fixedAmount !== 0
-          ? Number(a.fixedAmount)
-          : fee * ((Number(a.percentage) || 0) / 100);
-        if (!amount) continue;
-        const key = a.agentName || "Unassigned";
-        if (!commissionByAgent.has(key)) commissionByAgent.set(key, { amount: 0, deals: new Set() });
-        const bucket = commissionByAgent.get(key)!;
-        bucket.amount += amount;
-        bucket.deals.add(link.dealId);
-      }
-    }
   }
-
-  const commissions = Array.from(commissionByAgent.entries())
-    .map(([agent, v]) => ({ agent, amount: Math.round(v.amount), deals: v.deals.size }))
-    .sort((a, b) => b.amount - a.amount);
 
   return {
     totalPaid: Math.round(totalPaid),
     count: paidInvoices.length,
     recent: recent.slice(0, 10),
-    commissions,
     unmatchedCount,
   };
 }
@@ -431,10 +386,15 @@ export function registerXeroFinancialRoutes(app: Express): void {
       if (cache && Date.now() - cache.at < CACHE_TTL_MS && req.query.refresh !== "1") {
         return res.json(cache.payload);
       }
-      // WIP forecast is local-DB only — compute it first so the pipeline
-      // half of the dashboard works even when Xero needs reconnecting.
+      // WIP forecast + commission statements are local-DB only — compute
+      // them first so those halves of the dashboard work even when Xero
+      // needs reconnecting.
       const wip = await buildWipForecast().catch((e: any) => {
         console.warn("[xero-financials] wip forecast failed:", e?.message);
+        return null;
+      });
+      const commissions = await buildCommissionStatements().catch((e: any) => {
+        console.warn("[xero-financials] commission engine failed:", e?.message);
         return null;
       });
 
@@ -451,15 +411,17 @@ export function registerXeroFinancialRoutes(app: Express): void {
             message: "The Xero connection predates reports access. An admin needs to reconnect Xero (Subscriptions → Xero → Connect) to grant the new reports permission.",
             detail: msg,
             wip,
+            commissions,
           });
         }
         throw e;
       }
       if (!payload) {
-        return res.json({ notConnected: true, message: "Xero isn't connected — connect it on the Subscriptions page first.", wip });
+        return res.json({ notConnected: true, message: "Xero isn't connected — connect it on the Subscriptions page first.", wip, commissions });
       }
 
       payload.wip = wip;
+      payload.commissions = commissions;
       payload.paid = await buildPaidPanel(payload.paidInvoices || []).catch((e: any) => {
         console.warn("[xero-financials] paid panel failed:", e?.message);
         return null;

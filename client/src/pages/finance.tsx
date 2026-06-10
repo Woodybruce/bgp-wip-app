@@ -51,8 +51,23 @@ interface Financials {
     totalPaid: number;
     count: number;
     recent: Array<{ label: string; dealId: string | null; number: string; amount: number; paidOn: string | null }>;
-    commissions: Array<{ agent: string; amount: number; deals: number }>;
     unmatchedCount: number;
+  } | null;
+  commissions?: {
+    fyStart: string;
+    statements: Array<{
+      agent: string;
+      salary: number | null;
+      billings: number;
+      multiple: number | null;
+      currentRate: number;
+      earned: number;
+      payable: number;
+      awaitingPayment: number;
+      nextThreshold: { multiple: number; rate: number; billingsAway: number } | null;
+      deals: Array<{ id: string; name: string; feeDue: string | null; billing: number; commission: number; clientPaid: boolean }>;
+    }>;
+    assumptions: string[];
   } | null;
   fetchedAt?: string;
 }
@@ -179,6 +194,72 @@ function WipSection({ wip, projection }: { wip: WipForecast; projection?: Financ
   );
 }
 
+// Commission statements — the tiered scheme: billings (agent's fee split,
+// after BGP House's 15%) accumulate from 1 May in fee-due order; 0% to 2×
+// salary, then 30% / 40% / 50% bands; payable at month-end payroll once
+// the client has paid.
+function CommissionSection({ commissions }: { commissions: NonNullable<Financials["commissions"]> }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span>Commission statements</span>
+          <span className="text-xs font-normal text-muted-foreground">FY from {formatDate(commissions.fyStart)}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {commissions.statements.map((s, i) => {
+          const pct = s.multiple != null ? Math.min((s.multiple / 4) * 100, 100) : 0;
+          return (
+            <div key={i} className="space-y-1.5" data-testid={`commission-statement-${s.agent.toLowerCase().replace(/\s+/g, "-")}`}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-medium truncate">{s.agent}</span>
+                  {s.multiple != null ? (
+                    <Badge variant="secondary" className="text-[10px]">{s.multiple}× salary</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] text-amber-600">no salary on file</Badge>
+                  )}
+                  <Badge variant={s.currentRate > 0 ? "default" : "outline"} className="text-[10px]">
+                    {Math.round(s.currentRate * 100)}% band
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-4 text-sm">
+                  <span className="text-muted-foreground text-xs">Billings <span className="font-mono font-medium text-foreground">{money(s.billings)}</span></span>
+                  <span className="text-muted-foreground text-xs">Earned <span className="font-mono font-medium text-foreground">{money(s.earned)}</span></span>
+                  <span className="text-muted-foreground text-xs">Payable <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">{money(s.payable)}</span></span>
+                  {s.awaitingPayment > 0 && (
+                    <span className="text-muted-foreground text-xs">Awaiting client <span className="font-mono font-medium text-amber-600 dark:text-amber-400">{money(s.awaitingPayment)}</span></span>
+                  )}
+                </div>
+              </div>
+              {/* Progress to the salary-multiple thresholds (markers at 2×/3×/4×) */}
+              {s.multiple != null && (
+                <div className="relative h-2 rounded-full bg-muted overflow-hidden">
+                  <div className="absolute inset-y-0 left-0 bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                  {[2, 3, 4].map(m => (
+                    <div key={m} className="absolute inset-y-0 w-px bg-background" style={{ left: `${(m / 4) * 100}%` }} title={`${m}× salary`} />
+                  ))}
+                </div>
+              )}
+              {s.nextThreshold && (
+                <p className="text-[11px] text-muted-foreground">
+                  {money(s.nextThreshold.billingsAway)} of billings away from the {Math.round(s.nextThreshold.rate * 100)}% band ({s.nextThreshold.multiple}× salary).
+                </p>
+              )}
+            </div>
+          );
+        })}
+        <div className="border-t pt-2">
+          <p className="text-[11px] text-muted-foreground">
+            {commissions.assumptions.join(" ")}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function FinancePage() {
   const { data, isLoading, isFetching, refetch, error } = useQuery<Financials>({
     queryKey: ["/api/xero/financials"],
@@ -229,9 +310,12 @@ export default function FinancePage() {
             </Button>
           </CardContent>
         </Card>
-        {/* The pipeline half comes from the CRM, so it works regardless of
-            the Xero connection state. */}
+        {/* The pipeline + commission halves come from the CRM, so they work
+            regardless of the Xero connection state. */}
         {data.wip && <WipSection wip={data.wip} />}
+        {data.commissions && data.commissions.statements.length > 0 && (
+          <CommissionSection commissions={data.commissions} />
+        )}
       </div>
     );
   }
@@ -276,9 +360,8 @@ export default function FinancePage() {
       {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
       {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
 
-      {/* Paid this FY + commissions on a paid basis (Wendy's rule:
-          commission is earned when the invoice is PAID, not raised). */}
-      {data.paid && (data.paid.count > 0 || data.paid.commissions.length > 0) && (
+      {/* Paid this FY — when the client's money actually landed. */}
+      {data.paid && data.paid.count > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card>
             <CardHeader className="pb-2">
@@ -314,23 +397,21 @@ export default function FinancePage() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Commissions earned — paid basis</CardTitle>
+              <CardTitle className="text-sm">Cash collected</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-0.5">
-              {data.paid.commissions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No commissions triggered yet this financial year.</p>
-              ) : data.paid.commissions.map((c, i) => (
-                <div key={i} className="flex items-center justify-between text-sm py-1" data-testid={`finance-commission-${i}`}>
-                  <span className="truncate pr-3">{c.agent} <span className="text-muted-foreground text-xs">· {c.deals} deal(s)</span></span>
-                  <span className="font-mono shrink-0">{money(c.amount)}</span>
-                </div>
-              ))}
-              <p className="text-[11px] text-muted-foreground pt-2">
-                Agent's share of the deal fee (from the deal's fee split), triggered when the deal's invoice is fully paid in Xero this FY. BGP House share excluded.
+            <CardContent>
+              <p className="text-2xl font-semibold tracking-tight">{money(data.paid.totalPaid)}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {data.paid.count} invoice(s) fully paid this financial year (ex VAT). Commission statements below pay out at month-end payroll once these land.
               </p>
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* Commission statements — Woody's tiered scheme */}
+      {data.commissions && data.commissions.statements.length > 0 && (
+        <CommissionSection commissions={data.commissions} />
       )}
 
       {/* Monthly P&L chart */}
