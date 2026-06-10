@@ -1303,6 +1303,7 @@ export default function ImageStudio() {
                       onToggleSelect={() => toggleSelect(img.id)}
                       aiTagging={aiTagMutation.isPending}
                       crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                      version={imageVersions[img.id]}
                     />
                   ))}
                 </div>
@@ -1618,6 +1619,7 @@ export default function ImageStudio() {
                             selected={selectedIds.has(img.id)}
                             onToggleSelect={() => toggleSelect(img.id)}
                             crmLinks={resolveCrmLinks(imageObj as any, propertyLookup, brandLookup)}
+                            version={imageVersions[img.id]}
                           />
                         </div>
                       );
@@ -1868,6 +1870,7 @@ export default function ImageStudio() {
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
                       crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                      version={imageVersions[img.id]}
                     />
                   ))}
                 </div>
@@ -1919,6 +1922,7 @@ export default function ImageStudio() {
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
                     crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                    version={imageVersions[img.id]}
                   />
                 ))}
               </div>
@@ -1947,6 +1951,7 @@ export default function ImageStudio() {
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
                     crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                    version={imageVersions[img.id]}
                   />
                 ))}
               </div>
@@ -3010,6 +3015,7 @@ function ImageCard({
   selected = false,
   onToggleSelect,
   crmLinks = [],
+  version,
 }: {
   image: ImageStudioImage;
   onView: () => void;
@@ -3022,7 +3028,13 @@ function ImageCard({
   selected?: boolean;
   onToggleSelect?: () => void;
   crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
+  version?: number;
 }) {
+  // /thumb is cached `immutable` for a day, so after an AI edit the grid keeps
+  // showing the stale thumbnail until the cache expires. When we know the
+  // image was just edited (version token), bust the cache so it repaints —
+  // same trick the lightbox uses.
+  const cacheBust = version ? `?v=${version}` : "";
   return (
     <div
       className={`group relative rounded-lg overflow-hidden border bg-card cursor-pointer transition-all ${selected ? "ring-2 ring-primary" : "hover:ring-2 hover:ring-primary/50"}`}
@@ -3036,7 +3048,7 @@ function ImageCard({
       )}
       <div className="aspect-square" onClick={selectMode ? undefined : onView}>
         <img
-          src={image.thumbnailData || ((image as any).hasThumbnail ? `/api/image-studio/${image.id}/thumb` : `/api/image-studio/${image.id}/full`)}
+          src={image.thumbnailData || ((image as any).hasThumbnail ? `/api/image-studio/${image.id}/thumb${cacheBust}` : `/api/image-studio/${image.id}/full${cacheBust}`)}
           alt={image.fileName}
           className="w-full h-full object-cover"
           loading="lazy"
@@ -3044,7 +3056,7 @@ function ImageCard({
             const t = e.currentTarget;
             if (!t.dataset.fallback) {
               t.dataset.fallback = "1";
-              t.src = `/api/image-studio/${image.id}/full`;
+              t.src = `/api/image-studio/${image.id}/full${cacheBust}`;
             } else {
               t.style.display = "none";
               const parent = t.parentElement;
