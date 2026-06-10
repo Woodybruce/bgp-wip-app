@@ -169,3 +169,36 @@ The application is built with a modern web stack: React, Vite, TypeScript, Tailw
 
 - **Datasite VDR integration**: Investment team regularly trawls seller-side data rooms when bidding. Two possible routes: (a) manual export → drop into SharePoint → archivist auto-indexes (cheap, works today with OCR); (b) Datasite API integration to auto-sync a deal's doc pack into BGP knowledge base so ChatBGP can answer "what's the WAULT on Project Moonstone?" (bigger lift, enterprise API tier).
 - **Cann CAD feedback (April 2026)**: Feedback received from agent user — wanted: (1) snap-to-point on lines/corners (currently requires pixel-perfect clicks); (2) vertical/lateral (ortho) lock to prevent accidental diagonal measurements; (3) text box annotations for zones/ancil/WCs; (4) simple line draw to mark zone boundaries; (5) **PDF import with scale calibration** — user marks a known dimension on a scaled PDF and locks scale from there. The PDF import is the biggest unlock: most high-street clients don't have DWGs, only scaled PDFs, so this would make Cann CAD the only tool agents need.
+## Company Finance Dashboard + Commission Engine (June 2026)
+
+`/finance` (admin-only, Admin nav) — the firm's live financial position: Xero
+Reports (P&L FY-to-date, Balance Sheet, cash by bank account, aged debtors)
+joined to the WIP pipeline (stage-weighted forecast, completed-but-uninvoiced
+reconciliation list) and per-agent commission statements. Server:
+`server/xero-financials.ts` (15-min cache; needs `accounting.reports.read`
+scope — connections predating it get a "Reconnect Xero" callout) and
+`server/commission-engine.ts`.
+
+**Commission scheme — confirmed by Woody, 10 June 2026.** Do not change the
+rules without his sign-off:
+
+1. 15% of every deal fee goes to BGP House first; the agent's BILLING is
+   their fee-allocation share of the remainder (deals with no explicit
+   split: 85% across the deal's agents, equally). Joint deals: each agent's
+   slice counts toward their own threshold only — NOT the gross deal fee.
+2. Commission FY runs 1 May → 30 April. A deal sits in the FY of its
+   fee-due date = the earlier of exchange / completion.
+3. Tiers per agent per FY, on salary multiples, filled in fee-due order:
+   0% to 2× salary, 30% from 2×–3×, 40% from 3×–4×, 50% beyond (uncapped).
+   Deals straddling a threshold are split across bands.
+4. Commission is EARNED at fee-due but only PAYABLE (month-end payroll)
+   once ALL the deal's Xero invoices are fully paid — part-payment does
+   not release pro-rata commission.
+5. Mid-year salary changes pro-rata: thresholds use the time-weighted
+   salary across the FY from `salary_history`. Agents map to HR records by
+   exact name match on `users.name`.
+
+Next phases discussed: cost forecasting (payroll forward-curve + P&L expense
+run-rate vs income projection) and agent profitability (commissions − salary
+− pensions via the already-granted Xero payroll scopes) to replace Wendy's
+Power BI workflow.
