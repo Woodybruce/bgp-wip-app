@@ -149,7 +149,7 @@ async function resolveSource(args: ReadDocumentArgs): Promise<
 
 // ─── Text extraction ────────────────────────────────────────────────────
 
-async function extractPdfText(buffer: Buffer): Promise<string> {
+export async function extractPdfText(buffer: Buffer): Promise<string> {
   const pdfModule = await import("pdf-parse");
   const PDFParseClass = (pdfModule as any).PDFParse || (pdfModule as any).default;
   const parser = new PDFParseClass(new Uint8Array(buffer));

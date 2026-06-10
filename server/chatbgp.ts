@@ -1405,6 +1405,95 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   ]);
 }
 
+// ─── Land Registry documents via PropertyData ─────────────────────────────
+// Fetches Title Register / Title Plan for one or MORE titles, downloads the
+// ZIP PropertyData returns, and extracts the PDF text server-side so the
+// model can read the register (lease parties, term, charges) directly —
+// previously it could only hand the user a download link, and only for a
+// single title per call.
+interface LandRegDocResult {
+  title: string;
+  documentUrl: string | null;
+  alreadyPurchased: boolean;
+  files: Array<{ filename: string; text?: string; note?: string }>;
+  proprietorData?: any;
+  error?: string;
+}
+
+async function fetchLandRegistryDocuments(
+  apiKey: string,
+  titles: string[],
+  documents: string,
+  extractProprietor: boolean,
+): Promise<LandRegDocResult[]> {
+  const MAX_TITLES = 4;          // cost guard — each title is a paid purchase
+  const MAX_TEXT_PER_PDF = 15000; // keep tool results inside sane token budgets
+  const results: LandRegDocResult[] = [];
+  for (const rawTitle of titles.slice(0, MAX_TITLES)) {
+    const title = rawTitle.trim().toUpperCase();
+    if (!title) continue;
+    const out: LandRegDocResult = { title, documentUrl: null, alreadyPurchased: false, files: [] };
+    try {
+      const params = new URLSearchParams({ key: apiKey, title, documents: documents || "both" });
+      params.set("extract_proprietor_data", extractProprietor ? "true" : "false");
+      const res = await fetch(`https://api.propertydata.co.uk/land-registry-documents?${params.toString()}`, {
+        signal: AbortSignal.timeout(60000),
+      });
+      const data = await res.json().catch(() => ({} as any)) as any;
+      if (!res.ok && !data?.document_url) {
+        out.error = `PropertyData HTTP ${res.status}`;
+        results.push(out);
+        continue;
+      }
+      if (data.status === "error" && !(data.code === "2906" && data.document_url)) {
+        out.error = data.message || `PropertyData error (code ${data.code || "?"})`;
+        results.push(out);
+        continue;
+      }
+      out.alreadyPurchased = data.code === "2906";
+      out.documentUrl = data.document_url || null;
+      if (data.proprietor_data || data.extracted_data) out.proprietorData = data.proprietor_data || data.extracted_data;
+
+      // Download the ZIP and pull the text out of each PDF inside it.
+      if (out.documentUrl) {
+        try {
+          const zipRes = await fetch(out.documentUrl, { signal: AbortSignal.timeout(60000) });
+          if (!zipRes.ok) throw new Error(`download HTTP ${zipRes.status}`);
+          const zipBuffer = Buffer.from(await zipRes.arrayBuffer());
+          const AdmZip = (await import("adm-zip")).default;
+          const { extractPdfText } = await import("./document-reader");
+          const zip = new AdmZip(zipBuffer);
+          for (const entry of zip.getEntries()) {
+            if (entry.isDirectory) continue;
+            if (/\.pdf$/i.test(entry.entryName)) {
+              try {
+                const text = (await extractPdfText(entry.getData())).trim();
+                out.files.push({
+                  filename: entry.entryName,
+                  text: text.length > MAX_TEXT_PER_PDF ? `${text.slice(0, MAX_TEXT_PER_PDF)}\n…[truncated]` : text,
+                  // Title PLANS are map images — pdf text extraction returns
+                  // little/nothing, which is expected, not a failure.
+                  note: text.length < 40 ? "No extractable text (likely a plan/map PDF — use the download link to view it)" : undefined,
+                });
+              } catch (pdfErr: any) {
+                out.files.push({ filename: entry.entryName, note: `PDF parse failed: ${pdfErr?.message}` });
+              }
+            } else {
+              out.files.push({ filename: entry.entryName, note: "non-PDF file — see download link" });
+            }
+          }
+        } catch (zipErr: any) {
+          out.files.push({ filename: "(zip)", note: `Couldn't download/extract: ${zipErr?.message}. Use the download link instead.` });
+        }
+      }
+    } catch (err: any) {
+      out.error = err?.message || "Unknown error";
+    }
+    results.push(out);
+  }
+  return results;
+}
+
 export async function getCrmContext(): Promise<string> {
   const cached = getCached<string>("crmContext");
   if (cached) return cached;
@@ -2288,6 +2377,32 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           modelVersionId: { type: "string", description: "Optional specific version id. Defaults to the latest version of the model run." },
         },
         required: ["runId", "modelRunId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_pathway_tenancy",
+      description: "Upsert a tenancy unit on a Property Pathway run (stage1.tenancy.units). Use after extracting lease terms — e.g. from a Land Registry title register, an email, or a brochure — so the run's tenancy schedule reflects the real lease and downstream documents (business plan, Why Buy) regenerate against it. Upserts by titleNumber (preferred) or tenantName+unitName; merges fields so partial updates don't wipe existing data.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
+          tenantName: { type: "string", description: "Tenant company name, e.g. 'Waitrose Limited'" },
+          unitName: { type: "string", description: "Unit/demise label, e.g. 'Ground & Basement'. Defaults to 'Whole'." },
+          leaseStart: { type: "string", description: "Lease start date, ISO format (e.g. '2024-09-26')" },
+          leaseExpiry: { type: "string", description: "Lease expiry date, ISO format (e.g. '2039-09-25')" },
+          passingRentPa: { type: "number", description: "Passing rent per annum in £, if known" },
+          sqft: { type: "number", description: "Demise area in sq ft, if known" },
+          floor: { type: "string", description: "Floor(s), e.g. 'Ground, Basement'" },
+          useClass: { type: "string", description: "Planning use class, e.g. 'E'" },
+          titleNumber: { type: "string", description: "Land Registry title number of the occupational lease, e.g. 'TGL624521' — used as the upsert key" },
+          notes: { type: "string", description: "Anything else worth keeping: break clauses, review pattern, alienation restrictions etc." },
+          source: { type: "string", description: "Where the terms came from: 'land_registry', 'email', 'sharepoint', 'brochure', 'user'. Defaults to 'land_registry'." },
+        },
+        required: ["runId", "tenantName"],
       },
     },
   });
@@ -3440,7 +3555,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           postcode: { type: "string", description: "UK postcode (full, district, or sector). e.g. W1K 3QB, SW1X, EC2A. Not required for 'uprn' endpoint." },
           address: { type: "string", description: "For address-match-uprn: the street address to match. e.g. '10 Lowndes Street'" },
           uprn: { type: "string", description: "For uprn and uprn-title endpoints: the UPRN number to look up." },
-          title: { type: "string", description: "For analyse-buildings or land-registry-documents: the Land Registry title number. e.g. 'ON60618'" },
+          title: { type: "string", description: "For analyse-buildings: a single Land Registry title number. For land-registry-documents: one or MORE title numbers, comma-separated (e.g. 'TGL379483,TGL624521') — each is purchased and its register text extracted in one call (max 4)." },
           documents: { type: "string", enum: ["register", "plan", "both"], description: "For land-registry-documents: which documents to purchase. 'register' = Title Register, 'plan' = Title Plan, 'both' = both. Default: both." },
           extract_proprietor_data: { type: "boolean", description: "For land-registry-documents: extract proprietor name, address, price paid, and mortgage charges from the register (extra £1+VAT). Default: true." },
           property_type: { type: "string", description: "For commercial endpoints: retail, offices, industrial, restaurants, or pubs. For residential: flat, terraced, semi-detached, detached. For rebuild-cost: detached_house, semi_detached_house, mid_terrace_house, end_terrace_house, flat." },
@@ -6785,6 +6900,14 @@ async function executeCrmToolRaw(
     if (needsPostcode && !postcode) return { data: { error: "Postcode is required." } };
     if (endpoint === "address-match-uprn" && !fnArgs.address) return { data: { error: "Both 'address' (street address, e.g. '10 Lowndes Street') and 'postcode' are required for address-match-uprn." } };
     if (endpoint === "land-registry-documents" && !fnArgs.title) return { data: { error: "Title number is required for land-registry-documents." } };
+    // Land Registry docs get a dedicated path: multi-title support (comma/
+    // space-separated) + server-side ZIP download and PDF text extraction so
+    // the register contents come back readable instead of as a bare link.
+    if (endpoint === "land-registry-documents") {
+      const titles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
+      const docs = await fetchLandRegistryDocuments(apiKey, titles, (fnArgs.documents as string) || "both", fnArgs.extract_proprietor_data !== false);
+      return { data: { success: true, source: "PropertyData.co.uk", endpoint, results: docs, note: "Each result includes the extracted register text (files[].text) and a documentUrl download link. Present documentUrl as a bare URL on its own line so the chat UI renders it clickable." } };
+    }
     try {
       const params = new URLSearchParams({ key: apiKey });
       if (postcode) params.set("postcode", postcode);
@@ -6795,10 +6918,6 @@ async function executeCrmToolRaw(
       if (fnArgs.address) params.set("address", fnArgs.address as string);
       if (fnArgs.uprn) params.set("uprn", String(fnArgs.uprn));
       if (fnArgs.title) params.set("title", fnArgs.title as string);
-      if (endpoint === "land-registry-documents") {
-        params.set("documents", (fnArgs.documents as string) || "both");
-        params.set("extract_proprietor_data", fnArgs.extract_proprietor_data === false ? "false" : "true");
-      }
       if (endpoint.startsWith("valuation-commercial") || endpoint === "rebuild-cost") {
         if (fnArgs.property_type) params.set("property_type", fnArgs.property_type);
         params.delete("type");
@@ -6812,7 +6931,6 @@ async function executeCrmToolRaw(
       }
       const data = await res.json() as any;
       if (data.status === "error") {
-        if (data.code === "2906" && data.document_url) return { data: { success: true, note: "Documents previously purchased", document_url: data.document_url, source: "PropertyData.co.uk", endpoint } };
         return { data: { error: data.message || "PropertyData API error", code: data.code } };
       }
       return { data: { success: true, source: "PropertyData.co.uk", endpoint, postcode: fnArgs.postcode, ...data } };
@@ -10615,6 +10733,25 @@ export async function handleCrmToolCall(
     if (needsPostcode && !postcode) return { handled: true, response: { reply: "Postcode is required." } };
     if (endpoint === "address-match-uprn" && !fnArgs.address) return { handled: true, response: { reply: "Both 'address' (street address, e.g. '10 Lowndes Street') and 'postcode' are required for address-match-uprn." } };
     if (endpoint === "land-registry-documents" && !fnArgs.title) return { handled: true, response: { reply: "Title number is required for land-registry-documents." } };
+    // Dedicated Land Registry path — multi-title + server-side ZIP/PDF
+    // extraction (mirrors the property_data_lookup handler above).
+    if (endpoint === "land-registry-documents") {
+      const titles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
+      const docs = await fetchLandRegistryDocuments(apiKey, titles, (fnArgs.documents as string) || "both", fnArgs.extract_proprietor_data !== false);
+      const replyParts = docs.map((d) => {
+        const lines = [`Title ${d.title}${d.alreadyPurchased ? " (previously purchased)" : ""}:`];
+        if (d.error) lines.push(`  Error: ${d.error}`);
+        // Bare URL on its own line — the chat UI auto-links bare URLs;
+        // markdown [text](url) was rendering as literal brackets.
+        if (d.documentUrl) lines.push(`  Download: ${d.documentUrl}`);
+        for (const f of d.files) {
+          if (f.text) lines.push(`  --- ${f.filename} ---\n${f.text}`);
+          else if (f.note) lines.push(`  ${f.filename}: ${f.note}`);
+        }
+        return lines.join("\n");
+      });
+      return { handled: true, response: { reply: replyParts.join("\n\n") || "No documents returned." } };
+    }
     try {
       const params = new URLSearchParams({ key: apiKey });
       if (postcode) params.set("postcode", postcode);
@@ -10625,10 +10762,6 @@ export async function handleCrmToolCall(
       if (fnArgs.address) params.set("address", fnArgs.address as string);
       if (fnArgs.uprn) params.set("uprn", String(fnArgs.uprn));
       if (fnArgs.title) params.set("title", fnArgs.title as string);
-      if (endpoint === "land-registry-documents") {
-        params.set("documents", (fnArgs.documents as string) || "both");
-        params.set("extract_proprietor_data", fnArgs.extract_proprietor_data === false ? "false" : "true");
-      }
       if (endpoint.startsWith("valuation-commercial") || endpoint === "rebuild-cost") {
         if (fnArgs.property_type) params.set("property_type", fnArgs.property_type);
         params.delete("type");
@@ -10642,9 +10775,6 @@ export async function handleCrmToolCall(
       }
       const data = await res.json() as any;
       if (data.status === "error") {
-        if (data.code === "2906" && data.document_url) {
-          return { handled: true, response: { reply: `These documents were previously purchased. Download link: ${data.document_url}` } };
-        }
         return { handled: true, response: { reply: `PropertyData error: ${data.message || "Unknown error"}` } };
       }
       const reply = await summaryHelper({ success: true, source: "PropertyData.co.uk", endpoint, postcode: fnArgs.postcode, ...data });
@@ -12110,6 +12240,74 @@ export function setupChatBGPRoutes(app: Express) {
         };
       } catch (err: any) {
         return { data: { error: `Failed to attach workbook to pathway: ${err?.message}` } };
+      }
+    }
+
+    // Upsert a tenancy unit on a pathway run — used when lease terms are
+    // extracted from a Land Registry register (or an email/brochure) so the
+    // tenancy schedule + Why Buy regenerate against the real lease, instead
+    // of the user re-typing terms ChatBGP already read.
+    if (tcName === "update_pathway_tenancy") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const runId = String(tcArgs.runId || "");
+        const tenantName = String(tcArgs.tenantName || "").trim();
+        if (!runId || !tenantName) return { data: { error: "runId and tenantName are required" } };
+
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+
+        const sr: any = run.stageResults || {};
+        const stage1: any = sr.stage1 || {};
+        const tenancy: any = stage1.tenancy || { status: "unknown", units: [] };
+        const units: any[] = Array.isArray(tenancy.units) ? [...tenancy.units] : [];
+
+        const unitName = String(tcArgs.unitName || "Whole").trim();
+        const incoming: any = {
+          unitName,
+          tenantName,
+          ...(tcArgs.leaseStart ? { leaseStart: String(tcArgs.leaseStart) } : {}),
+          ...(tcArgs.leaseExpiry ? { leaseExpiry: String(tcArgs.leaseExpiry) } : {}),
+          ...(tcArgs.passingRentPa !== undefined && tcArgs.passingRentPa !== null ? { passingRentPa: Number(tcArgs.passingRentPa) } : {}),
+          ...(tcArgs.sqft !== undefined && tcArgs.sqft !== null ? { sqft: Number(tcArgs.sqft) } : {}),
+          ...(tcArgs.floor ? { floor: String(tcArgs.floor) } : {}),
+          ...(tcArgs.useClass ? { useClass: String(tcArgs.useClass) } : {}),
+          ...(tcArgs.titleNumber ? { titleNumber: String(tcArgs.titleNumber).toUpperCase() } : {}),
+          ...(tcArgs.notes ? { notes: String(tcArgs.notes) } : {}),
+          source: String(tcArgs.source || "land_registry"),
+        };
+
+        // Upsert: match on titleNumber first (strongest key), then
+        // tenant + unit. Merge so partial updates don't wipe fields.
+        const idx = units.findIndex((u: any) =>
+          (incoming.titleNumber && u?.titleNumber && String(u.titleNumber).toUpperCase() === incoming.titleNumber)
+          || (String(u?.tenantName || "").toLowerCase() === tenantName.toLowerCase()
+              && String(u?.unitName || "Whole").toLowerCase() === unitName.toLowerCase())
+        );
+        if (idx >= 0) units[idx] = { ...units[idx], ...incoming };
+        else units.push({ id: `manual-${Date.now()}`, ...incoming });
+
+        const status = units.length > 0 ? (units.every((u: any) => u?.tenantName) ? "let" : "mixed") : (tenancy.status || "unknown");
+        const nextStage1 = { ...stage1, tenancy: { ...tenancy, status, units } };
+
+        await db.update(propertyPathwayRuns).set({
+          stageResults: { ...sr, stage1: nextStage1 },
+          updatedAt: new Date(),
+        }).where(eq(propertyPathwayRuns.id, runId));
+
+        return {
+          data: {
+            ok: true,
+            runId,
+            upserted: incoming,
+            unitCount: units.length,
+            note: "Tenancy updated on the run. Downstream documents (business plan / Why Buy) pick this up on their next regenerate.",
+          },
+        };
+      } catch (err: any) {
+        return { data: { error: `Failed to update pathway tenancy: ${err?.message}` } };
       }
     }
 

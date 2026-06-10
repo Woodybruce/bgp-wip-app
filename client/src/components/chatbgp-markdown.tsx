@@ -175,8 +175,10 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
       // [text](/path) — internal app link
       result.push(<a key={`${keyPrefix}-${key++}`} href={match[8]} className="text-primary underline underline-offset-2">{match[7]}</a>);
     } else if (match[9]) {
-      // **bold**
-      result.push(<strong key={`${keyPrefix}-${key++}`} className="font-semibold">{match[9]}</strong>);
+      // **bold** — parse the content recursively so links survive inside
+      // bold. ChatBGP loves "👉 **[Download…](url)**" and the bold branch
+      // was swallowing the link and rendering it as literal [text](url).
+      result.push(<strong key={`${keyPrefix}-${key++}`} className="font-semibold">{parseInline(match[9], `${keyPrefix}-b${key}`)}</strong>);
     } else if (match[10]) {
       // `code`
       result.push(<code key={`${keyPrefix}-${key++}`}>{match[10]}</code>);
