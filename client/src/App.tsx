@@ -66,8 +66,6 @@ const ExperianAudit = lazy(() => import("@/pages/experian-audit"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
 const Instructions = lazy(() => import("@/pages/instructions"));
 const Enrichment = lazy(() => import("@/pages/enrichment"));
-const LandRegistry = lazy(() => import("@/pages/land-registry"));
-const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const BoardReport = lazy(() => import("@/pages/board-report"));
 const LeasingSchedule = lazy(() => import("@/pages/leasing-schedule"));
 const TenancyScheduleFull = lazy(() => import("@/pages/tenancy-schedule-full"));
@@ -137,28 +135,21 @@ function PageLoader() {
 
 function DiaryRedirect() {
   const [, setLocation] = useLocation();
-  useEffect(() => { setLocation("/calendar"); }, [setLocation]);
+  useEffect(() => { setLocation("/calendar", { replace: true }); }, [setLocation]);
   return null;
 }
 
-// Map BGP retired — the live Goad map is now the Property Intelligence
-// Map tab. /map-bgp keeps its query string (address/postcode/layer) so
-// any deep link still lands the user in the right spot.
-function MapBgpRedirect() {
+// Legacy tool URLs (/map-bgp, /map, /land-registry, /business-rates) all
+// live on as tabs inside Property Intelligence. Each redirect keeps the
+// incoming query string (address/postcode/layer/title…) and replaces the
+// history entry so Back doesn't bounce the user forward again.
+function PropertyIntelligenceTabRedirect({ tab }: { tab: string }) {
   const [, setLocation] = useLocation();
   useEffect(() => {
-    const search = window.location.search || "";
-    const sep = search ? "&" : "?";
-    setLocation(`/property-intelligence${search}${sep}tab=map`);
-  }, [setLocation]);
-  return null;
-}
-
-// The old standalone Property Map tab (under /map) was retired when
-// Properties got folded into Deals. /map → live Goad map.
-function MapRedirect() {
-  const [, setLocation] = useLocation();
-  useEffect(() => { setLocation("/property-intelligence?tab=map"); }, [setLocation]);
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", tab);
+    setLocation(`/property-intelligence?${params.toString()}`, { replace: true });
+  }, [setLocation, tab]);
   return null;
 }
 
@@ -166,7 +157,17 @@ function MapRedirect() {
 // reachable only here, admin-only, so it can be worked on later.
 function CompsLeadsRedirect() {
   const [, setLocation] = useLocation();
-  useEffect(() => { setLocation("/comps?tab=leads"); }, [setLocation]);
+  useEffect(() => { setLocation("/comps?tab=leads", { replace: true }); }, [setLocation]);
+  return null;
+}
+
+// /hr/:userId deep links (org chart, profile shares) — the HR page reads
+// ?person= from the query string, so translate the path param across.
+function HrPersonRedirect({ params }: { params: { userId: string } }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation(`/hr?person=${encodeURIComponent(params.userId)}`, { replace: true });
+  }, [setLocation, params.userId]);
   return null;
 }
 
@@ -191,7 +192,7 @@ function Router() {
           detail page (PropertiesHub still routes to Properties.tsx). */}
       <Route path="/properties" component={DealsHub} />
       <Route path="/properties/:id" component={PropertiesHub} />
-      <Route path="/map" component={MapRedirect} />
+      <Route path="/map">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
@@ -223,15 +224,13 @@ function Router() {
       <Route path="/comps" component={Comps} />
       <Route path="/comps/:id" component={Comps} />
       <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
-      <Route path="/investment-comps" component={InvestmentComps} />
+      <Route path="/investment-comps">{() => <InvestmentComps />}</Route>
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />
       <Route path="/experian-audit" component={ExperianAudit} />
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
       <Route path="/admin/dedupe" component={AdminDedupe} />
-      <Route path="/land-registry" component={LandRegistry} />
-      <Route path="/business-rates" component={VoaRatings} />
       <Route path="/board-report" component={BoardReport} />
       <Route path="/reporting" component={Reporting} />
       <Route path="/leasing-schedule" component={LeasingSchedule} />
@@ -239,13 +238,14 @@ function Router() {
       <Route path="/tenancy-schedule/:propertyId" component={TenancyScheduleFull} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
-      <Route path="/lease-events" component={LeaseEvents} />
-      {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
-          Legacy tool routes redirect here so old links keep working. */}
+      <Route path="/lease-events">{() => <LeaseEvents />}</Route>
+      {/* Property Intelligence Hub — unified investigation hub.
+          Legacy tool routes redirect to the matching tab so old links
+          keep working (query strings are preserved). */}
       <Route path="/property-intelligence" component={PropertyIntelligence} />
-      <Route path="/map-bgp" component={MapBgpRedirect} />
-      <Route path="/land-registry" component={PropertyIntelligence} />
-      <Route path="/business-rates" component={PropertyIntelligence} />
+      <Route path="/map-bgp">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
+      <Route path="/land-registry">{() => <PropertyIntelligenceTabRedirect tab="land-registry" />}</Route>
+      <Route path="/business-rates">{() => <PropertyIntelligenceTabRedirect tab="business-rates" />}</Route>
       {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
           The Investigator tool has moved to Property Intelligence. */}
       <Route path="/kyc-clouseau" component={KycHub} />
@@ -256,7 +256,7 @@ function Router() {
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
       <Route path="/property-pathway" component={PropertyPathway} />
-      <Route path="/turnover" component={TurnoverBoard} />
+      <Route path="/turnover">{() => <TurnoverBoard />}</Route>
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />
       <Route path="/available" component={AvailableUnitsPage} />
@@ -274,7 +274,7 @@ function Router() {
       <Route path="/m/team-expenses" component={MobileAdminExpenses} />
       <Route path="/m/images" component={MobileImages} />
       <Route path="/hr" component={HRPage} />
-      <Route path="/hr/:userId">{(params) => <HRPage />}</Route>
+      <Route path="/hr/:userId">{(params) => <HrPersonRedirect params={params as { userId: string }} />}</Route>
       <Route path="/team" component={TeamPage} />
       <Route component={NotFound} />
     </Switch>

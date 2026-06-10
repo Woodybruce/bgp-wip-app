@@ -1566,7 +1566,7 @@ function ThreadInfoPanel({
       <div className="px-4 pt-4 pb-3 border-b shrink-0">
         <div className="flex items-center justify-between mb-3">
           <button
-            onClick={() => onNavigate(`/properties?id=${propertyId}`)}
+            onClick={() => onNavigate(`/properties/${propertyId}`)}
             className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
             data-testid="button-view-property-board"
           >
@@ -2100,8 +2100,7 @@ export default function ChatBGP() {
       for (const t of allThreads) {
         if (
           t.title?.toLowerCase().includes(q) ||
-          t.linkedName?.toLowerCase().includes(q) ||
-          t.lastMessage?.content?.toLowerCase().includes(q)
+          t.linkedName?.toLowerCase().includes(q)
         ) {
           matched.push(t);
         }
@@ -3330,7 +3329,7 @@ export default function ChatBGP() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => navigate(`/properties?id=${activeProjectView.id}`)} data-testid="menu-edit-property">
+                  <DropdownMenuItem onClick={() => navigate(`/properties/${activeProjectView.id}`)} data-testid="menu-edit-property">
                     <Pencil className="w-4 h-4 mr-2" />
                     Edit Property
                   </DropdownMenuItem>

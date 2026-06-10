@@ -26,7 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
@@ -5011,7 +5011,6 @@ function MyBenefitsCard({ userId: _userId }: { userId: string }) {
   const { data: benefits = [], isLoading } = useQuery<Array<{ slug: string; name: string; category: string; contact: string | null; enrolment_url: string | null; enrolled: boolean }>>({
     queryKey: ["/api/hr/benefits"],
   });
-  const [, navigate] = useLocation();
   if (isLoading) return <div className="text-xs text-muted-foreground">Loading benefits…</div>;
   const enrolled = benefits.filter(b => b.enrolled);
   return (
@@ -5021,9 +5020,9 @@ function MyBenefitsCard({ userId: _userId }: { userId: string }) {
           <div className="text-xs text-muted-foreground">
             {enrolled.length === 0 ? "Nothing ticked yet." : `${enrolled.length} of ${benefits.length} ticked.`}
           </div>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => navigate("/benefits")} data-testid="open-benefits">
-            Manage on Benefits page →
-          </Button>
+          {/* "Manage on Benefits page" button removed — the standalone
+              /benefits route doesn't exist (the Benefits tab is parked as
+              unfinished), so it dead-ended on the 404 page. */}
         </div>
         {enrolled.length > 0 && (
           <div className="space-y-1.5">
