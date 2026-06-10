@@ -1637,19 +1637,38 @@ export default function ImageStudio() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button size="sm" variant="outline" data-testid="button-ai-tag-uncategorised"
                       onClick={async () => {
-                        if (aiTagging) { aiAutoRef.current = false; return; } // clicking again stops the loop
-                        aiAutoRef.current = true; setAiTagging(true); let done = 0;
+                        // Tagging runs as a server-side background job (the old
+                        // per-batch requests 504'd on Railway's 45s ceiling).
+                        // We just kick it off and poll progress; clicking again
+                        // cancels the job server-side.
+                        if (aiTagging) {
+                          aiAutoRef.current = false;
+                          await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised/cancel").catch(() => {});
+                          return;
+                        }
+                        aiAutoRef.current = true; setAiTagging(true);
                         try {
-                          while (aiAutoRef.current) {
-                            const r = await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised", { limit: 25 });
-                            const d = await r.json();
-                            done += d.processed || 0;
-                            setAiTagProgress({ done, remaining: d.remaining ?? 0 });
-                            queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
-                            if (!d.processed || (d.remaining ?? 0) <= 0) break; // done (or nothing left to do)
+                          const r = await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised");
+                          const d = await r.json();
+                          if (!d.started && !d.alreadyRunning) {
+                            toast({ title: "Nothing to tag", description: "No uncategorised images left." });
+                            return;
                           }
-                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
-                          toast({ title: "AI-tagging finished", description: `${done.toLocaleString()} image(s) tagged.` });
+                          while (aiAutoRef.current) {
+                            await new Promise(resolve => setTimeout(resolve, 2500));
+                            const sr = await apiRequest("GET", "/api/image-studio/ai-tag-uncategorised/status");
+                            const s = await sr.json();
+                            setAiTagProgress({ done: s.processed || 0, remaining: s.remaining ?? 0 });
+                            queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+                            if (!s.running) {
+                              queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                              toast({
+                                title: "AI-tagging finished",
+                                description: `${(s.processed || 0).toLocaleString()} image(s) tagged${s.failed ? `, ${s.failed} failed` : ""}.`,
+                              });
+                              break;
+                            }
+                          }
                         } catch (e: any) {
                           toast({ title: "AI-tag stopped", description: e?.message || "", variant: "destructive" });
                         } finally { aiAutoRef.current = false; setAiTagging(false); setAiTagProgress(null); }

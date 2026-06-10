@@ -171,11 +171,10 @@ import { pool } from "./db";
     `CREATE TABLE IF NOT EXISTS map_layers (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, color TEXT, owner_id VARCHAR, shared_with_team BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT now())`,
     `ALTER TABLE map_annotations ADD COLUMN IF NOT EXISTS layer_id VARCHAR`,
     `ALTER TABLE knowledge_base ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'sharepoint'`,
-    // Drop the legacy index that may have been created with a non-IMMUTABLE
-    // expression (array_to_string was STABLE in Postgres <14). We rebuild it
-    // below without the ai_tags piece so it's IMMUTABLE on every version.
-    `DROP INDEX IF EXISTS knowledge_base_search_idx`,
-    `CREATE INDEX IF NOT EXISTS knowledge_base_search_idx ON knowledge_base USING GIN (to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,'')))`,
+    // knowledge_base_search_idx (GIN) is built AFTER this loop on a
+    // dedicated no-timeout client — its build exceeds the pool's 30s
+    // query_timeout, and the old DROP + CREATE pair here meant every boot
+    // dropped the index then failed to rebuild it.
     `CREATE INDEX IF NOT EXISTS knowledge_base_source_idx ON knowledge_base (source)`,
     `CREATE INDEX IF NOT EXISTS knowledge_base_category_idx ON knowledge_base (category)`,
     `CREATE INDEX IF NOT EXISTS chat_messages_content_search_idx ON chat_messages USING GIN (to_tsvector('english', coalesce(content,'')))`,
@@ -2339,6 +2338,11 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     // setting the value explicitly keeps the data tidy and makes ad-hoc
     // SQL / exports unambiguous. Idempotent — re-runs are no-ops.
     `UPDATE crm_properties SET group_name = 'Properties' WHERE group_name IS NULL`,
+
+    // London Property News — domain no longer resolves (ENOTFOUND on every
+    // fetch), so the feed only produced error noise. Removed from the seed
+    // list in news-feeds.ts; this deactivates the existing DB row.
+    `UPDATE news_sources SET active = false WHERE url LIKE '%londonpropertynews.co.uk%' AND active = true`,
   ];
 
   let ok = 0, skipped = 0;
@@ -2353,6 +2357,40 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     }
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
+
+  // ── knowledge_base GIN search index — built off the boot path ──────────
+  // The build takes longer than the pool's 30s query_timeout, so as a
+  // MIGRATIONS entry it failed every boot — and the legacy DROP that ran
+  // before it meant each deploy dropped the index and never rebuilt it,
+  // leaving knowledge-base search sequential-scanning. Dedicated client,
+  // no statement timeout, fire-and-forget so boot isn't held up. The
+  // legacy non-IMMUTABLE variant (with ai_tags) is dropped if it's still
+  // present; IF NOT EXISTS makes every subsequent boot a no-op.
+  (async () => {
+    const pgMod = await import("pg");
+    const client = new pgMod.default.Client({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+    });
+    try {
+      await client.connect();
+      await client.query("SET statement_timeout = 0");
+      const def = await client.query(
+        `SELECT indexdef FROM pg_indexes WHERE indexname = 'knowledge_base_search_idx'`,
+      );
+      if (def.rows[0]?.indexdef?.includes("ai_tags")) {
+        await client.query(`DROP INDEX knowledge_base_search_idx`);
+      }
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS knowledge_base_search_idx ON knowledge_base USING GIN (to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,'')))`,
+      );
+      console.log("[auto-migrate] knowledge_base GIN index ensured");
+    } catch (e: any) {
+      console.warn("[auto-migrate] knowledge_base GIN index build failed:", e?.message);
+    } finally {
+      try { await client.end(); } catch {}
+    }
+  })();
 
   // ── Clean up WIP-sync-derived team values from deal_type ───────────────
   // Early versions of syncWipToCrmDeals wrote team names ('Leasing', 'Investment',

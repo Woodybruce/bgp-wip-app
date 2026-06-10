@@ -171,7 +171,32 @@ export function setupAuth(app: Express) {
     })
   );
 
-  app.use(async (req: Request, _res: Response, next: NextFunction) => {
+  // Account-deactivation gate. requireAuth re-checks is_active, but most
+  // routes resolve the user themselves and never do — so a deactivated
+  // account with a live session could keep using chat, mail, pathway etc.
+  // (visible in prod logs as a user whose only failures were the
+  // requireAuth-gated endpoints). Any /api request from a deactivated
+  // account now gets 401 + session destroyed, which lands the client on
+  // the login screen. Result cached 60s per user so the app's polling
+  // endpoints don't add a users lookup on every request.
+  const activeCache = new Map<string, { active: boolean; at: number }>();
+  const ACTIVE_TTL_MS = 60_000;
+  async function isUserActive(userId: string): Promise<boolean> {
+    const hit = activeCache.get(userId);
+    if (hit && Date.now() - hit.at < ACTIVE_TTL_MS) return hit.active;
+    let active = true;
+    try {
+      const r = await pool.query("SELECT is_active FROM users WHERE id = $1", [userId]);
+      active = r.rows.length > 0 && r.rows[0].is_active !== false;
+    } catch {
+      // DB hiccup — fail open so a transient outage doesn't lock everyone out.
+      active = true;
+    }
+    activeCache.set(userId, { active, at: Date.now() });
+    return active;
+  }
+
+  app.use(async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7);
@@ -184,6 +209,16 @@ export function setupAuth(app: Express) {
           }
         }
       } catch (err: any) { console.error("[auth] token validation error:", err?.message); }
+    }
+
+    const userId = req.session.userId || req.tokenUserId;
+    // Logout stays reachable so a deactivated user can still clear their
+    // cookie cleanly; everything else under /api is gated.
+    if (userId && req.path.startsWith("/api") && req.path !== "/api/auth/logout") {
+      if (!(await isUserActive(userId))) {
+        try { req.session.destroy(() => {}); } catch {}
+        return res.status(401).json({ message: "Your account has been deactivated. Please contact an administrator." });
+      }
     }
     next();
   });

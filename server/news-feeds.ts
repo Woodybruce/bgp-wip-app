@@ -22,13 +22,18 @@ const DEFAULT_SOURCES = [
   // alternative to the GREEN_STREET_API_TOKEN integration. Named "(RSS)" so it
   // doesn't collide with the API-fed "Green Street News" source.
   { name: "Green Street News (RSS)", url: "https://greenstreetnews.com", feedUrl: "https://greenstreetnews.com/feed/", type: "rss", category: "Property" },
-  { name: "Property Week", url: "https://www.propertyweek.com", feedUrl: "https://www.propertyweek.com/rss", type: "rss", category: "Property" },
+  // Property Week — their /rss returns malformed XML ("Invalid character in
+  // entity name", unescaped & in URLs) which crashes rss-parser. Same fix as
+  // Sourcing Journal below: Google News site-scope, which is clean XML and
+  // unwraps the redirect. seedNewsSources heals the existing DB row in place.
+  { name: "Property Week", url: "https://www.propertyweek.com", feedUrl: "https://news.google.com/rss/search?q=site:propertyweek.com&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Property" },
   { name: "Commercial News Media", url: "https://www.commercialnewsmedia.com", feedUrl: "https://www.commercialnewsmedia.com/feed", type: "rss", category: "Property" },
   { name: "Propel Hospitality", url: "https://www.propelhospitality.com", feedUrl: "https://www.propelhospitality.com/rss", type: "rss", category: "Hospitality" },
   { name: "Business of Fashion", url: "https://www.businessoffashion.com", feedUrl: "https://www.businessoffashion.com/feed", type: "rss", category: "Retail" },
   { name: "Retail Gazette", url: "https://www.retailgazette.co.uk", feedUrl: "https://www.retailgazette.co.uk/feed/", type: "rss", category: "Retail" },
   { name: "City AM Property", url: "https://www.cityam.com/category/property/", feedUrl: "https://www.cityam.com/category/property/feed/", type: "rss", category: "Property" },
-  { name: "London Property News", url: "https://www.londonpropertynews.co.uk", feedUrl: "https://www.londonpropertynews.co.uk/feed/", type: "rss", category: "Property" },
+  // London Property News removed — the domain no longer resolves (ENOTFOUND
+  // on every fetch). The auto-migrate in index.ts deactivates the old DB row.
   { name: "Property Investor Today", url: "https://www.propertyinvestortoday.co.uk", feedUrl: "https://www.propertyinvestortoday.co.uk/rss.xml", type: "rss", category: "Investment" },
   { name: "Drapers", url: "https://www.drapersonline.com", feedUrl: "https://www.drapersonline.com/rss", type: "rss", category: "Retail" },
   { name: "Retail Week", url: "https://www.retailweek.com", feedUrl: "https://www.retailweek.com/feed", type: "rss", category: "Retail" },

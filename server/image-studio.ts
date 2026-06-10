@@ -2287,75 +2287,125 @@ export function registerImageStudioRoutes(app: Express) {
   // Batch AI-tag the uncategorised pile — processes a chunk per call (vision is
   // slow), returns how many remain so the UI can loop. Shrinks the rubbish into
   // real categories instead of deleting blind.
-  app.post("/api/image-studio/ai-tag-uncategorised", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  // AI-tag uncategorised — background job. The synchronous version 504'd:
+  // even a batch of 8-12 vision calls (~2-5s each) could blow Railway's 45s
+  // gateway ceiling. POST now kicks off ONE run over the whole backlog and
+  // returns immediately; the client polls /status and can /cancel. Job
+  // state is in-memory — fine on Railway's single instance, and a stale
+  // flag (30 min) lets a crashed run be restarted.
+  const aiTagJob = {
+    running: false,
+    cancelled: false,
+    processed: 0,
+    failed: 0,
+    total: 0,
+    startedAt: 0,
+  };
+  const aiTagJobStale = () => aiTagJob.running && Date.now() - aiTagJob.startedAt > 30 * 60_000;
+
+  async function runAiTagJob(ids: string[]): Promise<void> {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const sharpMod = (await import("sharp")).default;
+    const anthropic = new Anthropic();
+
+    // Anthropic vision rejects images >10 MB after base64 encoding. We
+    // downscale anything large to a 1568px long edge (Claude's recommended
+    // resolution cap) and re-encode as JPEG q85, which keeps quality high
+    // for tagging while staying well under the limit. Tiny / already-small
+    // files pass through untouched to avoid double-encoding artefacts.
+    const MAX_BYTES_RAW = 4 * 1024 * 1024;
+    const MAX_EDGE = 1568;
+    const prepareForVision = async (buf: Buffer, mime: string): Promise<{ buf: Buffer; mime: string }> => {
+      try {
+        const meta = await sharpMod(buf).metadata();
+        const longest = Math.max(meta.width || 0, meta.height || 0);
+        if (buf.length <= MAX_BYTES_RAW && longest <= MAX_EDGE) return { buf, mime };
+        const out = await sharpMod(buf).rotate().resize({ width: MAX_EDGE, height: MAX_EDGE, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+        return { buf: out, mime: "image/jpeg" };
+      } catch {
+        return { buf, mime };
+      }
+    };
+
+    for (const id of ids) {
+      if (aiTagJob.cancelled) break;
+      try {
+        const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+        if (!image) continue;
+        const buf0 = await readPersistedImage(image.localPath);
+        if (!buf0) continue;
+        const { buf, mime } = await prepareForVision(buf0, image.mimeType || "image/jpeg");
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-6", max_tokens: 500,
+          messages: [{ role: "user", content: [
+            { type: "image", source: { type: "base64", media_type: mime as any, data: buf.toString("base64") } },
+            { type: "text", text: `Analyze this image for a London commercial property agency (BGP). Return JSON only:\n{"description": "one sentence", "tags": ["tag1","tag2"], "category": "one of: Properties, Areas, Marketing, Events, Headshots, Floor Plans, Interiors, Exteriors, Street Views, Generated, Other", "area": "London area or null"}` },
+          ] }],
+        });
+        const text = response.content[0].type === "text" ? response.content[0].text : "";
+        const m = text.match(/\{[\s\S]*\}/);
+        if (!m) { aiTagJob.failed++; continue; }
+        const ai = JSON.parse(m[0]);
+        await db.update(imageStudioImages).set({
+          description: ai.description || image.description,
+          tags: ai.tags || image.tags,
+          category: ai.category || image.category,
+          area: ai.area || image.area,
+        }).where(eq(imageStudioImages.id, id));
+        aiTagJob.processed++;
+      } catch (e: any) {
+        aiTagJob.failed++;
+        console.warn("[ai-tag-uncategorised] failed for", id, e?.message);
+      }
+    }
+  }
+
+  app.post("/api/image-studio/ai-tag-uncategorised", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
-      // Cap small enough to fit Railway's 45s gateway timeout: Claude vision
-      // calls run ~2-5s each, so 8 keeps the round-trip under ~40s. Bigger
-      // batches were causing 504s; the client paginates by re-calling.
-      const limit = Math.min(Math.max(Number(req.body?.limit) || 8, 1), 12);
+      if (aiTagJob.running && !aiTagJobStale()) {
+        return res.json({ started: false, alreadyRunning: true, processed: aiTagJob.processed, total: aiTagJob.total });
+      }
       const idRows = await pool.query<{ id: string }>(
         `SELECT id FROM image_studio_images
          WHERE (category IS NULL OR category = 'Uncategorised') AND local_path IS NOT NULL
-         ORDER BY created_at ASC LIMIT $1`, [limit]);
-      const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const sharpMod = (await import("sharp")).default;
-      const anthropic = new Anthropic();
+         ORDER BY created_at ASC`);
+      if (idRows.rows.length === 0) return res.json({ started: false, total: 0, remaining: 0 });
 
-      // Anthropic vision rejects images >10 MB after base64 encoding. We
-      // downscale anything large to a 1568px long edge (Claude's recommended
-      // resolution cap) and re-encode as JPEG q85, which keeps quality high
-      // for tagging while staying well under the limit. Tiny / already-small
-      // files pass through untouched to avoid double-encoding artefacts.
-      const MAX_BYTES_RAW = 4 * 1024 * 1024;
-      const MAX_EDGE = 1568;
-      const prepareForVision = async (buf: Buffer, mime: string): Promise<{ buf: Buffer; mime: string }> => {
-        try {
-          const meta = await sharpMod(buf).metadata();
-          const longest = Math.max(meta.width || 0, meta.height || 0);
-          if (buf.length <= MAX_BYTES_RAW && longest <= MAX_EDGE) return { buf, mime };
-          const out = await sharpMod(buf).rotate().resize({ width: MAX_EDGE, height: MAX_EDGE, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
-          return { buf: out, mime: "image/jpeg" };
-        } catch {
-          return { buf, mime };
-        }
-      };
+      aiTagJob.running = true;
+      aiTagJob.cancelled = false;
+      aiTagJob.processed = 0;
+      aiTagJob.failed = 0;
+      aiTagJob.total = idRows.rows.length;
+      aiTagJob.startedAt = Date.now();
 
-      let processed = 0;
-      for (const { id } of idRows.rows) {
-        try {
-          const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
-          if (!image) continue;
-          const buf0 = await readPersistedImage(image.localPath);
-          if (!buf0) continue;
-          const { buf, mime } = await prepareForVision(buf0, image.mimeType || "image/jpeg");
-          const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-6", max_tokens: 500,
-            messages: [{ role: "user", content: [
-              { type: "image", source: { type: "base64", media_type: mime as any, data: buf.toString("base64") } },
-              { type: "text", text: `Analyze this image for a London commercial property agency (BGP). Return JSON only:\n{"description": "one sentence", "tags": ["tag1","tag2"], "category": "one of: Properties, Areas, Marketing, Events, Headshots, Floor Plans, Interiors, Exteriors, Street Views, Generated, Other", "area": "London area or null"}` },
-            ] }],
-          });
-          const text = response.content[0].type === "text" ? response.content[0].text : "";
-          const m = text.match(/\{[\s\S]*\}/);
-          if (!m) continue;
-          const ai = JSON.parse(m[0]);
-          await db.update(imageStudioImages).set({
-            description: ai.description || image.description,
-            tags: ai.tags || image.tags,
-            category: ai.category || image.category,
-            area: ai.area || image.area,
-          }).where(eq(imageStudioImages.id, id));
-          processed++;
-        } catch (e: any) { console.warn("[ai-tag-uncategorised] failed for", id, e?.message); }
-      }
-      const remRes = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM image_studio_images WHERE category IS NULL OR category = 'Uncategorised'`);
-      // Guard against the case where Railway's gateway already 504'd this
-      // request — writing to a dead socket throws ERR_HTTP_HEADERS_SENT and
-      // poisons the global error log. Silent skip is fine: client retries.
-      if (!res.headersSent) res.json({ processed, remaining: remRes.rows[0]?.n ?? 0 });
+      runAiTagJob(idRows.rows.map(r => r.id))
+        .catch((e: any) => console.error("[ai-tag-uncategorised] job crashed:", e?.message))
+        .finally(() => { aiTagJob.running = false; });
+
+      res.json({ started: true, total: aiTagJob.total });
     } catch (e: any) {
-      if (!res.headersSent) res.status(500).json({ error: e?.message });
+      res.status(500).json({ error: e?.message });
     }
+  });
+
+  app.get("/api/image-studio/ai-tag-uncategorised/status", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const remRes = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM image_studio_images WHERE category IS NULL OR category = 'Uncategorised'`);
+      res.json({
+        running: aiTagJob.running,
+        processed: aiTagJob.processed,
+        failed: aiTagJob.failed,
+        total: aiTagJob.total,
+        remaining: remRes.rows[0]?.n ?? 0,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  app.post("/api/image-studio/ai-tag-uncategorised/cancel", requireAuth, requireAdmin, (_req: Request, res: Response) => {
+    aiTagJob.cancelled = true;
+    res.json({ ok: true });
   });
 
   // Dedupe: find exact-duplicate images (same byte hash) and delete all but the
