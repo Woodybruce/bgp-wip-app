@@ -835,7 +835,7 @@ export default function AvailableUnitsPage() {
       // dropdown shows a real value for older flipped deals.
       dealType: (existingDeal?.dealType === "Letting" ? "New Letting" : existingDeal?.dealType) || "New Letting",
       team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
-      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "",
+      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "",
       tenantId: existingDeal?.tenantId || "",
       tenantName: crmCompanies.find(c => c.id === existingDeal?.tenantId)?.name || "",
       tenantEntityId: (existingDeal as any)?.tenantEntityId || "",
@@ -875,7 +875,7 @@ export default function AvailableUnitsPage() {
     } else {
       // No existing split — fall back to picked agent at 85%; FeeAllocationEditor
       // auto-injects BGP House at 15% to make a complete 100%.
-      const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || unit.agent || "";
+      const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "";
       setWipFeeRows(initialAgent ? [{
         agentName: initialAgent,
         allocationType: "percentage",

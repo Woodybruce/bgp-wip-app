@@ -287,22 +287,28 @@ const COLUMN_LABELS: Record<string, string> = {
   rentAnalysis: "Rent Analysis (legacy)",
 };
 
-export function formatCurrency(val: number | null | undefined): string {
-  if (val == null) return "—";
-  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 }).format(val);
+// Drizzle `numeric` columns arrive as strings over JSON, so these accept
+// string | number and coerce before formatting.
+export function formatCurrency(val: number | string | null | undefined): string {
+  if (val == null || val === "") return "—";
+  const n = typeof val === "string" ? Number(val) : val;
+  if (isNaN(n)) return "—";
+  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 }).format(n);
 }
 
-export function formatNumber(val: number | null | undefined): string {
-  if (val == null) return "—";
-  return new Intl.NumberFormat("en-GB").format(val);
+export function formatNumber(val: number | string | null | undefined): string {
+  if (val == null || val === "") return "—";
+  const n = typeof val === "string" ? Number(val) : val;
+  if (isNaN(n)) return "—";
+  return new Intl.NumberFormat("en-GB").format(n);
 }
 
-export function formatDate(val: string | null | undefined): string {
+export function formatDate(val: string | Date | null | undefined): string {
   if (!val) return "—";
   try {
     return new Date(val).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   } catch {
-    return val;
+    return typeof val === "string" ? val : "—";
   }
 }
 

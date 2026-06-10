@@ -547,16 +547,18 @@ export const mobileOverlayItems = [
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Mail", url: "/mail", icon: Mail },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
-  { title: "Board Report", url: "/board-report", icon: Presentation },
-  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
-  { title: "News", url: "/news", icon: Newspaper },
-  { title: "Leads", url: "/leads", icon: UserPlus },
+  // Admin gating mirrors the desktop sidebar (Admin + Unfinished groups)
+  // so non-admins don't get mobile links into pages whose APIs will 403.
+  { title: "Board Report", url: "/board-report", icon: Presentation, adminOnly: true },
+  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle, adminOnly: true },
+  { title: "News", url: "/news", icon: Newspaper, adminOnly: true },
+  { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
-  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
-  { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, adminOnly: true },
+  { title: "Office Add-ins", url: "/addins", icon: Puzzle, adminOnly: true },
+  { title: "Settings", url: "/settings", icon: Settings, adminOnly: true },
 ];
 
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {

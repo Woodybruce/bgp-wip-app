@@ -5,9 +5,14 @@ export function formatDate(date: string | Date | null | undefined): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function formatCurrency(value: number | null | undefined): string {
-  if (value == null) return "—";
-  return `£${value.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+// Accepts strings too — Drizzle `numeric` columns arrive as strings over
+// JSON, and String.prototype.toLocaleString silently ignores the options
+// (rendering "£1500000" with no separators).
+export function formatCurrency(value: number | string | null | undefined): string {
+  if (value == null || value === "") return "—";
+  const n = typeof value === "string" ? Number(value) : value;
+  if (isNaN(n)) return "—";
+  return `£${n.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
 // Convert any of (Date | timestamp string | "YYYY-MM-DD") into a

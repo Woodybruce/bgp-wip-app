@@ -992,7 +992,7 @@ export default function WipReport() {
         case "amtInvoice": aVal = a.amtInvoice || 0; bVal = b.amtInvoice || 0; break;
         case "month": aVal = getMonthSortKey(a.month || ""); bVal = getMonthSortKey(b.month || ""); break;
         case "dealDate": {
-          const pick = (e: WipEntry) => e.invoicedAt || e.completedAt || e.exchangedAt || e.targetDate || "";
+          const pick = (e: WipDealEntry) => e.invoicedAt || e.completedAt || e.exchangedAt || e.targetDate || "";
           aVal = pick(a) ? new Date(pick(a)).getTime() : 0;
           bVal = pick(b) ? new Date(pick(b)).getTime() : 0;
           break;
