@@ -481,7 +481,7 @@ export default function PropertyPathway() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Property Pathway</h1>
@@ -594,14 +594,16 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const [emailSorting, setEmailSorting] = useState(false);
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
+      {/* Stacks on phones — the old single row pushed the action buttons
+          (incl. Summary PDF) off-screen past the shell's overflow-x clip. */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="min-w-0">
           <button onClick={onBack} className="text-xs text-muted-foreground hover:text-foreground mb-1">← All investigations</button>
-          <h1 className="text-2xl font-semibold tracking-tight">{run.address}</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight break-words">{run.address}</h1>
           {run.postcode && <p className="text-sm text-muted-foreground">{run.postcode}</p>}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap shrink-0">
           <Button
             variant="ghost"
             size="sm"
@@ -625,14 +627,37 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {advancing ? <Clock className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
             Refresh
           </Button>
-          <Button variant="ghost" size="sm" title="Download a 2-page internal property summary PDF (with Planning / Land Registry / Companies House / Rates links)"
+          <Button variant="ghost" size="sm" title="2-page internal summary PDF (Planning / Land Registry / Companies House / Rates links) — on a phone this opens the share sheet so you can send it straight to someone"
             onClick={async () => {
               try {
                 const res = await fetch(`/api/property-pathway/${run.id}/summary-pdf`, { headers: getAuthHeaders(), credentials: "include" });
                 if (!res.ok) throw new Error(String(res.status));
                 const blob = await res.blob();
+                const fileName = `Pathway Summary — ${run.address}.pdf`;
+                const file = new File([blob], fileName, { type: "application/pdf" });
+                // Phones/tablets: native share sheet (WhatsApp / Mail /
+                // AirDrop) — the "send the first pass internally" path.
+                // window.open after an await is popup-blocked on iOS, which
+                // is why the old handler silently did nothing on mobile.
+                if (typeof navigator !== "undefined" && navigator.canShare?.({ files: [file] })) {
+                  try {
+                    await navigator.share({ files: [file], title: fileName });
+                    return;
+                  } catch (shareErr: any) {
+                    if (shareErr?.name === "AbortError") return; // user closed the sheet
+                  }
+                }
                 const url = URL.createObjectURL(blob);
-                window.open(url, "_blank");
+                const coarse = window.matchMedia?.("(pointer: coarse)")?.matches;
+                if (coarse) {
+                  // Mobile without file-share support: anchor download
+                  // (not popup-gated the way window.open is).
+                  const a = document.createElement("a");
+                  a.href = url; a.download = fileName; a.rel = "noreferrer";
+                  document.body.appendChild(a); a.click(); a.remove();
+                } else {
+                  window.open(url, "_blank");
+                }
                 setTimeout(() => URL.revokeObjectURL(url), 60000);
               } catch {
                 window.open(`/api/property-pathway/${run.id}/summary-pdf`, "_blank");
@@ -653,30 +678,33 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         </div>
       </div>
 
-      {/* Stage timeline */}
+      {/* Stage timeline — scrolls horizontally on phones instead of
+          crushing nine labelled steps into 390px. */}
       <Card>
         <CardContent className="pt-4">
-          <div className="flex items-center justify-between gap-2">
-            {STAGE_LABELS.map(s => {
-              const status = run.stageStatus?.[`stage${s.n}`];
-              const Icon = s.icon;
-              return (
-                <div key={s.n} className="flex-1 text-center">
-                  <div className={`mx-auto w-8 h-8 rounded-full flex items-center justify-center mb-1.5 ${
-                    status === "completed" ? "bg-emerald-500 text-white" :
-                    status === "running" ? "bg-blue-500 text-white" :
-                    status === "failed" ? "bg-red-500 text-white" :
-                    status === "skipped" ? "bg-zinc-300 text-zinc-600" :
-                    "bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
-                  }`}>
-                    {status === "completed" ? <Check className="w-4 h-4" /> :
-                     status === "failed" ? <AlertCircle className="w-4 h-4" /> :
-                     <Icon className="w-4 h-4" />}
+          <div className="overflow-x-auto">
+            <div className="flex items-start justify-between gap-2 min-w-max sm:min-w-0">
+              {STAGE_LABELS.map(s => {
+                const status = run.stageStatus?.[`stage${s.n}`];
+                const Icon = s.icon;
+                return (
+                  <div key={s.n} className="w-16 flex-none sm:w-auto sm:flex-1 text-center">
+                    <div className={`mx-auto w-8 h-8 rounded-full flex items-center justify-center mb-1.5 ${
+                      status === "completed" ? "bg-emerald-500 text-white" :
+                      status === "running" ? "bg-blue-500 text-white" :
+                      status === "failed" ? "bg-red-500 text-white" :
+                      status === "skipped" ? "bg-zinc-300 text-zinc-600" :
+                      "bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
+                    }`}>
+                      {status === "completed" ? <Check className="w-4 h-4" /> :
+                       status === "failed" ? <AlertCircle className="w-4 h-4" /> :
+                       <Icon className="w-4 h-4" />}
+                    </div>
+                    <p className="text-[10px] leading-tight">{s.label}</p>
                   </div>
-                  <p className="text-[10px] leading-tight">{s.label}</p>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </CardContent>
       </Card>
