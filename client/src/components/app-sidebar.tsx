@@ -141,6 +141,7 @@ const unfinishedNav = [
 ];
 
 const adminNavBase = [
+  { title: "Finance", url: "/finance", icon: Landmark },
   { title: "Expenses", url: "/expenses", icon: Receipt },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
   { title: "News", url: "/news", icon: Newspaper, badge: "AI" },

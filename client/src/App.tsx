@@ -109,6 +109,7 @@ const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const TeamPage = lazy(() => import("@/pages/team"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
+const FinancePage = lazy(() => import("@/pages/finance"));
 
 function PublicKycUploadRoute() {
   return (
@@ -264,6 +265,7 @@ function Router() {
       <Route path="/marketing-files" component={MarketingFilesPage} />
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
+      <Route path="/finance">{() => <AdminRoute><FinancePage /></AdminRoute>}</Route>
       <Route path="/expenses" component={ExpensesAdmin} />
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
       <Route path="/expenses/revolut" component={ExpensesRevolut} />

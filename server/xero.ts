@@ -336,7 +336,7 @@ export function setupXeroRoutes(app: Express) {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings payroll.payslip payroll.employees",
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees",
       state,
     });
 
@@ -362,7 +362,7 @@ export function setupXeroRoutes(app: Express) {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings payroll.payslip payroll.employees",
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees",
       state,
     });
 
