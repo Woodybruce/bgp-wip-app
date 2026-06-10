@@ -2850,6 +2850,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
+      // Populated when a best-effort cross-board mirror fails — returned on
+      // the response so the client can surface a sync warning instead of
+      // the drift staying invisible in server logs.
+      let mirrorWarning: string | null = null;
 
       // Normalise status to a canonical code before anything reads or
       // writes it — clients still send legacy labels ("HOTs", "Under
@@ -3103,6 +3107,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           await mirrorFromDeal(deal.id, deal.status as string, { pool, reason: "crm_deals.PUT" });
         } catch (e: any) {
           console.warn(`[deals] status mirror failed for ${deal.id}:`, e?.message);
+          mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
         }
         // Mirror to investment_tracker if a row is linked back to this deal.
         // Investment Tracker shares the canonical 10-code enum with Deals, so
@@ -3227,13 +3232,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const statusChanged = req.body.status && oldDeal && oldCode !== newCode;
       const nowComplete = ["EXC", "COM"].includes(newCode || "");
 
-      // Once a deal has moved past listing (SOL onwards), drop any available_units row tied to it
-      const POST_LISTING_CODES = ["SOL", "EXC", "COM", "INV"];
-      if (statusChanged && POST_LISTING_CODES.includes(newCode || "")) {
-        try {
-          await db.delete(availableUnits).where(eq(availableUnits.dealId, deal.id));
-        } catch (_) {}
-      }
+      // NOTE: deals moving past listing (SOL+) used to hard-delete the linked
+      // available_units row here, which made the unit's lifecycle depend on
+      // which board drove the change (the tracker's own flip-to-SOL kept the
+      // row). The mirror above now keeps the unit's marketing_status in
+      // lockstep instead; the Letting Tracker hides post-NEG rows by default
+      // and the property-page summary counts SOL/COM rows deliberately.
 
       if (statusChanged && nowComplete) {
         if (isInvestmentTeam) {
@@ -3488,7 +3492,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // via POST /api/kyc/run-all-checks { dealId, bothSides: true } from
       // deals.tsx inline-edit handler — see commit ee7f9e5. No server-side
       // trigger here to avoid double-running the orchestrator on every save.
-      res.json(deal);
+      res.json(mirrorWarning ? { ...deal, mirrorWarning } : deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {

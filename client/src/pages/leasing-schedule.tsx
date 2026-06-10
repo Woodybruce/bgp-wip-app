@@ -1443,15 +1443,22 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("PUT", `/api/leasing-schedule/unit/${data.id}`, data),
-    onSuccess: () => {
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("PUT", `/api/leasing-schedule/unit/${data.id}`, data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
       // Status changes mirror server-side to available_units + crm_deals
       // (+ tenancy spine), so refresh the whole deal-board family — WIP
       // Report, Pipeline + Performance, dashboard included.
       invalidateDealCaches();
       setEditUnit(null);
-      toast({ title: "Unit updated" });
+      if (data?.mirrorWarning) {
+        toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      } else {
+        toast({ title: "Unit updated" });
+      }
     },
     onError: (err: any) => toast({ title: "Update failed", description: err?.message || "Try again", variant: "destructive" }),
   });
@@ -2249,14 +2256,20 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("PUT", `/api/leasing-schedule/unit/${data.id}`, data),
-    onSuccess: () => {
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("PUT", `/api/leasing-schedule/unit/${data.id}`, data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
       // Three-way status mirror: refresh the other two boards' caches so
       // a status change here shows up on the Letting Tracker + Deals board
       // without a manual reload.
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      if (data?.mirrorWarning) {
+        toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      }
     },
     onError: (err: any) => { toast({ title: "Update failed", description: err.message, variant: "destructive" }); },
   });

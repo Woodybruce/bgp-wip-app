@@ -1,4 +1,5 @@
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -3602,11 +3603,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
 
   const statusColor = (status: string) => {
     const code = legacyToCode(status);
-    if (code === "AVA") return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
-    if (code === "SOL") return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-    if (code === "COM") return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
-    if (code === "WIT") return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
-    return "bg-gray-100 text-gray-600";
+    return (code && DEAL_STATUS_BADGE_COLORS[code]) || "bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300";
   };
 
   return (

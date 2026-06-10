@@ -48,9 +48,12 @@ export async function mirrorFromAvailableUnit(unitId: string, newStatus: string,
   if (!code) return;
   const target = codeToLeasingStatus(code);
 
-  // 1) Mirror to the linked crm_deal — but only if the deal is in a
-  //    different bucket. SOL/EXC are in the same Leasing bucket; we don't
-  //    want to drag an EXC deal back to SOL on a tracker tweak.
+  // 1) Mirror to the linked crm_deal. Tracker and Deals board share the
+  //    same canonical code set, so this is an exact copy — a deliberate
+  //    tracker edit (incl. SOL → EXC within the same Leasing bucket) should
+  //    move the deal too. Bucket-aware downgrade protection only applies to
+  //    the Leasing Schedule round-trip (see mirrorFromLeasingSchedule),
+  //    whose coarser enum genuinely can't distinguish SOL from EXC.
   const dealRow = await ctx.pool.query(
     `SELECT d.id AS deal_id, d.status, au.tenancy_unit_id
        FROM available_units au
@@ -62,8 +65,7 @@ export async function mirrorFromAvailableUnit(unitId: string, newStatus: string,
   const row = dealRow.rows[0];
   if (row?.deal_id) {
     const currentCode = legacyToCode(row.status);
-    const currentBucket = currentCode ? codeToLeasingStatus(currentCode) : null;
-    if (currentCode !== code && currentBucket !== target) {
+    if (currentCode !== code) {
       await ctx.pool.query(
         `UPDATE crm_deals SET status = $1, updated_at = NOW() WHERE id = $2`,
         [code, row.deal_id],

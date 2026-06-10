@@ -124,41 +124,11 @@ import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } 
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
 
-// Canonical 10-code colour map. Legacy strings retained as fallbacks for any
-// rows that haven't yet been touched by the migration.
-export const DEAL_STATUS_COLORS: Record<string, string> = {
-  REP: "bg-slate-500",
-  SPEC: "bg-violet-500",
-  LIVE: "bg-blue-500",
-  AVA: "bg-emerald-500",
-  NEG: "bg-yellow-600",
-  SOL: "bg-orange-500",
-  EXC: "bg-purple-500",
-  COM: "bg-green-500",
-  WIT: "bg-zinc-500",
-  INV: "bg-emerald-600",
-  // Legacy strings — kept for safety; all map to the new colours above
-  "Targeting": "bg-slate-500",
-  "Reporting": "bg-slate-500",
-  "Speculative": "bg-violet-500",
-  "Live": "bg-blue-500",
-  "Available": "bg-emerald-500",
-  "Marketing": "bg-emerald-500",
-  "Under Negotiation": "bg-yellow-600",
-  "HOTs": "bg-yellow-600",
-  "Under Offer": "bg-orange-500",
-  "SOLs": "bg-orange-500",
-  "Exchanged": "bg-purple-500",
-  "Completed": "bg-green-500",
-  "Let": "bg-green-500",
-  "Withdrawn": "bg-zinc-500",
-  "Lost": "bg-zinc-500",
-  "Dead": "bg-zinc-500",
-  "Invoiced": "bg-emerald-600",
-  "Billed": "bg-emerald-600",
-  "Leasing Comps": "bg-cyan-600",
-  "Investment Comps": "bg-purple-500",
-};
+// Canonical 10-code colour map — now sourced from the shared module so the
+// Letting Tracker / property summary use identical hues. Re-exported here
+// because many files historically import it from @/pages/deals.
+import { DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
+export const DEAL_STATUS_COLORS: Record<string, string> = DEAL_STATUS_DOT_COLORS;
 
 export const DEAL_TYPE_COLORS: Record<string, string> = {
   // Legacy — still exist in older deals
@@ -5001,10 +4971,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [feeAllocEditDeal, setFeeAllocEditDeal] = useState<CrmDeal | null>(null);
   const inlineUpdateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: unknown }) => {
-      await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+      const res = await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       invalidateDealCaches();
+      if (data?.mirrorWarning) {
+        toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      }
     },
     onError: (err: Error) => {
       // Roll back the kanban card's optimistic move: invalidate so the
