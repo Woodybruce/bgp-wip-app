@@ -1242,6 +1242,13 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     crmHits: { properties: crmPF?.properties || [], deals: crmPF?.deals || [], companies: crmPF?.companies || [] },
     deals: crmPF?.deals || [],
     initialOwnership: (() => {
+      // A user-confirmed title (manualLock, seeded by start_property_pathway)
+      // ALWAYS wins — without this guard the partial save below was
+      // clobbering the lock with the first freehold at the postcode, so a
+      // run pinned to a long-leasehold (e.g. Nuveen TGL379483) spent the
+      // whole of Stage 1 showing the freeholder (Pavement Holdings) instead.
+      const lockedOwnership = (run.stageResults as any)?.stage1?.initialOwnership;
+      if (lockedOwnership?.manualLock) return lockedOwnership;
       const fhs = landRegPF?.freeholds || [];
       // Prefer the first title with an actual proprietor name — postcode-
       // wide LR lookups sometimes return a title with a blank proprietor
@@ -1404,9 +1411,33 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   // and leave it untouched. Their picked value is in the existing
   // stage1.initialOwnership on the run record at this point.
   const existingStage1 = (run.stageResults as any)?.stage1?.initialOwnership;
-  if (existingStage1?.manualLock) {
-    console.log(`[pathway stage1] manual title lock active (title=${existingStage1.titleNumber} set by ${existingStage1.manualSetBy || "?"}) — skipping cross-validation`);
-    stage1Payload.initialOwnership = existingStage1;
+  // Fall back to the top-level confirmedLandReg gate: it survives partial
+  // saves and crashed re-runs even when the stage1 lock object got wiped,
+  // so a user-confirmed title is never silently swapped for the freehold.
+  const confirmedGate = (run.stageResults as any)?.confirmedLandReg;
+  const lockedOwnership = existingStage1?.manualLock
+    ? existingStage1
+    : (confirmedGate?.titleNumber
+        ? {
+            titleNumber: String(confirmedGate.titleNumber).toUpperCase(),
+            proprietorName: existingStage1?.proprietorName || null,
+            titleVerified: true,
+            titleSource: "user_confirmed",
+            manualLock: true,
+            manualSetBy: confirmedGate.confirmedBy,
+            manualSetAt: confirmedGate.confirmedAt,
+          }
+        : null);
+  if (lockedOwnership) {
+    console.log(`[pathway stage1] manual title lock active (title=${lockedOwnership.titleNumber} set by ${lockedOwnership.manualSetBy || "?"}) — skipping cross-validation`);
+    // Keep AI-derived enrichment (proprietor name, company number, purchase
+    // data) where the lock doesn't have it — the lock pins the TITLE, the
+    // investigator may still have found richer detail about that title.
+    const aiOwnership = stage1Payload.initialOwnership as any;
+    const aiMatchesLock = aiOwnership?.titleNumber && aiOwnership.titleNumber === lockedOwnership.titleNumber;
+    stage1Payload.initialOwnership = aiMatchesLock
+      ? { ...aiOwnership, ...lockedOwnership, proprietorName: lockedOwnership.proprietorName || aiOwnership.proprietorName }
+      : lockedOwnership;
   } else {
   const verifiedOwnership = partialPayload.initialOwnership as any;
   const verifiedTitle = verifiedOwnership?.titleNumber;
