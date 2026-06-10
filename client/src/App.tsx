@@ -662,7 +662,14 @@ function AppContent() {
       {/* Update banner disabled — was misfiring. Service worker still
           refreshes the bundle on its own on next reload. */}
       {/* <UpdatePrompt /> */}
-      <AuthenticatedApp />
+      {/* Boundary around the whole authenticated shell: the full-page
+          /chatbgp branch (and the mobile shells) render OUTSIDE Router's
+          boundary, so a crash or a stale-deploy chunk failure there used
+          to unmount the entire tree — a hard white screen. The boundary
+          also triggers the one-shot reload recovery for stale chunks. */}
+      <ErrorBoundary name="App">
+        <AuthenticatedApp />
+      </ErrorBoundary>
     </ChatBGPProvider>
   );
 }
