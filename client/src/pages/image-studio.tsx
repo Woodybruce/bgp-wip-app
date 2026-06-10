@@ -694,6 +694,8 @@ export default function ImageStudio() {
       done++;
       setBulkAiProgress({ running: true, done, total: ids.length, failed });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      // Refresh the open folder's grid too (prefix-matches the viewed collection).
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
     }
     setBulkAiProgress({ running: false, done, total: ids.length, failed });
     queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
@@ -1480,6 +1482,15 @@ export default function ImageStudio() {
                   )}
                   <div className="flex-1" />
                   <Button
+                    variant={selectMode ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()); }}
+                    data-testid="button-collection-select-mode"
+                  >
+                    {selectMode ? <X className="h-4 w-4 mr-1" /> : <StretchHorizontal className="h-4 w-4 mr-1" />}
+                    {selectMode ? "Cancel" : "Select"}
+                  </Button>
+                  <Button
                     size="sm"
                     onClick={() => {
                       // Pre-target this folder so uploaded photos file straight in.
@@ -1504,6 +1515,52 @@ export default function ImageStudio() {
                     <Trash2 className="h-4 w-4 mr-1" /> Delete Collection
                   </Button>
                 </div>
+                {selectMode && (
+                  <div className="mb-4 flex items-center gap-2 flex-wrap rounded-md border bg-muted/40 p-2">
+                    <span className="text-sm text-muted-foreground px-1">{selectedIds.size} selected</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedIds.size === 0}
+                      onClick={() => { setBulkAiPrompt(""); setBulkAiProgress({ running: false, done: 0, total: 0, failed: 0 }); setBulkAiOpen(true); }}
+                      data-testid="button-collection-bulk-ai"
+                    >
+                      <Sparkles className="h-4 w-4 mr-1" /> AI Touch Up
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedIds.size === 0}
+                      onClick={() => { setBulkTagInput(""); setBulkTagDialogOpen(true); }}
+                      data-testid="button-collection-bulk-tag"
+                    >
+                      <Tag className="h-4 w-4 mr-1" /> Tag All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedIds.size === 0}
+                      onClick={() => { setAddToCollectionTargetId(""); setAddToCollectionOpen(true); }}
+                      data-testid="button-collection-bulk-add"
+                    >
+                      <FolderPlus className="h-4 w-4 mr-1" /> Add to Collection
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={selectedIds.size === 0 || bulkDeleteMutation.isPending}
+                      onClick={() => {
+                        if (confirm(`Delete ${selectedIds.size} images? This cannot be undone.`)) {
+                          bulkDeleteMutation.mutate({ ids: [...selectedIds] });
+                        }
+                      }}
+                      data-testid="button-collection-bulk-delete"
+                    >
+                      {bulkDeleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                      Delete {selectedIds.size}
+                    </Button>
+                  </div>
+                )}
                 {viewingCollectionLoading ? (
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {Array.from({ length: 6 }).map((_, i) => (
@@ -1557,8 +1614,9 @@ export default function ImageStudio() {
                               }
                             }}
                             aiTagging={aiTagMutation.isPending}
-                            selectMode={false}
-                            selected={false}
+                            selectMode={selectMode}
+                            selected={selectedIds.has(img.id)}
+                            onToggleSelect={() => toggleSelect(img.id)}
                             crmLinks={resolveCrmLinks(imageObj as any, propertyLookup, brandLookup)}
                           />
                         </div>
