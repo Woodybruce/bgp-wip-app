@@ -148,13 +148,19 @@ async function editWithOpenAI(prompt: string, imageBuffer: Buffer, inputMime: st
     const ext = inputMime.includes("png") ? "png" : inputMime.includes("webp") ? "webp" : "jpg";
     const file = await toFile(imageBuffer, `source.${ext}`, { type: inputMime });
     console.log(`[image-studio] OpenAI edit: trying gpt-image-1`);
+    // quality:high = the model's best output tier; input_fidelity:high makes
+    // gpt-image-1 stick much closer to the source pixels (faces, signage,
+    // brickwork) instead of loosely re-imagining them — both matter for
+    // repeat amendments, where softness compounds with every pass.
     const response = await openai.images.edit({
       model: "gpt-image-1",
       image: file,
       prompt,
       n: 1,
       size: "auto" as any,
-    });
+      quality: "high",
+      input_fidelity: "high",
+    } as any);
     const b64 = response?.data?.[0]?.b64_json;
     if (b64) {
       console.log(`[image-studio] OpenAI edit: success with gpt-image-1`);
@@ -184,11 +190,15 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90000);
         try {
-          // Edits run at the model's default resolution. Requesting 4K here
-          // pushed Gemini 3 Pro past the ~45s request timeout (→ 504 + a
-          // headers-already-sent crash on the late response). 4K stays on the
-          // from-scratch generate path, which is less latency-sensitive.
+          // Ask Gemini 3 for 2K output. The default (~1K) is what made repeat
+          // amendments go blurry: a ~4000px iPhone source came back at a
+          // quarter the resolution, then each further edit re-generated from
+          // the already-shrunk image — photocopy-of-a-photocopy. 4K fixed that
+          // but blew the old 45s route budget (since raised to 120s); 2K is
+          // 4× the pixels of 1K at a fraction of 4K's latency and fits well
+          // inside the 90s abort below. 2.5 fallbacks don't support imageConfig.
           const config: any = { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any };
+          if (model.startsWith("gemini-3")) config.imageConfig = { imageSize: "2K" };
           const response = await ai.models.generateContent({
             model,
             contents: [{
