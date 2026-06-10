@@ -11729,6 +11729,41 @@ export function setupChatBGPRoutes(app: Express) {
           s.trim().toLowerCase().replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-").replace(/[.,]/g, "").replace(/\s+/g, " ");
         const normalisedAddr = normaliseAddr(address);
         const normalisedPostcode = (postcode || "").replace(/\s+/g, "").toUpperCase();
+
+        // Build the confirmed-title seed: resolve the proprietor for the
+        // picked title and lock Stage 1 to it (manualLock) so the runner
+        // honours the user's choice instead of re-fetching and picking the
+        // first title back. Shared by the create path and the re-pin path.
+        const buildConfirmedSeed = async (titleNumber: string) => {
+          let proprietorName: string | null = null;
+          let tenure: string | null = null;
+          try {
+            const { findProprietorsByTitle } = await import("./hmlr-direct");
+            const props = await findProprietorsByTitle(titleNumber);
+            if (props?.length) {
+              proprietorName = props.map((p: any) => p.proprietorName).filter(Boolean).join(", ") || null;
+              tenure = (props[0] as any)?.tenure || null;
+            }
+          } catch (e: any) {
+            console.warn(`[start_property_pathway] proprietor lookup for ${titleNumber} failed: ${e?.message}`);
+          }
+          return {
+            confirmedLandReg: { titleNumber, confirmedAt: new Date().toISOString(), confirmedBy: userId },
+            stage1: {
+              initialOwnership: {
+                titleNumber,
+                proprietorName,
+                tenure,
+                titleVerified: true,
+                titleSource: "user_confirmed",
+                manualLock: true,
+                manualSetBy: userId,
+                manualSetAt: new Date().toISOString(),
+              },
+            },
+          };
+        };
+
         if (!forceNew) {
           const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
           const match = existing.find((r) => {
@@ -11739,6 +11774,41 @@ export function setupChatBGPRoutes(app: Express) {
             return true;
           });
           if (match) {
+            // What title is this existing run pinned to?
+            const existingPin: string | null =
+              (match.stageResults as any)?.confirmedLandReg?.titleNumber
+              || (match.stageResults as any)?.stage1?.initialOwnership?.titleNumber
+              || null;
+            // BUG FIX: if the user has now confirmed a DIFFERENT title than the
+            // matched run is pinned to, re-pin the existing run rather than
+            // silently returning the stale one. Previously this `match` short-
+            // circuit dropped the new confirmedTitleNumber on the floor — so
+            // picking the long-leasehold (e.g. Nuveen/TGL379483) after a run
+            // had been started on the freehold (Pavement Holdings) just reused
+            // the freehold run, and every stage stayed built around the wrong
+            // interest. Re-pinning resets it to Stage 1 on the correct title.
+            if (confirmedTitleNumber && (!existingPin || existingPin.toUpperCase() !== confirmedTitleNumber)) {
+              const seed = await buildConfirmedSeed(confirmedTitleNumber);
+              const { eq } = await import("drizzle-orm");
+              await db.update(propertyPathwayRuns).set({
+                currentStage: 1,
+                stageStatus: {},
+                // Discard the old stage intel — it was built around the wrong
+                // title — and reseed with the confirmed-title lock.
+                stageResults: { confirmedLandReg: seed.confirmedLandReg, stage1: seed.stage1 },
+              }).where(eq(propertyPathwayRuns.id, match.id));
+              return {
+                data: {
+                  runId: match.id,
+                  address: match.address,
+                  currentStage: 1,
+                  repinnedFrom: existingPin || null,
+                  repinnedTo: confirmedTitleNumber,
+                  nextStep: `This address already had an investigation pinned to ${existingPin || "another title"}. Re-pinned it to the confirmed title ${confirmedTitleNumber} and reset to Stage 1. Call advance_property_pathway with stage 1 to re-run Initial Search on the correct interest.`,
+                },
+                action: { type: "navigate", path: `/property-pathway?runId=${match.id}` },
+              };
+            }
             return {
               data: { runId: match.id, address: match.address, currentStage: match.currentStage, existing: true, nextStep: `Existing investigation reused for this address. Call advance_property_pathway to continue from stage ${match.currentStage}. If the user explicitly wants a fresh investigation from scratch instead, call start_property_pathway again with forceNew: true.` },
               action: { type: "navigate", path: `/property-pathway?runId=${match.id}` },
@@ -11806,37 +11876,12 @@ export function setupChatBGPRoutes(app: Express) {
 
         const initialStageResults: any = {};
         if (confirmedTitleNumber) {
-          initialStageResults.confirmedLandReg = { titleNumber: confirmedTitleNumber, confirmedAt: new Date().toISOString(), confirmedBy: userId };
-          // CRITICAL: seed stage1.initialOwnership with manualLock so the
-          // Stage 1 runner HONOURS this title instead of re-fetching and
-          // potentially picking a different one. Stage 1 checks
-          // `stage1.initialOwnership.manualLock` and skips cross-validation
-          // when set (property-pathway.ts). Without this the confirmed
-          // title is stored but ignored — the gate would be cosmetic.
-          let proprietorName: string | null = null;
-          let tenure: string | null = null;
-          try {
-            const { findProprietorsByTitle } = await import("./hmlr-direct");
-            const props = await findProprietorsByTitle(confirmedTitleNumber);
-            if (props?.length) {
-              proprietorName = props.map((p: any) => p.proprietorName).filter(Boolean).join(", ") || null;
-              tenure = (props[0] as any)?.tenure || null;
-            }
-          } catch (e: any) {
-            console.warn(`[start_property_pathway] proprietor lookup for ${confirmedTitleNumber} failed: ${e?.message}`);
-          }
-          initialStageResults.stage1 = {
-            initialOwnership: {
-              titleNumber: confirmedTitleNumber,
-              proprietorName,
-              tenure,
-              titleVerified: true,
-              titleSource: "user_confirmed",
-              manualLock: true,
-              manualSetBy: userId,
-              manualSetAt: new Date().toISOString(),
-            },
-          };
+          const seed = await buildConfirmedSeed(confirmedTitleNumber);
+          initialStageResults.confirmedLandReg = seed.confirmedLandReg;
+          // Seed stage1.initialOwnership with manualLock so the Stage 1 runner
+          // HONOURS this title instead of re-fetching and picking a different
+          // one (property-pathway.ts checks initialOwnership.manualLock).
+          initialStageResults.stage1 = seed.stage1;
         } else if (skipLandReg) {
           initialStageResults.confirmedLandReg = { skipped: true, skippedAt: new Date().toISOString(), skippedBy: userId };
         }
