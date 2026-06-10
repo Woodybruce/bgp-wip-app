@@ -2472,7 +2472,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn(`[seed-staff] failed: ${e.message}`);
   }
 })();
-import { setupAuth } from "./auth";
+import { setupAuth, requireAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -2687,7 +2687,7 @@ app.get("/bgp-mark.png", async (_req, res) => {
  *   3) Test fetch: pull a known-good Westminster IDOX docs page through
  *      the proxy and check we get HTML back (not a block / 503)
  */
-app.get("/api/scraperapi/ping", async (_req, res) => {
+app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   const key = process.env.SCRAPERAPI_KEY;
   const out: any = { keySet: !!key, keyLength: key?.length || 0 };
   if (!key) {
@@ -3076,7 +3076,7 @@ app.use("/api/branding/assets", express.static(
   app.get("/api/experian/health", async (_req, res) => {
     res.json(await experianHealth());
   });
-  app.post("/api/experian/credit-report", async (req, res) => {
+  app.post("/api/experian/credit-report", requireAuth, async (req, res) => {
     try {
       if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
       const companyNumber = String(req.body?.companyNumber || "").trim();
@@ -3089,7 +3089,7 @@ app.use("/api/branding/assets", express.static(
     }
   });
   // Temporary sandbox debug route — remove after testing
-  app.post("/api/experian/debug-raw", async (req, res) => {
+  app.post("/api/experian/debug-raw", requireAuth, async (req, res) => {
     try {
       if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
       const companyNumber = String(req.body?.companyNumber || "").trim();
@@ -3110,7 +3110,7 @@ app.use("/api/branding/assets", express.static(
   // Comprehensive sandbox audit — exercises every Experian product BGP cares
   // about, returns a sales-ready buy list. Hit GET /api/experian/sandbox-audit
   // (?regnum=XXXX optional, defaults to Experian's 99999999 dummy company).
-  app.get("/api/experian/sandbox-audit", async (req, res) => {
+  app.get("/api/experian/sandbox-audit", requireAuth, async (req, res) => {
     try {
       const regnum = String(req.query?.regnum || "99999999");
       const out = await sandboxAudit(regnum);
@@ -3120,7 +3120,7 @@ app.use("/api/branding/assets", express.static(
     }
   });
   // Business Profile endpoint discovery — hit once to find the correct path, then remove
-  app.get("/api/experian/discover-profile", async (req, res) => {
+  app.get("/api/experian/discover-profile", requireAuth, async (req, res) => {
     try {
       if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
       const regnum = String(req.query?.regnum || "99999999").trim().toUpperCase();

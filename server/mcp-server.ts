@@ -389,10 +389,9 @@ function createBgpMcpServer(): McpServer {
           boardType: investmentTracker.boardType,
           client: investmentTracker.client,
           vendor: investmentTracker.vendor,
-          askingPrice: investmentTracker.askingPrice,
-          agreedPrice: investmentTracker.agreedPrice,
+          guidePrice: investmentTracker.guidePrice,
           niy: investmentTracker.niy,
-          bgpFee: investmentTracker.bgpFee,
+          fee: investmentTracker.fee,
         })
         .from(investmentTracker)
         .$dynamic();
@@ -437,9 +436,9 @@ function createBgpMcpServer(): McpServer {
           name: crmDeals.name,
           groupName: crmDeals.groupName,
           status: crmDeals.status,
-          quotedfee: crmDeals.quotedfee,
+          fee: crmDeals.fee,
           dealType: crmDeals.dealType,
-          agentFees: crmDeals.agentFees,
+          internalAgent: crmDeals.internalAgent,
         })
         .from(crmDeals)
         .where(
@@ -484,7 +483,7 @@ function createBgpMcpServer(): McpServer {
           dealType: crmComps.dealType,
           headlineRent: crmComps.headlineRent,
           netEffectiveRent: crmComps.netEffectiveRent,
-          sqft: crmComps.sqft,
+          sqft: crmComps.areaSqft,
           completionDate: crmComps.completionDate,
           address: crmComps.address,
         })
@@ -528,12 +527,12 @@ function createBgpMcpServer(): McpServer {
           unitName: availableUnits.unitName,
           propertyId: availableUnits.propertyId,
           marketingStatus: availableUnits.marketingStatus,
-          useType: availableUnits.useType,
+          useType: availableUnits.useClass,
           floor: availableUnits.floor,
           sqft: availableUnits.sqft,
-          rent: availableUnits.rent,
-          rates: availableUnits.rates,
-          serviceCharge: availableUnits.serviceCharge,
+          rent: availableUnits.askingRent,
+          rates: availableUnits.ratesPa,
+          serviceCharge: availableUnits.serviceChargePa,
         })
         .from(availableUnits)
         .$dynamic();

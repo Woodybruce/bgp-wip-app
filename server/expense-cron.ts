@@ -145,9 +145,20 @@ export function startExpenseCron(): void {
   if (_started) return;
   _started = true;
 
-  // Check every hour. Each job has its own day/hour gate so they fire
-  // at most once per scheduled window. UK time — Railway boxes run UTC
-  // so this drifts an hour during BST; close enough for "Monday 09:00 ish".
+  // Check every hour. Each job has its own day/hour gate, plus a per-job
+  // last-run date stamp so timer drift can never fire the same job twice
+  // in one window within a process. (Cross-process dedup — e.g. two
+  // instances overlapping during a rolling deploy — would need a DB-level
+  // claim; not worth a table until it's actually observed.) UK time —
+  // Railway boxes run UTC so this drifts an hour during BST; close
+  // enough for "Monday 09:00 ish".
+  const lastRan: Record<string, string> = {};
+  const onceToday = (job: string, now: Date): boolean => {
+    const stamp = now.toISOString().slice(0, 10);
+    if (lastRan[job] === stamp) return false;
+    lastRan[job] = stamp;
+    return true;
+  };
   setInterval(() => {
     const now = new Date();
     const day = now.getUTCDay();   // 0 Sun .. 6 Sat
@@ -155,18 +166,18 @@ export function startExpenseCron(): void {
     const hour = now.getUTCHours();
 
     // Monday 09:00 UTC — weekly agent chase
-    if (day === 1 && hour === 9) {
+    if (day === 1 && hour === 9 && onceToday("weekly-chase", now)) {
       runWeeklyAgentChase().catch(e => console.error("[expense-cron] weekly chase failed:", e?.message));
     }
 
     // 28th of the month 09:00 UTC — monthly approver digest
-    if (date === 28 && hour === 9) {
+    if (date === 28 && hour === 9 && onceToday("monthly-digest", now)) {
       runMonthlyApproverDigest().catch(e => console.error("[expense-cron] monthly digest failed:", e?.message));
     }
 
     // 06:00 UTC daily — pre-generate everyone's AI Daily Briefing so it's
     // already cached when they open the app (no 15s regen on each open).
-    if (hour === 6) {
+    if (hour === 6 && onceToday("briefing-pregen", now)) {
       import("./daily-briefing")
         .then(m => m.pregenerateAllBriefings())
         .catch(e => console.error("[expense-cron] briefing pre-gen failed:", e?.message));
@@ -176,7 +187,7 @@ export function startExpenseCron(): void {
     // with a Revolut card swipe older than 3 days still missing a receipt
     // (and ≥ £10, not personal, not an admin) gets their card frozen
     // until they upload the receipt or mark it personal.
-    if (date === 1 && hour === 9) {
+    if (date === 1 && hour === 9 && onceToday("month-end-freeze", now)) {
       import("./expense-freeze")
         .then(m => m.runMonthEndFreezeSweep())
         .then(r => console.log(`[expense-cron] month-end freeze: ${r.frozen.length} frozen, ${r.skipped} clean/exempt`))

@@ -2729,6 +2729,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, req.body.propertyId);
         if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
       }
+      // Normalise legacy status labels ("HOTs", "Under Offer"…) to the
+      // canonical 10-code set so new deals never persist non-canonical
+      // statuses that boards/filters can't see.
+      if (typeof req.body?.status === "string") {
+        const { legacyToCode } = await import("../shared/deal-status");
+        const canonical = legacyToCode(req.body.status);
+        if (canonical) req.body.status = canonical;
+      }
       const parsed = insertCrmDealSchema.parse(req.body);
       const deal = await storage.createCrmDeal(parsed);
 
@@ -2842,6 +2850,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
+
+      // Normalise status to a canonical code before anything reads or
+      // writes it — clients still send legacy labels ("HOTs", "Under
+      // Offer"…) and storing those raw makes the deal invisible to any
+      // board/filter comparing against the 10-code set.
+      if (typeof req.body?.status === "string") {
+        const { legacyToCode } = await import("../shared/deal-status");
+        const canonical = legacyToCode(req.body.status);
+        if (canonical) req.body.status = canonical;
+      }
 
       // Same tenancy-token resolve as POST — picker can hand us a
       // "__tenancy__<id>" for rows that didn't have a property_units
@@ -7638,21 +7656,11 @@ Rules:
 
       const usedDealIds = new Set<string>();
 
-      let entries: any[] = wipRows.map(r => {
-        const projectKey = (r.project || "").toLowerCase().trim();
-        const refKey = (r.ref || "").toLowerCase().trim();
-        const matchedDeal = findDealExcel(projectKey) || findDealExcel(refKey);
-        if (matchedDeal) usedDealIds.add(matchedDeal.id);
-        const tenantName = matchedDeal?.tenantId ? compMap.get(matchedDeal.tenantId) || null : null;
-        return {
-          id: r.id, dealId: matchedDeal?.id || null, dealType: matchedDeal?.dealType || null,
-          ref: r.ref, groupName: r.groupName, project: r.project, tenant: r.tenant || tenantName,
-          team: r.team, agent: r.agent, assetClass: matchedDeal?.assetClass || null,
-          amtWip: r.amtWip || 0, amtInvoice: r.amtInvoice || 0, month: r.month,
-          dealStatus: r.dealStatus, stage: r.stage, invoiceNo: r.invoiceNo,
-          fiscalYear: r.fiscalYear, source: "spreadsheet" as const,
-        };
-      });
+      // The legacy spreadsheet wip_rows source was retired (referencing it
+      // here threw "wipRows is not defined" and 500'd every export). The
+      // workbook is built entirely from CRM deals below, matching the live
+      // /api/wip view.
+      let entries: any[] = [];
 
       const unmatchedDeals = deals.filter(d => {
         if (usedDealIds.has(d.id)) return false;
