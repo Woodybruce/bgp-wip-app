@@ -1198,9 +1198,39 @@ export async function htmlToPdfPortrait(html: string): Promise<Buffer> {
   return htmlToPdfBuffer(html, { format: "A4", landscape: false });
 }
 
+// Chromium executable resolution is shared + single-flight. On a fresh
+// container @sparticuz/chromium-min downloads and extracts the tarball to
+// /tmp on FIRST use — two concurrent PDF requests used to race that
+// extraction and the loser spawned a binary still open for writing:
+// "spawn ETXTBSY". One in-flight resolution shared by every caller, plus
+// an ETXTBSY/EBUSY retry on launch, covers both halves of the race.
+let chromiumPathPromise: Promise<string> | null = null;
+function resolveChromiumPath(): Promise<string> {
+  if (!chromiumPathPromise) {
+    chromiumPathPromise = (async () => {
+      if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+      try {
+        const chromium: any = (await import("@sparticuz/chromium-min")).default;
+        const url = process.env.SPARTICUZ_CHROMIUM_URL
+          || "https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.x64.tar";
+        return await chromium.executablePath(url);
+      } catch (err: any) {
+        throw new Error(
+          "Native PDF needs a chromium binary. Set PUPPETEER_EXECUTABLE_PATH to a system chromium, " +
+          "or set SPARTICUZ_CHROMIUM_URL to a chromium tarball (default: github.com/Sparticuz/chromium release). " +
+          `Underlying error: ${err?.message || "unknown"}`,
+        );
+      }
+    })();
+    // A failed download/extraction shouldn't poison every future PDF —
+    // clear the cached promise so the next request retries from scratch.
+    chromiumPathPromise.catch(() => { chromiumPathPromise = null; });
+  }
+  return chromiumPathPromise;
+}
+
 async function htmlToPdfBuffer(html: string, options?: { format?: "A4" | "Letter"; landscape?: boolean }): Promise<Buffer> {
   let puppeteer: any;
-  let executablePath: string | undefined;
 
   try {
     puppeteer = (await import("puppeteer-core")).default || (await import("puppeteer-core"));
@@ -1208,28 +1238,27 @@ async function htmlToPdfBuffer(html: string, options?: { format?: "A4" | "Letter
     throw new Error("puppeteer-core not installed — run npm install puppeteer-core @sparticuz/chromium-min");
   }
 
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-  } else {
+  const executablePath = await resolveChromiumPath();
+
+  let browser: any;
+  let lastErr: any;
+  for (let attempt = 0; attempt < 3 && !browser; attempt++) {
     try {
-      const chromium: any = (await import("@sparticuz/chromium-min")).default;
-      const url = process.env.SPARTICUZ_CHROMIUM_URL
-        || "https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.x64.tar";
-      executablePath = await chromium.executablePath(url);
-    } catch (err: any) {
-      throw new Error(
-        "Native PDF needs a chromium binary. Set PUPPETEER_EXECUTABLE_PATH to a system chromium, " +
-        "or set SPARTICUZ_CHROMIUM_URL to a chromium tarball (default: github.com/Sparticuz/chromium release). " +
-        `Underlying error: ${err?.message || "unknown"}`,
-      );
+      browser = await puppeteer.launch({
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        executablePath,
+        headless: true,
+      });
+    } catch (e: any) {
+      lastErr = e;
+      const msg = String(e?.message || e?.code || "");
+      if (!/ETXTBSY|EBUSY/i.test(msg)) throw e;
+      // Binary still being written by a concurrent first-use extraction —
+      // give it a moment and retry.
+      await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
     }
   }
-
-  const browser = await puppeteer.launch({
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-    executablePath,
-    headless: true,
-  });
+  if (!browser) throw lastErr;
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "networkidle0", timeout: 30000 });
