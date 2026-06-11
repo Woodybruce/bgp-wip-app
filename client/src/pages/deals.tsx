@@ -979,11 +979,11 @@ function PropertyUnitCell({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-[180px]"
+          className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-0 max-w-full overflow-hidden"
           data-testid={`property-unit-cell-${deal.id}`}
         >
           {propertyName ? (
-            <span className="text-sm font-medium truncate">{propertyName}</span>
+            <span className="text-sm font-medium truncate" title={propertyName}>{propertyName}</span>
           ) : (
             <span className="text-muted-foreground text-[11px] flex items-center gap-1">
               <Plus className="w-3 h-3" /> Add property
@@ -1202,20 +1202,23 @@ function ClientXeroCell({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-[170px]"
+          className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-0 max-w-full overflow-hidden"
           data-testid={`client-xero-cell-${deal.id}`}
         >
           {clientName ? (
-            <span className="text-sm font-medium truncate">{clientName}</span>
+            <span className="text-sm font-medium truncate" title={clientName}>{clientName}</span>
           ) : (
             <span className="text-muted-foreground text-[11px] flex items-center gap-1">
               <Plus className="w-3 h-3" /> Add client
             </span>
           )}
           {xeroName ? (
-            <span className="text-[11px] text-muted-foreground truncate flex items-center gap-1">
+            <span className="text-[11px] text-muted-foreground truncate flex items-center gap-1 min-w-0 max-w-full">
               <Receipt className="w-2.5 h-2.5 shrink-0" />
-              <span className="truncate">{xeroName}{xeroAcct ? ` · A/C ${xeroAcct}` : ""}</span>
+              {/* min-w-0 — flex items refuse to shrink below content width
+                  without it, which is exactly how long billing entities were
+                  painting across the Deal Type column. */}
+              <span className="truncate min-w-0" title={`${xeroName}${xeroAcct ? ` · A/C ${xeroAcct}` : ""}`}>{xeroName}{xeroAcct ? ` · A/C ${xeroAcct}` : ""}</span>
             </span>
           ) : (
             <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
@@ -5891,7 +5894,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           ) : "—"}
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 max-w-[220px]">
+                      <TableCell className="px-1.5 py-1 w-[220px] max-w-[220px] overflow-hidden">
                         <PropertyUnitCell
                           deal={deal}
                           properties={properties}
@@ -5907,7 +5910,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         </TableCell>
                       )}
                       {visibleColumns.clientXero && (
-                        <TableCell className="px-1.5 py-1 max-w-[200px]">
+                        <TableCell className="px-1.5 py-1 w-[200px] max-w-[200px] overflow-hidden">
                           <ClientXeroCell
                             deal={deal}
                             companies={companies}
