@@ -3,7 +3,9 @@
 // aged debtors. Data comes from /api/xero/financials (system Xero session,
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { Link } from "wouter";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -339,10 +341,31 @@ function AppCostsSection() {
 }
 
 export default function FinancePage() {
+  const { toast } = useToast();
   const { data, isLoading, isFetching, refetch, error } = useQuery<Financials>({
     queryKey: ["/api/xero/financials"],
     staleTime: 5 * 60 * 1000,
   });
+
+  // The Xero OAuth callback lands back here with ?xero=connected or
+  // ?xero_error=… — surface the outcome and, on success, force a live
+  // pull so the page doesn't keep showing the cached pre-connect state.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ok = params.get("xero");
+    const err = params.get("xero_error");
+    if (!ok && !err) return;
+    window.history.replaceState({}, "", "/finance");
+    if (ok === "connected") {
+      toast({ title: "Xero connected", description: "Pulling fresh figures from Xero…" });
+      fetch("/api/xero/financials?refresh=1", { credentials: "include", headers: getAuthHeaders() })
+        .catch(() => {})
+        .finally(() => refetch());
+    } else if (err) {
+      toast({ title: "Xero connection failed", description: decodeURIComponent(err), variant: "destructive" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const hardRefresh = async () => {
     await fetch("/api/xero/financials?refresh=1", { credentials: "include", headers: getAuthHeaders() });

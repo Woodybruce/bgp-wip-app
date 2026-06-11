@@ -323,27 +323,33 @@ export function setupXeroRoutes(app: Express) {
   // the JSON-returning /api/xero/auth so the browser handles the redirect chain
   // without any client-side fetch logic that can silently fail.
   app.get("/api/xero/connect", requireAuth, async (req: Request, res: Response) => {
-    const clientId = process.env.XERO_CLIENT_ID;
-    if (!clientId) {
-      return res.redirect("/?xero_error=" + encodeURIComponent("XERO_CLIENT_ID not set in environment"));
+    try {
+      const clientId = process.env.XERO_CLIENT_ID;
+      if (!clientId) {
+        return res.redirect("/finance?xero_error=" + encodeURIComponent("XERO_CLIENT_ID not set in environment"));
+      }
+
+      const state = crypto.randomBytes(32).toString("hex");
+      req.session.xeroOAuthState = state;
+      const redirectUri = getRedirectUri(req);
+      console.log("[Xero] /connect — redirect_uri:", redirectUri);
+
+      const params = new URLSearchParams({
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees",
+        state,
+      });
+
+      req.session.save((err) => {
+        if (err) console.error("[Xero] Session save error in /connect:", err);
+        res.redirect(`${XERO_AUTH_URL}?${params.toString()}`);
+      });
+    } catch (e: any) {
+      console.error("[Xero] /connect crashed:", e?.message, e?.stack);
+      res.redirect("/finance?xero_error=" + encodeURIComponent(e?.message || "connect failed"));
     }
-
-    const state = crypto.randomBytes(32).toString("hex");
-    req.session.xeroOAuthState = state;
-    const redirectUri = getRedirectUri(req);
-
-    const params = new URLSearchParams({
-      response_type: "code",
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees",
-      state,
-    });
-
-    req.session.save((err) => {
-      if (err) console.error("[Xero] Session save error in /connect:", err);
-      res.redirect(`${XERO_AUTH_URL}?${params.toString()}`);
-    });
   });
 
   app.get("/api/xero/auth", requireAuth, async (req: Request, res: Response) => {
@@ -379,23 +385,23 @@ export function setupXeroRoutes(app: Express) {
     if (error) {
       console.error("[Xero] Authorization error:", error, error_description);
       const errMsg = error_description ? `${error}: ${error_description}` : String(error);
-      return res.redirect(`/deals?xero_error=${encodeURIComponent(errMsg)}`);
+      return res.redirect(`/finance?xero_error=${encodeURIComponent(errMsg)}`);
     }
 
     if (!code) {
-      return res.redirect("/deals?xero_error=no_code_received");
+      return res.redirect("/finance?xero_error=no_code_received");
     }
 
     if (!state || state !== req.session.xeroOAuthState) {
       console.error("[Xero] State mismatch — expected:", req.session.xeroOAuthState?.substring(0, 8), "got:", String(state).substring(0, 8));
-      return res.redirect("/deals?xero_error=invalid_state");
+      return res.redirect("/finance?xero_error=invalid_state");
     }
 
     const clientId = process.env.XERO_CLIENT_ID;
     const clientSecret = process.env.XERO_CLIENT_SECRET;
 
     if (!clientId || !clientSecret) {
-      return res.redirect("/deals?xero_error=missing_config");
+      return res.redirect("/finance?xero_error=missing_config");
     }
 
     try {
@@ -417,7 +423,7 @@ export function setupXeroRoutes(app: Express) {
       if (!tokenRes.ok) {
         const errText = await tokenRes.text();
         console.error("[Xero] Token exchange failed:", errText);
-        return res.redirect("/deals?xero_error=token_failed");
+        return res.redirect("/finance?xero_error=token_failed");
       }
 
       const data = await tokenRes.json();
@@ -462,14 +468,14 @@ export function setupXeroRoutes(app: Express) {
       req.session.save((saveErr) => {
         if (saveErr) console.error("[Xero] Session save error after callback:", saveErr);
         if (!req.session.xeroTokens?.tenantId) {
-          res.redirect("/deals?xero_error=no_tenant");
+          res.redirect("/finance?xero_error=no_tenant");
         } else {
-          res.redirect("/deals?xero=connected");
+          res.redirect("/finance?xero=connected");
         }
       });
     } catch (err: any) {
       console.error("[Xero] OAuth callback error:", err);
-      res.redirect("/deals?xero_error=callback_failed");
+      res.redirect("/finance?xero_error=callback_failed");
     }
   });
 

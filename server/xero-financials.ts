@@ -438,18 +438,22 @@ export function registerXeroFinancialRoutes(app: Express): void {
         payload = await withSystemXero((session) => buildFinancials(session));
       } catch (e: any) {
         const msg = String(e?.message || "");
-        // 401/403 from the Reports endpoints with an old token = the
-        // connection predates the accounting.reports.read scope.
-        if (/403|401|insufficient|unauthori[sz]ed|forbidden/i.test(msg)) {
+        // Anything that smells like an auth/consent problem — old token
+        // without the reports scope (401/403), a burned rotating refresh
+        // token (invalid_grant), or a dead system session — gets the
+        // reconnect callout rather than a raw 500. Reconnecting re-mints
+        // and re-captures the system session either way.
+        if (/401|403|insufficient|unauthori[sz]ed|forbidden|invalid_grant|refresh token|not connected to xero|no xero tenant|reconnect/i.test(msg)) {
           return res.json({
             needsReconnect: true,
-            message: "The Xero connection predates reports access. An admin needs to reconnect Xero (Subscriptions → Xero → Connect) to grant the new reports permission.",
+            message: "The Xero connection needs re-authorising (expired token or missing reports permission). Click Reconnect Xero — one consent fixes it for everyone.",
             detail: msg,
             wip,
             commissions,
             spend,
           });
         }
+        console.error("[xero-financials] unclassified Xero failure:", msg, e?.stack);
         throw e;
       }
       if (!payload) {
