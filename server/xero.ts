@@ -380,7 +380,21 @@ export function setupXeroRoutes(app: Express) {
 
   app.get("/api/xero/callback", async (req: Request, res: Response) => {
     const { code, state, error, error_description } = req.query;
-    console.log("[Xero] Callback received — code:", !!code, "error:", error || "none", "error_description:", error_description || "none");
+    // Forensics for empty-callback hits: which query KEYS arrived (values
+    // redacted), where the browser came from, and whether a session with a
+    // pending OAuth state exists. A bare hit with referer=xero means Xero
+    // dropped the params; referer=our-own-app means something client-side
+    // re-navigated to the callback URL without them.
+    console.log(
+      "[Xero] Callback received — code:", !!code,
+      "error:", error || "none",
+      "error_description:", error_description || "none",
+      "| queryKeys:", Object.keys(req.query).join(",") || "(none)",
+      "| referer:", String(req.headers.referer || "(none)").slice(0, 80),
+      "| hasSession:", !!req.session?.userId,
+      "| pendingState:", !!req.session?.xeroOAuthState,
+      "| ua:", String(req.headers["user-agent"] || "").slice(0, 60),
+    );
 
     if (error) {
       console.error("[Xero] Authorization error:", error, error_description);
