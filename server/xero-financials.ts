@@ -104,12 +104,12 @@ function parseXeroDate(v: any): Date | null {
 function fyStartFrom(org: any, today: Date): Date {
   const endDay = Number(org?.FinancialYearEndDay) || 31;
   const endMonth = Number(org?.FinancialYearEndMonth) || 12; // 1-12
-  // FY end this calendar year, then start = day after, minus one year if
-  // that lands in the future.
+  // FY end this calendar year, then start = day after — minus one year if
+  // that start hasn't arrived yet. (Xero caps report spans at 365 days, so
+  // overshooting into the previous FY here breaks the P&L call.)
   const endThisYear = new Date(Date.UTC(today.getUTCFullYear(), endMonth - 1, endDay));
   let start = new Date(endThisYear);
   start.setUTCDate(start.getUTCDate() + 1);
-  start.setUTCFullYear(start.getUTCFullYear() - 1);
   if (start > today) start.setUTCFullYear(start.getUTCFullYear() - 1);
   // Calendar-year orgs (end 31 Dec) come out as 1 Jan — "start of the year".
   return start;
