@@ -334,11 +334,19 @@ export function setupXeroRoutes(app: Express) {
       const redirectUri = getRedirectUri(req);
       console.log("[Xero] /connect — redirect_uri:", redirectUri);
 
+      // Base scopes are all GA accounting scopes (verified against Xero's
+      // official example app). Payroll scopes are opt-in via ?payroll=1 —
+      // payroll API access is app/region-conditional and a rejected scope
+      // 500s the WHOLE consent with invalid_scope, which held the Finance
+      // reconnect hostage to a permission it doesn't even need.
+      let scope = "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read";
+      if (req.query.payroll === "1") scope += " payroll.payslip payroll.employees";
+      console.log("[Xero] /connect — scopes:", scope);
       const params = new URLSearchParams({
         response_type: "code",
         client_id: clientId,
         redirect_uri: redirectUri,
-        scope: "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees",
+        scope,
         state,
       });
 
@@ -368,7 +376,9 @@ export function setupXeroRoutes(app: Express) {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees",
+      scope: req.query.payroll === "1"
+        ? "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees"
+        : "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read",
       state,
     });
 
