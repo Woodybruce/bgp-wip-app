@@ -370,6 +370,17 @@ export function setupXeroRoutes(app: Express) {
             if (matches) reason = Array.from(new Set(matches)).join("; ");
           } catch {}
           console.error("[Xero] /connect PRE-FLIGHT REJECTED by Xero:", reason);
+          // Don't send the user to Xero's dead-end page — bounce back to
+          // Finance with the verdict and which client id the server holds,
+          // so the failure explains itself without log digging. Client ids
+          // are public (they ride in every authorize URL); the secret is
+          // what stays private.
+          const idHint = `${clientId.slice(0, 4)}…${clientId.slice(-4)}`;
+          return res.redirect("/finance?xero_error=" + encodeURIComponent(
+            `Xero rejected the consent request before login — ${reason}. ` +
+            `The server is using client ID ${idHint}. If that doesn't match your 'Web app' in the Xero portal, ` +
+            `update XERO_CLIENT_ID / XERO_CLIENT_SECRET in Railway. Note: 'Custom connection' apps can never do this consent — the app type must be 'Web app'.`,
+          ));
         } else {
           console.log(`[Xero] /connect pre-flight OK — Xero accepted the request (status ${probe.status}, location ${loc.slice(0, 60) || "(login page)"})`);
         }
