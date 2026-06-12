@@ -350,9 +350,36 @@ export function setupXeroRoutes(app: Express) {
         state,
       });
 
+      const authorizeUrl = `${XERO_AUTH_URL}?${params.toString()}`;
+
+      // Pre-flight the EXACT authorize URL server-side. Xero's error page
+      // gives the browser nothing machine-readable, so we ask Xero
+      // ourselves: a healthy request 302s into the login UI; a rejected
+      // one 302s to /identity/error — in which case we fetch that page
+      // and log the human-readable reason (Unknown client / Invalid
+      // scope / Invalid redirect…). This puts the verdict in OUR logs.
+      try {
+        const probe = await fetch(authorizeUrl, { redirect: "manual" });
+        const loc = probe.headers.get("location") || "";
+        if (loc.includes("/identity/error")) {
+          let reason = loc.slice(0, 140);
+          try {
+            const errPage = await fetch(new URL(loc, "https://login.xero.com").toString());
+            const text = await errPage.text();
+            const matches = text.match(/Invalid scope|Unknown client|Invalid redirect[^<]*|unauthorized_client|invalid_request[^<]*|Error:\s*[a-z_]+/gi);
+            if (matches) reason = Array.from(new Set(matches)).join("; ");
+          } catch {}
+          console.error("[Xero] /connect PRE-FLIGHT REJECTED by Xero:", reason);
+        } else {
+          console.log(`[Xero] /connect pre-flight OK — Xero accepted the request (status ${probe.status}, location ${loc.slice(0, 60) || "(login page)"})`);
+        }
+      } catch (pfErr: any) {
+        console.warn("[Xero] /connect pre-flight skipped:", pfErr?.message);
+      }
+
       req.session.save((err) => {
         if (err) console.error("[Xero] Session save error in /connect:", err);
-        res.redirect(`${XERO_AUTH_URL}?${params.toString()}`);
+        res.redirect(authorizeUrl);
       });
     } catch (e: any) {
       console.error("[Xero] /connect crashed:", e?.message, e?.stack);
