@@ -216,6 +216,7 @@ export function setupAuth(app: Express) {
     // cookie cleanly; everything else under /api is gated.
     if (userId && req.path.startsWith("/api") && req.path !== "/api/auth/logout") {
       if (!(await isUserActive(userId))) {
+        console.warn(`[auth] blocked deactivated user: user=${userId} path=${req.path}`);
         try { req.session.destroy(() => {}); } catch {}
         return res.status(401).json({ message: "Your account has been deactivated. Please contact an administrator." });
       }
@@ -764,8 +765,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.session.userId = req.tokenUserId;
   }
   try {
-    const result = await pool.query("SELECT is_active FROM users WHERE id = $1", [userId]);
+    const result = await pool.query("SELECT is_active, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length > 0 && result.rows[0].is_active === false) {
+      // Reaching here means the global deactivation gate didn't intercept —
+      // log enough to identify the user + path so we can see why.
+      console.warn(`[auth] deactivated user hit requireAuth (gate missed): user=${userId} email=${result.rows[0].email || "?"} path=${req.path}`);
       return res.status(403).json({ message: "Your account has been deactivated. Please contact an administrator." });
     }
   } catch (_e) {}
