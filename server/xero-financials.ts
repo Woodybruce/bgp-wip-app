@@ -3,11 +3,13 @@
 // invoices for the debtors view. Runs on the SYSTEM Xero session so any
 // admin can view it without personally connecting Xero.
 //
-// Requires the `accounting.reports.read` scope — added to the consent URL
-// in xero.ts, but existing connections were granted before it existed, so
-// the endpoint reports needsReconnect until an admin re-runs
-// /api/xero/connect. The OAuth callback re-captures the system session
-// automatically, so one reconnect fixes it for everyone.
+// Requires the granular `accounting.reports.profitandloss.read` and
+// `accounting.reports.balancesheet.read` scopes (apps created on/after
+// 2 Mar 2026 can't use the old broad reports scope) — requested by the
+// consent URL in xero.ts. Connections granted before those scopes existed
+// report needsReconnect until an admin re-runs /api/xero/connect. The
+// OAuth callback re-captures the system session automatically, so one
+// reconnect fixes it for everyone.
 //
 // Xero rate limits are 60 calls/min, 5,000/day per tenant — responses are
 // cached in-memory for 15 minutes; ?refresh=1 busts the cache.

@@ -175,9 +175,12 @@ The application is built with a modern web stack: React, Vite, TypeScript, Tailw
 Reports (P&L FY-to-date, Balance Sheet, cash by bank account, aged debtors)
 joined to the WIP pipeline (stage-weighted forecast, completed-but-uninvoiced
 reconciliation list) and per-agent commission statements. Server:
-`server/xero-financials.ts` (15-min cache; needs `accounting.reports.read`
-scope — connections predating it get a "Reconnect Xero" callout) and
-`server/commission-engine.ts`.
+`server/xero-financials.ts` (15-min cache; needs the granular Xero report
+scopes in `XERO_BASE_SCOPES` (server/xero.ts) — Xero apps created on/after
+2 Mar 2026 cannot use the old broad `accounting.transactions` /
+`accounting.reports.read` scopes, so the consent URL requests per-resource
+scopes instead; connections predating them get a "Reconnect Xero" callout)
+and `server/commission-engine.ts`.
 
 **Commission scheme — confirmed by Woody, 10 June 2026.** Do not change the
 rules without his sign-off:

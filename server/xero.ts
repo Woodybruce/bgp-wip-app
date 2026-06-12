@@ -12,6 +12,19 @@ const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const XERO_CONNECTIONS_URL = "https://api.xero.com/connections";
 
+// Apps created in the Xero portal on/after 2 Mar 2026 cannot use the broad
+// accounting.transactions / accounting.reports.read scopes — Xero replaced
+// them with granular per-resource scopes (invalid_scope at consent
+// otherwise). This is every granular scope the server actually calls:
+// Invoices (raise + read), embedded payment data, Contacts, Settings
+// (Organisation/Accounts/TrackingCategories), BankTransactions + receipt
+// Attachments (expense posting), and the two reports Finance renders.
+const XERO_BASE_SCOPES =
+  "openid profile email offline_access" +
+  " accounting.invoices accounting.payments.read accounting.contacts accounting.settings" +
+  " accounting.attachments accounting.banktransactions" +
+  " accounting.reports.profitandloss.read accounting.reports.balancesheet.read";
+
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
 const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
@@ -334,12 +347,11 @@ export function setupXeroRoutes(app: Express) {
       const redirectUri = getRedirectUri(req);
       console.log("[Xero] /connect — redirect_uri:", redirectUri);
 
-      // Base scopes are all GA accounting scopes (verified against Xero's
-      // official example app). Payroll scopes are opt-in via ?payroll=1 —
-      // payroll API access is app/region-conditional and a rejected scope
-      // 500s the WHOLE consent with invalid_scope, which held the Finance
-      // reconnect hostage to a permission it doesn't even need.
-      let scope = "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read";
+      // Payroll scopes are opt-in via ?payroll=1 — payroll API access is
+      // app/region-conditional and a rejected scope 500s the WHOLE consent
+      // with invalid_scope, which held the Finance reconnect hostage to a
+      // permission it doesn't even need.
+      let scope = XERO_BASE_SCOPES;
       if (req.query.payroll === "1") scope += " payroll.payslip payroll.employees";
       console.log("[Xero] /connect — scopes:", scope);
       const params = new URLSearchParams({
@@ -415,8 +427,8 @@ export function setupXeroRoutes(app: Express) {
       client_id: clientId,
       redirect_uri: redirectUri,
       scope: req.query.payroll === "1"
-        ? "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read payroll.payslip payroll.employees"
-        : "openid profile email offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read",
+        ? `${XERO_BASE_SCOPES} payroll.payslip payroll.employees`
+        : XERO_BASE_SCOPES,
       state,
     });
 
