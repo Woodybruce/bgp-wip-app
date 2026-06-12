@@ -25,6 +25,37 @@ const XERO_BASE_SCOPES =
   " accounting.attachments accounting.banktransactions" +
   " accounting.reports.profitandloss.read accounting.reports.balancesheet.read";
 
+// OAuth `state` params live server-side, NOT only in the cookie session: the
+// app polls constantly (heartbeat / chat / notifications) and sessions are
+// rolling, so a poll whose session snapshot predates /connect can write
+// itself back while the user is away on Xero's login page — wiping the
+// freshly saved state. Seen in prod: callback arrived with a valid code but
+// `expected: undefined`. Entries are single-use, expire after 10 minutes,
+// and are bound to the issuing browser's session id so a state minted in one
+// browser can't complete the consent in another (OAuth login-CSRF).
+const pendingOAuthStates = new Map<string, { createdAt: number; sid: string }>();
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+
+function issueOAuthState(sid: string): string {
+  const now = Date.now();
+  for (const [k, v] of pendingOAuthStates) {
+    if (now - v.createdAt > OAUTH_STATE_TTL_MS) pendingOAuthStates.delete(k);
+  }
+  const state = crypto.randomBytes(32).toString("hex");
+  pendingOAuthStates.set(state, { createdAt: now, sid });
+  return state;
+}
+
+function consumeOAuthState(state: unknown, sid: string): { ok: boolean; reason?: string } {
+  if (typeof state !== "string" || !state) return { ok: false, reason: "no state param on the callback" };
+  const entry = pendingOAuthStates.get(state);
+  if (!entry) return { ok: false, reason: "state unknown or already used (server restarted mid-consent?)" };
+  pendingOAuthStates.delete(state);
+  if (Date.now() - entry.createdAt > OAUTH_STATE_TTL_MS) return { ok: false, reason: "state expired (>10 min between Connect and approval)" };
+  if (entry.sid !== sid) return { ok: false, reason: "consent was started in a different browser session" };
+  return { ok: true };
+}
+
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
 const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
@@ -342,8 +373,8 @@ export function setupXeroRoutes(app: Express) {
         return res.redirect("/finance?xero_error=" + encodeURIComponent("XERO_CLIENT_ID not set in environment"));
       }
 
-      const state = crypto.randomBytes(32).toString("hex");
-      req.session.xeroOAuthState = state;
+      const state = issueOAuthState(req.sessionID);
+      req.session.xeroOAuthState = state; // fallback only — survives a deploy mid-consent
       const redirectUri = getRedirectUri(req);
       console.log("[Xero] /connect — redirect_uri:", redirectUri);
 
@@ -416,8 +447,8 @@ export function setupXeroRoutes(app: Express) {
       return res.status(500).json({ message: "Xero Client ID not configured. Add XERO_CLIENT_ID and XERO_CLIENT_SECRET to your environment." });
     }
 
-    const state = crypto.randomBytes(32).toString("hex");
-    req.session.xeroOAuthState = state;
+    const state = issueOAuthState(req.sessionID);
+    req.session.xeroOAuthState = state; // fallback only — survives a deploy mid-consent
 
     const redirectUri = getRedirectUri(req);
     console.log("[Xero] Auth redirect_uri:", redirectUri, "client_id:", clientId);
@@ -453,6 +484,7 @@ export function setupXeroRoutes(app: Express) {
       "| referer:", String(req.headers.referer || "(none)").slice(0, 80),
       "| hasSession:", !!req.session?.userId,
       "| pendingState:", !!req.session?.xeroOAuthState,
+      "| stateKnownToServer:", typeof state === "string" && pendingOAuthStates.has(state),
       "| ua:", String(req.headers["user-agent"] || "").slice(0, 60),
     );
 
@@ -466,9 +498,17 @@ export function setupXeroRoutes(app: Express) {
       return res.redirect("/finance?xero_error=no_code_received");
     }
 
-    if (!state || state !== req.session.xeroOAuthState) {
-      console.error("[Xero] State mismatch — expected:", req.session.xeroOAuthState?.substring(0, 8), "got:", String(state).substring(0, 8));
-      return res.redirect("/finance?xero_error=invalid_state");
+    const stateVerdict = consumeOAuthState(state, req.sessionID);
+    const sessionStateMatch = typeof state === "string" && !!state && state === req.session.xeroOAuthState;
+    if (!stateVerdict.ok && !sessionStateMatch) {
+      console.error(
+        "[Xero] State rejected —", stateVerdict.reason,
+        "| sessionState:", req.session.xeroOAuthState?.substring(0, 8) || "none",
+        "| got:", String(state).substring(0, 8),
+      );
+      return res.redirect("/finance?xero_error=" + encodeURIComponent(
+        `invalid_state — ${stateVerdict.reason}. Click Connect Xero again and approve in one go.`,
+      ));
     }
 
     const clientId = process.env.XERO_CLIENT_ID;
