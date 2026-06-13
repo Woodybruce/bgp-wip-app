@@ -13,6 +13,7 @@
 //   GET  /api/weekly-report/recipients         — list who's opted in + last sent
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
+import { activeBrand } from "./brand";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import * as path from "path";
@@ -76,7 +77,7 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   const doc = new PDFDocument({
     size: "A4",
     margins: { top: 60, bottom: 60, left: 50, right: 50 },
-    info: { Title: `Weekly Update — ${contact.resolved_company_name || contact.company_name || contact.name}`, Author: "Bruce Gillingham Pollard" },
+    info: { Title: `Weekly Update — ${contact.resolved_company_name || contact.company_name || contact.name}`, Author: activeBrand().name },
     bufferPages: true,
   });
   const chunks: Buffer[] = [];

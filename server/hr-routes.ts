@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { activeBrand } from "./brand";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
 import { xeroApi, xeroPayrollApi } from "./xero";
@@ -3842,7 +3843,7 @@ Rules: British English, no exclamation marks, no "I'm pleased to" / "delighted" 
       children.push(new docx.Paragraph({ spacing: { after: 240 } }));
       children.push(new docx.Paragraph({ children: [new docx.TextRun({ text: "Yours sincerely,", size: 22, font: "Calibri" })], spacing: { after: 600 } }));
       children.push(new docx.Paragraph({ children: [new docx.TextRun({ text: managerName, bold: true, size: 22, font: "Calibri" })], spacing: { after: 40 } }));
-      children.push(new docx.Paragraph({ children: [new docx.TextRun({ text: "Bruce Gillingham Pollard", size: 20, font: "Calibri", color: "555555" })] }));
+      children.push(new docx.Paragraph({ children: [new docx.TextRun({ text: activeBrand().name, size: 20, font: "Calibri", color: "555555" })] }));
 
       const doc = new docx.Document({
         sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }, children }],

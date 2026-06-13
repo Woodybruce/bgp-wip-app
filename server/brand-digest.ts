@@ -14,6 +14,7 @@
 // Scheduled via cron in index.ts every 14 days (alternating Mondays 08:00).
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
+import { activeBrand } from "./brand";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
@@ -174,7 +175,7 @@ function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>): str
   <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
     <tr>
       <td style="vertical-align:middle">
-        <img src="${bgpLogo}" alt="Bruce Gillingham Pollard" height="28" style="display:block;height:28px;width:auto"/>
+        <img src="${bgpLogo}" alt="${activeBrand().name}" height="28" style="display:block;height:28px;width:auto"/>
       </td>
       <td style="vertical-align:middle;text-align:right;font-size:13px;font-weight:600;color:${CLAUDE_INK};letter-spacing:-0.01em">
         ${sparkleSvg}<span style="vertical-align:middle">ChatBGP</span>

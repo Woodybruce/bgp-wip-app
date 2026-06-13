@@ -5,6 +5,7 @@
 // GET /api/brand/:companyId/pack.pdf
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
+import { activeBrand } from "./brand";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import * as path from "path";
@@ -65,7 +66,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
       margins: { top: 60, bottom: 60, left: 50, right: 50 },
       info: {
         Title: `${company.name} — Brand Pack`,
-        Author: "Bruce Gillingham Pollard",
+        Author: activeBrand().name,
         Creator: "BGP Dashboard",
       },
       bufferPages: true,
