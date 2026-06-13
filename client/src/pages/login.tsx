@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
+import { useBrand } from "@/lib/brand-context";
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -17,6 +18,48 @@ interface LoginPageProps {
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const [isSsoLoading, setIsSsoLoading] = useState(false);
   const { toast } = useToast();
+  const { brand } = useBrand();
+  const isBgp = brand.id === "bgp";
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [showRegister, setShowRegister] = useState(false);
+  const [isPwLoading, setIsPwLoading] = useState(false);
+
+  async function handlePasswordAuth(e: React.FormEvent) {
+    e.preventDefault();
+    setIsPwLoading(true);
+    try {
+      const endpoint = showRegister ? "/api/auth/register" : "/api/auth/login";
+      const body = showRegister
+        ? { name, email, password }
+        : { username: email, password };
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok && data.token) {
+        localStorage.setItem("bgp_auth_token", data.token);
+        onLogin();
+        return;
+      }
+      toast({
+        title: showRegister ? "Could not create account" : "Sign in failed",
+        description: data.message || "Check your details and try again.",
+        variant: "destructive",
+      });
+    } catch {
+      toast({
+        title: "Connection error",
+        description: "Could not reach the server. Try again.",
+        variant: "destructive",
+      });
+    }
+    setIsPwLoading(false);
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -128,13 +171,21 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   return (
     <div className="min-h-screen flex" data-testid="card-login">
       <div className="hidden lg:flex lg:w-1/2 bg-black items-center justify-center p-12">
-        <img src={bgpLogo} alt="Bruce Gillingham Pollard" className="max-w-[500px] w-full" />
+        {isBgp ? (
+          <img src={bgpLogo} alt={brand.name} className="max-w-[500px] w-full" />
+        ) : (
+          <span className="font-serif text-white text-7xl tracking-tight">{brand.name}.</span>
+        )}
       </div>
       <div className="flex-1 flex items-center justify-center bg-white dark:bg-neutral-950 p-8">
         <div className="w-full max-w-sm space-y-8">
           <div className="lg:hidden flex justify-center mb-8">
             <div className="bg-black p-6 rounded-lg">
-              <img src={bgpLogo} alt="Bruce Gillingham Pollard" className="h-20 w-auto" />
+              {isBgp ? (
+                <img src={bgpLogo} alt={brand.name} className="h-20 w-auto" />
+              ) : (
+                <span className="font-serif text-white text-3xl tracking-tight">{brand.name}.</span>
+              )}
             </div>
           </div>
           <div className="space-y-2">
@@ -142,7 +193,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               Sign in
             </h1>
             <p className="text-sm text-neutral-500">
-              BGP Property Dashboard
+              {brand.headerText}
             </p>
           </div>
 
@@ -167,9 +218,69 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             Sign in with Microsoft
           </Button>
 
+          {!isBgp && (
+            <form onSubmit={handlePasswordAuth} className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 border-t border-neutral-200" />
+                <span className="text-[11px] uppercase tracking-widest text-neutral-400">or</span>
+                <div className="flex-1 border-t border-neutral-200" />
+              </div>
+              {showRegister && (
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Full name"
+                  className="w-full h-11 px-3 rounded-md border border-neutral-200 text-sm focus:outline-none focus:ring-1 focus:ring-neutral-400"
+                  data-testid="input-name"
+                />
+              )}
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email"
+                autoComplete="username"
+                className="w-full h-11 px-3 rounded-md border border-neutral-200 text-sm focus:outline-none focus:ring-1 focus:ring-neutral-400"
+                data-testid="input-email"
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                autoComplete={showRegister ? "new-password" : "current-password"}
+                className="w-full h-11 px-3 rounded-md border border-neutral-200 text-sm focus:outline-none focus:ring-1 focus:ring-neutral-400"
+                data-testid="input-password"
+              />
+              <Button type="submit" disabled={isPwLoading} className="w-full h-11" data-testid="button-password-login">
+                {isPwLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : showRegister ? (
+                  "Create account"
+                ) : (
+                  "Sign in"
+                )}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setShowRegister((v) => !v)}
+                className="w-full text-[11px] text-neutral-500 hover:text-neutral-800"
+              >
+                {showRegister ? "Have an account? Sign in" : "First time? Create an account"}
+              </button>
+            </form>
+          )}
+
           <p className="text-[11px] text-center text-neutral-500 pt-2">
-            Use your @brucegillinghampollard.com Microsoft account.<br />
-            New starters — ask IT to provision your Entra account.
+            {isBgp ? (
+              <>
+                Use your @{brand.emailDomain} Microsoft account.<br />
+                New starters — ask IT to provision your Entra account.
+              </>
+            ) : (
+              <>Sign in with your {brand.name} {brand.emailDomain ? `@${brand.emailDomain}` : ""} account.</>
+            )}
           </p>
         </div>
       </div>

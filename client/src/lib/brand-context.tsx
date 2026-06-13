@@ -1,36 +1,11 @@
 import { createContext, useContext, useMemo } from "react";
 import type { ReactNode } from "react";
 import { useTeam } from "@/lib/team-context";
+import { BRANDS, getBrand, type BrandConfig } from "@shared/brand";
 
-/** Brand configuration per client */
-export interface BrandConfig {
-  id: string;
-  name: string;
-  logoUrl?: string;
-  primaryColor: string; // hex
-  accentColor: string;
-  headerText: string;
-  footerText: string;
-}
-
-export const BRANDS: Record<string, BrandConfig> = {
-  bgp: {
-    id: "bgp",
-    name: "Bruce Gillingham Pollard",
-    primaryColor: "#2E5E3F",
-    accentColor: "#C4A35A",
-    headerText: "BGP Dashboard",
-    footerText: "\u00A9 Bruce Gillingham Pollard",
-  },
-  landsec: {
-    id: "landsec",
-    name: "Landsec",
-    primaryColor: "#00263A", // Landsec navy
-    accentColor: "#00A3E0", // Landsec blue
-    headerText: "Landsec Portfolio",
-    footerText: "Powered by Bruce Gillingham Pollard",
-  },
-};
+// Re-exported so existing imports from this module keep working.
+export { BRANDS };
+export type { BrandConfig };
 
 interface BrandContextType {
   brand: BrandConfig;
@@ -42,10 +17,14 @@ const BrandContext = createContext<BrandContextType>({
   isLandsec: false,
 });
 
-/** Resolves the active brand from the current team context */
+/**
+ * Resolves the active brand. The deployment's brand is set at build time via
+ * VITE_BRAND (defaults to bgp); the Landsec client-view is still selected by
+ * team context within the BGP tenant.
+ */
 function resolveBrand(teamName: string | null | undefined): BrandConfig {
   if (teamName === "Landsec") return BRANDS.landsec;
-  return BRANDS.bgp;
+  return getBrand(import.meta.env.VITE_BRAND as string | undefined);
 }
 
 export function BrandProvider({ children }: { children: ReactNode }) {
