@@ -83,6 +83,7 @@ export default function MyExpenses() {
   const [showWallet, setShowWallet] = useState(false);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<Expense | null>(null);
+  const [viewingReceipt, setViewingReceipt] = useState<Expense | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ total: number; done: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -467,9 +468,15 @@ export default function MyExpenses() {
                             </Button>
                           )}
                           {e.receiptFilename && (
-                            <Badge variant="outline" className="text-xs">
-                              <CheckCircle2 className="w-3 h-3 mr-1" /> Receipt
-                            </Badge>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs text-emerald-700 dark:text-emerald-400"
+                              onClick={() => setViewingReceipt(e)}
+                              data-testid={`button-view-receipt-${e.id}`}
+                            >
+                              <Receipt className="w-3 h-3 mr-1" /> Receipt
+                            </Button>
                           )}
                           {e.status !== "posted_to_xero" && (
                             <Button
@@ -524,6 +531,39 @@ export default function MyExpenses() {
         onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] }); }}
       />
+
+      <Dialog open={!!viewingReceipt} onOpenChange={(v) => { if (!v) setViewingReceipt(null); }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              Receipt — {viewingReceipt?.merchant || "—"} · {viewingReceipt ? fmt(viewingReceipt.amountPence) : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {viewingReceipt && (
+            <div className="space-y-2">
+              {/* iframe renders both images and PDFs; same-origin so the
+                  session cookie authorises the request. */}
+              <iframe
+                src={`/api/expenses/${viewingReceipt.id}/receipt`}
+                title="Receipt"
+                className="w-full h-[70vh] rounded border bg-muted"
+                data-testid="iframe-receipt"
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className="truncate">{viewingReceipt.receiptFilename}</span>
+                <a
+                  href={`/api/expenses/${viewingReceipt.id}/receipt`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-700 dark:text-emerald-400 hover:underline shrink-0 ml-2"
+                >
+                  Open in new tab
+                </a>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

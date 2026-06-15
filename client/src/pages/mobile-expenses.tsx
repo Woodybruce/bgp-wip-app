@@ -477,6 +477,17 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         </SheetHeader>
 
         <div className="px-4 py-4 space-y-5 pb-32">
+          {expense.receiptFilename && (
+            <button
+              type="button"
+              onClick={() => window.open(`/api/expenses/${expense.id}/receipt`, "_blank")}
+              className="w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-900 text-emerald-700 dark:text-emerald-400 text-sm font-medium active:opacity-80"
+              data-testid="m-view-receipt"
+            >
+              <Receipt className="w-4 h-4" /> View receipt
+            </button>
+          )}
+
           {/* Personal toggle — first thing in the form so a mis-tap on
               the row is the first thing you can fix. When on, skips AI
               classify (a personal expense never posts to a Xero nominal,
