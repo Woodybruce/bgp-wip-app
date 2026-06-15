@@ -337,6 +337,29 @@ export async function canApproveExpense(approverUserId: string, expenseId: strin
   return exp.approverUserId == null && FALLBACK_APPROVER_EMAILS.has(email);
 }
 
+/** Who may VIEW an expense's receipt. Deliberately broader than
+ *  canApproveExpense: any finance approver (Layla/Wendy) or rota member can
+ *  open a receipt to check it — not just whoever it's currently assigned to —
+ *  plus the expense's own submitter and admins. Owner-by-cardholder is covered
+ *  separately by userCanAccessExpense at the route. */
+export async function canViewExpenseReceipt(userId: string, expenseId: string): Promise<boolean> {
+  const [u] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!u) return false;
+  if ((u as any).isAdmin) return true;
+  const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
+  if (!exp) return false;
+  if (exp.submitterUserId === userId || exp.createdBy === userId || exp.approverUserId === userId) return true;
+  // Finance shared inbox (Layla / Wendy / accounts) can view any receipt.
+  const email = ((u as any).email || "").toLowerCase();
+  if (FALLBACK_APPROVER_EMAILS.has(email)) return true;
+  // Anyone on either approval rota can view (e.g. a director at sign-off).
+  const approverPool = new Set([
+    ...(await resolvePool(STAGE1_SLOTS)),
+    ...(await resolvePool(STAGE2_SLOTS)),
+  ]);
+  return approverPool.has(userId);
+}
+
 /** List of expenses an approver can act on. Includes:
  *  - Rows where approver_user_id = approverUserId (their direct reports)
  *  - Rows where approver_user_id IS NULL AND the approver is in the

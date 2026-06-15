@@ -256,6 +256,10 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
   const [transactionDate, setTransactionDate] = useState("");
   const [category, setCategory] = useState("");
   const [businessPurpose, setBusinessPurpose] = useState("");
+  // Flipped true once the user manually edits category / purpose, so a slower
+  // auto-classify response (fired on sheet open) can't stomp what they typed —
+  // that was the mobile-only "my edits don't save" bug.
+  const userEditedRef = useRef(false);
   const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
   // Free-text attendee names — used when the diary attendees aren't in the
   // CRM. Captures everyone for HMRC entertainment records.
@@ -295,7 +299,10 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
       .then((r) => r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b?.error || `HTTP ${r.status}`))))
       .then((s: AutoClassifyResult) => {
         setAiSuggestion(s);
-        if (s.confidence === "high") {
+        // Only auto-apply if the user hasn't started editing — otherwise the
+        // suggestion still shows in the banner for them to apply by hand, but
+        // it never overwrites their typing.
+        if (s.confidence === "high" && !userEditedRef.current) {
           if (s.category) setCategory(s.category);
           if (s.businessPurpose) setBusinessPurpose(s.businessPurpose);
           if (s.attendeeContactIds.length > 0) setAttendeeIds(s.attendeeContactIds);
@@ -312,6 +319,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
 
   useEffect(() => {
     if (!expense) return;
+    userEditedRef.current = false;
     setMerchant(expense.merchant || "");
     setTransactionDate(expense.transactionDate ? expense.transactionDate.slice(0, 10) : "");
     setCategory(expense.category || "");
@@ -477,6 +485,17 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
         </SheetHeader>
 
         <div className="px-4 py-4 space-y-5 pb-32">
+          {expense.receiptFilename && (
+            <button
+              type="button"
+              onClick={() => window.open(`/api/expenses/${expense.id}/receipt`, "_blank")}
+              className="w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-900 text-emerald-700 dark:text-emerald-400 text-sm font-medium active:opacity-80"
+              data-testid="m-view-receipt"
+            >
+              <Receipt className="w-4 h-4" /> View receipt
+            </button>
+          )}
+
           {/* Personal toggle — first thing in the form so a mis-tap on
               the row is the first thing you can fix. When on, skips AI
               classify (a personal expense never posts to a Xero nominal,
@@ -655,7 +674,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                   <button
                     key={c.code}
                     type="button"
-                    onClick={() => !isPosted && setCategory(c.name)}
+                    onClick={() => { if (!isPosted) { userEditedRef.current = true; setCategory(c.name); } }}
                     disabled={isPosted}
                     className={`text-[12px] px-3 py-1.5 rounded-full border transition-colors ${
                       category === c.name
@@ -677,7 +696,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             <Textarea
               id="m-purpose"
               value={businessPurpose}
-              onChange={(e) => setBusinessPurpose(e.target.value)}
+              onChange={(e) => { userEditedRef.current = true; setBusinessPurpose(e.target.value); }}
               disabled={isPosted}
               placeholder="What was this for?"
               rows={2}

@@ -62,6 +62,7 @@ export default function ExpensesApprovals() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rejecting, setRejecting] = useState<PendingExpense | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [viewing, setViewing] = useState<PendingExpense | null>(null);
 
   const { data: rows = [], isLoading } = useQuery<PendingExpense[]>({
     queryKey: ["/api/expenses/pending-approval"],
@@ -211,6 +212,7 @@ export default function ExpensesApprovals() {
                     }}
                     onApprove={(id) => approveMutation.mutate(id)}
                     onReject={(r) => setRejecting(r)}
+                    onViewReceipt={(r) => setViewing(r)}
                     isApproving={approveMutation.isPending}
                   />
                 </div>
@@ -232,6 +234,7 @@ export default function ExpensesApprovals() {
                     }}
                     onApprove={(id) => approveMutation.mutate(id)}
                     onReject={(r) => setRejecting(r)}
+                    onViewReceipt={(r) => setViewing(r)}
                     isApproving={approveMutation.isPending}
                     showFlags
                   />
@@ -298,18 +301,53 @@ export default function ExpensesApprovals() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!viewing} onOpenChange={(v) => { if (!v) setViewing(null); }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              Receipt — {viewing?.merchant || "—"} · {viewing ? fmt(viewing.amountPence) : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {viewing && (
+            <div className="space-y-2">
+              {/* iframe renders both images and PDFs natively; the request is
+                  same-origin so the session cookie authorises it. */}
+              <iframe
+                src={`/api/expenses/${viewing.id}/receipt`}
+                title="Receipt"
+                className="w-full h-[70vh] rounded border bg-muted"
+                data-testid="iframe-receipt"
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className="truncate">{viewing.receiptFilename}</span>
+                <a
+                  href={`/api/expenses/${viewing.id}/receipt`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-700 dark:text-emerald-400 hover:underline shrink-0 ml-2"
+                  data-testid="link-receipt-new-tab"
+                >
+                  Open in new tab
+                </a>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 function ExpenseTable({
-  rows, selected, onToggle, onApprove, onReject, isApproving, showFlags,
+  rows, selected, onToggle, onApprove, onReject, onViewReceipt, isApproving, showFlags,
 }: {
   rows: PendingExpense[];
   selected: Set<string>;
   onToggle: (id: string) => void;
   onApprove: (id: string) => void;
   onReject: (r: PendingExpense) => void;
+  onViewReceipt: (r: PendingExpense) => void;
   isApproving: boolean;
   showFlags?: boolean;
 }) {
@@ -345,9 +383,18 @@ function ExpenseTable({
                     {r.approvalStage === 2 ? "Sign-off" : "Info check"}
                   </span>
                 </div>
-                {r.receiptFilename && (
-                  <div className="text-[10px] text-emerald-600 flex items-center gap-0.5 mt-0.5">
-                    <Receipt className="w-2.5 h-2.5" /> Receipt
+                {r.receiptFilename ? (
+                  <button
+                    type="button"
+                    onClick={() => onViewReceipt(r)}
+                    className="text-[10px] text-emerald-600 hover:text-emerald-700 hover:underline flex items-center gap-0.5 mt-0.5"
+                    data-testid={`button-view-receipt-${r.id}`}
+                  >
+                    <Receipt className="w-2.5 h-2.5" /> View receipt
+                  </button>
+                ) : (
+                  <div className="text-[10px] text-amber-600 flex items-center gap-0.5 mt-0.5">
+                    <Receipt className="w-2.5 h-2.5" /> No receipt
                   </div>
                 )}
               </td>
