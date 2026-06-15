@@ -236,3 +236,21 @@ runs once at boot to scrub the legacy noise off non-hospitality Revolut rows.
 files the supplier invoice if it lands. Set `EXPENSE_RECEIPTS_MAILBOXES`
 (comma-separated) so the hunter also searches shared finance/billing mailboxes,
 not just each cardholder's own — that's where SaaS invoices go.
+
+## Railway management as code (June 2026)
+
+Manage the Railway service's env vars + redeploys from the repo instead of the
+dashboard, via `script/railway.ts`: `npm run railway -- <cmd>`.
+
+    npm run railway -- list [--values]      # variable names (values hidden by default)
+    npm run railway -- get NAME
+    npm run railway -- set NAME VALUE        # upsert + redeploy (--no-deploy to stage)
+    npm run railway -- unset NAME
+    npm run railway -- redeploy
+    npm run railway -- info
+
+Auth = a Railway **project token** in env `RAILWAY_TOKEN` (the only secret;
+never commit it — set it in the Claude Code environment so future sessions can
+use it). Project/environment/service IDs live in `script/railway.config.json`
+(not secret — useless without the token). Talks to the Railway GraphQL API
+(`backboard.railway.app/graphql/v2`) via the `Project-Access-Token` header.
