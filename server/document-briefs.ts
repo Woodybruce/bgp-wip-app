@@ -49,6 +49,7 @@ import {
   composeCovenantCard,
 } from "./property-imagery-composers";
 import { getPlanningSummary, planningSummaryToMarkdown } from "./planning-summary";
+import { BGP_BRAND, renderHtmlWithClaude } from "./doc-engine";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1059,17 +1060,6 @@ export function registerDocumentBriefRoutes(app: Express): void {
 
 // ─── Claude design adapter ───────────────────────────────────────────────────
 
-const BGP_BRAND = `
-BGP brand cues:
-- Primary teal: #15616D
-- Cream: #FBF5DF
-- Charcoal: #001524
-- Accent gold: #FF7D00
-- Typography: serif headlines (display), sans-serif body. Tight tracking on headlines.
-- Tone: confident, evidence-led, never hyperbolic. UK property language ('instructions', 'completions', 'lease events').
-- Layout: generous whitespace, clear sections, big numbers, supporting evidence underneath.
-`;
-
 const BASE_PROMPT_HEADER = `You are designing a print-ready document for Bruce Gillingham Pollard (BGP), a UK commercial property advisor.
 
 Output a SINGLE self-contained HTML document — no external assets, no scripts, all CSS inline in a <style> tag. Print-ready (A4 portrait or landscape per layoutHints, one section per page using @page and page-break-after on each section). Looks like a polished pitch / advisory document, not a webpage.
@@ -1155,21 +1145,11 @@ ${sectionsBlock}
 Return a single self-contained HTML document, starting with <!DOCTYPE html>, A4 print-ready, with embedded CSS in a <style> tag. Each section is a full page with page-break-after: always. BGP brand cues throughout.`;
 }
 
+// Brief rendering now goes through the shared design core (server/
+// doc-engine.ts) so every document — briefs, Why Buy, ChatBGP PDFs — uses
+// the same Claude call, model, fence-stripping and HTML sanitiser.
 async function renderWithClaude(prompt: string): Promise<string> {
-  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
-    ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
-    : undefined;
-  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
-  const msg = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 16000,
-    messages: [{ role: "user", content: prompt }],
-  });
-  const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
-  return safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+  return renderHtmlWithClaude(prompt);
 }
 
 function safeHtml(s: string): string {

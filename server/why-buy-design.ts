@@ -15,6 +15,7 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { buildBrief } from "./why-buy-gamma";
 import { preferencesPromptFor } from "./document-preferences";
+import { BGP_BRAND, renderHtmlWithClaude } from "./doc-engine";
 import { applyEdit, type EditType } from "./html-edit";
 
 const PREFERENCES_SCOPE = "why_buy";
@@ -83,17 +84,6 @@ async function injectDeckAssets(html: string, runId: string): Promise<string> {
   return out;
 }
 
-const BGP_BRAND = `
-BGP brand cues:
-- Primary teal: #15616D
-- Cream: #FBF5DF
-- Charcoal: #001524
-- Accent gold: #FF7D00
-- Typography: serif headlines (display), sans-serif body. Tight tracking on headlines.
-- Tone: confident, evidence-led, never hyperbolic. UK property language ('instructions', 'completions', 'lease events').
-- Layout: generous whitespace, clear sections, big numbers, supporting evidence underneath.
-`;
-
 const BASE_PROMPT = `You are designing a Why Buy investment pitch deck for Bruce Gillingham Pollard (BGP), a UK commercial property advisor.
 
 Output a SINGLE self-contained HTML document — no external assets, no scripts, all CSS inline in a <style> tag. Make it print-ready (A4 landscape, one slide per page using @page and page-break-after on each section). It should look like a polished pitch deck, not a webpage.
@@ -140,16 +130,6 @@ IDs must be globally unique within the document. Stable across iterations
 (don't renumber when adding/removing slides — pick semantic names).
 
 Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`;
-
-function safeHtml(html: string): string {
-  // Strip script/iframe/object so the sandboxed preview is safe.
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-    .replace(/<object[\s\S]*?<\/object>/gi, "")
-    .replace(/on[a-z]+="[^"]*"/gi, "")
-    .replace(/on[a-z]+='[^']*'/gi, "");
-}
 
 export function setupWhyBuyDesignRoutes(app: Express) {
   // List versions for a run
@@ -237,15 +217,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
         ? `${BASE_PROMPT}\n\n${housePrefs}\n\n--- DEAL BRIEF ---\n\n${built.brief}`
         : `${BASE_PROMPT}\n\n--- DEAL BRIEF ---\n\n${built.brief}`;
 
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const msg = await client.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 16000,
-        messages: [{ role: "user", content: userPrompt }],
-      });
-      const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
-      const html = safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+      const html = await renderHtmlWithClaude(userPrompt);
 
       const next = await pool.query(
         `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
@@ -290,18 +262,9 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       const housePrefs = await preferencesPromptFor(PREFERENCES_SCOPE);
       const prefsBlock = housePrefs ? `\n\n${housePrefs}\n` : "";
 
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const msg = await client.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 16000,
-        messages: [{
-          role: "user",
-          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. Also PRESERVE any \`__BGP_LOGO_DARK__\` / \`__BGP_LOGO_LIGHT__\` / \`__BGP_HERO_IMAGE__\` / \`__BGP_LOCATION_PLAN__\` placeholder src values exactly as-is (they are swapped for the real BGP logo + saved imagery at render time). If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
-        }],
-      });
-      const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
-      const html = safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+      const html = await renderHtmlWithClaude(
+        `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. Also PRESERVE any \`__BGP_LOGO_DARK__\` / \`__BGP_LOGO_LIGHT__\` / \`__BGP_HERO_IMAGE__\` / \`__BGP_LOCATION_PLAN__\` placeholder src values exactly as-is (they are swapped for the real BGP logo + saved imagery at render time). If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
+      );
 
       const next = await pool.query(
         `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
@@ -390,16 +353,8 @@ export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ doc
     ? `${BASE_PROMPT}\n\n${housePrefs}\n\n--- DEAL BRIEF ---\n\n${built.brief}`
     : `${BASE_PROMPT}\n\n--- DEAL BRIEF ---\n\n${built.brief}`;
 
-  // 2. Claude → HTML
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const msg = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 16000,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-  const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
-  const html = safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+  // 2. Claude → HTML (shared design core)
+  const html = await renderHtmlWithClaude(userPrompt);
   if (!html || html.length < 200) throw new Error("Claude returned empty/too-short HTML for Why Buy");
 
   // 3. Save the design as version N so the in-app preview lights up

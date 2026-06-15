@@ -17,18 +17,8 @@
 import { saveFile } from "./file-storage";
 import { preferencesPromptFor } from "./document-preferences";
 import { htmlToPdfForWhyBuy } from "./document-briefs";
+import { BGP_BRAND, renderHtmlWithClaude } from "./doc-engine";
 import crypto from "crypto";
-
-const BGP_BRAND = `
-BGP brand cues:
-- Primary teal: #15616D
-- Cream: #FBF5DF
-- Charcoal: #001524
-- Accent gold: #FF7D00
-- Typography: serif headlines (display), sans-serif body. Tight tracking on headlines.
-- Tone: confident, evidence-led, never hyperbolic. UK property language ('instructions', 'completions', 'lease events').
-- Layout: generous whitespace, clear sections, big numbers, supporting evidence underneath.
-`;
 
 const BASE_PROMPT = `You are designing a polished investor / client document for Bruce Gillingham Pollard (BGP), a UK commercial property advisor.
 
@@ -54,15 +44,6 @@ Each slide:
 - BGP footer band on every slide
 
 Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary, no markdown fences.`;
-
-function safeHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-    .replace(/<object[\s\S]*?<\/object>/gi, "")
-    .replace(/on[a-z]+="[^"]*"/gi, "")
-    .replace(/on[a-z]+='[^']*'/gi, "");
-}
 
 export interface DesignedPdfArgs {
   title: string;
@@ -98,15 +79,7 @@ export async function generateClaudeDesignedPdf(args: DesignedPdfArgs): Promise<
     `\n--- BRIEF ---\n\n${args.brief}`,
   ].join("");
 
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const msg = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 16000,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-  const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
-  const html = safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+  const html = await renderHtmlWithClaude(userPrompt);
   if (!html || html.length < 200) return { error: "Claude returned empty or too-short HTML" };
 
   const pdfBuf = await htmlToPdfForWhyBuy(html);
