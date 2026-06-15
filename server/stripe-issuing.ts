@@ -20,7 +20,7 @@ import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAtten
 import { eq, desc, and, gte, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
-import { saveFile } from "./file-storage";
+import { saveFile, getFile } from "./file-storage";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 
@@ -248,6 +248,22 @@ export async function setCardholderStatus(cardholderId: string, status: "active"
 // the route closes off any stray Stripe webhook creating phantom expenses.
 
 // ─── ROUTES ────────────────────────────────────────────────────────────────
+
+// Best-effort content-type detection from the first bytes. Receipts stored as
+// legacy inline base64 (the old email/WhatsApp shape) carry no mime type, so we
+// sniff one — otherwise the browser can't render the image/PDF in the viewer.
+function sniffReceiptMime(buf: Buffer): string {
+  if (buf.length >= 4) {
+    if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return "application/pdf"; // %PDF
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return "image/jpeg";
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return "image/png";
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return "image/gif"; // GIF
+    if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  }
+  const head = buf.toString("utf8", 0, Math.min(buf.length, 64)).trim().toLowerCase();
+  if (head.startsWith("<")) return "text/html"; // emailed receipt body
+  return "application/octet-stream";
+}
 
 // Check that the current user owns this expense (or is admin). Returns true if allowed.
 async function userCanAccessExpense(req: Request, expenseId: string): Promise<boolean> {
@@ -1124,6 +1140,60 @@ export function setupStripeIssuingRoutes(app: Express) {
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // View a receipt (image / PDF) for an expense. Powers the in-app receipt
+  // viewer in the approvals inbox + My Expenses so Layla / Wendy can actually
+  // see the photo before approving — not just a "receipt attached" badge.
+  // Reads bytes from file_storage (the normal key shape) or decodes the legacy
+  // inline-base64 shape (old email/WhatsApp receipts). Inline by default;
+  // ?download=1 forces a download. Approvers + finance can view, not just the
+  // owner — see canViewExpenseReceipt.
+  app.get("/api/expenses/:id/receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+
+      let allowed = await userCanAccessExpense(req, id);
+      if (!allowed) {
+        const { canViewExpenseReceipt } = await import("./expense-approval");
+        allowed = await canViewExpenseReceipt(userId, id);
+      }
+      if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+
+      // Prefer the most recent uploaded receipt row; fall back to the
+      // denormalised pointer on the expense itself.
+      const [receipt] = await db.select().from(expenseReceipts)
+        .where(eq(expenseReceipts.expenseId, id)).orderBy(desc(expenseReceipts.uploadedAt)).limit(1);
+      const storageKey = receipt?.storageKey || exp.receiptUrl || null;
+      if (!storageKey) return res.status(404).json({ error: "No receipt attached to this expense" });
+
+      let bytes: Buffer | null = null;
+      let contentType: string | null = receipt?.mimeType || null;
+      if (storageKey.startsWith("expense-receipts/")) {
+        const f = await getFile(storageKey);
+        if (f) { bytes = f.data; contentType = contentType || f.contentType; }
+      } else {
+        // Legacy inline shape: the column holds raw base64 of the file.
+        try { bytes = Buffer.from(storageKey, "base64"); } catch { bytes = null; }
+      }
+      if (!bytes || bytes.length === 0) return res.status(404).json({ error: "Receipt file could not be loaded" });
+
+      if (!contentType) contentType = sniffReceiptMime(bytes);
+      const rawName = receipt?.filename || exp.receiptFilename || `receipt-${id}`;
+      const safeName = rawName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="${safeName}"`);
+      res.setHeader("Cache-Control", "private, max-age=60");
+      res.send(bytes);
+    } catch (e: any) {
+      console.error("[expenses receipt view] error:", e?.message);
+      res.status(500).json({ error: e?.message || "Failed to load receipt" });
     }
   });
 

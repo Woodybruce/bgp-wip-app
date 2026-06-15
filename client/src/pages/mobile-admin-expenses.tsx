@@ -395,7 +395,16 @@ function ApprovalRow({ r, busy, onApprove, onReject }: { r: PendingExpense; busy
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="font-medium text-[14px] truncate">{r.merchant || "—"}</span>
-            {r.receiptFilename && <Receipt className="w-3 h-3 text-emerald-600 shrink-0" />}
+            {r.receiptFilename && (
+              <button
+                type="button"
+                onClick={() => window.open(`/api/expenses/${r.id}/receipt`, "_blank")}
+                className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 shrink-0 active:opacity-70"
+                data-testid={`m-admin-view-receipt-${r.id}`}
+              >
+                <Receipt className="w-3 h-3" /> View
+              </button>
+            )}
           </div>
           <div className="text-[11px] text-muted-foreground mt-0.5">
             {fmtDate(r.transactionDate)}{r.category ? ` · ${r.category}` : ""}
