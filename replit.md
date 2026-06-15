@@ -222,3 +222,17 @@ pattern as `api_usage_log`). Two mechanisms: a deterministic merchant→category
 memory (overrides the model after every parse, prefix-tolerant merchant match)
 and a free-text lesson list prepended to the parse prompt (the house-style
 pattern). `GET /api/expenses/ai-memory` shows what it's learned.
+
+**Diary-match scope (June 2026):** a calendar event is only auto-attached to a
+card swipe when it's an eating/drinking spend — gated at import by hospitality
+MCC (`isHospitalityMcc`, server/expense-calendar-context.ts) and at receipt
+time by category (`isCalendarRelevantCategory`). Stops train fares / SaaS
+charges inheriting an overlapping meeting + its attendees. `clearMeetingNoise()`
+runs once at boot to scrub the legacy noise off non-hospitality Revolut rows.
+
+**Recurring subscriptions:** SaaS card spend (`isSaaSExpense`, server/revolut.ts
+— software MCCs + a tight merchant allowlist) imports pre-categorised as
+"Software (subscriptions)" and never nags for a receipt; the email sweep still
+files the supplier invoice if it lands. Set `EXPENSE_RECEIPTS_MAILBOXES`
+(comma-separated) so the hunter also searches shared finance/billing mailboxes,
+not just each cardholder's own — that's where SaaS invoices go.

@@ -3399,6 +3399,14 @@ app.use("/api/branding/assets", express.static(
         .then(n => { if (n > 0) console.log(`[expense-calendar] cleared diary noise from ${n} non-hospitality card rows`); })
         .catch(err => console.warn("[expense-calendar] clearMeetingNoise failed:", err?.message));
 
+      // One-off (idempotent): stop existing software-subscription card rows
+      // nagging for a receipt — flip them to categorised (the supplier invoice
+      // is the record; the sweep still files it if it emails through).
+      import("./revolut")
+        .then(m => m.categoriseExistingSubscriptions())
+        .then(n => { if (n > 0) console.log(`[revolut] auto-categorised ${n} recurring-subscription rows (no longer chasing receipts)`); })
+        .catch(err => console.warn("[revolut] categoriseExistingSubscriptions failed:", err?.message));
+
       // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
       // company whose KYC has gone stale (past the firm's recheck_interval_days,
       // default 365) or has an overdue aml_recheck_reminders row, and re-run

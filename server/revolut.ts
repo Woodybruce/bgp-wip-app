@@ -388,6 +388,12 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
   } else if (isTfl) {
     initialStatus = "categorised";
     initialCategory = "Travel";
+  } else if (isSaaSExpense(merchant, txn.merchant?.category_code)) {
+    // Recurring software subscriptions — the supplier's monthly invoice is
+    // the record; don't pester for a separate receipt. Imports pre-
+    // categorised; the email sweep still files the invoice if one lands.
+    initialStatus = "categorised";
+    initialCategory = "Software (subscriptions)";
   }
 
   const [inserted] = await db.insert(expenses).values({
@@ -1246,4 +1252,39 @@ export function setupRevolutRoutes(app: Express): void {
       res.status(500).json({ error: e?.message });
     }
   });
+}
+
+// ─── Recurring software subscriptions ───────────────────────────────────────
+// SaaS spend where the supplier's own monthly invoice is the record — chasing
+// a separate "receipt" is noise (Woody, June 2026). Detected by MCC (reliable
+// from Revolut) or a tight merchant allowlist of unambiguous SaaS names.
+//   5734 software stores · 7372 programming/data processing
+//   5817/5818 digital goods · 4816 computer network/info services
+const SOFTWARE_MCCS = new Set(["5734", "7372", "5817", "5818", "4816"]);
+const SAAS_MERCHANT_RE = /\b(anthropic|openai|chatgpt|adobe|notion|slack|github|atlassian|jira|confluence|zoom|dropbox|figma|vercel|cursor|linear|miro|docusign|mailchimp|hubspot|salesforce|twilio|sendgrid|cloudflare|namecheap|godaddy|squarespace|zapier|airtable|grammarly|1password|perplexity|elevenlabs|midjourney|microsoft\s*365|office\s*365|google\s*\*?\s*(workspace|cloud|gsuite|svcs)|amazon\s*web\s*services|\baws\b)\b/i;
+export function isSaaSExpense(merchant: string, mcc: string | null | undefined): boolean {
+  return (!!mcc && SOFTWARE_MCCS.has(String(mcc).trim())) || SAAS_MERCHANT_RE.test(merchant || "");
+}
+
+// One-off (idempotent) cleanup: existing software-subscription card rows that
+// are still stuck in "Receipt needed" get flipped to categorised so they stop
+// nagging. MCC-based (the notes carry "Revolut MCC <code>") to stay precise —
+// once flipped they leave the pending_receipt set, so reruns clear nothing.
+export async function categoriseExistingSubscriptions(): Promise<number> {
+  try {
+    const r = await pool.query(
+      `UPDATE expenses
+          SET status = 'categorised',
+              category = COALESCE(category, 'Software (subscriptions)'),
+              updated_at = NOW()
+        WHERE status = 'pending_receipt'
+          AND receipt_filename IS NULL
+          AND revolut_transaction_id IS NOT NULL
+          AND COALESCE(substring(notes from 'Revolut MCC ([0-9]{3,4})'), '') IN ('5734','7372','5817','5818','4816')`,
+    );
+    return r.rowCount || 0;
+  } catch (e: any) {
+    console.warn("[revolut] categoriseExistingSubscriptions failed:", e?.message);
+    return 0;
+  }
 }

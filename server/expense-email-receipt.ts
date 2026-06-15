@@ -49,6 +49,17 @@ const AMOUNT_TOLERANCE_PENCE = 50;       // 50p — covers rounding / minor FX
 const MAX_PARSES = 12;                   // cap vision/text calls per run
 const RECEIPT_HINT = /receipt|parking|invoice|payment|paid|booking|confirmation|order|tax\s*invoice|vat/i;
 
+// Shared finance / billing mailboxes to ALSO hunt for receipts, beyond each
+// cardholder's own inbox. Set EXPENSE_RECEIPTS_MAILBOXES in Railway to a
+// comma-separated list (e.g. "accounts@brucegillinghampollard.com"). SaaS
+// invoices land here, not in the individual's mailbox.
+function extraReceiptMailboxes(): string[] {
+  return (process.env.EXPENSE_RECEIPTS_MAILBOXES || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /@/.test(s));
+}
+
 function htmlToText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -129,16 +140,6 @@ export async function findEmailReceiptForExpense(
   const start = new Date(txnDate.getTime() - hoursBefore * 3600_000).toISOString();
   const end = new Date(txnDate.getTime() + hoursAfter * 3600_000).toISOString();
 
-  // Pull candidate emails, newest first, within the window.
-  const listUrl = `/users/${encodeURIComponent(mailbox)}/messages`
-    + `?$filter=${encodeURIComponent(`receivedDateTime ge ${start} and receivedDateTime le ${end}`)}`
-    + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview`
-    + `&$orderby=receivedDateTime desc&$top=${maxEmails}`;
-  const list = await graphRequest(listUrl).catch((e: any) => {
-    throw new Error(`Mailbox search failed: ${e?.message}`);
-  });
-  const messages: any[] = list?.value || [];
-
   // Category list for the text-body parser (live Xero chart, falls back).
   let categories: string[];
   try {
@@ -149,67 +150,92 @@ export async function findEmailReceiptForExpense(
     categories = Object.keys(EXPENSE_CATEGORY_MAP);
   }
 
+  // Search the cardholder's own mailbox first, then any shared finance /
+  // billing mailboxes (EXPENSE_RECEIPTS_MAILBOXES). SaaS invoices — Google,
+  // Anthropic, Adobe and friends — routinely go to accounts@ rather than the
+  // individual cardholder, so without this they'd never be found. Closest
+  // amount match across all the mailboxes wins.
+  const mailboxes = Array.from(new Set([mailbox, ...extraReceiptMailboxes()].map((m) => m.toLowerCase())));
+
   let scanned = 0;
   let parses = 0;
   let best: BestMatch | null = null;
   let bestDiff = Infinity;       // tracked separately to keep CFA simple
 
-  for (const m of messages) {
-    if (parses >= MAX_PARSES) break;
-    scanned++;
-    const subject = m.subject || "";
-    const preview = m.bodyPreview || "";
-    const hintMatch = RECEIPT_HINT.test(subject) || RECEIPT_HINT.test(preview);
+  for (const mbox of mailboxes) {
+    if (parses >= MAX_PARSES || (best && bestDiff === 0)) break;
 
-    // 1) Attachments first — strongest signal.
-    if (m.hasAttachments) {
-      const attRes = await graphRequest(
-        `/users/${encodeURIComponent(mailbox)}/messages/${m.id}/attachments?$select=id,name,contentType,size,isInline,contentBytes`,
-      ).catch(() => null);
-      const atts: any[] = attRes?.value || [];
-      for (const att of atts) {
-        if (parses >= MAX_PARSES) break;
-        if (att["@odata.type"] !== "#microsoft.graph.fileAttachment") continue;
-        const ct = (att.contentType || "").toLowerCase();
-        const isPdf = ct.includes("pdf") || /\.pdf$/i.test(att.name || "");
-        const isImg = ct.startsWith("image/") || /\.(png|jpe?g|heic|webp|gif)$/i.test(att.name || "");
-        if (!isPdf && !isImg) continue;
-        if (att.isInline && isImg && !hintMatch) continue;   // skip inline logos unless email looks receipt-ish
-        if (!att.contentBytes) continue;
-        const bytes = Buffer.from(att.contentBytes, "base64");
-        try {
-          parses++;
-          const parsed = await parseReceiptImage({ imageBytes: bytes, mimeType: att.contentType || (isPdf ? "application/pdf" : "image/jpeg") });
-          const diff = Math.abs(parsed.totalPence - expense.amountPence);
-          if (diff <= AMOUNT_TOLERANCE_PENCE && diff < bestDiff) {
-            best = { parsed, msg: m, source: "attachment", filename: att.name, diff, bytes, mimeType: att.contentType };
-            bestDiff = diff;
-            if (diff === 0) break;
-          }
-        } catch { /* unreadable attachment — skip */ }
-      }
-      if (best && bestDiff === 0) break;
-    }
+    // Pull candidate emails, newest first, within the window.
+    const listUrl = `/users/${encodeURIComponent(mbox)}/messages`
+      + `?$filter=${encodeURIComponent(`receivedDateTime ge ${start} and receivedDateTime le ${end}`)}`
+      + `&$select=id,subject,from,receivedDateTime,hasAttachments,bodyPreview`
+      + `&$orderby=receivedDateTime desc&$top=${maxEmails}`;
+    const list = await graphRequest(listUrl).catch((e: any) => {
+      // A missing/forbidden shared mailbox shouldn't abort the whole hunt —
+      // only the cardholder's own mailbox failing is worth surfacing.
+      if (mbox === mailbox) throw new Error(`Mailbox search failed: ${e?.message}`);
+      console.warn(`[email-receipt] shared mailbox ${mbox} unreadable: ${e?.message}`);
+      return null;
+    });
+    const messages: any[] = list?.value || [];
 
-    // 2) Body fallback — only if the email looks like a receipt and we
-    //    haven't already matched it via an attachment.
-    if (!best && hintMatch && parses < MAX_PARSES) {
-      const full = await graphRequest(
-        `/users/${encodeURIComponent(mailbox)}/messages/${m.id}?$select=body`,
-      ).catch(() => null);
-      const body = full?.body;
-      if (body?.content) {
-        const text = body.contentType === "html" ? htmlToText(body.content) : String(body.content);
-        // Cheap pre-filter: the Revolut amount should appear in the body.
-        const pounds = (expense.amountPence / 100).toFixed(2);
-        if (text.includes(pounds)) {
-          parses++;
-          const parsed = await parseReceiptFromText(text, categories);
-          if (parsed) {
+    for (const m of messages) {
+      if (parses >= MAX_PARSES) break;
+      scanned++;
+      const subject = m.subject || "";
+      const preview = m.bodyPreview || "";
+      const hintMatch = RECEIPT_HINT.test(subject) || RECEIPT_HINT.test(preview);
+
+      // 1) Attachments first — strongest signal.
+      if (m.hasAttachments) {
+        const attRes = await graphRequest(
+          `/users/${encodeURIComponent(mbox)}/messages/${m.id}/attachments?$select=id,name,contentType,size,isInline,contentBytes`,
+        ).catch(() => null);
+        const atts: any[] = attRes?.value || [];
+        for (const att of atts) {
+          if (parses >= MAX_PARSES) break;
+          if (att["@odata.type"] !== "#microsoft.graph.fileAttachment") continue;
+          const ct = (att.contentType || "").toLowerCase();
+          const isPdf = ct.includes("pdf") || /\.pdf$/i.test(att.name || "");
+          const isImg = ct.startsWith("image/") || /\.(png|jpe?g|heic|webp|gif)$/i.test(att.name || "");
+          if (!isPdf && !isImg) continue;
+          if (att.isInline && isImg && !hintMatch) continue;   // skip inline logos unless email looks receipt-ish
+          if (!att.contentBytes) continue;
+          const bytes = Buffer.from(att.contentBytes, "base64");
+          try {
+            parses++;
+            const parsed = await parseReceiptImage({ imageBytes: bytes, mimeType: att.contentType || (isPdf ? "application/pdf" : "image/jpeg") });
             const diff = Math.abs(parsed.totalPence - expense.amountPence);
             if (diff <= AMOUNT_TOLERANCE_PENCE && diff < bestDiff) {
-              best = { parsed, msg: m, source: "body", diff, html: body.content };
+              best = { parsed, msg: m, source: "attachment", filename: att.name, diff, bytes, mimeType: att.contentType };
               bestDiff = diff;
+              if (diff === 0) break;
+            }
+          } catch { /* unreadable attachment — skip */ }
+        }
+        if (best && bestDiff === 0) break;
+      }
+
+      // 2) Body fallback — only if the email looks like a receipt and we
+      //    haven't already matched it via an attachment.
+      if (!best && hintMatch && parses < MAX_PARSES) {
+        const full = await graphRequest(
+          `/users/${encodeURIComponent(mbox)}/messages/${m.id}?$select=body`,
+        ).catch(() => null);
+        const body = full?.body;
+        if (body?.content) {
+          const text = body.contentType === "html" ? htmlToText(body.content) : String(body.content);
+          // Cheap pre-filter: the Revolut amount should appear in the body.
+          const pounds = (expense.amountPence / 100).toFixed(2);
+          if (text.includes(pounds)) {
+            parses++;
+            const parsed = await parseReceiptFromText(text, categories);
+            if (parsed) {
+              const diff = Math.abs(parsed.totalPence - expense.amountPence);
+              if (diff <= AMOUNT_TOLERANCE_PENCE && diff < bestDiff) {
+                best = { parsed, msg: m, source: "body", diff, html: body.content };
+                bestDiff = diff;
+              }
             }
           }
         }
@@ -318,14 +344,21 @@ export async function findEmailReceiptForExpense(
 // Naturally idempotent: a matched expense gets receipt_filename set and
 // drops out of the query, so it's never double-notified.
 export async function sweepPendingEmailReceipts(): Promise<{ scanned: number; matched: number }> {
+  // Hunt invoices for rows still awaiting a receipt, PLUS recurring software
+  // subscriptions (imported pre-categorised so they don't nag) — for those we
+  // still quietly file the supplier invoice when it lands in a watched
+  // mailbox, we just never pester for it. Both bounded to the last 7 days.
   const { rows } = await pool.query<{ id: string; user_id: string | null; amount_pence: number; merchant: string | null }>(
     `SELECT e.id, c.user_id, e.amount_pence, e.merchant
        FROM expenses e
        JOIN stripe_cardholders c ON c.id = e.cardholder_id
-      WHERE e.status = 'pending_receipt'
-        AND e.receipt_filename IS NULL
+      WHERE e.receipt_filename IS NULL
         AND c.email IS NOT NULL
         AND e.created_at > now() - interval '7 days'
+        AND (
+          e.status = 'pending_receipt'
+          OR (e.status = 'categorised' AND e.amount_pence > 0 AND e.category = 'Software (subscriptions)')
+        )
       ORDER BY e.created_at DESC
       LIMIT 25`,
   );
