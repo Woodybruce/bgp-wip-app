@@ -205,3 +205,20 @@ Next phases discussed: cost forecasting (payroll forward-curve + P&L expense
 run-rate vs income projection) and agent profitability (commissions − salary
 − pensions via the already-granted Xero payroll scopes) to replace Wendy's
 Power BI workflow.
+
+## Receipt-AI correction + learning (June 2026)
+
+The expense receipt parser (`server/expense-receipt-parser.ts`) learns from
+its own mistakes. On the expense screen's edit dialog, a "Receipt AI got
+something wrong?" panel lets the user (a) fix the fields by hand — including
+the amount on receipt/cash rows (card-feed amounts stay locked to the real
+charge), or (b) type the correction and hit Re-read (`POST /api/expenses/:id/
+reparse`, hint passed to vision as ground truth). Saving records the change
+via `POST /api/expenses/:id/receipt-correction`.
+
+Learning lives in `server/expense-ai-memory.ts` (runtime-ensured table
+`expense_receipt_corrections` — NOT in shared/schema.ts or migrations, same
+pattern as `api_usage_log`). Two mechanisms: a deterministic merchant→category
+memory (overrides the model after every parse, prefix-tolerant merchant match)
+and a free-text lesson list prepended to the parse prompt (the house-style
+pattern). `GET /api/expenses/ai-memory` shows what it's learned.

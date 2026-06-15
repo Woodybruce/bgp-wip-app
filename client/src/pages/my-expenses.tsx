@@ -37,6 +37,11 @@ interface Expense {
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
   attendeeContacts?: { id: string; name: string | null }[];
+  // Card-feed rows carry the real charged amount — set when the row came
+  // from Revolut / Stripe. Receipt-photo and cash claims leave both null,
+  // and only those have an AI-parsed (therefore editable) amount.
+  revolutTransactionId?: string | null;
+  stripeTransactionId?: string | null;
 }
 interface NominalCode { code: string; name: string; }
 interface CrmContact { id: string; name: string; email?: string | null; companyId?: string | null; }
@@ -558,12 +563,17 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
   const [merchant, setMerchant] = useState("");
   const [transactionDate, setTransactionDate] = useState("");
   const [category, setCategory] = useState("");
+  const [amountPounds, setAmountPounds] = useState("");     // editable only on non-card (AI-parsed) rows
   const [businessPurpose, setBusinessPurpose] = useState("");
   const [attendeesText, setAttendeesText] = useState("");   // free-text attendees (e.g. auto-filled from calendar)
   const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
   const [relatedPropertyId, setRelatedPropertyId] = useState<string | null>(null);
   const [relatedDealId, setRelatedDealId] = useState<string | null>(null);
   const [isPersonal, setIsPersonal] = useState(false);
+  const [aiNote, setAiNote] = useState("");                 // "what did the AI get wrong?" — re-read hint + lesson
+  // What the row held when the dialog opened — diffed on save so we only
+  // teach the parser about fields the human actually changed.
+  const original = useRef({ merchant: "", category: "", date: "", amountPence: 0 });
 
   // Re-seed the form whenever a new expense opens.
   useEffect(() => {
@@ -571,20 +581,33 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     setMerchant(expense.merchant || "");
     setTransactionDate(expense.transactionDate ? expense.transactionDate.slice(0, 10) : "");
     setCategory(expense.category || "");
+    setAmountPounds((expense.amountPence / 100).toFixed(2));
     setBusinessPurpose(expense.businessPurpose || "");
     setAttendeesText(expense.attendees || "");
     setAttendeeIds((expense.attendeeContacts || []).map(c => c.id));
     setRelatedPropertyId(expense.relatedPropertyId || null);
     setRelatedDealId(expense.relatedDealId || null);
     setIsPersonal(!!expense.isPersonal);
+    setAiNote("");
+    original.current = {
+      merchant: expense.merchant || "",
+      category: expense.category || "",
+      date: expense.transactionDate ? expense.transactionDate.slice(0, 10) : "",
+      amountPence: expense.amountPence,
+    };
   }, [expense?.id]);
 
   const showEntertainmentFields = ENTERTAINMENT_CATEGORIES.has(category);
   const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
 
+  const isCard = !!(expense?.revolutTransactionId || expense?.stripeTransactionId);
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!expense) throw new Error("No expense");
+      const parsedAmount = Math.round(parseFloat(amountPounds) * 100);
+      const amountPence = Number.isFinite(parsedAmount) && parsedAmount >= 0 ? parsedAmount : original.current.amountPence;
+
       const payload: Record<string, unknown> = {
         merchant: merchant || null,
         transactionDate: transactionDate ? new Date(transactionDate).toISOString() : null,
@@ -595,14 +618,55 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
         relatedDealId: relatedDealId || null,
         isPersonal,
       };
+      // Amount is editable only on non-card rows (the server rejects it on
+      // the card feed regardless), and only sent when it actually changed.
+      if (!isCard && amountPence !== original.current.amountPence) payload.amountPence = amountPence;
+
       await apiRequest("PATCH", `/api/expenses/${expense.id}`, payload);
       await apiRequest("PUT", `/api/expenses/${expense.id}/attendees`, { contactIds: attendeeIds });
+
+      // Teach the parser: record only the fields the human changed, plus any
+      // free-text lesson typed into the "what did it get wrong?" box.
+      const changes: { field: string; from: string | null; to: string | null }[] = [];
+      if ((merchant || "") !== original.current.merchant) changes.push({ field: "merchant", from: original.current.merchant || null, to: merchant || null });
+      if ((category || "") !== original.current.category) changes.push({ field: "category", from: original.current.category || null, to: category || null });
+      if ((transactionDate || "") !== original.current.date) changes.push({ field: "date", from: original.current.date || null, to: transactionDate || null });
+      if (!isCard && amountPence !== original.current.amountPence) changes.push({ field: "amount", from: (original.current.amountPence / 100).toFixed(2), to: (amountPence / 100).toFixed(2) });
+      if (changes.length > 0 || aiNote.trim()) {
+        try {
+          await apiRequest("POST", `/api/expenses/${expense.id}/receipt-correction`, {
+            merchant: merchant || original.current.merchant || null,
+            changes,
+            note: aiNote.trim() || null,
+          });
+        } catch { /* learning is best-effort — must not fail the save */ }
+      }
     },
     onSuccess: () => {
       toast({ title: "Expense updated" });
       onSaved();
     },
     onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
+  });
+
+  // Re-read the receipt with the user's correction as a hint. Fills the form
+  // with the fresh parse; the user then Saves to confirm (and teach) it.
+  const reparseMutation = useMutation({
+    mutationFn: async () => {
+      if (!expense) throw new Error("No expense");
+      const r = await apiRequest("POST", `/api/expenses/${expense.id}/reparse`, { hint: aiNote.trim() || undefined });
+      const body = await r.json();
+      return body.parsed as { merchant?: string; totalPence?: number; date?: string; category?: string; confidence?: string } | null;
+    },
+    onSuccess: (parsed) => {
+      if (!parsed) { toast({ title: "Couldn't re-read the receipt", variant: "destructive" }); return; }
+      if (parsed.merchant) setMerchant(parsed.merchant);
+      if (parsed.category) setCategory(parsed.category);
+      if (parsed.date) setTransactionDate(parsed.date.slice(0, 10));
+      if (!isCard && typeof parsed.totalPence === "number" && parsed.totalPence > 0) setAmountPounds((parsed.totalPence / 100).toFixed(2));
+      toast({ title: "Re-read the receipt", description: "Check the fields, then Save to confirm and teach it." });
+    },
+    onError: (e: any) => toast({ title: "Re-read failed", description: e?.message, variant: "destructive" }),
   });
 
   if (!expense) return null;
@@ -615,10 +679,67 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
           <DialogTitle>Edit expense</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="text-xs text-muted-foreground">
-            Amount: <span className="font-mono font-medium">{fmt(expense.amountPence)}</span>
-            {isPosted && <span className="ml-3 text-emerald-600">Posted to Xero — cannot edit core fields</span>}
+          {/* Amount — editable on receipt/cash rows (AI-parsed); read-only on
+              the card feed, where it's the real charged figure. */}
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <Label htmlFor="exp-amount" className="text-xs">Amount (£)</Label>
+              {isCard ? (
+                <div className="font-mono font-medium text-sm py-2">
+                  {fmt(expense.amountPence)}
+                  <span className="ml-2 text-[10px] text-muted-foreground font-sans">from card feed — fixed</span>
+                </div>
+              ) : (
+                <Input
+                  id="exp-amount"
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0"
+                  value={amountPounds}
+                  onChange={(e) => setAmountPounds(e.target.value)}
+                  disabled={isPosted}
+                  data-testid="input-expense-amount"
+                />
+              )}
+            </div>
+            {isPosted && <span className="text-[11px] text-emerald-600 pb-2.5">Posted to Xero — cannot edit core fields</span>}
           </div>
+
+          {/* Receipt AI — tell it what it got wrong. Fix the fields by hand,
+              or type the correction and hit Re-read for another AI pass.
+              Saving teaches it (merchant→category memory + the note). */}
+          {expense.receiptFilename && (
+            <div className="rounded-lg border border-violet-200 dark:border-violet-900/40 bg-violet-50/50 dark:bg-violet-950/20 px-3 py-2.5 space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                <span className="text-xs font-medium">Receipt AI got something wrong?</span>
+              </div>
+              <Textarea
+                value={aiNote}
+                onChange={(e) => setAiNote(e.target.value)}
+                placeholder="Tell it what's wrong — e.g. 'the total is £68.50 not £6.85', or 'receipts here are always Subsistence, not Meals'. It'll remember for next time."
+                rows={2}
+                className="text-xs bg-background"
+                data-testid="input-ai-correction"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] text-muted-foreground">Fix the fields below by hand, or let the AI re-read with your note.</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs shrink-0"
+                  onClick={() => reparseMutation.mutate()}
+                  disabled={reparseMutation.isPending}
+                  data-testid="button-reparse-receipt"
+                >
+                  {reparseMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                  Re-read
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Personal/business toggle — lets you undo an accidental "Personal" tag. */}
           <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2">

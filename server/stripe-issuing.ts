@@ -455,7 +455,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       // this skip Express serves a 403 here ("you don't own expense
       // 'pending-approval'") — which silently broke the Approvals badge
       // for every non-admin approver. Pass to the next matching handler.
-      if (id === "me" || id === "pending-approval") return next("route" as any);
+      if (id === "me" || id === "pending-approval" || id === "ai-memory") return next("route" as any);
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const [row] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!row) return res.status(404).json({ error: "Not found" });
@@ -528,7 +528,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const allowed = ["merchant", "transactionDate", "category", "xeroAccountCode",
                        "businessPurpose", "attendees", "isPersonal", "isClientRechargeable",
-                       "relatedDealId", "relatedPropertyId", "notes", "status"];
+                       "relatedDealId", "relatedPropertyId", "notes", "status", "amountPence"];
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const k of allowed) {
         if (req.body[k] !== undefined) updates[k] = req.body[k];
@@ -543,8 +543,20 @@ export function setupStripeIssuingRoutes(app: Express) {
       // diverge silently from what Wendy can see in Xero. Block here so the
       // PATCH 200 doesn't lie about persistence.
       const [existing] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
-      if (existing?.xeroExpenseId && (updates.merchant !== undefined || updates.transactionDate !== undefined || updates.category !== undefined)) {
+      if (existing?.xeroExpenseId && (updates.merchant !== undefined || updates.transactionDate !== undefined || updates.category !== undefined || updates.amountPence !== undefined)) {
         return res.status(409).json({ error: "Expense is already posted to Xero — edit it in Xero instead, or unpost first." });
+      }
+      // Amount is only correctable on receipt-photo / cash claims, where it
+      // came from the AI parse. Card-feed rows (Revolut / Stripe) carry the
+      // real charged amount — never let an edit diverge the ledger from what
+      // actually left the account.
+      if (updates.amountPence !== undefined) {
+        if (existing?.revolutTransactionId || existing?.stripeTransactionId) {
+          return res.status(409).json({ error: "This is a card transaction — the amount is what the card actually charged and can't be edited. Correct the merchant, date or category instead." });
+        }
+        const n = Math.round(Number(updates.amountPence));
+        if (!Number.isFinite(n) || n < 0) delete updates.amountPence;
+        else updates.amountPence = n;
       }
       if (updates.category) {
         // Prefer the live Xero list (Wendy's source of truth); fall back
@@ -1111,6 +1123,76 @@ export function setupStripeIssuingRoutes(app: Express) {
       res.json({ success: true, parsed, autoposted: parsed?.confidence === "high" && !!baseUpdates.category });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Re-read a receipt the AI got wrong. Optional free-text `hint` is passed
+  // to the vision model as ground truth ("the total is £68.50, not £6.85").
+  // Returns the fresh parse for the user to confirm in the dialog — does NOT
+  // persist. They review and Save as normal (which is also where the
+  // correction gets recorded for learning).
+  app.post("/api/expenses/:id/reparse", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const hint = typeof req.body?.hint === "string" ? req.body.hint : undefined;
+
+      const [receipt] = await db.select().from(expenseReceipts)
+        .where(eq(expenseReceipts.expenseId, id)).orderBy(desc(expenseReceipts.uploadedAt)).limit(1);
+      if (!receipt) return res.status(404).json({ error: "No receipt on this expense to re-read — upload one first." });
+
+      // Two storage shapes co-exist (see expense-xero-poster): a file_storage
+      // key, or legacy inline base64 from the old WhatsApp path.
+      let bytes: Buffer | null = null;
+      let mimeType = receipt.mimeType || "image/jpeg";
+      if (receipt.storageKey?.startsWith("expense-receipts/")) {
+        const { getFile } = await import("./file-storage");
+        const f = await getFile(receipt.storageKey);
+        if (f) { bytes = f.data; mimeType = f.contentType || mimeType; }
+      } else if (receipt.storageKey) {
+        try { bytes = Buffer.from(receipt.storageKey, "base64"); } catch { /* not base64 */ }
+      }
+      if (!bytes || bytes.length === 0) return res.status(404).json({ error: "Receipt file couldn't be loaded for re-reading." });
+
+      const { parseReceiptImage } = await import("./expense-receipt-parser");
+      const parsed = await parseReceiptImage({ imageBytes: bytes, mimeType, userHint: hint });
+      res.json({ parsed });
+    } catch (e: any) {
+      console.error("[expenses reparse] error:", e?.message);
+      res.status(500).json({ error: e?.message || "Re-read failed" });
+    }
+  });
+
+  // Record what the AI got wrong so it learns. Body:
+  //   { merchant?, changes?: [{field, from, to}], note? }
+  //   field ∈ merchant | amount | date | category
+  // The expense fields themselves are persisted by the normal PATCH above —
+  // this captures the learning signal only (merchant→category memory + the
+  // free-text lesson). Best-effort: a failure here never blocks the save.
+  app.post("/api/expenses/:id/receipt-correction", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const { recordReceiptCorrections } = await import("./expense-ai-memory");
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      const merchant = typeof req.body?.merchant === "string" ? req.body.merchant : null;
+      const changes = Array.isArray(req.body?.changes) ? req.body.changes : [];
+      const note = typeof req.body?.note === "string" ? req.body.note : null;
+      const out = await recordReceiptCorrections({ expenseId: id, merchant, changes, note, userId });
+      res.json({ ok: true, ...out });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Transparency: what the receipt AI has learned from the team's fixes.
+  // (Skip-listed in the GET /:id handler so "ai-memory" isn't read as an id.)
+  app.get("/api/expenses/ai-memory", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { getLearnedSummary } = await import("./expense-ai-memory");
+      res.json(await getLearnedSummary());
+    } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
   });

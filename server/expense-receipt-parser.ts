@@ -106,6 +106,9 @@ Respond with ONLY valid JSON, no markdown fence, no commentary. If a field is no
 export async function parseReceiptImage(args: {
   imageBytes: Buffer;
   mimeType?: string;
+  // Free-text correction from the user ("the total is £68.50, not £6.85").
+  // Set when re-reading a receipt the AI got wrong — treated as ground truth.
+  userHint?: string;
 }): Promise<ParsedReceipt> {
   const { buffer, mediaType } = await normaliseForClaude(args.imageBytes, args.mimeType);
   const base64 = buffer.toString("base64");
@@ -123,6 +126,14 @@ export async function parseReceiptImage(args: {
   }
   const liveSet = new Set(categoryList);
 
+  // Fold in what the firm has taught the parser from past corrections, and
+  // any specific correction the user just typed in the "fix receipt" dialog.
+  const { learnedReceiptHints, learnedCategoryForMerchant } = await import("./expense-ai-memory");
+  const learned = await learnedReceiptHints().catch(() => "");
+  const hintBlock = args.userHint?.trim()
+    ? `\n\nThe user says your previous reading of THIS receipt was wrong:\n"${args.userHint.trim()}"\nTreat that as ground truth and correct your output accordingly.`
+    : "";
+
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
     max_tokens: 1024,
@@ -130,7 +141,7 @@ export async function parseReceiptImage(args: {
       role: "user",
       content: [
         { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-        { type: "text", text: buildPrompt(categoryList) },
+        { type: "text", text: buildPrompt(categoryList) + learned + hintBlock },
       ],
     }],
   });
@@ -145,7 +156,7 @@ export async function parseReceiptImage(args: {
 
   const parsed = JSON.parse(jsonMatch[0]);
 
-  return {
+  const result: ParsedReceipt = {
     merchant: parsed.merchant || "Unknown",
     totalPence: parsed.totalPence ?? 0,
     netPence: parsed.netPence,
@@ -161,6 +172,19 @@ export async function parseReceiptImage(args: {
     confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "medium",
     rawText: text,
   };
+
+  // Deterministic override: if a human has previously corrected the
+  // category for this merchant, that wins over the model's guess — as long
+  // as it's still a live Xero category. This is the half of "learning" that
+  // never drifts; the prompt hints above handle the fuzzier lessons.
+  try {
+    const learnedCat = await learnedCategoryForMerchant(result.merchant);
+    if (learnedCat && liveSet.has(learnedCat) && learnedCat !== result.category) {
+      result.category = learnedCat;
+    }
+  } catch { /* learning is best-effort — never block a parse */ }
+
+  return result;
 }
 
 // Claude vision only accepts these four. Anything else has to be
