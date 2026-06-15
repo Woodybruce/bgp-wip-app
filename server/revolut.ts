@@ -413,7 +413,15 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
   // around the transaction time, attach the subject + attendees so the
   // expense arrives pre-contextualised ("Lunch with … re …") before any
   // receipt comes in. Degrades silently if Graph/calendar isn't available.
-  if (cardholderId) {
+  //
+  // ONLY for eating/drinking swipes (hospitality MCC). The category isn't
+  // known yet at import time, so without this gate every train fare, SaaS
+  // charge and parking tap that merely overlapped a meeting inherited its
+  // subject + attendees — the Railway / Google / Anthropic noise. Non-
+  // hospitality spend gets its meeting (if any) later, at receipt time, where
+  // findMeetingContext gates on the real category.
+  const { isHospitalityMcc } = await import("./expense-calendar-context");
+  if (cardholderId && isHospitalityMcc(txn.merchant?.category_code)) {
     try {
       const { rows } = await pool.query<{ email: string | null; user_id: string | null }>(
         `SELECT email, user_id FROM stripe_cardholders WHERE id = $1 LIMIT 1`,
@@ -424,7 +432,9 @@ async function upsertExpenseFromTransaction(txn: RevolutTransaction): Promise<{ 
         const { findMeetingContext } = await import("./expense-calendar-context");
         // requireContaining: only attach a meeting the spend actually falls
         // within — stops random purchases pulling in an unrelated meeting.
-        const ctx = await findMeetingContext({ userEmail: email, userId: rows[0]?.user_id, when: txnDate, requireContaining: true });
+        // baseCategory "Meals & Drinks" satisfies the category gate (we've
+        // already confirmed it's a hospitality swipe via the MCC).
+        const ctx = await findMeetingContext({ userEmail: email, userId: rows[0]?.user_id, when: txnDate, requireContaining: true, baseCategory: "Meals & Drinks" });
         if (ctx) {
           await pool.query(
             `UPDATE expenses

@@ -3389,6 +3389,16 @@ app.use("/api/branding/assets", express.static(
           .catch(err => console.warn("[email-receipt sweep] failed:", err?.message));
       }, 10 * 60 * 1000);
 
+      // One-off (idempotent) cleanup of the diary noise the old import-time
+      // matcher stamped onto non-hospitality card rows — e.g. a leasing
+      // meeting + 12 attendees on a £0.75 train tap. Clears only auto-attached
+      // events on non-eating/drinking Revolut rows; restaurant matches and
+      // manual entries are untouched. Reruns clear nothing.
+      import("./expense-calendar-context")
+        .then(m => m.clearMeetingNoise())
+        .then(n => { if (n > 0) console.log(`[expense-calendar] cleared diary noise from ${n} non-hospitality card rows`); })
+        .catch(err => console.warn("[expense-calendar] clearMeetingNoise failed:", err?.message));
+
       // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
       // company whose KYC has gone stale (past the firm's recheck_interval_days,
       // default 365) or has an overdue aml_recheck_reminders row, and re-run

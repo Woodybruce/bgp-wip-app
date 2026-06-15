@@ -16,6 +16,31 @@ export interface MeetingContext {
   refinedCategory?: string; // e.g. "Client Entertainment" if attendees include external clients
 }
 
+// A diary event only belongs on an expense where "who was there / what was it
+// about" is the point — hospitality. A train fare, software subscription or
+// parking charge that merely overlaps a meeting in the calendar must NOT
+// inherit that meeting's subject + a dozen attendees (the noise Woody flagged
+// on the Railway / Google / Anthropic rows).
+export const CALENDAR_RELEVANT_CATEGORIES = new Set<string>([
+  "Client Entertainment",
+  "Agent Entertainment (External)",
+  "Staff Entertainment",
+  "Directors Meetings",
+  "Meals & Drinks",
+  "Subsistence",
+]);
+export function isCalendarRelevantCategory(category: string | null | undefined): boolean {
+  return !!category && CALENDAR_RELEVANT_CATEGORIES.has(category);
+}
+
+// Merchant category codes for eating/drinking — the only swipes where a
+// meeting match is wanted before a receipt (and therefore a category) exists.
+//   5811 caterers · 5812 restaurants · 5813 bars · 5814 fast food
+const HOSPITALITY_MCCS = new Set(["5811", "5812", "5813", "5814"]);
+export function isHospitalityMcc(code: string | null | undefined): boolean {
+  return !!code && HOSPITALITY_MCCS.has(String(code).trim());
+}
+
 export async function findMeetingContext(args: {
   userEmail: string;
   userId?: string | null;
@@ -28,6 +53,9 @@ export async function findMeetingContext(args: {
   requireContaining?: boolean;
 }): Promise<MeetingContext | null> {
   if (!args.userEmail || !args.when) return null;
+  // If the caller already knows the category and it isn't hospitality, never
+  // attach a meeting — a train fare or SaaS charge keeps its own identity.
+  if (args.baseCategory !== undefined && !isCalendarRelevantCategory(args.baseCategory)) return null;
   const at = new Date(args.when);
   if (isNaN(at.getTime())) return null;
 
@@ -140,4 +168,29 @@ export function refineEntertainmentCategory(args: {
   const agencyDomains = /knightfrank|cbre|jll|colliers|cushman|savills|avisonyoung|bnp|gerald-eve|dtre|bryce|workman|corestate|edge|hanover/i;
   const hasAgency = args.attendeeEmails.some((e) => agencyDomains.test(e));
   return hasAgency ? "Agent Entertainment (External)" : "Client Entertainment";
+}
+
+// One-off cleanup for the meeting noise the old import-time matcher left on
+// non-hospitality card rows (e.g. a leasing meeting stamped on a train fare).
+// Surgical + safe: only Revolut rows (their notes carry "Revolut MCC <code>"),
+// only where a diary event was auto-attached (calendar_event_id IS NOT NULL),
+// and only when the MCC is NOT eating/drinking — so genuine restaurant matches
+// (and any manual entry, which never sets calendar_event_id) are untouched.
+// Idempotent: after it runs those rows have no calendar_event_id, so reruns
+// clear nothing.
+export async function clearMeetingNoise(): Promise<number> {
+  const { pool } = await import("./db");
+  try {
+    const r = await pool.query(
+      `UPDATE expenses
+          SET business_purpose = NULL, attendees = NULL, calendar_event_id = NULL, updated_at = NOW()
+        WHERE calendar_event_id IS NOT NULL
+          AND notes ~ 'Revolut MCC'
+          AND COALESCE(substring(notes from 'Revolut MCC ([0-9]{3,4})'), '') NOT IN ('5811','5812','5813','5814')`,
+    );
+    return r.rowCount || 0;
+  } catch (e: any) {
+    console.warn("[expense-calendar] clearMeetingNoise failed:", e?.message);
+    return 0;
+  }
 }
