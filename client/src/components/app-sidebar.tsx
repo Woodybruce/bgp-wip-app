@@ -11,7 +11,6 @@ import {
   BarChart3,
   Newspaper,
   Users,
-  UserCog,
   Handshake,
   X,
 
@@ -140,7 +139,6 @@ const unfinishedNav = [
 ];
 
 const adminNavBase = [
-  { title: "Team", url: "/team", icon: UserCog },
   { title: "Finance", url: "/finance", icon: Landmark },
   { title: "Expenses", url: "/expenses", icon: Receipt },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
@@ -532,7 +530,6 @@ export const mobileOverlayItems = [
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
-  { title: "Team", url: "/team", icon: UserCog, adminOnly: true },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },

@@ -1235,9 +1235,13 @@ export async function registerRoutes(
       const days = Math.max(1, Math.min(60, parseInt(String(req.query.days || "14"), 10) || 14));
       // Birthdays are stored as ISO YYYY-MM-DD strings. Match on month/day so
       // age is irrelevant; window crosses the year boundary if needed.
+      // DOB is owned by staff_profiles (the HR record); the old users.dob
+      // column is no longer written now that the Team page is retired.
       const { rows } = await pool.query(
-        `SELECT id, name, role, team, profile_pic_url, dob FROM users
-         WHERE is_active = true AND dob IS NOT NULL`
+        `SELECT u.id, u.name, u.role, u.team, u.profile_pic_url, sp.dob
+           FROM users u
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.is_active = true AND sp.dob IS NOT NULL`
       );
       const today = new Date();
       const upcoming = rows

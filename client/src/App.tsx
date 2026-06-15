@@ -107,7 +107,6 @@ const PlaMatters = lazy(() => import("@/pages/pla-matters"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const HRPage = lazy(() => import("@/pages/hr"));
-const TeamPage = lazy(() => import("@/pages/team"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 const FinancePage = lazy(() => import("@/pages/finance"));
 
@@ -277,7 +276,6 @@ function Router() {
       <Route path="/m/images" component={MobileImages} />
       <Route path="/hr" component={HRPage} />
       <Route path="/hr/:userId">{(params) => <HrPersonRedirect params={params as { userId: string }} />}</Route>
-      <Route path="/team" component={TeamPage} />
       <Route component={NotFound} />
     </Switch>
     </Suspense>
