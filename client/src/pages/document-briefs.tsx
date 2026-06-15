@@ -12,7 +12,7 @@
  * truth either way.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -57,6 +57,27 @@ export default function DocumentBriefsPage() {
   const [iteratePrompt, setIteratePrompt] = useState("");
   const [iterating, setIterating] = useState(false);
 
+  // Context deep-link — this is the "one location fed from different
+  // locations" hook. Any page (a property, a deal, a PLA matter, a Pathway
+  // run, ChatBGP) can open the Studio pre-loaded by passing the property in
+  // the URL and optionally narrowing to a doc type, e.g.
+  //   /document-briefs?propertyId=abc&propertyName=12%20Hanover%20Sq&postcode=W1S&brief=brochure
+  // We pre-resolve the property and pre-filter the catalogue; the user still
+  // clicks Render (so we never spend an AI call on a stray navigation).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pid = params.get("propertyId");
+    if (pid) {
+      setProperty({
+        id: pid,
+        name: params.get("propertyName") || "Selected property",
+        postcode: params.get("postcode"),
+      });
+    }
+    const brief = params.get("brief") || params.get("briefId");
+    if (brief) setSearch(brief);
+  }, []);
+
   const { data: briefs = [], isLoading } = useQuery<BriefMeta[]>({
     queryKey: ["/api/document-briefs"],
     queryFn: async () => {
@@ -70,7 +91,9 @@ export default function DocumentBriefsPage() {
     if (categoryFilter !== "all" && b.category !== categoryFilter) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
-      if (!b.name.toLowerCase().includes(q) && !b.description.toLowerCase().includes(q)) return false;
+      // Match name, description OR id — so a deep-link passing the brief id
+      // (?brief=why-buy-memo) narrows the catalogue to that document.
+      if (!b.name.toLowerCase().includes(q) && !b.description.toLowerCase().includes(q) && !b.id.toLowerCase().includes(q)) return false;
     }
     return true;
   });
