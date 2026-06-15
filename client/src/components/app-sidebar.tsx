@@ -89,7 +89,6 @@ const coreNavBase = [
   // Tracker / Investment / WIP Report), so the standalone sidebar entry
   // was dropped — it duplicated the Deals view.
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "Portfolios", url: "/portfolios", icon: Layers },
   { title: "Requirements", url: "/requirements", icon: FileText },
   // Work-in-progress modules (AML, Tenant Rep, hunters, Landlord Intel,
   // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
@@ -98,7 +97,6 @@ const coreNavBase = [
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
-  { title: "Team", url: "/team", icon: UserCog, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
 ];
 
@@ -122,6 +120,7 @@ const microsoftNav = [
 // find without cluttering Core. Hidden from non-admins entirely. Order
 // matches the list Woody dictated (AML → Enrichment Hub).
 const unfinishedNav = [
+  { title: "Portfolios", url: "/portfolios", icon: Layers },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
@@ -141,6 +140,7 @@ const unfinishedNav = [
 ];
 
 const adminNavBase = [
+  { title: "Team", url: "/team", icon: UserCog },
   { title: "Finance", url: "/finance", icon: Landmark },
   { title: "Expenses", url: "/expenses", icon: Receipt },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
@@ -304,7 +304,8 @@ export function AppSidebar() {
     setPeeking(false);
   };
 
-  // Core hides anything still admin-gated (currently just Team) for non-admins.
+  // Core hides anything still admin-gated for non-admins (none at present —
+  // Team now lives in the Admin group).
   // Reporting is surfaced inside Core for Landsec tenants — for everyone else
   // it lives in the Unfinished group along with the other modules being
   // polished.
