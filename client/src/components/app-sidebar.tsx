@@ -414,16 +414,16 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="p-3 space-y-2">
-        <div className="flex items-center gap-1 px-1">
+      <SidebarFooter className="p-3 space-y-2 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-2">
+        <div className="flex items-center gap-1 px-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs hover:bg-sidebar-accent transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs hover:bg-sidebar-accent transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center"
                 data-testid="button-color-scheme"
               >
-                <Palette className="w-3.5 h-3.5" />
-                <span className="truncate">{COLOR_SCHEMES.find(s => s.id === colorScheme)?.label}</span>
+                <Palette className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate group-data-[collapsible=icon]:hidden">{COLOR_SCHEMES.find(s => s.id === colorScheme)?.label}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" side="top" className="w-48">
@@ -453,16 +453,16 @@ export function AppSidebar() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium hover:bg-sidebar-accent transition-colors"
+              className="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium hover:bg-sidebar-accent transition-colors group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center"
               data-testid="button-team-switcher"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center shrink-0">
                   <Users className="w-3 h-3 text-primary" />
                 </div>
-                <span className="truncate">{activeTeam === "all" ? "All Teams" : activeTeam || "Select Team"}</span>
+                <span className="truncate group-data-[collapsible=icon]:hidden">{activeTeam === "all" ? "All Teams" : activeTeam || "Select Team"}</span>
               </div>
-              <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 opacity-50" />
+              <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 opacity-50 group-data-[collapsible=icon]:hidden" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="top" className="w-52">
@@ -492,18 +492,18 @@ export function AppSidebar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+        <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
             <span className="text-xs font-medium text-primary">{initials}</span>
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
             <p className="text-xs font-medium truncate" data-testid="text-current-user">{user?.name || "Loading..."}</p>
             <p className="text-[10px] text-muted-foreground truncate">{user?.role || "BGP Team"}</p>
           </div>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0"
+            className="h-7 w-7 shrink-0 group-data-[collapsible=icon]:hidden"
             onClick={handleLogout}
             data-testid="button-logout"
           >
