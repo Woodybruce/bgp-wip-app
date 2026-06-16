@@ -345,21 +345,9 @@ export function AppSidebar() {
     : "?";
 
   return (
-    // collapsible="icon" lets the sidebar shrink to a narrow icon rail
-    // instead of sliding fully off-screen. Pairs with the auto-collapse
-    // when ChatBGP opens (in App.tsx) so the main content gets room
-    // without losing nav access. Hover handlers drive the floating
-    // peek-expand behaviour wired through useSidebar above.
-    <Sidebar
-      collapsible="icon"
-      onMouseEnter={() => schedulePeek(true)}
-      onMouseLeave={() => schedulePeek(false)}
-      onClick={(e) => {
-        // Tuck peek when the user actually navigates (clicked a link),
-        // but leave it open when they're just expanding a section header.
-        if ((e.target as HTMLElement).closest("a")) collapsePeekNow();
-      }}
-    >
+    // collapsible="none" pins the left nav permanently open (the hover-peek
+    // behaviour moved to the chat panel on the right edge — see App.tsx).
+    <Sidebar collapsible="none">
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
           {isLandsec ? (

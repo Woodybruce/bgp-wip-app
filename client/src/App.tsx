@@ -291,6 +291,9 @@ function AuthenticatedApp() {
   // when chat is consuming the right side of the screen).
   const { panelOpen: chatOpen, setPanelOpen: setChatOpen } = useChatBGPState();
   const [aiChatRequested, setAiChatRequested] = useState(false);
+  // Chat peek: hover opens it, click pins it open (so it doesn't tuck away on
+  // mouse-leave). Mirrors the old left-sidebar peek behaviour.
+  const [chatPinned, setChatPinned] = useState(false);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
 
@@ -526,7 +529,8 @@ function AuthenticatedApp() {
           <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
             <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">
               <div className="flex items-center gap-2">
-                <SidebarTrigger data-testid="button-sidebar-toggle" />
+                {/* Left nav is pinned open (collapsible="none"), so the
+                    sidebar toggle is gone. */}
                 <GlobalSearch />
               </div>
               <div className="flex items-center gap-2">
@@ -534,7 +538,7 @@ function AuthenticatedApp() {
                 <NotificationCenter />
                 <button
                   data-testid="button-chat-toggle"
-                  onClick={() => setChatOpen(prev => !prev)}
+                  onClick={() => { const n = !chatOpen; setChatPinned(n); setChatOpen(n); }}
                   className="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
                   title="Team Chat"
                 >
@@ -551,7 +555,23 @@ function AuthenticatedApp() {
               <Router />
             </div>
           </div>
-          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
+          {/* ChatBGP: minimised to a right-edge rail; hover peeks it open,
+              click pins it. Mouse-leaving the chat area tucks it back unless
+              pinned. (Desktop; on mobile the header button opens it full-screen.) */}
+          <div className="flex" onMouseLeave={() => { if (!chatPinned) setChatOpen(false); }}>
+            <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
+            <button
+              type="button"
+              data-testid="button-chatbgp-rail"
+              className="hidden md:flex flex-col items-center gap-3 w-10 shrink-0 border-l bg-primary text-primary-foreground py-4 cursor-pointer hover:opacity-90 transition-opacity"
+              onMouseEnter={() => { if (!chatPinned) setChatOpen(true); }}
+              onClick={() => { if (chatOpen && chatPinned) { setChatPinned(false); setChatOpen(false); } else { setChatPinned(true); setChatOpen(true); } }}
+              title="ChatBGP"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] tracking-widest uppercase">ChatBGP</span>
+            </button>
+          </div>
       </div>
       {isForceDesktop && (
         <button
