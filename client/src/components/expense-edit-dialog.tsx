@@ -102,13 +102,11 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
     }
   }, [open, expense, existingSplits]);
 
-  if (!expense) return null;
-
   const categoryDefaultReclaimable = catByName.get(category)?.vatReclaimable ?? true;
   const effectiveReclaimable = vatReclaimable ?? categoryDefaultReclaimable;
 
   const splitSum = lines.reduce((a, l) => a + toPence(l.amountPounds), 0);
-  const splitBalanced = splitSum === expense.amountPence;
+  const splitBalanced = expense ? splitSum === expense.amountPence : false;
 
   const userName = (id: string | null) => activeUsers.find(u => u.id === id)?.name || "";
 
@@ -161,6 +159,11 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
     },
     onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
   });
+
+  // Every hook above runs on every render; only the JSX below is conditional.
+  // Bailing out earlier skipped useMutation while the dialog was closed, so the
+  // hook count jumped when it opened — React error #310.
+  if (!expense) return null;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
