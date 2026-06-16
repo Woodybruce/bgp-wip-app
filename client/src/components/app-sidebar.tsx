@@ -132,8 +132,9 @@ const unfinishedNav = [
   // One Document Studio — the unified, engine-backed catalogue (Why Buy →
   // Heads of Terms) that the old /templates "Document Briefs" pages merged
   // into. Template authoring + Decks are reachable from inside it.
+  // Decks folded in as a tab of Document Studio (the one cockpit), so no
+  // standalone sidebar entry — /decks redirects into the Studio's Decks tab.
   { title: "Document Studio", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
-  { title: "Decks", url: "/decks", icon: Layers, badge: "New" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
   { title: "Leads", url: "/leads", icon: UserPlus },

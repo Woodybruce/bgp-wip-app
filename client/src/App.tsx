@@ -52,8 +52,8 @@ const Calendar = lazy(() => import("@/pages/calendar"));
 const Mail = lazy(() => import("@/pages/mail"));
 const WhatsApp = lazy(() => import("@/pages/whatsapp"));
 const Models = lazy(() => import("@/pages/models"));
-const DocumentTemplates = lazy(() => import("@/pages/document-templates"));
-const Decks = lazy(() => import("@/pages/decks"));
+// DocumentTemplates + Decks are now rendered as tabs inside Document Studio
+// (client/src/pages/document-briefs.tsx); /templates and /decks redirect in.
 const DeckDetail = lazy(() => import("@/pages/deck-detail"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const Comps = lazy(() => import("@/pages/comps"));
@@ -139,6 +139,16 @@ function DiaryRedirect() {
   return null;
 }
 
+// Document Studio is now one cockpit with tabs. The old standalone
+// /templates and /decks pages fold in as tabs, so their URLs redirect into
+// the Studio with the right tab pre-selected (the deck editor /decks/:id
+// stays a full page).
+function StudioTabRedirect({ tab }: { tab: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation(`/document-briefs?tab=${tab}`, { replace: true }); }, [setLocation, tab]);
+  return null;
+}
+
 // Legacy tool URLs (/map-bgp, /map, /land-registry, /business-rates) all
 // live on as tabs inside Property Intelligence. Each redirect keeps the
 // incoming query string (address/postcode/layer/title…) and replaces the
@@ -216,8 +226,8 @@ function Router() {
       <Route path="/mail" component={Mail} />
       <Route path="/whatsapp" component={WhatsApp} />
       <Route path="/models" component={Models} />
-      <Route path="/templates" component={DocumentTemplates} />
-      <Route path="/decks" component={Decks} />
+      <Route path="/templates">{() => <StudioTabRedirect tab="templates" />}</Route>
+      <Route path="/decks">{() => <StudioTabRedirect tab="decks" />}</Route>
       <Route path="/decks/:id" component={DeckDetail} />
       <Route path="/image-studio">{() => <AdminRoute><ImageStudio /></AdminRoute>}</Route>
       <Route path="/settings" component={SettingsPage} />
