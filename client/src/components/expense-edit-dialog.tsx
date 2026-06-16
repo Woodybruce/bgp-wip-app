@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, Plus, Trash2, SplitSquareHorizontal } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 interface NominalCode { code: string; name: string; vatReclaimable?: boolean; vatRatePct?: number; taxType?: string; }
 interface AppUser { id: string; name: string; email?: string | null; isActive?: boolean | null; }
@@ -44,6 +45,8 @@ interface SplitLine {
 const NONE = "__none__";
 const fmt = (p: number) => `£${(p / 100).toFixed(2)}`;
 const toPence = (pounds: string) => Math.round((parseFloat(pounds) || 0) * 100);
+// Stable reference for "no splits yet" — see the note where it's used.
+const EMPTY_SPLITS: any[] = [];
 
 export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
   expense: EditableExpense | null;
@@ -54,7 +57,7 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
   const { toast } = useToast();
   const { data: nominalCodes = [] } = useQuery<NominalCode[]>({ queryKey: ["/api/expenses/nominal-codes"] });
   const { data: users = [] } = useQuery<AppUser[]>({ queryKey: ["/api/users"] });
-  const { data: existingSplits = [] } = useQuery<any[]>({
+  const { data: existingSplitsData } = useQuery<any[]>({
     queryKey: ["/api/expenses", expense?.id, "splits"],
     queryFn: async () => {
       const r = await apiRequest("GET", `/api/expenses/${expense!.id}/splits`, undefined);
@@ -62,6 +65,10 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
     },
     enabled: open && !!expense?.id,
   });
+  // A fresh [] fallback on every render changes the effect's deps below and
+  // spins it into a setState loop ("Maximum update depth exceeded") while the
+  // query is still loading. Hold one stable reference instead.
+  const existingSplits = existingSplitsData ?? EMPTY_SPLITS;
 
   const [category, setCategory] = useState("");
   const [vatReclaimable, setVatReclaimable] = useState<boolean | null>(null);
@@ -158,6 +165,7 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <ErrorBoundary compact name="Edit expense">
         <DialogHeader>
           <DialogTitle className="text-base">
             {expense.merchant || "Expense"} · {fmt(expense.amountPence)}
@@ -312,6 +320,7 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
             Save
           </Button>
         </DialogFooter>
+        </ErrorBoundary>
       </DialogContent>
     </Dialog>
   );
