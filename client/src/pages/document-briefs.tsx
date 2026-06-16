@@ -215,12 +215,20 @@ export default function DocumentBriefsPage() {
   return (
     <div className="flex flex-col h-full min-h-screen">
       <div className="border-b bg-background sticky top-0 z-10 px-4 lg:px-6 py-3">
-        <div className="flex items-center gap-2 mb-3">
-          <FileText className="h-5 w-5 text-primary" />
-          <h1 className="text-xl font-semibold">Document Briefs</h1>
-          <Badge variant="outline" className="text-xs gap-1">
-            <Sparkles className="h-3 w-3" /> Claude design
-          </Badge>
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-primary" />
+            <h1 className="text-xl font-semibold">Document Studio</h1>
+            <Badge variant="outline" className="text-xs gap-1">
+              <Sparkles className="h-3 w-3" /> Claude design
+            </Badge>
+          </div>
+          {/* The other two authoring routes, reachable from the one Studio
+              door: the original template generator and the card-deck builder. */}
+          <div className="flex items-center gap-3 text-xs">
+            <a href="/templates" className="text-muted-foreground hover:text-foreground hover:underline">Template authoring</a>
+            <a href="/decks" className="text-muted-foreground hover:text-foreground hover:underline">Card decks</a>
+          </div>
         </div>
         <PropertyResolverBar
           current={property}
