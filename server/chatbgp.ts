@@ -16,8 +16,8 @@ import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRec
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-sonnet-4-6";      // Default chat: Sonnet 4.6 (fast + cheap). Per-thread /opus flips to Opus.
-const CHATBGP_OPUS_MODEL = "claude-opus-4-7";   // Heavy reasoning when /opus is set on a thread.
+const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Opus 4.8 via chatbgp-model-router.
+const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning (also the chat default now).
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
 
 // Resolve a list of chat-media filenames into Graph fileAttachment payloads
@@ -11571,7 +11571,9 @@ export function setupChatBGPRoutes(app: Express) {
       } catch {
         systemPrompt = SYSTEM_PROMPT_FALLBACK;
       }
-      const systemContent = systemPrompt + personalisation + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
+      // Lean context (see main chat handler) — keep only who you're talking to;
+      // fetch knowledge / CRM / email on demand via tools rather than force-feeding.
+      const systemContent = systemPrompt + personalisation;
 
       const fileResolved = await resolveChatModel({ threadId: fileThreadId, override: fileSlashOverride });
       const completionOptions: any = {
@@ -12669,7 +12671,13 @@ export function setupChatBGPRoutes(app: Express) {
         systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
       }
       // Split system prompt: static (cacheable) vs dynamic (per-request)
-      const dynamicContext = currentUserContext + threadContext + knowledgeContext2 + businessLearnings2 + memoryContext + emailCalContext + crmCtx;
+      // Lean context: only the cheap, targeted bits — who you're talking to and
+      // the current thread's property/deal. The firm-wide dumps (knowledge,
+      // learnings, memory, email/calendar, CRM summary) used to be force-fed on
+      // every turn, bloating the window and diluting focus. The model now fetches
+      // any of those on demand via tools (search_crm, search_knowledge_base, the
+      // email/calendar tools) only when a request actually needs them.
+      const dynamicContext = currentUserContext + threadContext;
       const systemContent2 = systemPrompt2 + dynamicContext;
 
       // Build structured system prompt array for Anthropic prompt caching
@@ -12835,7 +12843,7 @@ export function setupChatBGPRoutes(app: Express) {
               // Keep system + first user message + last 6 messages
               const sys = conversationMessages.filter((m: any) => m.role === "system");
               const rest = conversationMessages.filter((m: any) => m.role !== "system");
-              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              conversationMessages = [...sys, ...rest.slice(0, 2), ...rest.slice(-12)];
               loopOpts.messages = conversationMessages;
               completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); });
             } else {
@@ -12853,7 +12861,7 @@ export function setupChatBGPRoutes(app: Express) {
               console.warn("[ChatBGP] Context too long in tool loop — trimming history and retrying");
               const sys = conversationMessages.filter((m: any) => m.role === "system");
               const rest = conversationMessages.filter((m: any) => m.role !== "system");
-              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              conversationMessages = [...sys, ...rest.slice(0, 2), ...rest.slice(-12)];
               loopOpts.messages = conversationMessages;
               completion = await callClaude(loopOpts);
             } else {
@@ -13184,7 +13192,8 @@ If the user asks to build a full investment appraisal (multi-sheet), you may eit
 ${safeExcelContext ? `**Current Workbook Data (automatically read from the user's open Excel workbook):**\n${safeExcelContext}\n` : "**Note:** No spreadsheet data was provided. If the user asks you to analyse their sheet, suggest they click the refresh button next to the input."}
 `;
 
-      const dynamicContext = knowledgeContext + businessLearnings + memoryContext + emailCalContext + crmCtx + excelSupplement;
+      // Lean context — keep the task-relevant Excel supplement; fetch the rest on demand.
+      const dynamicContext = excelSupplement;
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has
