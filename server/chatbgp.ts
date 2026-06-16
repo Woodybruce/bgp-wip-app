@@ -11557,14 +11557,10 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
-      const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings, personalisation] = await Promise.all([
-        withTimeout(getKnowledgeContext(), 8000, ""),
-        withTimeout(getMemoryContext(fileUserId), 8000, ""),
-        withTimeout(getEmailAndCalendarContext(req), 8000, ""),
-        withTimeout(getCrmContext(), 8000, ""),
-        withTimeout(getBusinessLearningsContext(), 8000, ""),
-        withTimeout(getUserPersonalisationContext(fileUserId), 2000, ""),
-      ]);
+      // Lean mode: only the cheap personalisation line is still injected; the
+      // knowledge bank / memory / email+calendar / CRM dumps are fetched on
+      // demand via tools, so we skip building them here.
+      const personalisation = await withTimeout(getUserPersonalisationContext(fileUserId), 2000, "");
       let systemPrompt: string;
       try {
         systemPrompt = await buildSystemPrompt();
@@ -12553,39 +12549,12 @@ export function setupChatBGPRoutes(app: Express) {
     try {
       const { tools } = await getAvailableTools();
       const userId = req.session.userId!;
-      // Load contexts with size limits and error handling
-      let knowledgeContext2 = "";
-      let memoryContext = "";
-      let emailCalContext = "";
-      let crmCtx = "";
-      let businessLearnings2 = "";
-      
-      try {
-        sendProgress("Gathering intelligence...");
-        const contextResults = await Promise.all([
-          withTimeout(getMemoryContext(userId), 3000, ""),
-          withTimeout(getBusinessLearningsContext(), 3000, ""),
-          withTimeout(getCrmContext(), 3000, ""),
-          withTimeout(getKnowledgeContext(), 3000, ""),
-          withTimeout(getEmailAndCalendarContext(req), 3000, ""),
-          withTimeout(getUserPersonalisationContext(userId), 1500, ""),
-        ]);
-        memoryContext = contextResults[0];
-        businessLearnings2 = contextResults[1];
-        crmCtx = contextResults[2];
-        knowledgeContext2 = contextResults[3];
-        emailCalContext = contextResults[4];
-        // Per-user personalisation prepends so role/department defaults are
-        // the first thing Claude sees after the static system prompt.
-        memoryContext = (contextResults[5] || "") + memoryContext;
-        // Trim to stay under 120KB total context
-        const totalLen = memoryContext.length + businessLearnings2.length + crmCtx.length + knowledgeContext2.length + emailCalContext.length;
-        if (totalLen > 120000) {
-          emailCalContext = emailCalContext.slice(0, Math.max(0, 120000 - totalLen + emailCalContext.length));
-        }
-      } catch (err) {
-        console.error("Context loading error:", err);
-      }
+      // Lean mode: the firm-wide context builders (memory, learnings, CRM
+      // summary, knowledge bank, and a live email/calendar Graph fetch) used to
+      // run on every turn and get force-fed into the prompt. They're no longer
+      // injected — the model pulls any of that on demand via tools — so we skip
+      // building them entirely. Just the current thread's property/deal context
+      // and the cheap "current user" line (below) remain.
       let threadContext = "";
       let currentUserContext = "";
       try {
@@ -13123,18 +13092,9 @@ export function setupChatBGPRoutes(app: Express) {
         safeExcelContext = safeExcelContext.substring(0, 60000) + "\n... (spreadsheet data truncated for size — full workbook metadata above is complete)\n";
       }
 
-      // Load full contexts (same as main ChatBGP) so Excel add-in has the same reach
-      sendProgress("Gathering intelligence...");
+      // Lean mode: skip the firm-wide context builders (fetched on demand via
+      // tools); the Excel add-in only needs its task-specific excelSupplement.
       const userId = req.session.userId!;
-      const [memoryContextRaw, businessLearnings, crmCtx, knowledgeContext, emailCalContext, personalisation] = await Promise.all([
-        withTimeout(getMemoryContext(userId), 5000, ""),
-        withTimeout(getBusinessLearningsContext(), 5000, ""),
-        withTimeout(getCrmContext(), 5000, ""),
-        withTimeout(getKnowledgeContext(), 5000, ""),
-        withTimeout(getEmailAndCalendarContext(req), 5000, ""),
-        withTimeout(getUserPersonalisationContext(userId), 1500, ""),
-      ]);
-      const memoryContext = personalisation + memoryContextRaw;
 
       let baseSystemPrompt: string;
       try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
