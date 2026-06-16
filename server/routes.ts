@@ -102,7 +102,7 @@ const marketingUpload = multer({
 
 const chatMediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024 },
 });
 
 const GROUP_CHAT_TOOLS = [
@@ -396,7 +396,24 @@ export async function registerRoutes(
     } catch (err: any) { console.error("[routes] File download error:", err?.message); res.status(500).end(); }
   });
 
-  app.post("/api/chat/upload", requireAuth, chatMediaUpload.array("files", 10), async (req: Request, res) => {
+  // Wrap multer so its errors (esp. LIMIT_FILE_SIZE) return a clear JSON
+  // message the client can show, instead of falling through to the generic
+  // 500 handler. The old opaque failure is what made oversized brochures
+  // look like a mysterious "storage" problem.
+  const chatUploadMw = (req: any, res: any, next: any) => {
+    chatMediaUpload.array("files", 10)(req, res, (err: any) => {
+      if (err) {
+        const tooBig = err?.code === "LIMIT_FILE_SIZE";
+        return res.status(tooBig ? 413 : 400).json({
+          message: tooBig
+            ? "File too large — the limit is 100 MB per file. Compress or split the PDF and try again."
+            : (err?.message || "Upload failed"),
+        });
+      }
+      next();
+    });
+  };
+  app.post("/api/chat/upload", requireAuth, chatUploadMw, async (req: Request, res) => {
     try {
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {

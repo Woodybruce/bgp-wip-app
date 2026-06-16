@@ -2576,7 +2576,10 @@ export default function ChatBGP() {
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch("/api/chat/upload", { method: "POST", body: formData, credentials: "include", headers });
-    if (!res.ok) throw new Error("Upload failed");
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      throw new Error(detail?.message || "Upload failed");
+    }
     const data = await res.json();
     return data.files || data;
   };
@@ -2689,8 +2692,8 @@ export default function ChatBGP() {
       try {
         setUploading(true);
         uploadedAttachments = await uploadFiles(attachedFiles);
-      } catch {
-        toast({ title: "Upload failed", description: "Could not upload files. Please try again.", variant: "destructive" });
+      } catch (err: any) {
+        toast({ title: "Upload failed", description: err?.message || "Could not upload files. Please try again.", variant: "destructive" });
         setUploading(false);
         return;
       }
