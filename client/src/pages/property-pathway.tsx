@@ -623,6 +623,22 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             <Plus className="w-4 h-4 mr-1" />
             Create comp
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const params = new URLSearchParams();
+              if (run.propertyId) params.set("propertyId", run.propertyId);
+              params.set("propertyName", run.propertyName || run.address);
+              if (run.postcode) params.set("postcode", run.postcode);
+              navigate(`/document-briefs?${params.toString()}`);
+            }}
+            title="Open the Document Studio pre-loaded with this property"
+            data-testid="button-create-document-from-pathway"
+          >
+            <FileText className="w-4 h-4 mr-1" />
+            Create document
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => onAdvance(1)} disabled={advancing} title="Re-scan for new emails, attachments, SharePoint items, and regenerate the briefing">
             {advancing ? <Clock className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
             Refresh

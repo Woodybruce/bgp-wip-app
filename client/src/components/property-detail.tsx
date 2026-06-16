@@ -14,6 +14,7 @@ import {
   X,
   ArrowLeft,
   FolderTree,
+  FileText,
   Loader2,
   FolderOpen,
   ChevronRight,
@@ -523,6 +524,12 @@ export function PropertyDetail({ id }: { id: string }) {
                   <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio">
                     <ImageIcon className="w-3.5 h-3.5" />
                     Image Studio
+                  </Button>
+                </Link>
+                <Link href={`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`}>
+                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-create-document">
+                    <FileText className="w-3.5 h-3.5" />
+                    Create document
                   </Button>
                 </Link>
                 <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders">

@@ -603,6 +603,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               Image Studio
             </Button>
           </Link>
+          <Link href={`/document-briefs?propertyId=${encodeURIComponent(deal.propertyId || "")}&propertyName=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&postcode=${encodeURIComponent((linkedProperty as any)?.postcode || "")}`}>
+            <Button variant="outline" size="sm" data-testid="button-deal-create-document">
+              <FileText className="w-4 h-4 mr-2" />
+              Create document
+            </Button>
+          </Link>
           <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
             <Pencil className="w-4 h-4 mr-2" />
             Edit
