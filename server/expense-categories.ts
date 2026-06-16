@@ -57,6 +57,7 @@ export type ExpenseCategory = {
   code: string;        // Xero account code, e.g. "410"
   name: string;        // Xero account name, e.g. "Client Entertainment"
   type?: string;       // Xero account Type (EXPENSE | OVERHEADS | ...)
+  taxType?: string;    // Xero default TaxType, e.g. "INPUT2" / "NONE" / "ZERORATEDINPUT"
   description?: string;
 };
 
@@ -92,6 +93,7 @@ export async function getExpenseCategories(opts?: { forceRefresh?: boolean }): P
           code: String(a.Code),
           name: String(a.Name),
           type: a.Type,
+          taxType: a.TaxType || undefined,
           description: a.Description || undefined,
         }))
         .sort((a: ExpenseCategory, b: ExpenseCategory) => a.code.localeCompare(b.code));
@@ -138,4 +140,56 @@ export function getCategoryCodeStatic(name: string): string | undefined {
 
 export function invalidateCache(): void {
   cached = null;
+}
+
+// ── VAT / tax-type resolution ───────────────────────────────────────────────
+// Per-category VAT treatment. The source of truth is Xero: each expense
+// account carries a default TaxType, which we pull live (cached with the
+// category list). This static map mirrors the firm's historic hardcoded rules
+// and is the fallback when Xero is unreachable or an account has no tax type.
+//
+//   INPUT2          standard-rated input VAT (20%, reclaimable)
+//   ZERORATEDINPUT  zero-rated purchases (e.g. flights) — 0%, nothing to reclaim
+//   EXEMPTINPUT     exempt purchases — 0%, nothing to reclaim
+//   NONE            no VAT / outside scope — used for irrecoverable input VAT
+//                   (client entertainment) and no-VAT items (gifts, mileage…)
+export function fallbackTaxType(category: string | null): string {
+  if (!category) return "INPUT2";
+  if (category === "Client Entertainment") return "NONE";
+  if (category === "Travel - Flights") return "ZERORATEDINPUT";
+  if (["Donations", "Staff Gifts", "Client Gifts", "RICS Fees", "Mileage Claims (HMRC 45p)",
+       "Eye Tests", "Flu Jabs & Covid Tests", "Personal (deduct from payroll)"].includes(category)) {
+    return "NONE";
+  }
+  return "INPUT2";
+}
+
+/** Resolve a category's Xero TaxType — live from Xero's chart of accounts,
+ *  falling back to the static rules above. */
+export async function getCategoryTaxType(name: string | null): Promise<string> {
+  if (!name) return "INPUT2";
+  try {
+    const list = await getExpenseCategories();
+    const live = list.find(c => c.name === name);
+    if (live?.taxType) return live.taxType;
+  } catch { /* fall through to static */ }
+  return fallbackTaxType(name);
+}
+
+/** Display info for a tax type: is the input VAT reclaimable, and the rate %.
+ *  Powers "VAT £x (20%, reclaimable)" vs "VAT £x (not reclaimable)". */
+export function vatInfoForTaxType(taxType: string | null | undefined): { reclaimable: boolean; ratePct: number } {
+  const t = (taxType || "").toUpperCase();
+  if (t === "INPUT2" || t === "INPUT") return { reclaimable: true, ratePct: 20 };
+  if (t === "RRINPUT") return { reclaimable: true, ratePct: 5 };
+  if (t === "ZERORATEDINPUT") return { reclaimable: true, ratePct: 0 };
+  return { reclaimable: false, ratePct: 0 };   // EXEMPTINPUT, NONE, unknown → not reclaimable
+}
+
+/** Effective reclaimability for a category, honouring a per-expense override.
+ *  override === false forces the VAT into the cost (posts as TaxType NONE). */
+export async function isCategoryVatReclaimable(name: string | null, override?: boolean | null): Promise<boolean> {
+  if (override === false) return false;
+  if (override === true) return true;
+  return vatInfoForTaxType(await getCategoryTaxType(name)).reclaimable;
 }

@@ -1,12 +1,24 @@
 /**
- * Post a finalised expense to Xero as a Spend Money transaction
- * against the Stripe Cards bank account, with receipt attached.
+ * Post a finalised expense to Xero as a Spend Money transaction against the
+ * Stripe/Revolut Cards bank account, with receipt attached.
+ *
+ * Handles VAT and splits:
+ *   - VAT treatment per line comes from the category's Xero tax type
+ *     (reclaimable 20%/5%/0%) unless the per-expense/per-split vatReclaimable
+ *     override forces it to NONE — i.e. the VAT becomes part of the cost
+ *     (client entertainment etc.). The actual VAT read off the receipt is
+ *     passed through as the line TaxAmount so Xero matches the paperwork.
+ *   - A split expense posts one Xero line per split, each with its own
+ *     account code, tax type and "Team Member" tracking (the person the cost
+ *     is allocated to). An unsplit expense posts a single line off the parent.
  */
 import { xeroApi } from "./xero";
 import { db } from "./db";
-import { expenses, stripeCardholders, expenseReceipts } from "@shared/schema";
-import { eq } from "drizzle-orm";
-import { EXPENSE_CATEGORY_MAP } from "./expense-categories";
+import { expenses, stripeCardholders, expenseReceipts, expenseSplits, users } from "@shared/schema";
+import { eq, inArray } from "drizzle-orm";
+import {
+  EXPENSE_CATEGORY_MAP, getCategoryCode, getCategoryTaxType, isCategoryVatReclaimable,
+} from "./expense-categories";
 
 const STRIPE_CARDS_ACCOUNT_CODE = "1200";
 
@@ -22,56 +34,113 @@ export async function postExpenseToXero(args: {
     ? await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1)
     : [null];
 
-  // Prefer the code stamped on the expense at submission/edit time. Only
-  // fall back to a category → code lookup for rows submitted before the
-  // code stamp existed, or for receipt-parser auto-categorisations that
-  // didn't catch the Xero side. Final fallback "900" = Other Expenses
-  // so a post never blocks on a missing code.
-  let accountCode = exp.xeroAccountCode;
-  if (!accountCode && exp.category) {
-    const { getCategoryCode } = await import("./expense-categories");
-    accountCode = (await getCategoryCode(exp.category)) || EXPENSE_CATEGORY_MAP[exp.category]?.code;
-  }
-  accountCode = accountCode || "900";
-  const amountGbp = exp.amountPence / 100;
+  // Split lines, if any (sorted for stable display order).
+  const splits = await db.select().from(expenseSplits)
+    .where(eq(expenseSplits.expenseId, exp.id)).orderBy(expenseSplits.sortOrder);
 
-  // Build tracking categories — pull live from Xero so we use the right IDs
-  const tracking: any[] = [];
+  // Resolve names for any allocated-to users so the "Team Member" tracking can
+  // point at the person the cost is for, not just whoever's card paid.
+  const allocateIds = Array.from(new Set(
+    [exp.allocatedToUserId, ...splits.map(s => s.allocatedToUserId)].filter(Boolean) as string[],
+  ));
+  const userById = new Map<string, string>();
+  if (allocateIds.length > 0) {
+    const rows = await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, allocateIds));
+    for (const r of rows) userById.set(r.id, r.name);
+  }
+  const cardholderName = ch?.userName || null;
+  const teamMemberFor = (allocatedToUserId: string | null | undefined): string | null =>
+    (allocatedToUserId ? userById.get(allocatedToUserId) : null) || cardholderName;
+
+  // Which tracking categories exist in Xero — pull live so we use real names.
+  let hasPropertyCat = false;
+  let hasTeamCat = false;
   try {
     const cats = await xeroApi(args.session, "/TrackingCategories");
     const trackingCats = cats.TrackingCategories || [];
-
-    if (exp.xeroTrackingProperty) {
-      const propCat = trackingCats.find((c: any) => c.Name === "Property / Deal");
-      if (propCat) tracking.push({ Name: "Property / Deal", Option: exp.xeroTrackingProperty });
-    }
-    if (ch?.userName) {
-      const teamCat = trackingCats.find((c: any) => c.Name === "Team Member");
-      if (teamCat) tracking.push({ Name: "Team Member", Option: ch.userName });
-    }
+    hasPropertyCat = trackingCats.some((c: any) => c.Name === "Property / Deal");
+    hasTeamCat = trackingCats.some((c: any) => c.Name === "Team Member");
   } catch (e: any) {
     console.warn(`[xero-post] tracking categories lookup failed: ${e?.message}`);
   }
+  const buildTracking = (teamMember: string | null): any[] | undefined => {
+    const t: any[] = [];
+    if (hasPropertyCat && exp.xeroTrackingProperty) t.push({ Name: "Property / Deal", Option: exp.xeroTrackingProperty });
+    if (hasTeamCat && teamMember) t.push({ Name: "Team Member", Option: teamMember });
+    return t.length > 0 ? t : undefined;
+  };
 
-  const description = [
-    exp.merchant,
-    exp.businessPurpose ? `— ${exp.businessPurpose}` : null,
-    exp.attendees ? `(with ${exp.attendees})` : null,
-  ].filter(Boolean).join(" ");
+  // Build one Xero line from a category + amount + VAT inputs.
+  const buildLine = async (opts: {
+    category: string | null;
+    accountCode: string | null;
+    amountPence: number;
+    vatPence: number | null;
+    vatReclaimable: boolean | null;
+    allocatedToUserId: string | null;
+    description: string;
+  }) => {
+    const accountCode = opts.accountCode
+      || (opts.category ? await getCategoryCode(opts.category) : null)
+      || (opts.category ? EXPENSE_CATEGORY_MAP[opts.category]?.code : null)
+      || exp.xeroAccountCode || "900";
+    const reclaimable = await isCategoryVatReclaimable(opts.category, opts.vatReclaimable);
+    const taxType = reclaimable ? await getCategoryTaxType(opts.category) : "NONE";
+    const line: any = {
+      Description: opts.description || exp.merchant || "BGP card spend",
+      UnitAmount: opts.amountPence / 100,
+      AccountCode: accountCode,
+      TaxType: taxType,
+      Tracking: buildTracking(teamMemberFor(opts.allocatedToUserId)),
+    };
+    // Pass the receipt's actual VAT through so Xero matches the paperwork.
+    // Non-reclaimable → 0 (VAT folds into the cost). Reclaimable with a parsed
+    // VAT figure → that figure. Otherwise omit and let Xero compute the rate.
+    if (!reclaimable) line.TaxAmount = 0;
+    else if (opts.vatPence != null && opts.vatPence > 0) line.TaxAmount = opts.vatPence / 100;
+    return line;
+  };
 
-  // Spend Money via /BankTransactions
+  let lineItems: any[];
+  if (splits.length > 0) {
+    lineItems = [];
+    for (const s of splits) {
+      lineItems.push(await buildLine({
+        category: s.category,
+        accountCode: s.xeroAccountCode,
+        amountPence: s.amountPence,
+        vatPence: s.vatPence ?? null,
+        vatReclaimable: s.vatReclaimable ?? null,
+        allocatedToUserId: s.allocatedToUserId ?? null,
+        description: [s.businessPurpose, s.category].filter(Boolean).join(" — "),
+      }));
+    }
+  } else {
+    const description = [
+      exp.merchant,
+      exp.businessPurpose ? `— ${exp.businessPurpose}` : null,
+      exp.attendees ? `(with ${exp.attendees})` : null,
+    ].filter(Boolean).join(" ");
+    lineItems = [await buildLine({
+      category: exp.category,
+      accountCode: exp.xeroAccountCode,
+      amountPence: exp.amountPence,
+      vatPence: exp.vatPence ?? null,
+      vatReclaimable: exp.vatReclaimable ?? null,
+      allocatedToUserId: exp.allocatedToUserId ?? null,
+      description,
+    })];
+  }
+
+  // Spend Money via /BankTransactions. LineAmountTypes=Inclusive: the amounts
+  // are gross (what actually left the card), matching the receipt total.
   const body = {
     Type: "SPEND",
     BankAccount: { Code: STRIPE_CARDS_ACCOUNT_CODE },
     Date: exp.transactionDate ? new Date(exp.transactionDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
     Reference: exp.merchant?.slice(0, 50) || "BGP Card",
-    LineItems: [{
-      Description: description || exp.merchant || "BGP card spend",
-      UnitAmount: amountGbp,
-      AccountCode: accountCode,
-      TaxType: deriveTaxType(exp.category),
-      Tracking: tracking.length > 0 ? tracking : undefined,
-    }],
+    LineAmountTypes: "Inclusive",
+    LineItems: lineItems,
     Status: "AUTHORISED",
   };
 
@@ -96,17 +165,6 @@ export async function postExpenseToXero(args: {
   });
 
   return { xeroTransactionId: xeroTxn.BankTransactionID };
-}
-
-function deriveTaxType(category: string | null): string {
-  if (!category) return "INPUT2";
-  if (category === "Client Entertainment") return "NONE";
-  if (category === "Travel - Flights") return "ZERORATEDINPUT";
-  if (["Donations", "Staff Gifts", "Client Gifts", "RICS Fees", "Mileage Claims (HMRC 45p)",
-       "Eye Tests", "Flu Jabs & Covid Tests", "Personal (deduct from payroll)"].includes(category)) {
-    return "NONE";
-  }
-  return "INPUT2";
 }
 
 async function attachReceiptToXero(session: any, expenseId: string, xeroTransactionId: string): Promise<void> {

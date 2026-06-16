@@ -1155,6 +1155,11 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_reason TEXT`).catch(() => {});
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS flagged_for_review BOOLEAN DEFAULT false`).catch(() => {});
   pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS flag_reasons TEXT[]`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS vat_pence INTEGER`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS vat_rate REAL`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS net_pence INTEGER`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS vat_reclaimable BOOLEAN`).catch(() => {});
+  pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS allocated_to_user_id VARCHAR`).catch(() => {});
   pool.query(`CREATE INDEX IF NOT EXISTS idx_expenses_approver_user_id ON expenses (approver_user_id) WHERE status = 'pending_approval'`).catch(() => {});
   pool.query(`CREATE INDEX IF NOT EXISTS idx_expenses_status_submitted ON expenses (status, submitted_for_approval_at) WHERE status = 'pending_approval'`).catch(() => {});
 
@@ -1169,6 +1174,24 @@ export function setupCrmRoutes(app: Express) {
   `).catch(() => {});
   pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_attendees_unique ON expense_attendees(expense_id, contact_id)`).catch(() => {});
   pool.query(`CREATE INDEX IF NOT EXISTS idx_expense_attendees_contact ON expense_attendees(contact_id)`).catch(() => {});
+
+  // expense_splits — one receipt carved into multiple category/VAT/person lines.
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS expense_splits (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      expense_id VARCHAR NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+      amount_pence INTEGER NOT NULL,
+      category TEXT,
+      xero_account_code TEXT,
+      vat_pence INTEGER,
+      vat_reclaimable BOOLEAN,
+      allocated_to_user_id VARCHAR,
+      business_purpose TEXT,
+      sort_order INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT now()
+    )
+  `).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_expense_splits_expense ON expense_splits(expense_id)`).catch(() => {});
 
   // internalAgentIds shadow column for the name → id migration. The
   // name column stays in place (dual-write) until every reader migrates.

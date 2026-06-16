@@ -305,18 +305,10 @@ export async function findEmailReceiptForExpense(
     console.warn(`[email-receipt] submitForApproval failed: ${e?.message}`);
   }
 
-  // Auto-post to Xero (Wendy reviews monthly per policy).
-  let posted = false;
-  let xeroError: string | undefined;
-  try {
-    const { postExpenseToXero } = await import("./expense-xero-poster");
-    const { withSystemXero } = await import("./xero-system-session");
-    const result = await withSystemXero((session) => postExpenseToXero({ session, expenseId: expense.id }));
-    posted = !!result;
-    if (!result) xeroError = "no admin Xero session — sitting in queue";
-  } catch (e: any) {
-    xeroError = e?.message;
-  }
+  // No auto-post — the initial pass goes via Wendy first. Sits in her approval
+  // queue until signed off, then posts to Xero.
+  const posted = false;
+  const xeroError: string | undefined = "awaiting approval";
 
   return {
     ok: true,

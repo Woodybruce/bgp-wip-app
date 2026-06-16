@@ -3027,8 +3027,39 @@ export const expenses = pgTable("expenses", {
   rejectedReason: text("rejected_reason"),
   flaggedForReview: boolean("flagged_for_review").default(false),
   flagReasons: text("flag_reasons").array(),
+  // VAT read off the receipt by the parser. vatReclaimable is the per-receipt
+  // override for whether the input VAT can be reclaimed — null = derive from
+  // the category's Xero tax rule; false = treat the VAT as part of the cost
+  // (e.g. client entertainment, where input VAT is irrecoverable).
+  vatPence: integer("vat_pence"),
+  vatRate: real("vat_rate"),
+  netPence: integer("net_pence"),
+  vatReclaimable: boolean("vat_reclaimable"),
+  // Who the cost is for, when that differs from the cardholder who paid (e.g.
+  // Layla books a flight for Victoria → allocate to Victoria). Drives the Xero
+  // "Team Member" tracking category. Null = the cardholder bears the cost.
+  allocatedToUserId: varchar("allocated_to_user_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Split lines — one receipt carved into multiple cost lines, each with its own
+// category, VAT treatment and (optionally) the person it's for. A hotel bill
+// becomes accommodation + subsistence + entertainment, each posted to the
+// right Xero account with the right tax. An expense with no split rows posts
+// as a single line off the parent fields; with splits, the lines drive Xero.
+export const expenseSplits = pgTable("expense_splits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  expenseId: varchar("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+  amountPence: integer("amount_pence").notNull(),
+  category: text("category"),
+  xeroAccountCode: text("xero_account_code"),
+  vatPence: integer("vat_pence"),
+  vatReclaimable: boolean("vat_reclaimable"),
+  allocatedToUserId: varchar("allocated_to_user_id"),
+  businessPurpose: text("business_purpose"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Join table linking entertainment expenses to the CRM contacts who
@@ -3057,6 +3088,7 @@ export type StripeCardholder = typeof stripeCardholders.$inferSelect;
 export type StripeCard = typeof stripeCards.$inferSelect;
 export type Expense = typeof expenses.$inferSelect;
 export type ExpenseReceipt = typeof expenseReceipts.$inferSelect;
+export type ExpenseSplit = typeof expenseSplits.$inferSelect;
 
 // ─── HR Module ────────────────────────────────────────────────────────────────
 

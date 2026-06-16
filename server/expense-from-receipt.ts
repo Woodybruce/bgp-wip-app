@@ -129,6 +129,9 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
       amountPence: parsed.totalPence,
       currency: parsed.currency || "gbp",
       transactionDate: txnDate,
+      vatPence: parsed.vatPence ?? null,
+      vatRate: parsed.vatRate ?? null,
+      netPence: parsed.netPence ?? null,
       category: category || null,
       xeroAccountCode: xeroCode || null,
       businessPurpose: args.businessPurpose || args.caption || null,
@@ -164,26 +167,11 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
     const { submitForApproval } = await import("./expense-approval");
     await submitForApproval(inserted.id, args.submitter.userId || null);
 
-    // 6. Auto-post to Xero when category resolved + parser confidence is high.
-    let xeroPosted = false;
-    let xeroError: string | undefined;
-    if (!isPersonal && xeroCode && parsed.confidence !== "low") {
-      try {
-        const { postExpenseToXero } = await import("./expense-xero-poster");
-        const { withSystemXero } = await import("./xero-system-session");
-        const posted = await withSystemXero((session) => postExpenseToXero({ session, expenseId: inserted.id }));
-        if (posted) {
-          xeroPosted = true;
-        } else {
-          xeroError = "no admin Xero session — sitting in review queue";
-        }
-      } catch (e: any) {
-        xeroError = e?.message;
-        console.warn(`[expense-from-receipt] Xero post failed:`, e?.message);
-      }
-    } else if (isPersonal) {
-      xeroError = "marked personal — not posted to Xero";
-    }
+    // 6. No auto-post. Policy: the initial pass goes via Wendy first, so the
+    // row sits at pending_approval (set by submitForApproval above) and only
+    // posts to Xero once it clears approval.
+    const xeroPosted = false;
+    const xeroError = isPersonal ? "marked personal — not posted to Xero" : "awaiting approval";
 
     return {
       ok: true,

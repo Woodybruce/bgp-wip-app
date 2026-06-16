@@ -206,6 +206,9 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
     calendarEventId,
     transactionDate: target.transactionDate || (parsed.date ? new Date(parsed.date) : new Date()),
     isPersonal: /\bpersonal\b/i.test(args.caption),
+    vatPence: parsed.vatPence ?? null,
+    vatRate: parsed.vatRate ?? null,
+    netPence: parsed.netPence ?? null,
     receiptFilename: `receipt_${target.id}.${(mimeType || "image/jpeg").split("/")[1]}`,
     updatedAt: new Date(),
   } as any).where(eq(expenses.id, target.id));
@@ -223,21 +226,9 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
   const { submitForApproval } = await import("./expense-approval");
   await submitForApproval(target.id, null);
 
-  // Auto-post to Xero (Wendy reviews monthly per policy)
-  let xeroResult: { posted: boolean; error?: string } = { posted: false };
-  try {
-    const { postExpenseToXero } = await import("./expense-xero-poster");
-    const { withSystemXero } = await import("./xero-system-session");
-    const result = await withSystemXero((session) => postExpenseToXero({ session, expenseId: target.id }));
-    if (result) {
-      xeroResult.posted = true;
-    } else {
-      xeroResult.error = "no admin Xero session — sitting in queue for manual post";
-    }
-  } catch (e: any) {
-    xeroResult.error = e?.message;
-    console.warn(`[expense-receipt] Xero post failed: ${e?.message}`);
-  }
+  // No auto-post — the initial pass goes via Wendy first. Sits in her approval
+  // queue until signed off, then posts to Xero.
+  const xeroResult: { posted: boolean; error?: string } = { posted: false, error: "awaiting approval" };
 
   // Reply
   const amountStr = `£${(target.amountPence / 100).toFixed(2)}`;

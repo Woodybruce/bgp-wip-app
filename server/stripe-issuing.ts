@@ -16,7 +16,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { db, pool } from "./db";
-import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAttendees, crmContacts, users as usersTable } from "@shared/schema";
+import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAttendees, expenseSplits, crmContacts, users as usersTable } from "@shared/schema";
 import { eq, desc, and, gte, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
@@ -336,9 +336,16 @@ export function setupStripeIssuingRoutes(app: Express) {
   // submissions don't block on connectivity.
   app.get("/api/expenses/nominal-codes", requireAuth, async (_req: Request, res: Response) => {
     try {
-      const { getExpenseCategories } = await import("./expense-categories");
+      const { getExpenseCategories, vatInfoForTaxType, fallbackTaxType } = await import("./expense-categories");
       const categories = await getExpenseCategories();
-      res.json(categories);
+      // Annotate each with its VAT treatment so the approvals/edit UI can show
+      // "20% reclaimable" vs "not reclaimable" and default the reclaim toggle.
+      const enriched = categories.map((c) => {
+        const taxType = c.taxType || fallbackTaxType(c.name);
+        const vat = vatInfoForTaxType(taxType);
+        return { ...c, taxType, vatReclaimable: vat.reclaimable, vatRatePct: vat.ratePct };
+      });
+      res.json(enriched);
     } catch (e: any) {
       console.error("[expenses] nominal-codes error:", e?.message);
       res.status(500).json({ error: e?.message });
@@ -537,6 +544,85 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Split lines for an expense (the hotel-bill-into-accommodation+subsistence+
+  // entertainment case). Returns [] when the expense isn't split.
+  app.get("/api/expenses/:id/splits", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const rows = await db.select().from(expenseSplits).where(eq(expenseSplits.expenseId, id)).orderBy(expenseSplits.sortOrder);
+      res.json(rows);
+    } catch (e: any) {
+      console.error("[expenses] splits-get error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Replace the split lines. Body: { splits: [{ amountPence, category,
+  // vatPence?, vatReclaimable?, allocatedToUserId?, businessPurpose? }, ...] }.
+  // Validates the lines sum to the receipt total, stamps each line's Xero
+  // account code, wipes + re-inserts. Send an empty array to un-split.
+  app.put("/api/expenses/:id/splits", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.xeroExpenseId) return res.status(409).json({ error: "Expense is already posted to Xero — edit it in Xero instead." });
+
+      const incoming: any[] = Array.isArray(req.body?.splits) ? req.body.splits : [];
+
+      // Empty → un-split (clear the lines; expense posts as a single line).
+      if (incoming.length === 0) {
+        await db.delete(expenseSplits).where(eq(expenseSplits.expenseId, id));
+        return res.json({ ok: true, count: 0 });
+      }
+
+      const lines = incoming.map((s) => ({
+        amountPence: Math.round(Number(s.amountPence) || 0),
+        category: typeof s.category === "string" && s.category ? s.category : null,
+        vatPence: s.vatPence == null || s.vatPence === "" ? null : Math.round(Number(s.vatPence)),
+        vatReclaimable: typeof s.vatReclaimable === "boolean" ? s.vatReclaimable : null,
+        allocatedToUserId: typeof s.allocatedToUserId === "string" && s.allocatedToUserId ? s.allocatedToUserId : null,
+        businessPurpose: typeof s.businessPurpose === "string" && s.businessPurpose ? s.businessPurpose : null,
+      }));
+      if (lines.some(l => !Number.isFinite(l.amountPence) || l.amountPence <= 0)) {
+        return res.status(400).json({ error: "Every split needs a positive amount." });
+      }
+      const sum = lines.reduce((a, l) => a + l.amountPence, 0);
+      if (sum !== exp.amountPence) {
+        return res.status(400).json({
+          error: `Splits must add up to the receipt total (£${(exp.amountPence / 100).toFixed(2)}). They currently add to £${(sum / 100).toFixed(2)}.`,
+        });
+      }
+
+      // Resolve each line's Xero account code from its category.
+      const { getCategoryCode } = await import("./expense-categories");
+      const withCodes: any[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const code = lines[i].category ? await getCategoryCode(lines[i].category!) : null;
+        withCodes.push({
+          expenseId: id,
+          amountPence: lines[i].amountPence,
+          category: lines[i].category,
+          xeroAccountCode: code || null,
+          vatPence: lines[i].vatPence,
+          vatReclaimable: lines[i].vatReclaimable,
+          allocatedToUserId: lines[i].allocatedToUserId,
+          businessPurpose: lines[i].businessPurpose,
+          sortOrder: i,
+        });
+      }
+
+      await db.delete(expenseSplits).where(eq(expenseSplits.expenseId, id));
+      await db.insert(expenseSplits).values(withCodes);
+      res.json({ ok: true, count: withCodes.length });
+    } catch (e: any) {
+      console.error("[expenses] splits-put error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Update expense (owner or admin)
   app.patch("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -544,7 +630,8 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const allowed = ["merchant", "transactionDate", "category", "xeroAccountCode",
                        "businessPurpose", "attendees", "isPersonal", "isClientRechargeable",
-                       "relatedDealId", "relatedPropertyId", "notes", "status", "amountPence"];
+                       "relatedDealId", "relatedPropertyId", "notes", "status", "amountPence",
+                       "vatReclaimable", "allocatedToUserId", "vatPence", "netPence", "vatRate"];
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const k of allowed) {
         if (req.body[k] !== undefined) updates[k] = req.body[k];
@@ -1100,6 +1187,9 @@ export function setupStripeIssuingRoutes(app: Express) {
           if (code) baseUpdates.xeroAccountCode = code;
         }
         if (parsed.totalPence && !exp.amountPence) baseUpdates.amountPence = parsed.totalPence;
+        if (parsed.vatPence != null && exp.vatPence == null) baseUpdates.vatPence = parsed.vatPence;
+        if (parsed.vatRate != null && exp.vatRate == null) baseUpdates.vatRate = parsed.vatRate;
+        if (parsed.netPence != null && exp.netPence == null) baseUpdates.netPence = parsed.netPence;
       } catch (e: any) {
         console.warn("[receipt-upload] parse failed (receipt still logged):", e?.message);
       }
@@ -1117,16 +1207,8 @@ export function setupStripeIssuingRoutes(app: Express) {
         console.error("[receipt-upload] submitForApproval failed:", e?.message);
       }
 
-      // Auto-post to Xero only when parsing was high-confidence with a category.
-      if (parsed?.confidence === "high" && baseUpdates.category) {
-        try {
-          const { withSystemXero } = await import("./xero-system-session");
-          const { postExpenseToXero } = await import("./expense-xero-poster");
-          await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
-        } catch (e: any) {
-          console.warn("[receipt-upload] auto-post to Xero failed:", e?.message);
-        }
-      }
+      // No auto-post — the initial pass goes via Wendy first. The row is now
+      // pending_approval and posts to Xero only once it clears approval.
 
       // Month-end freeze hook — this receipt may have cleared the user's
       // last blocking expense. Fire-and-forget.
@@ -1136,7 +1218,7 @@ export function setupStripeIssuingRoutes(app: Express) {
           .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
       }
 
-      res.json({ success: true, parsed, autoposted: parsed?.confidence === "high" && !!baseUpdates.category });
+      res.json({ success: true, parsed, autoposted: false });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
@@ -1815,11 +1897,26 @@ export function setupStripeIssuingRoutes(app: Express) {
         attendeesByExpense.get(r.expenseId)!.push({ id: r.contactId, name: r.name });
       }
 
+      // Allocated-to names + split counts so the inbox can badge "for Victoria"
+      // and "3-way split" without a per-row fetch.
+      const allocateIds = Array.from(new Set(rows.map(r => r.allocatedToUserId).filter(Boolean) as string[]));
+      const allocateRows = allocateIds.length > 0
+        ? await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable).where(inArray(usersTable.id, allocateIds))
+        : [];
+      const allocateById = new Map(allocateRows.map(a => [a.id, a.name]));
+      const splitRows = expenseIds.length > 0
+        ? await db.select({ expenseId: expenseSplits.expenseId }).from(expenseSplits).where(inArray(expenseSplits.expenseId, expenseIds))
+        : [];
+      const splitCountByExpense = new Map<string, number>();
+      for (const s of splitRows) splitCountByExpense.set(s.expenseId, (splitCountByExpense.get(s.expenseId) || 0) + 1);
+
       const enriched = rows.map(r => ({
         ...r,
         submitterName: r.submitterUserId ? submitterById.get(r.submitterUserId)?.name : null,
         cardholderName: r.cardholderId ? cardholderById.get(r.cardholderId)?.userName : null,
         attendeeContacts: attendeesByExpense.get(r.id) || [],
+        allocatedToName: r.allocatedToUserId ? (allocateById.get(r.allocatedToUserId) || null) : null,
+        splitCount: splitCountByExpense.get(r.id) || 0,
       }));
       res.json(enriched);
     } catch (e: any) {
