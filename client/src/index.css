@@ -880,6 +880,11 @@ html {
 .dark *::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }
+/* Firefox (and modern Chrome) honour scrollbar-color. Pin it to a soft
+   neutral globally so no colour scheme — including Claude's warm gold —
+   can tint the right-edge scrollbar into an aggressive band. */
+:root, html { scrollbar-color: rgba(0, 0, 0, 0.2) transparent; }
+.dark { scrollbar-color: rgba(255, 255, 255, 0.2) transparent; }
 
 /* Consistent focus ring (BGP green) */
 *:focus-visible {
