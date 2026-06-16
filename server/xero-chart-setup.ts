@@ -21,7 +21,8 @@ type XeroAccountType =
   | "OVERHEADS"
   | "CURRENT"
   | "CURRLIAB"
-  | "FIXED";
+  | "FIXED"
+  | "BANK";
 
 type XeroTaxType =
   | "INPUT2"          // 20% input VAT (recoverable)
@@ -38,6 +39,7 @@ interface AccountSpec {
   tax: XeroTaxType;
   description?: string;
   enablePayments?: boolean;  // for bank-style accounts that receive transactions
+  bankAccountNumber?: string; // required by Xero when type === "BANK"
 }
 
 const CHART: AccountSpec[] = [
@@ -115,7 +117,14 @@ const CHART: AccountSpec[] = [
   { code: "900",  name: "Other Expenses",                type: "OVERHEADS", tax: "INPUT2" },
   { code: "910",  name: "Personal (deduct from payroll)", type: "OVERHEADS", tax: "NONE", description: "Personal spend on company card — recovered via payroll deduction" },
   { code: "1100", name: "Client Recharges (debtors)",    type: "CURRENT",   tax: "NONE", description: "Rechargeable expenses awaiting re-billing to client" },
-  { code: "1230", name: "Stripe Cards",                  type: "CURRENT",   tax: "NONE", description: "Dedicated card-spend account for BGP Stripe/Revolut card receipts. Separate from the main bank account (1200). Use as bank feed account.", enablePayments: true },
+  // Card spend lands here as Xero "Spend Money" bank transactions
+  // (server/expense-xero-poster.ts). Spend Money REQUIRES a BANK-type
+  // account — a current-asset account is rejected by the Xero API — so this
+  // is provisioned as a bank account, separate from the main bank account
+  // (1200). BankAccountNumber is a Xero requirement for BANK accounts; it's a
+  // placeholder Wendy can replace with the real Revolut account if she wires
+  // up a live bank feed for reconciliation.
+  { code: "1230", name: "Stripe Cards",                  type: "BANK",      tax: "NONE", description: "Dedicated card-spend bank account for BGP Stripe/Revolut card receipts. Separate from the main bank account (1200).", bankAccountNumber: "BGP-CARD-1230" },
   { code: "1300", name: "Interco - BGP 55 Wells",        type: "CURRENT",   tax: "NONE" },
 ];
 
@@ -154,17 +163,25 @@ export async function initialiseXeroChart(session: any): Promise<ChartSetupResul
       continue;
     }
     try {
+      const body: Record<string, any> = {
+        Code: acc.code,
+        Name: acc.name,
+        Type: acc.type,
+        Description: acc.description || undefined,
+      };
+      if (acc.type === "BANK") {
+        // Bank accounts carry an account number and reject TaxType /
+        // ShowInExpenseClaims / EnablePaymentsToAccount — send only the
+        // number (falls back to the code if none was specified).
+        body.BankAccountNumber = acc.bankAccountNumber || acc.code;
+      } else {
+        body.TaxType = acc.tax;
+        body.ShowInExpenseClaims = acc.type === "OVERHEADS" || acc.type === "EXPENSE";
+        body.EnablePaymentsToAccount = acc.enablePayments || undefined;
+      }
       await xeroApi(session, "/Accounts", {
         method: "PUT",
-        body: JSON.stringify({
-          Code: acc.code,
-          Name: acc.name,
-          Type: acc.type,
-          TaxType: acc.tax,
-          Description: acc.description || undefined,
-          ShowInExpenseClaims: acc.type === "OVERHEADS" || acc.type === "EXPENSE",
-          EnablePaymentsToAccount: acc.enablePayments || undefined,
-        }),
+        body: JSON.stringify(body),
       });
       result.accounts.created++;
       console.log(`[xero-chart] Created ${acc.code} ${acc.name}`);
