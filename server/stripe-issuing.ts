@@ -718,7 +718,10 @@ export function setupStripeIssuingRoutes(app: Express) {
       // the card feed (manual receipt uploads, cash claims) can be removed.
       const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!exp) return res.status(404).json({ error: "Expense not found" });
-      if (exp.revolutTransactionId || exp.stripeTransactionId) {
+      // £0.00 card lines (auth holds, reversals, declined attempts) aren't a
+      // record of money moving, so they're safe to remove from the queue —
+      // everything with an actual amount stays on the ledger.
+      if ((exp.revolutTransactionId || exp.stripeTransactionId) && (exp.amountPence ?? 0) !== 0) {
         return res.status(403).json({
           error: "This is a card transaction and can't be deleted — the spend actually happened and has to stay on the ledger. Mark it personal or add a receipt instead.",
         });

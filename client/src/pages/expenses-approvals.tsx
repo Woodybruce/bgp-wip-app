@@ -161,6 +161,26 @@ export default function ExpensesApprovals() {
     onError: (e: any) => toast({ title: "Bulk reject failed", description: e?.message, variant: "destructive" }),
   });
 
+  // Delete a £0.00 junk line outright (auth holds / reversals that aren't real
+  // spend). The server only permits this for zero-value rows.
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("DELETE", `/api/expenses/${id}`, undefined);
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
+      toast({ title: "Deleted" });
+    },
+    onError: (e: any) => toast({ title: "Delete failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const onDelete = (r: PendingExpense) => {
+    if (window.confirm(`Delete this £0.00 entry${r.merchant ? ` from ${r.merchant}` : ""}? This removes it for good.`)) {
+      deleteMutation.mutate(r.id);
+    }
+  };
+
   if (isLoading) {
     return <div className="container mx-auto p-6"><ExpensesNavTabs /><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
@@ -257,6 +277,7 @@ export default function ExpensesApprovals() {
                     onReject={(r) => setRejecting(r)}
                     onViewReceipt={(r) => setViewing(r)}
                     onEdit={(r) => setEditing(r)}
+                    onDelete={onDelete}
                     isApproving={approveMutation.isPending}
                   />
                 </div>
@@ -280,6 +301,7 @@ export default function ExpensesApprovals() {
                     onReject={(r) => setRejecting(r)}
                     onViewReceipt={(r) => setViewing(r)}
                     onEdit={(r) => setEditing(r)}
+                    onDelete={onDelete}
                     isApproving={approveMutation.isPending}
                     showFlags
                   />
@@ -409,7 +431,7 @@ export default function ExpensesApprovals() {
 }
 
 function ExpenseTable({
-  rows, selected, onToggle, onApprove, onReject, onViewReceipt, onEdit, isApproving, showFlags,
+  rows, selected, onToggle, onApprove, onReject, onViewReceipt, onEdit, onDelete, isApproving, showFlags,
 }: {
   rows: PendingExpense[];
   selected: Set<string>;
@@ -418,6 +440,7 @@ function ExpenseTable({
   onReject: (r: PendingExpense) => void;
   onViewReceipt: (r: PendingExpense) => void;
   onEdit: (r: PendingExpense) => void;
+  onDelete: (r: PendingExpense) => void;
   isApproving: boolean;
   showFlags?: boolean;
 }) {
@@ -537,6 +560,17 @@ function ExpenseTable({
                 >
                   Reject
                 </Button>
+                {r.amountPence === 0 && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-red-600"
+                    onClick={() => onDelete(r)}
+                    data-testid={`button-delete-${r.id}`}
+                  >
+                    Delete
+                  </Button>
+                )}
               </td>
             </tr>
           ))}
