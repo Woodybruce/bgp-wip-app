@@ -287,6 +287,12 @@ export default function DocumentBriefsPage() {
 
       {tab === "ready" && (
       <div className="flex-1 overflow-auto p-4 lg:p-6 space-y-4">
+        {!property && (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm flex items-start gap-2">
+            <span className="font-medium shrink-0">Pick a property first</span>
+            <span className="text-muted-foreground">— search an address, postcode or title number in the bar above and hit Resolve. The Run brief / Render buttons unlock once a property is set.</span>
+          </div>
+        )}
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32 w-full" />)}
