@@ -325,8 +325,10 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     const fields: string[] = [];
     const values: any[] = [];
     let idx = 1;
-    // Allow 'status' alongside the shared TENANCY_FIELDS list.
-    const updatable = [...TENANCY_FIELDS, "status"];
+    // 'status' is already in TENANCY_FIELDS, so dedupe — otherwise a status
+    // edit emits "status = $a, status = $b" and Postgres rejects it with
+    // "multiple assignments to same column status".
+    const updatable = Array.from(new Set([...TENANCY_FIELDS, "status"]));
     for (const f of updatable) {
       if (!(f in d)) continue;
       const v = normaliseFieldValue(f, d[f]);
