@@ -226,6 +226,27 @@ export default function ExpensesAdmin() {
           >
             Send pending to Wendy
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                const r = await apiRequest("POST", "/api/expenses/admin/repost-approved");
+                const d = await r.json();
+                toast({
+                  title: "Re-posted to Xero",
+                  description: `${d.posted || 0} of ${d.attempted || 0} approved expense(s) posted${d.failed ? `, ${d.failed} failed` : ""}.`,
+                });
+                refetchExp(); refetchSummary();
+                queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
+              } catch (e: any) {
+                toast({ title: "Re-post failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+            title="Post any approved expenses that never reached Xero (e.g. earlier posting failures)"
+          >
+            Re-post to Xero
+          </Button>
           <Button variant="outline" size="sm" onClick={() => { refetchCh(); refetchExp(); refetchSummary(); }}>
             <RefreshCw className="w-4 h-4 mr-1.5" />
             Refresh

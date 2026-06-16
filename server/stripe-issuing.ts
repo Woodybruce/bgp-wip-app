@@ -833,6 +833,45 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Bulk catch-up: post every expense that reached final approval but never
+  // landed in Xero (status=approved, xero_expense_id IS NULL) — e.g. posts
+  // that failed while account 1230 wasn't a valid bank account. Auto-post
+  // doesn't retry, so this is the one-click way to clear the backlog once
+  // the underlying cause is fixed. Idempotent: already-posted rows are
+  // excluded by the filter. Admin only.
+  app.post("/api/expenses/admin/repost-approved", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { getSystemXeroSession, withSystemXero } = await import("./xero-system-session");
+      const sys = await getSystemXeroSession();
+      if (!sys) {
+        return res.status(400).json({ error: "Xero isn't connected — reconnect Xero on the Finance page before re-posting." });
+      }
+      const { postExpenseToXero } = await import("./expense-xero-poster");
+
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM expenses
+          WHERE status = 'approved' AND xero_expense_id IS NULL
+          ORDER BY approved_at ASC NULLS LAST`,
+      );
+
+      let posted = 0;
+      const failures: { id: string; error: string }[] = [];
+      for (const r of rows) {
+        try {
+          const result = await withSystemXero((session) => postExpenseToXero({ session, expenseId: r.id }));
+          if (result?.xeroTransactionId) posted++;
+          else failures.push({ id: r.id, error: "Xero returned no result — connection may have dropped" });
+        } catch (e: any) {
+          failures.push({ id: r.id, error: e?.message || String(e) });
+        }
+      }
+      res.json({ ok: true, attempted: rows.length, posted, failed: failures.length, failures: failures.slice(0, 20) });
+    } catch (e: any) {
+      console.error("[expenses] repost-approved error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Diagnostic: status breakdown of all expenses + the contents of the
   // approval queue (stage + assigned approver). Tells us whether an empty
   // approvals inbox is "nothing has reached approval yet" (everything still
