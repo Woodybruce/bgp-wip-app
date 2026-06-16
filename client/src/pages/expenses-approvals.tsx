@@ -19,6 +19,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ExpensesNavTabs } from "@/components/expenses-nav-tabs";
 import ReceiptViewer from "@/components/receipt-viewer";
+import ExpenseEditDialog, { type EditableExpense } from "@/components/expense-edit-dialog";
 
 interface PendingExpense {
   id: string;
@@ -40,6 +41,12 @@ interface PendingExpense {
   flaggedForReview: boolean | null;
   flagReasons: string[] | null;
   attendeeContacts?: { id: string; name: string | null }[];
+  vatPence?: number | null;
+  vatRate?: number | null;
+  vatReclaimable?: boolean | null;
+  allocatedToUserId?: string | null;
+  allocatedToName?: string | null;
+  splitCount?: number | null;
 }
 
 const fmt = (p: number) => `£${(p / 100).toFixed(2)}`;
@@ -65,6 +72,7 @@ export default function ExpensesApprovals() {
   const [rejectReason, setRejectReason] = useState("");
   const [bulkRejecting, setBulkRejecting] = useState(false);
   const [viewing, setViewing] = useState<PendingExpense | null>(null);
+  const [editing, setEditing] = useState<PendingExpense | null>(null);
 
   const { data: rows = [], isLoading } = useQuery<PendingExpense[]>({
     queryKey: ["/api/expenses/pending-approval"],
@@ -248,6 +256,7 @@ export default function ExpensesApprovals() {
                     onApprove={(id) => approveMutation.mutate(id)}
                     onReject={(r) => setRejecting(r)}
                     onViewReceipt={(r) => setViewing(r)}
+                    onEdit={(r) => setEditing(r)}
                     isApproving={approveMutation.isPending}
                   />
                 </div>
@@ -270,6 +279,7 @@ export default function ExpensesApprovals() {
                     onApprove={(id) => approveMutation.mutate(id)}
                     onReject={(r) => setRejecting(r)}
                     onViewReceipt={(r) => setViewing(r)}
+                    onEdit={(r) => setEditing(r)}
                     isApproving={approveMutation.isPending}
                     showFlags
                   />
@@ -388,12 +398,18 @@ export default function ExpensesApprovals() {
         title={viewing ? `${viewing.merchant || "Receipt"} · ${fmt(viewing.amountPence)}` : "Receipt"}
         filename={viewing?.receiptFilename}
       />
+
+      <ExpenseEditDialog
+        expense={editing as EditableExpense | null}
+        open={!!editing}
+        onClose={() => setEditing(null)}
+      />
     </div>
   );
 }
 
 function ExpenseTable({
-  rows, selected, onToggle, onApprove, onReject, onViewReceipt, isApproving, showFlags,
+  rows, selected, onToggle, onApprove, onReject, onViewReceipt, onEdit, isApproving, showFlags,
 }: {
   rows: PendingExpense[];
   selected: Set<string>;
@@ -401,6 +417,7 @@ function ExpenseTable({
   onApprove: (id: string) => void;
   onReject: (r: PendingExpense) => void;
   onViewReceipt: (r: PendingExpense) => void;
+  onEdit: (r: PendingExpense) => void;
   isApproving: boolean;
   showFlags?: boolean;
 }) {
@@ -452,7 +469,22 @@ function ExpenseTable({
                 )}
               </td>
               <td className="px-3 py-2 text-right font-mono">{fmt(r.amountPence)}</td>
-              <td className="px-3 py-2 text-muted-foreground text-xs">{r.category || <span className="text-amber-600">—</span>}</td>
+              <td className="px-3 py-2 text-xs">
+                <div className="text-muted-foreground">{r.category || <span className="text-amber-600">—</span>}</div>
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  {r.vatPence != null && (
+                    <span className="text-[10px] text-muted-foreground" title="VAT read off the receipt">
+                      VAT {fmt(r.vatPence)}{r.vatReclaimable === false ? " (cost)" : ""}
+                    </span>
+                  )}
+                  {r.allocatedToName && (
+                    <span className="text-[10px] px-1 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">for {r.allocatedToName}</span>
+                  )}
+                  {(r.splitCount ?? 0) > 0 && (
+                    <span className="text-[10px] px-1 rounded bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">{r.splitCount}-way split</span>
+                  )}
+                </div>
+              </td>
               <td className="px-3 py-2 text-xs max-w-[280px]">
                 {r.businessPurpose && <div className="truncate">{r.businessPurpose}</div>}
                 {/* Structured attendees from the CRM picker take precedence
@@ -477,6 +509,15 @@ function ExpenseTable({
                 )}
               </td>
               <td className="px-3 py-2 text-right whitespace-nowrap">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={() => onEdit(r)}
+                  data-testid={`button-edit-${r.id}`}
+                >
+                  Edit
+                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
