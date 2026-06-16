@@ -34,6 +34,11 @@ type BriefMeta = {
   optionalImagery: string[];
 };
 
+// Saved Document Studio templates (the original "author a template →
+// generate" flow). Surfaced in the same catalogue so the one Studio shows
+// ready briefs AND the team's own templates together.
+type DocTemplate = { id: string; name: string; description?: string | null };
+
 const CATEGORY_COLOR: Record<string, string> = {
   investment: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
   letting: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
@@ -82,6 +87,15 @@ export default function DocumentBriefsPage() {
     queryKey: ["/api/document-briefs"],
     queryFn: async () => {
       const r = await fetch("/api/document-briefs", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const { data: templates = [] } = useQuery<DocTemplate[]>({
+    queryKey: ["/api/doc-templates"],
+    queryFn: async () => {
+      const r = await fetch("/api/doc-templates", { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       return r.json();
     },
@@ -313,6 +327,28 @@ export default function DocumentBriefsPage() {
                 No briefs match — try a different filter or search.
               </CardContent></Card>
             )}
+          </div>
+        )}
+
+        {templates.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <FileText className="h-4 w-4" /> Your saved templates
+              <span className="text-xs font-normal">— author once, fill in &amp; generate</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {templates.map((t) => (
+                <a key={t.id} href={`/templates?id=${encodeURIComponent(t.id)}`} className="block">
+                  <Card className="hover:border-primary/40 transition">
+                    <CardContent className="p-4">
+                      <div className="font-medium">{t.name}</div>
+                      {t.description && <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{t.description}</p>}
+                      <div className="text-xs text-primary mt-2 inline-flex items-center gap-1">Open in Studio <ExternalLink className="h-3 w-3" /></div>
+                    </CardContent>
+                  </Card>
+                </a>
+              ))}
+            </div>
           </div>
         )}
 
