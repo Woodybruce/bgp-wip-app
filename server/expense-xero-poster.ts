@@ -20,7 +20,9 @@ import {
   EXPENSE_CATEGORY_MAP, getCategoryCode, getCategoryTaxType, isCategoryVatReclaimable,
 } from "./expense-categories";
 
-const STRIPE_CARDS_ACCOUNT_CODE = "1200";
+// Card spend posts here. Wendy's dedicated account for BGP card receipts —
+// 1200 is the main bank account in Xero and can't be used for these.
+const STRIPE_CARDS_ACCOUNT_CODE = "1230";
 
 export async function postExpenseToXero(args: {
   session: any;

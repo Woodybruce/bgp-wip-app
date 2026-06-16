@@ -115,7 +115,7 @@ const CHART: AccountSpec[] = [
   { code: "900",  name: "Other Expenses",                type: "OVERHEADS", tax: "INPUT2" },
   { code: "910",  name: "Personal (deduct from payroll)", type: "OVERHEADS", tax: "NONE", description: "Personal spend on company card — recovered via payroll deduction" },
   { code: "1100", name: "Client Recharges (debtors)",    type: "CURRENT",   tax: "NONE", description: "Rechargeable expenses awaiting re-billing to client" },
-  { code: "1200", name: "Stripe Cards",                  type: "CURRENT",   tax: "NONE", description: "BGP Stripe Issuing balance — funded from NatWest, draws down per card transaction. Use as bank feed account.", enablePayments: true },
+  { code: "1230", name: "Stripe Cards",                  type: "CURRENT",   tax: "NONE", description: "Dedicated card-spend account for BGP Stripe/Revolut card receipts. Separate from the main bank account (1200). Use as bank feed account.", enablePayments: true },
   { code: "1300", name: "Interco - BGP 55 Wells",        type: "CURRENT",   tax: "NONE" },
 ];
 
