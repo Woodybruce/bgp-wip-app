@@ -129,8 +129,10 @@ const unfinishedNav = [
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
-  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI" },
+  // One Document Studio — the unified, engine-backed catalogue (Why Buy →
+  // Heads of Terms) that the old /templates "Document Briefs" pages merged
+  // into. Template authoring + Decks are reachable from inside it.
+  { title: "Document Studio", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
   { title: "Decks", url: "/decks", icon: Layers, badge: "New" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
@@ -537,8 +539,7 @@ export const mobileOverlayItems = [
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon, adminOnly: true },
-  { title: "Document Briefs", url: "/document-briefs", icon: Sparkles, badge: "AI", adminOnly: true },
+  { title: "Document Studio", url: "/document-briefs", icon: FileTextIcon, badge: "AI", adminOnly: true },
   // On mobile everyone uses the lightweight images page (works on auth; the
   // full /image-studio power page is desktop-admin only).
   { title: "Image Studio", url: "/m/images", icon: ImageIcon },
