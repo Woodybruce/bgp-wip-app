@@ -54,6 +54,7 @@ interface Expense {
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  rejectedReason?: string | null;
   // Identifies a real Revolut card swipe (vs a receipt-photo or manual
   // entry). Null = the expense was NOT created by the Revolut feed.
   revolutTransactionId?: string | null;
@@ -114,6 +115,7 @@ function StatusBadge({ status }: { status: string }) {
   if (status === "categorised") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-medium">Categorised</span>;
   if (status === "approved") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">Approved</span>;
   if (status === "synced_to_xero") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">In Xero</span>;
+  if (status === "rejected") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">Rejected</span>;
   return <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{status}</span>;
 }
 
@@ -480,6 +482,11 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
           {isPosted && (
             <p className="text-[11px] text-emerald-700 mt-1">
               Posted to Xero — core fields locked
+            </p>
+          )}
+          {expense.status === "rejected" && expense.rejectedReason && (
+            <p className="text-[11px] text-red-600 mt-1">
+              Rejected: {expense.rejectedReason} — fix below and save to resubmit.
             </p>
           )}
         </SheetHeader>

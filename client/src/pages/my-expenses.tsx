@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import ReceiptViewer from "@/components/receipt-viewer";
 
 interface Expense {
   id: string;
@@ -36,6 +37,7 @@ interface Expense {
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  rejectedReason?: string | null;
   attendeeContacts?: { id: string; name: string | null }[];
   // Card-feed rows carry the real charged amount — set when the row came
   // from Revolut / Stripe. Receipt-photo and cash claims leave both null,
@@ -74,6 +76,7 @@ function StatusBadge({ status, isPersonal }: { status: string; isPersonal: boole
   if (status === "pending_receipt") return <Badge variant="outline" className="text-amber-600 border-amber-600/30">Receipt needed</Badge>;
   if (status === "pending_approval") return <Badge variant="outline" className="text-blue-600 border-blue-600/30">Pending</Badge>;
   if (status === "approved") return <Badge variant="outline" className="text-blue-600 border-blue-600/30">Approved</Badge>;
+  if (status === "rejected") return <Badge variant="outline" className="text-red-600 border-red-600/30">Rejected</Badge>;
   return <Badge variant="outline">{status}</Badge>;
 }
 
@@ -155,6 +158,20 @@ export default function MyExpenses() {
       });
     },
     onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
+  // Resubmit a rejected expense after fixing it — flips it back to
+  // pending_approval and re-routes to Wendy/Layla for a fresh look.
+  const resubmitMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("POST", `/api/expenses/${id}/resubmit`, {});
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Resubmitted", description: "Sent back to Wendy & Layla for approval." });
+    },
+    onError: (e: any) => toast({ title: "Resubmit failed", description: e?.message, variant: "destructive" }),
   });
 
   const handleFile = (id: string, file: File) => {
@@ -444,6 +461,12 @@ export default function MyExpenses() {
                             </span>
                           </div>
                         )}
+                        {e.status === "rejected" && e.rejectedReason && (
+                          <div className="flex items-start gap-1 mt-0.5 text-[11px] font-normal text-red-600" title="Rejected by approver">
+                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>Rejected: {e.rejectedReason}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-2 text-right font-mono">{fmt(e.amountPence)}</td>
                       <td className="px-4 py-2 text-muted-foreground">{e.category || "—"}</td>
@@ -490,6 +513,21 @@ export default function MyExpenses() {
                               Edit
                             </Button>
                           )}
+                          {e.status === "rejected" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs text-blue-600"
+                              disabled={resubmitMutation.isPending && resubmitMutation.variables === e.id}
+                              onClick={() => resubmitMutation.mutate(e.id)}
+                              data-testid={`button-resubmit-${e.id}`}
+                            >
+                              {resubmitMutation.isPending && resubmitMutation.variables === e.id
+                                ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                : <RefreshCw className="w-3 h-3 mr-1" />}
+                              Resubmit
+                            </Button>
+                          )}
                           {!e.isPersonal && e.status !== "posted_to_xero" && (
                             <Button
                               size="sm"
@@ -532,38 +570,13 @@ export default function MyExpenses() {
         onSaved={() => { setEditing(null); queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] }); }}
       />
 
-      <Dialog open={!!viewingReceipt} onOpenChange={(v) => { if (!v) setViewingReceipt(null); }}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-base">
-              Receipt — {viewingReceipt?.merchant || "—"} · {viewingReceipt ? fmt(viewingReceipt.amountPence) : ""}
-            </DialogTitle>
-          </DialogHeader>
-          {viewingReceipt && (
-            <div className="space-y-2">
-              {/* iframe renders both images and PDFs; same-origin so the
-                  session cookie authorises the request. */}
-              <iframe
-                src={`/api/expenses/${viewingReceipt.id}/receipt`}
-                title="Receipt"
-                className="w-full h-[70vh] rounded border bg-muted"
-                data-testid="iframe-receipt"
-              />
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span className="truncate">{viewingReceipt.receiptFilename}</span>
-                <a
-                  href={`/api/expenses/${viewingReceipt.id}/receipt`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-emerald-700 dark:text-emerald-400 hover:underline shrink-0 ml-2"
-                >
-                  Open in new tab
-                </a>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <ReceiptViewer
+        open={!!viewingReceipt}
+        onClose={() => setViewingReceipt(null)}
+        expenseId={viewingReceipt?.id ?? null}
+        title={viewingReceipt ? `${viewingReceipt.merchant || "Receipt"} · ${fmt(viewingReceipt.amountPence)}` : "Receipt"}
+        filename={viewingReceipt?.receiptFilename}
+      />
     </div>
   );
 }

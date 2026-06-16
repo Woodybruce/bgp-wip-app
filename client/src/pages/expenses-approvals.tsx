@@ -18,6 +18,7 @@ import { CheckCircle2, AlertCircle, Loader2, X, Receipt, Inbox } from "lucide-re
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ExpensesNavTabs } from "@/components/expenses-nav-tabs";
+import ReceiptViewer from "@/components/receipt-viewer";
 
 interface PendingExpense {
   id: string;
@@ -62,6 +63,7 @@ export default function ExpensesApprovals() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rejecting, setRejecting] = useState<PendingExpense | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [bulkRejecting, setBulkRejecting] = useState(false);
   const [viewing, setViewing] = useState<PendingExpense | null>(null);
 
   const { data: rows = [], isLoading } = useQuery<PendingExpense[]>({
@@ -135,6 +137,22 @@ export default function ExpensesApprovals() {
     onError: (e: any) => toast({ title: "Reject failed", description: e?.message, variant: "destructive" }),
   });
 
+  // Group reject — one shared reason applied to every ticked row.
+  const bulkRejectMutation = useMutation({
+    mutationFn: async ({ ids, reason }: { ids: string[]; reason: string }) => {
+      const r = await apiRequest("POST", `/api/expenses/reject-bulk`, { ids, reason });
+      return r.json();
+    },
+    onSuccess: (json: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
+      setBulkRejecting(false);
+      setRejectReason("");
+      setSelected(new Set());
+      toast({ title: "Rejected", description: `${json?.rejected || 0} sent back to submitters` });
+    },
+    onError: (e: any) => toast({ title: "Bulk reject failed", description: e?.message, variant: "destructive" }),
+  });
+
   if (isLoading) {
     return <div className="container mx-auto p-6"><ExpensesNavTabs /><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
@@ -143,6 +161,9 @@ export default function ExpensesApprovals() {
     return (
       <div className="container mx-auto p-6 max-w-2xl">
         <ExpensesNavTabs />
+        <div className="flex justify-end mb-3">
+          <CoverToggle />
+        </div>
         <Card>
           <CardContent className="p-8 text-center">
             <Inbox className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
@@ -157,6 +178,9 @@ export default function ExpensesApprovals() {
     );
   }
 
+  const allIds = rows.map((r) => r.id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+
   return (
     <div className="container mx-auto p-6 max-w-6xl space-y-6">
       <div className="flex items-center justify-between">
@@ -165,6 +189,17 @@ export default function ExpensesApprovals() {
           <p className="text-sm text-muted-foreground">
             {rows.length} pending · {rows.filter(r => r.flaggedForReview).length} flagged for review
           </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <CoverToggle />
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none" data-testid="label-select-all">
+            <Checkbox
+              checked={allSelected}
+              onCheckedChange={(v) => setSelected(v ? new Set(allIds) : new Set())}
+              data-testid="checkbox-select-all"
+            />
+            Select all
+          </label>
         </div>
       </div>
 
@@ -257,11 +292,55 @@ export default function ExpensesApprovals() {
             {bulkApproveMutation.isPending && <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />}
             Approve selected
           </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => setBulkRejecting(true)}
+            disabled={bulkRejectMutation.isPending}
+            data-testid="button-reject-selected"
+          >
+            Reject selected
+          </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>
       )}
+
+      <Dialog open={bulkRejecting} onOpenChange={(v) => { if (!v) { setBulkRejecting(false); setRejectReason(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject {selected.size} expense{selected.size === 1 ? "" : "s"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              One reason goes to every selected submitter. They'll see it on their card and can fix &amp; resubmit.
+            </p>
+            <div>
+              <Label htmlFor="bulk-reject-reason" className="text-xs">Reason (all submitters see this)</Label>
+              <Textarea
+                id="bulk-reject-reason"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="e.g. Missing business purpose — add who you were with and resubmit"
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setBulkRejecting(false); setRejectReason(""); }}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => bulkRejectMutation.mutate({ ids: Array.from(selected), reason: rejectReason })}
+              disabled={bulkRejectMutation.isPending || !rejectReason.trim()}
+              data-testid="button-confirm-bulk-reject"
+            >
+              {bulkRejectMutation.isPending && <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />}
+              Reject {selected.size}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!rejecting} onOpenChange={(v) => { if (!v) { setRejecting(null); setRejectReason(""); } }}>
         <DialogContent>
@@ -302,39 +381,13 @@ export default function ExpensesApprovals() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!viewing} onOpenChange={(v) => { if (!v) setViewing(null); }}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-base">
-              Receipt — {viewing?.merchant || "—"} · {viewing ? fmt(viewing.amountPence) : ""}
-            </DialogTitle>
-          </DialogHeader>
-          {viewing && (
-            <div className="space-y-2">
-              {/* iframe renders both images and PDFs natively; the request is
-                  same-origin so the session cookie authorises it. */}
-              <iframe
-                src={`/api/expenses/${viewing.id}/receipt`}
-                title="Receipt"
-                className="w-full h-[70vh] rounded border bg-muted"
-                data-testid="iframe-receipt"
-              />
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span className="truncate">{viewing.receiptFilename}</span>
-                <a
-                  href={`/api/expenses/${viewing.id}/receipt`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-emerald-700 dark:text-emerald-400 hover:underline shrink-0 ml-2"
-                  data-testid="link-receipt-new-tab"
-                >
-                  Open in new tab
-                </a>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <ReceiptViewer
+        open={!!viewing}
+        onClose={() => setViewing(null)}
+        expenseId={viewing?.id ?? null}
+        title={viewing ? `${viewing.merchant || "Receipt"} · ${fmt(viewing.amountPence)}` : "Receipt"}
+        filename={viewing?.receiptFilename}
+      />
     </div>
   );
 }
@@ -448,6 +501,52 @@ function ExpenseTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Wendy's "cry for help": hand the initial pass to Layla while she's away,
+// take it back when she returns. Reads/writes the shared cover flag and
+// nudges the pending list to refetch so the queue visibly moves.
+function CoverToggle() {
+  const { toast } = useToast();
+  const { data: cover } = useQuery<{ active: boolean }>({
+    queryKey: ["/api/expenses/stage1-cover"],
+  });
+  const active = !!cover?.active;
+  const toggle = useMutation({
+    mutationFn: async (next: boolean) => {
+      const r = await apiRequest("POST", "/api/expenses/stage1-cover", { active: next });
+      return r.json();
+    },
+    onSuccess: (json: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/stage1-cover"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
+      toast({
+        title: json?.active ? "Handed to Layla" : "Approvals back with you",
+        description: typeof json?.reassigned === "number" && json.reassigned > 0
+          ? `${json.reassigned} moved across`
+          : undefined,
+      });
+    },
+    onError: (e: any) => toast({ title: "Couldn't switch cover", description: e?.message, variant: "destructive" }),
+  });
+  return (
+    <div className="flex items-center gap-2">
+      {active && (
+        <Badge variant="outline" className="text-amber-600 border-amber-600/30">Layla is covering</Badge>
+      )}
+      <Button
+        size="sm"
+        variant={active ? "default" : "outline"}
+        onClick={() => toggle.mutate(!active)}
+        disabled={toggle.isPending}
+        title={active ? "Take the initial pass back from Layla" : "Hand the initial pass to Layla while you're away"}
+        data-testid="button-cry-for-help"
+      >
+        {toggle.isPending && <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />}
+        {active ? "Take approvals back" : "Cry for help"}
+      </Button>
     </div>
   );
 }

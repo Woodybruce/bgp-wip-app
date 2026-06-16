@@ -1952,5 +1952,112 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Bulk reject — the "tick all → reject with one shared reason" path on the
+  // approvals inbox. Mirrors approve-bulk: only rejects rows the user can
+  // action and that are still pending, skips the rest. The same reason lands
+  // on every selected submitter's card so they all know what to fix.
+  app.post("/api/expenses/reject-bulk", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+      if (ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+        ? req.body.reason.trim()
+        : "No reason given";
+
+      const { canApproveExpense } = await import("./expense-approval");
+      let rejected = 0;
+      const outcomes: any[] = [];
+      for (const id of ids) {
+        if (!(await canApproveExpense(userId, id))) {
+          outcomes.push({ id, ok: false, error: "not authorised" });
+          continue;
+        }
+        const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+        if (!exp || exp.status !== "pending_approval") {
+          outcomes.push({ id, ok: false, error: "already actioned" });
+          continue;
+        }
+        await db.update(expenses).set({
+          status: "rejected",
+          rejectedAt: new Date(),
+          rejectedByUserId: userId,
+          rejectedReason: reason,
+          updatedAt: new Date(),
+        }).where(eq(expenses.id, id));
+        outcomes.push({ id, ok: true });
+        rejected++;
+      }
+      res.json({ ok: true, rejected, outcomes });
+    } catch (e: any) {
+      console.error("[expenses] reject-bulk error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Resubmit a rejected expense after the submitter has fixed it. Owner (or
+  // admin) only. Clears the rejection, recomputes flags and re-routes to a
+  // fresh stage-1 approver. This is what makes a rejection actionable: the
+  // row comes back on the submitter's card with the reason, they correct it
+  // and send it round again rather than it dead-ending at 'rejected'.
+  app.post("/api/expenses/:id/resubmit", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.status !== "rejected") {
+        return res.status(409).json({ error: "Only a rejected expense can be resubmitted." });
+      }
+      await db.update(expenses).set({
+        rejectedAt: null,
+        rejectedByUserId: null,
+        rejectedReason: null,
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, id));
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || exp.submitterUserId || null;
+      const { submitForApproval } = await import("./expense-approval");
+      await submitForApproval(id, userId);
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] resubmit error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Stage-1 cover toggle — Wendy's "cry for help". When she's away she flips
+  // this on and the initial pass routes to Layla (the outstanding backlog gets
+  // reassigned too); off again sends it back to Wendy. Finance approvers
+  // (Wendy / Layla / accounts) and admins only.
+  app.get("/api/expenses/stage1-cover", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { getStage1Cover } = await import("./expense-approval");
+      res.json({ active: await getStage1Cover() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  app.post("/api/expenses/stage1-cover", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      const [u] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+      const { FALLBACK_APPROVER_EMAILS, setStage1Cover, reassignPendingStage1 } = await import("./expense-approval");
+      const email = ((u as any)?.email || "").toLowerCase();
+      if (!((u as any)?.isAdmin || FALLBACK_APPROVER_EMAILS.has(email))) {
+        return res.status(403).json({ error: "Only Wendy, Layla or an admin can switch approval cover." });
+      }
+      const active = req.body?.active === true;
+      await setStage1Cover(active);
+      const reassigned = await reassignPendingStage1();
+      res.json({ active, reassigned });
+    } catch (e: any) {
+      console.error("[expenses] stage1-cover error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // (Stripe webhook route removed — card spend comes via Revolut now.)
 }

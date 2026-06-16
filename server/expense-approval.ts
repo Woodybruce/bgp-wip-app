@@ -13,7 +13,7 @@
 // and review only the flagged ones.
 
 import { db, pool } from "./db";
-import { expenses, users, expenseReceipts } from "@shared/schema";
+import { expenses, users, expenseReceipts, systemSettings } from "@shared/schema";
 import { eq, and, desc, gte, isNull, or, sql, inArray } from "drizzle-orm";
 
 // Layla + Wendy are the fallback approvers when an agent has no manager
@@ -27,7 +27,10 @@ export const FALLBACK_APPROVER_EMAILS = new Set([
 ]);
 
 // ── Two-stage approval pools (Jun 2026) ──────────────────────────────────────
-// Stage 1 (info check): every expense goes to Wendy OR Layla, random 50/50.
+// Stage 1 (info check): goes to Wendy (accounts@) by default — see the
+// stage-1 routing block below for the Wendy↔Layla cover toggle. STAGE1_SLOTS
+// is retained as the finance-approver set for the diagnostic + receipt-view
+// permission (both Wendy and Layla may always open a receipt).
 // Stage 2 (spend sign-off): once stage 1 passes, it goes to one of the
 // directors — Woody / Charlotte / Jack / Rupert — random even split. The
 // submitter is excluded from their own pool. Each "slot" is one person; the
@@ -42,6 +45,58 @@ const STAGE2_SLOTS: string[][] = [
   ["jack@brucegillinghampollard.com"],
   ["rupert@brucegillinghampollard.com"],
 ];
+
+// Stage-1 routing. The initial HMRC/info pass goes to Wendy (accounts@) by
+// default — she does the first approvals, not a Wendy/Layla coin-flip. When
+// she's away or busy she flips "cover" on from the approvals page and both
+// new AND outstanding stage-1 items route to Layla instead; flipping it off
+// hands them back to Wendy. Persisted in system_settings so it survives
+// restarts and is shared across her devices.
+const WENDY_EMAILS = ["accounts@brucegillinghampollard.com", "wendy@brucegillinghampollard.com"];
+const LAYLA_EMAILS = ["layla@brucegillinghampollard.com"];
+const STAGE1_COVER_KEY = "expense_stage1_cover";
+
+export async function getStage1Cover(): Promise<boolean> {
+  const [row] = await db.select().from(systemSettings).where(eq(systemSettings.key, STAGE1_COVER_KEY)).limit(1);
+  return !!(row?.value as any)?.active;
+}
+
+export async function setStage1Cover(active: boolean): Promise<void> {
+  await db.insert(systemSettings)
+    .values({ key: STAGE1_COVER_KEY, value: { active } as any })
+    .onConflictDoUpdate({ target: systemSettings.key, set: { value: { active } as any, updatedAt: new Date() } });
+}
+
+// Resolve the current stage-1 approver: Wendy normally, Layla while she's
+// covering. Never the submitter themselves — if the primary IS the submitter
+// (e.g. Wendy submits her own expense) it falls to the other finance approver.
+async function pickStage1Approver(submitterUserId: string | null): Promise<string | null> {
+  const cover = await getStage1Cover();
+  const primaryEmails = cover ? LAYLA_EMAILS : WENDY_EMAILS;
+  const backupEmails = cover ? WENDY_EMAILS : LAYLA_EMAILS;
+  const primary = await resolveUserIdByEmails(primaryEmails);
+  if (primary && primary !== submitterUserId) return primary;
+  const backup = await resolveUserIdByEmails(backupEmails);
+  if (backup && backup !== submitterUserId) return backup;
+  return primary || backup;   // last resort — never strand the row
+}
+
+// Move every outstanding stage-1 item to whoever's on the initial pass now.
+// Called when cover flips so the backlog follows Wendy ↔ Layla, not just new
+// submissions.
+export async function reassignPendingStage1(): Promise<number> {
+  const rows = await db
+    .select({ id: expenses.id, submitterUserId: expenses.submitterUserId })
+    .from(expenses)
+    .where(and(eq(expenses.status, "pending_approval"), eq(expenses.approvalStage, 1)));
+  let n = 0;
+  for (const r of rows) {
+    const approver = await pickStage1Approver(r.submitterUserId);
+    await db.update(expenses).set({ approverUserId: approver, updatedAt: new Date() }).where(eq(expenses.id, r.id));
+    n++;
+  }
+  return n;
+}
 
 async function resolveUserIdByEmails(emails: string[]): Promise<string | null> {
   for (const e of emails) {
@@ -94,7 +149,10 @@ async function resolvePool(slots: string[][]): Promise<string[]> {
 // nobody approves their own spend. Falls back to the full pool if excluding
 // the submitter would empty it (shouldn't happen, but never strand a row).
 async function pickStageApprover(stage: 1 | 2, submitterUserId: string | null): Promise<string | null> {
-  const fullPool = await resolvePool(stage === 1 ? STAGE1_SLOTS : STAGE2_SLOTS);
+  // Stage 1 is a single named approver (Wendy, or Layla while covering), not
+  // a random pool. Stage 2 stays a random even split across the directors.
+  if (stage === 1) return pickStage1Approver(submitterUserId);
+  const fullPool = await resolvePool(STAGE2_SLOTS);
   if (fullPool.length === 0) return null;
   const eligible = submitterUserId ? fullPool.filter((id) => id !== submitterUserId) : fullPool;
   const use = eligible.length > 0 ? eligible : fullPool;
