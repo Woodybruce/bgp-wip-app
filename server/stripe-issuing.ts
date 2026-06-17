@@ -441,7 +441,11 @@ export function setupStripeIssuingRoutes(app: Express) {
   // List expenses
   app.get("/api/expenses", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const rows = await db.select().from(expenses).orderBy(desc(expenses.transactionDate)).limit(200);
+      // Newest-first, capped to keep the payload sane. Raised 200 → 2000 so the
+      // full firm history loads — the old 200 cap silently cut the oldest rows
+      // off the bottom of the admin board. Band-aid: the proper fix is
+      // pagination / date + cardholder filters once history outgrows this.
+      const rows = await db.select().from(expenses).orderBy(desc(expenses.transactionDate)).limit(2000);
       // Hydrate attendees with their CRM contact id + name so the admin
       // drilldown can render each attendee as its own linked chip.
       const ids = rows.map(r => r.id);
