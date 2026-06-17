@@ -2084,6 +2084,15 @@ export function setupStripeIssuingRoutes(app: Express) {
         updatedAt: new Date(),
       }).where(eq(expenses.id, expenseId));
 
+      // Let the submitter know it was rejected, with the reason, so they can
+      // fix and resubmit (best-effort — never block the reject on a notify).
+      try {
+        const { notifyExpenseRejected } = await import("./expense-notify");
+        await notifyExpenseRejected(expenseId, reason);
+      } catch (e: any) {
+        console.warn("[expenses] reject notify failed:", e?.message);
+      }
+
       res.json({ success: true });
     } catch (e: any) {
       console.error("[expenses] reject error:", e?.message, e?.stack);
@@ -2106,6 +2115,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         : "No reason given";
 
       const { canApproveExpense } = await import("./expense-approval");
+      const { notifyExpenseRejected } = await import("./expense-notify");
       let rejected = 0;
       const outcomes: any[] = [];
       for (const id of ids) {
@@ -2125,6 +2135,7 @@ export function setupStripeIssuingRoutes(app: Express) {
           rejectedReason: reason,
           updatedAt: new Date(),
         }).where(eq(expenses.id, id));
+        await notifyExpenseRejected(id, reason);
         outcomes.push({ id, ok: true });
         rejected++;
       }
