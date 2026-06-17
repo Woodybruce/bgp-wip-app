@@ -21,10 +21,11 @@ import {
 } from "./expense-categories";
 
 // Card spend posts here as a Xero "Spend Money" bank transaction, so this
-// must be a BANK-type account. 1200 is the firm's main bank account in Xero
-// — the original, known-good target. (A separate 1230 card account was
-// trialled and reverted.)
-const STRIPE_CARDS_ACCOUNT_CODE = "1200";
+// must be a BANK-type account. 1230 is a dedicated, app-owned card account
+// (the app is its only source — see xero-chart-setup.ts) so card spend stays
+// out of the main bank account's (1200) reconciliation. Wendy must create
+// 1230 as a Bank Account in Xero for posts to land.
+const STRIPE_CARDS_ACCOUNT_CODE = "1230";
 
 export async function postExpenseToXero(args: {
   session: any;
