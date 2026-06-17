@@ -17,40 +17,45 @@ import { xeroApiWithFallback } from "./xero";
 // receipt-categorisation prompt's training list. Lives here now so the
 // expense pipeline doesn't depend on the legacy Stripe module.
 export const EXPENSE_CATEGORY_MAP: Record<string, { code: string; name: string }> = {
-  "Client Entertainment":           { code: "410", name: "Client Entertainment" },
-  "Agent Entertainment (External)": { code: "411", name: "Agent Entertainment (External)" },
-  "Staff Entertainment":            { code: "412", name: "Staff Entertainment" },
-  "Directors Meetings":             { code: "413", name: "Directors Meetings" },
-  "Subsistence":                    { code: "415", name: "Subsistence" },
-  "Meals & Drinks":                 { code: "416", name: "Meals & Drinks" },
-  "Travel - Train":                 { code: "471", name: "Travel - Train" },
-  "Travel - Tube":                  { code: "472", name: "Travel - Tube" },
-  "Travel - Taxi":                  { code: "473", name: "Travel - Taxi" },
-  "Travel - Flights":               { code: "474", name: "Travel - Flights" },
-  "Travel - Hotels":                { code: "475", name: "Travel - Hotels" },
-  "Travel - Car Hire":              { code: "476", name: "Travel - Car Hire" },
-  "Travel - Parking & Tolls":       { code: "477", name: "Travel - Parking & Tolls" },
-  "Travel - TFL Bike":              { code: "478", name: "Travel - TFL Bike" },
-  "Mileage Claims (HMRC 45p)":      { code: "479", name: "Mileage Claims (HMRC 45p)" },
-  "Marketing & Advertising":        { code: "480", name: "Marketing & Advertising" },
-  "PR (Literature & Brochures)":    { code: "481", name: "PR (Literature & Brochures)" },
-  "Advertising":                    { code: "482", name: "Advertising" },
-  "Office Supplies / Stationery":   { code: "500", name: "Office Supplies / Stationery" },
-  "Office Expenses (general)":      { code: "501", name: "Office Expenses (general)" },
-  "Printing - Pitch Documents":     { code: "512", name: "Printing - Pitch Documents" },
-  "Software (subscriptions)":       { code: "600", name: "Software (subscriptions)" },
-  "IT Charges":                     { code: "601", name: "IT Charges" },
-  "Mobile Phone":                   { code: "611", name: "Mobile Phone" },
-  "Phone & Internet":               { code: "612", name: "Phone & Internet" },
-  "Premises Expenses":              { code: "700", name: "Premises Expenses" },
-  "RICS Fees":                      { code: "750", name: "RICS Fees" },
-  "Training":                       { code: "751", name: "Training" },
-  "Subscriptions - Magazines/Memberships": { code: "753", name: "Subscriptions - Magazines/Memberships" },
-  "Staff Gifts":                    { code: "780", name: "Staff Gifts" },
-  "Client Gifts":                   { code: "781", name: "Client Gifts" },
-  "Other Expenses":                 { code: "900", name: "Other Expenses" },
+  // Codes aligned to the firm's live Xero chart of accounts (confirmed Jun 2026).
+  // Live Xero stays the source of truth (getExpenseCategories); this static map
+  // is only the fallback when Xero is unreachable or a name doesn't match.
+  // Codes still marked "(seed)" below are pre-Xero guesses — they're protected
+  // by the post-time guard until the full chart is supplied.
+  "Client Entertainment":           { code: "7403", name: "Client Entertainment" },
+  "Agent Entertainment (External)": { code: "740321", name: "Agent Entertainment (External)" },
+  "Staff Entertainment":            { code: "740319", name: "Staff Entertainment" },
+  "Directors Meetings":             { code: "413", name: "Directors Meetings" },           // seed
+  "Subsistence":                    { code: "74017", name: "Subsistence" },
+  "Meals & Drinks":                 { code: "416", name: "Meals & Drinks" },               // seed
+  "Travel - Train":                 { code: "471", name: "Travel - Train" },               // seed
+  "Travel - Tube":                  { code: "472", name: "Travel - Tube" },                // seed
+  "Travel - Taxi":                  { code: "74014", name: "Travel - Taxi" },
+  "Travel - Flights":               { code: "474", name: "Travel - Flights" },             // seed
+  "Travel - Hotels":                { code: "475", name: "Travel - Hotels" },              // seed
+  "Travel - Car Hire":              { code: "476", name: "Travel - Car Hire" },            // seed
+  "Travel - Parking & Tolls":       { code: "477", name: "Travel - Parking & Tolls" },     // seed
+  "Travel - TFL Bike":              { code: "74019", name: "Travel - TFL Bike" },
+  "Mileage Claims (HMRC 45p)":      { code: "479", name: "Mileage Claims (HMRC 45p)" },     // seed
+  "Marketing & Advertising":        { code: "480", name: "Marketing & Advertising" },      // seed
+  "PR (Literature & Brochures)":    { code: "481", name: "PR (Literature & Brochures)" },  // seed
+  "Advertising":                    { code: "482", name: "Advertising" },                  // seed
+  "Office Supplies / Stationery":   { code: "500", name: "Office Supplies / Stationery" }, // seed
+  "Office Expenses (general)":      { code: "501", name: "Office Expenses (general)" },     // seed
+  "Printing - Pitch Documents":     { code: "512", name: "Printing - Pitch Documents" },   // seed
+  "Software (subscriptions)":       { code: "750301", name: "Software (subscriptions)" },
+  "IT Charges":                     { code: "750301", name: "IT Charges" },
+  "Mobile Phone":                   { code: "611", name: "Mobile Phone" },                 // seed
+  "Phone & Internet":               { code: "612", name: "Phone & Internet" },            // seed
+  "Premises Expenses":              { code: "700", name: "Premises Expenses" },            // seed
+  "RICS Fees":                      { code: "750", name: "RICS Fees" },                    // seed
+  "Training":                       { code: "751", name: "Training" },                     // seed
+  "Subscriptions - Magazines/Memberships": { code: "753", name: "Subscriptions - Magazines/Memberships" }, // seed
+  "Staff Gifts":                    { code: "780", name: "Staff Gifts" },                  // seed
+  "Client Gifts":                   { code: "781", name: "Client Gifts" },                 // seed
+  "Other Expenses":                 { code: "900", name: "Other Expenses" },               // seed
   "Personal (deduct from payroll)": { code: "910", name: "Personal (deduct from payroll)" },
-  "Sainsburys / Tesco / Ocado":     { code: "503", name: "Sainsburys / Tesco / Ocado" },
+  "Sainsburys / Tesco / Ocado":     { code: "8205", name: "Sainsburys / Tesco / Ocado" },
 };
 
 export type ExpenseCategory = {
@@ -118,6 +123,14 @@ export async function getExpenseCategories(opts?: { forceRefresh?: boolean }): P
   return inFlight;
 }
 
+// Normalise a category/account name for matching — lowercase, and collapse
+// any run of non-alphanumerics to a single space. So "Travel - Taxi",
+// "travel taxi" and "Taxi " all compare equal, which stops a cosmetic name
+// difference from silently dropping to the static fallback code.
+function normaliseCategoryName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 /**
  * Resolve a category name to a Xero account code. Prefers the live Xero
  * list; falls back to the static map for names that have been renamed or
@@ -127,9 +140,27 @@ export async function getExpenseCategories(opts?: { forceRefresh?: boolean }): P
 export async function getCategoryCode(name: string): Promise<string | undefined> {
   if (!name) return undefined;
   const list = await getExpenseCategories();
-  const live = list.find(c => c.name === name);
-  if (live) return live.code;
+  const exact = list.find(c => c.name === name);
+  if (exact) return exact.code;
+  // Fall back to a normalised match before the static map, so an app name
+  // that differs only in case/spacing/punctuation from Xero's still resolves
+  // to the real, live code rather than a stale seed value.
+  const target = normaliseCategoryName(name);
+  const fuzzy = list.find(c => normaliseCategoryName(c.name) === target);
+  if (fuzzy) return fuzzy.code;
   return EXPENSE_CATEGORY_MAP[name]?.code;
+}
+
+/** Is this Xero account code one we recognise — either in the live chart
+ *  (when Xero is reachable) or in the static seed map? Used by the poster as
+ *  a guard so a junk/stale code never reaches Xero. When Xero is unreachable
+ *  the live list IS the static map, so this still allows every seed code. */
+export async function isKnownExpenseCode(code: string | null | undefined): Promise<boolean> {
+  if (!code) return false;
+  const c = String(code).trim();
+  const list = await getExpenseCategories();
+  if (list.some(x => x.code === c)) return true;
+  return Object.values(EXPENSE_CATEGORY_MAP).some(v => v.code === c);
 }
 
 /** Cheap synchronous lookup against the static map. Use when async isn't
