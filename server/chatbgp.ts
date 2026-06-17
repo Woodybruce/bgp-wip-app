@@ -16,8 +16,8 @@ import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRec
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-sonnet-4-6";      // Default chat: Sonnet 4.6 (fast + cheap). Per-thread /opus flips to Opus.
-const CHATBGP_OPUS_MODEL = "claude-opus-4-7";   // Heavy reasoning when /opus is set on a thread.
+const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Opus 4.8 via chatbgp-model-router.
+const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning (also the chat default now).
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
 
 // Resolve a list of chat-media filenames into Graph fileAttachment payloads
@@ -11557,21 +11557,19 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
-      const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings, personalisation] = await Promise.all([
-        withTimeout(getKnowledgeContext(), 8000, ""),
-        withTimeout(getMemoryContext(fileUserId), 8000, ""),
-        withTimeout(getEmailAndCalendarContext(req), 8000, ""),
-        withTimeout(getCrmContext(), 8000, ""),
-        withTimeout(getBusinessLearningsContext(), 8000, ""),
-        withTimeout(getUserPersonalisationContext(fileUserId), 2000, ""),
-      ]);
+      // Lean mode: only the cheap personalisation line is still injected; the
+      // knowledge bank / memory / email+calendar / CRM dumps are fetched on
+      // demand via tools, so we skip building them here.
+      const personalisation = await withTimeout(getUserPersonalisationContext(fileUserId), 2000, "");
       let systemPrompt: string;
       try {
         systemPrompt = await buildSystemPrompt();
       } catch {
         systemPrompt = SYSTEM_PROMPT_FALLBACK;
       }
-      const systemContent = systemPrompt + personalisation + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
+      // Lean context (see main chat handler) — keep only who you're talking to;
+      // fetch knowledge / CRM / email on demand via tools rather than force-feeding.
+      const systemContent = systemPrompt + personalisation;
 
       const fileResolved = await resolveChatModel({ threadId: fileThreadId, override: fileSlashOverride });
       const completionOptions: any = {
@@ -12551,39 +12549,12 @@ export function setupChatBGPRoutes(app: Express) {
     try {
       const { tools } = await getAvailableTools();
       const userId = req.session.userId!;
-      // Load contexts with size limits and error handling
-      let knowledgeContext2 = "";
-      let memoryContext = "";
-      let emailCalContext = "";
-      let crmCtx = "";
-      let businessLearnings2 = "";
-      
-      try {
-        sendProgress("Gathering intelligence...");
-        const contextResults = await Promise.all([
-          withTimeout(getMemoryContext(userId), 3000, ""),
-          withTimeout(getBusinessLearningsContext(), 3000, ""),
-          withTimeout(getCrmContext(), 3000, ""),
-          withTimeout(getKnowledgeContext(), 3000, ""),
-          withTimeout(getEmailAndCalendarContext(req), 3000, ""),
-          withTimeout(getUserPersonalisationContext(userId), 1500, ""),
-        ]);
-        memoryContext = contextResults[0];
-        businessLearnings2 = contextResults[1];
-        crmCtx = contextResults[2];
-        knowledgeContext2 = contextResults[3];
-        emailCalContext = contextResults[4];
-        // Per-user personalisation prepends so role/department defaults are
-        // the first thing Claude sees after the static system prompt.
-        memoryContext = (contextResults[5] || "") + memoryContext;
-        // Trim to stay under 120KB total context
-        const totalLen = memoryContext.length + businessLearnings2.length + crmCtx.length + knowledgeContext2.length + emailCalContext.length;
-        if (totalLen > 120000) {
-          emailCalContext = emailCalContext.slice(0, Math.max(0, 120000 - totalLen + emailCalContext.length));
-        }
-      } catch (err) {
-        console.error("Context loading error:", err);
-      }
+      // Lean mode: the firm-wide context builders (memory, learnings, CRM
+      // summary, knowledge bank, and a live email/calendar Graph fetch) used to
+      // run on every turn and get force-fed into the prompt. They're no longer
+      // injected — the model pulls any of that on demand via tools — so we skip
+      // building them entirely. Just the current thread's property/deal context
+      // and the cheap "current user" line (below) remain.
       let threadContext = "";
       let currentUserContext = "";
       try {
@@ -12669,7 +12640,13 @@ export function setupChatBGPRoutes(app: Express) {
         systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
       }
       // Split system prompt: static (cacheable) vs dynamic (per-request)
-      const dynamicContext = currentUserContext + threadContext + knowledgeContext2 + businessLearnings2 + memoryContext + emailCalContext + crmCtx;
+      // Lean context: only the cheap, targeted bits — who you're talking to and
+      // the current thread's property/deal. The firm-wide dumps (knowledge,
+      // learnings, memory, email/calendar, CRM summary) used to be force-fed on
+      // every turn, bloating the window and diluting focus. The model now fetches
+      // any of those on demand via tools (search_crm, search_knowledge_base, the
+      // email/calendar tools) only when a request actually needs them.
+      const dynamicContext = currentUserContext + threadContext;
       const systemContent2 = systemPrompt2 + dynamicContext;
 
       // Build structured system prompt array for Anthropic prompt caching
@@ -12835,7 +12812,7 @@ export function setupChatBGPRoutes(app: Express) {
               // Keep system + first user message + last 6 messages
               const sys = conversationMessages.filter((m: any) => m.role === "system");
               const rest = conversationMessages.filter((m: any) => m.role !== "system");
-              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              conversationMessages = [...sys, ...rest.slice(0, 2), ...rest.slice(-12)];
               loopOpts.messages = conversationMessages;
               completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); });
             } else {
@@ -12853,7 +12830,7 @@ export function setupChatBGPRoutes(app: Express) {
               console.warn("[ChatBGP] Context too long in tool loop — trimming history and retrying");
               const sys = conversationMessages.filter((m: any) => m.role === "system");
               const rest = conversationMessages.filter((m: any) => m.role !== "system");
-              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              conversationMessages = [...sys, ...rest.slice(0, 2), ...rest.slice(-12)];
               loopOpts.messages = conversationMessages;
               completion = await callClaude(loopOpts);
             } else {
@@ -13115,18 +13092,9 @@ export function setupChatBGPRoutes(app: Express) {
         safeExcelContext = safeExcelContext.substring(0, 60000) + "\n... (spreadsheet data truncated for size — full workbook metadata above is complete)\n";
       }
 
-      // Load full contexts (same as main ChatBGP) so Excel add-in has the same reach
-      sendProgress("Gathering intelligence...");
+      // Lean mode: skip the firm-wide context builders (fetched on demand via
+      // tools); the Excel add-in only needs its task-specific excelSupplement.
       const userId = req.session.userId!;
-      const [memoryContextRaw, businessLearnings, crmCtx, knowledgeContext, emailCalContext, personalisation] = await Promise.all([
-        withTimeout(getMemoryContext(userId), 5000, ""),
-        withTimeout(getBusinessLearningsContext(), 5000, ""),
-        withTimeout(getCrmContext(), 5000, ""),
-        withTimeout(getKnowledgeContext(), 5000, ""),
-        withTimeout(getEmailAndCalendarContext(req), 5000, ""),
-        withTimeout(getUserPersonalisationContext(userId), 1500, ""),
-      ]);
-      const memoryContext = personalisation + memoryContextRaw;
 
       let baseSystemPrompt: string;
       try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
@@ -13184,7 +13152,8 @@ If the user asks to build a full investment appraisal (multi-sheet), you may eit
 ${safeExcelContext ? `**Current Workbook Data (automatically read from the user's open Excel workbook):**\n${safeExcelContext}\n` : "**Note:** No spreadsheet data was provided. If the user asks you to analyse their sheet, suggest they click the refresh button next to the input."}
 `;
 
-      const dynamicContext = knowledgeContext + businessLearnings + memoryContext + emailCalContext + crmCtx + excelSupplement;
+      // Lean context — keep the task-relevant Excel supplement; fetch the rest on demand.
+      const dynamicContext = excelSupplement;
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has

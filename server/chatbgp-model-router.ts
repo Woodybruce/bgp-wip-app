@@ -1,22 +1,22 @@
 // Per-thread model toggle for ChatBGP.
 //
-// Default is Sonnet 4.6 (fast + cheap). Users can flip to Opus 4.7 on
-// a specific thread when they want the heavy model — type `/opus` (or
-// `/sonnet` to switch back) at the start of any message. The choice is
-// remembered per chat thread in chat_threads.model_preference until
-// the user flips it again.
+// Default is Opus 4.8 (most capable — matches what claude.ai runs, so the
+// chat is as powerful as Claude out of the box). Users can drop a specific
+// thread to Sonnet 4.6 (faster + cheaper) by typing `/sonnet` at the start of
+// a message; `/opus` flips back. The choice is remembered per chat thread in
+// chat_threads.model_preference until the user flips it again.
 //
-// Slash command alone (e.g. just "/opus") → return ack, don't call
-// Claude at all. Slash command followed by content (e.g. "/opus draft
+// Slash command alone (e.g. just "/sonnet") → return ack, don't call
+// Claude at all. Slash command followed by content (e.g. "/sonnet draft
 // the Why Buy") → strip the command, switch model, continue normally.
 
 import { pool } from "./db";
 
 const SONNET = "claude-sonnet-4-6";
-const OPUS = "claude-opus-4-7";
+const OPUS = "claude-opus-4-8";
 
 const DEFAULTS = {
-  default: SONNET,
+  default: OPUS,
   opus: OPUS,
   sonnet: SONNET,
 } as const;
@@ -71,13 +71,13 @@ export async function setThreadModel(threadId: string | null | undefined, prefer
 // Resolve the model id for this thread. Order of precedence:
 //   1. explicit override (e.g. a slash command on the current message)
 //   2. thread.model_preference from the DB
-//   3. default (Sonnet)
+//   3. default (Opus 4.8) — only an explicit /sonnet preference drops to Sonnet
 export async function resolveChatModel(args: {
   threadId?: string | null;
   override?: "opus" | "sonnet" | null;
 }): Promise<{ model: string; label: "opus" | "sonnet" }> {
   if (args.override) return { model: DEFAULTS[args.override], label: args.override };
-  if (!args.threadId) return { model: DEFAULTS.default, label: "sonnet" };
+  if (!args.threadId) return { model: DEFAULTS.default, label: "opus" };
   await ensureColumn();
   try {
     const { rows } = await pool.query<{ model_preference: string | null }>(
@@ -85,10 +85,10 @@ export async function resolveChatModel(args: {
       [args.threadId],
     );
     const pref = rows[0]?.model_preference;
-    if (pref === "opus") return { model: OPUS, label: "opus" };
-    return { model: SONNET, label: "sonnet" };
+    if (pref === "sonnet") return { model: SONNET, label: "sonnet" };
+    return { model: OPUS, label: "opus" };
   } catch {
-    return { model: DEFAULTS.default, label: "sonnet" };
+    return { model: DEFAULTS.default, label: "opus" };
   }
 }
 
@@ -97,9 +97,9 @@ export async function resolveChatModel(args: {
 // Claude call and respond with this.
 export function ackMessage(command: "opus" | "sonnet"): string {
   return command === "opus"
-    ? "🔀 Switched to Opus for this thread — slower but heavier reasoning. Type `/sonnet` to switch back."
-    : "🔀 Switched to Sonnet for this thread — faster + cheaper default. Type `/opus` for the heavy model.";
+    ? "🔀 Switched to Opus for this thread — the heavy default. Type `/sonnet` for the faster, cheaper model."
+    : "🔀 Switched to Sonnet for this thread — faster + cheaper. Type `/opus` to switch back to the heavy default.";
 }
 
-export const CHATBGP_DEFAULT_MODEL = SONNET;
+export const CHATBGP_DEFAULT_MODEL = OPUS;
 export const CHATBGP_OPUS_MODEL = OPUS;
