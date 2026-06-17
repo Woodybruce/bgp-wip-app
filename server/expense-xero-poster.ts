@@ -17,7 +17,7 @@ import { db } from "./db";
 import { expenses, stripeCardholders, expenseReceipts, expenseSplits, users } from "@shared/schema";
 import { eq, inArray } from "drizzle-orm";
 import {
-  EXPENSE_CATEGORY_MAP, getCategoryCode, getCategoryTaxType, isCategoryVatReclaimable,
+  EXPENSE_CATEGORY_MAP, getCategoryCode, getCategoryTaxType, isCategoryVatReclaimable, isKnownExpenseCode,
 } from "./expense-categories";
 
 // Card spend posts here as a Xero "Spend Money" bank transaction, so this
@@ -85,10 +85,24 @@ export async function postExpenseToXero(args: {
     allocatedToUserId: string | null;
     description: string;
   }) => {
-    const accountCode = opts.accountCode
+    let accountCode = opts.accountCode
       || (opts.category ? await getCategoryCode(opts.category) : null)
       || (opts.category ? EXPENSE_CATEGORY_MAP[opts.category]?.code : null)
       || exp.xeroAccountCode || "900";
+    // Guard: never post a code Xero doesn't recognise. If the resolved code
+    // isn't in the live chart (or our static map), re-resolve from the
+    // category name; if it still isn't recognised, fail with the reason
+    // rather than letting Xero bounce the whole batch with a cryptic error.
+    if (!(await isKnownExpenseCode(accountCode))) {
+      const reResolved = opts.category ? await getCategoryCode(opts.category) : undefined;
+      if (reResolved && (await isKnownExpenseCode(reResolved))) {
+        accountCode = reResolved;
+      } else {
+        throw new Error(
+          `Expense category "${opts.category || exp.category || "(none)"}" maps to Xero code "${accountCode}", which isn't in your Xero chart of accounts. Set a valid category before posting.`,
+        );
+      }
+    }
     const reclaimable = await isCategoryVatReclaimable(opts.category, opts.vatReclaimable);
     const taxType = reclaimable ? await getCategoryTaxType(opts.category) : "NONE";
     const line: any = {
