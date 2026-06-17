@@ -469,6 +469,7 @@ function getToolProgressLabel(toolName: string): string {
     export_to_excel: "Generating Excel file...",
     generate_word: "Generating Word document...",
     generate_pptx: "Generating PowerPoint...",
+    generate_why_buy_deck: "Building the Why Buy deck...",
     generate_document: "Generating document...",
     generate_brief_document: "Generating with Claude design...",
     generate_image: "Generating image...",
@@ -2491,6 +2492,24 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           },
         },
         required: ["title", "slides"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_why_buy_deck",
+      description: "Generate an EDITABLE, branded 'Why Buy' / investment-memo PowerPoint (.pptx) for a property — the team edits it in PowerPoint and exports to PDF for the final. Pulls the property + its units from the CRM and authors the narrative in BGP house style. Use when the user asks for a Why Buy, IM, investment memo or pitch deck for a specific property. For a locked, non-editable PDF instead, use generate_claude_designed_pdf.",
+      parameters: {
+        type: "object",
+        properties: {
+          propertyName: { type: "string", description: "Property name or address to build the deck for (e.g. '56-60 Pimlico Road'). The tool searches the CRM for the match." },
+          propertyId: { type: "string", description: "Optional crm_properties id if you already have it (skips the name search)." },
+          preparedFor: { type: "string", description: "Optional client/recipient name for the cover ('Prepared for ...')." },
+          context: { type: "string", description: "Optional extra context, figures or angle to fold into the narrative." },
+        },
+        required: [],
       },
     },
   });
@@ -7284,6 +7303,11 @@ async function executeCrmToolRaw(
       console.error("[chatbgp] PowerPoint generation error:", err?.message);
       return { data: { error: `Failed to generate PowerPoint: ${err?.message || "Unknown error"}` } };
     }
+  }
+
+  if (fnName === "generate_why_buy_deck") {
+    const { generateWhyBuyForChat } = await import("./why-buy-pptx");
+    return await generateWhyBuyForChat(fnArgs, req);
   }
 
   if (fnName === "send_email") {
