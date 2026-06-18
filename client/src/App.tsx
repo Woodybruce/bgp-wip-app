@@ -704,6 +704,45 @@ function AppContent() {
   );
 }
 
+// Shown only when the dashboard is opened on the OLD railway URL. The app's
+// home is chatbgp.app (same backend — we just want one address). A server
+// redirect can't be used here because it breaks the Office add-ins, which are
+// pinned to the railway domain — so this is a gentle, dismissible banner
+// instead. Self-gating so it can never reach an add-in: the Excel task pane is
+// a separate static page (no React at all), and the other add-ins live under
+// /addin/, which this skips (along with the public KYC portal).
+function OldUrlBanner() {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return sessionStorage.getItem("bgp_old_url_dismissed") === "1"; } catch { return false; }
+  });
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname.toLowerCase();
+  const path = window.location.pathname;
+  if (!host.endsWith(".up.railway.app")) return null;
+  if (path.startsWith("/addin/") || path.startsWith("/kyc-upload/")) return null;
+  if (dismissed) return null;
+  const target = `https://chatbgp.app${window.location.pathname}${window.location.search}`;
+  return (
+    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#7c2d12", color: "#fff", fontSize: 13, lineHeight: 1.4, padding: "8px 12px",
+      display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap",
+      boxShadow: "0 -1px 6px rgba(0,0,0,0.25)" }}>
+      <span>
+        You're on the <strong>old address</strong>. BGP has moved to{" "}
+        <a href={target} style={{ color: "#fff", textDecoration: "underline", fontWeight: 600 }}>chatbgp.app</a>{" "}
+        — please update your bookmark, and re-install the phone app from there.
+      </span>
+      <a href={target} style={{ background: "#fff", color: "#7c2d12", borderRadius: 6, padding: "4px 10px",
+        fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>Open chatbgp.app →</a>
+      <button
+        onClick={() => { try { sessionStorage.setItem("bgp_old_url_dismissed", "1"); } catch {} setDismissed(true); }}
+        aria-label="Dismiss"
+        style={{ background: "transparent", border: "none", color: "#fff", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: "0 4px" }}
+      >×</button>
+    </div>
+  );
+}
+
 function App() {
   return (
     <ThemeProvider>
@@ -713,6 +752,7 @@ function App() {
             <TooltipProvider>
               <EntitySidebarProvider>
                 <AppContent />
+                <OldUrlBanner />
                 <Toaster />
                 <GlobalPdfHandler />
                 <HandwritingPanel />
