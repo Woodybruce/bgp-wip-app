@@ -2802,6 +2802,25 @@ const MAINTENANCE_ALLOWED_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
 ]);
 
+// One front door. chatbgp.app and jubilant-cat's *.up.railway.app URL are the
+// SAME deployment + database — this just nudges everyone onto chatbgp.app so
+// there's a single address. Deliberately narrow: only GET document
+// navigations get bounced, never /api (XHR, Xero/Revolut webhooks and OAuth
+// callbacks may be registered against the railway host and must keep working
+// — and a 301 on a POST webhook would break it). chatbgp.app itself and
+// localhost / replit dev hosts don't match, so there's no redirect loop. 302
+// (not 301) so it's not permanently cached if we ever need to undo it.
+const CANONICAL_HOST = "chatbgp.app";
+app.use((req, res, next) => {
+  if (req.method !== "GET") return next();
+  if (req.path.startsWith("/api/")) return next();
+  const host = ((req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim()
+    || req.headers.host || "").toLowerCase();
+  if (!host.endsWith(".up.railway.app")) return next();
+  if (!String(req.headers.accept || "").includes("text/html")) return next();
+  return res.redirect(302, `https://${CANONICAL_HOST}${req.originalUrl}`);
+});
+
 app.use(async (req: any, res, next) => {
   if (!MAINTENANCE_MODE) return next();
   // Always allow auth routes so login still works
