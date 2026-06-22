@@ -1164,6 +1164,14 @@ export default function InvestmentTrackerPage() {
     updateMutation.mutate({ id, data: { [field]: value } });
   };
 
+  const createProperty = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/properties", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+    toast({ title: "Property created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+
   const boardItems = useMemo(() => items.filter(u => (u.boardType || "Purchases") === boardType), [items, boardType]);
 
   const filtered = useMemo(() => {
@@ -1814,6 +1822,11 @@ export default function InvestmentTrackerPage() {
                           const name = propertyMap.get(v || "") || "";
                           inlineUpdate(item.id, "propertyId", v || null);
                           if (name) inlineUpdate(item.id, "assetName", name);
+                        }}
+                        onCreate={async (name) => {
+                          const c = await createProperty(name);
+                          inlineUpdate(item.id, "propertyId", c.id);
+                          inlineUpdate(item.id, "assetName", c.name);
                         }}
                         placeholder={item.assetName || "Link property"}
                       />
