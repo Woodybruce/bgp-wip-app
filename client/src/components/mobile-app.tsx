@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
+import * as voiceRecovery from "@/lib/voice-recovery";
 import { AuthDownloadLink } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
@@ -1174,6 +1175,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wakeLockRef = useRef<any>(null);
   const canRecord = typeof window !== "undefined"
     && typeof navigator !== "undefined"
     && !!navigator.mediaDevices?.getUserMedia
@@ -1750,7 +1752,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       const res = await fetch("/api/chat/upload", { method: "POST", body: formData, headers: { ...getAuthHeaders() }, credentials: "include" });
       const data = await res.json();
       if (!res.ok || !data.files?.[0]) {
-        toast({ title: "Voice note failed", description: "Could not upload recording", variant: "destructive" });
+        toast({ title: "Voice note upload failed", description: "Saved — we'll recover it next time you open the app.", variant: "destructive" });
         return;
       }
       if (unmountedRef.current) return;
@@ -1766,16 +1768,34 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         setMessages(prev => [...prev, userMessage]);
         teamSendMutation.mutate({ content, tid: threadId, attachments: [attachmentJson] });
       }
+      // Sent successfully — drop the crash-recovery copy.
+      voiceRecovery.clearPending().catch(() => {});
     } catch {
-      toast({ title: "Voice note failed", description: "Network error", variant: "destructive" });
+      toast({ title: "Voice note upload failed", description: "Network error — saved, we'll recover it next time you open the app.", variant: "destructive" });
     } finally { setUploading(false); }
   }, [threadId, isActiveThreadAi, currentUser, messages, toast, aiSendMutation, teamSendMutation]);
 
   const sendVoiceNoteRef = useRef(sendVoiceNote);
   useEffect(() => { sendVoiceNoteRef.current = sendVoiceNote; }, [sendVoiceNote]);
 
+  // On open, recover any voice note that was interrupted (lock / crash /
+  // reload) or whose upload failed last time — so a long dictation is never
+  // silently lost. Runs once; clears itself on a successful send.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const pending = await voiceRecovery.loadPending();
+      if (cancelled || !pending) return;
+      toast({ title: "Recovered a voice note", description: "An unfinished recording was saved — transcribing it now." });
+      sendVoiceNoteRef.current(pending.blob);
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const stopRecording = useCallback(() => {
     if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    try { wakeLockRef.current?.release?.(); } catch {}
+    wakeLockRef.current = null;
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
@@ -1810,9 +1830,11 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       }
       const actualMime = recorder.mimeType || mimeType || "audio/mp4";
       audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) { audioChunksRef.current.push(e.data); voiceRecovery.appendChunk(e.data).catch(() => {}); } };
       recorder.onstop = () => {
         try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        try { wakeLockRef.current?.release?.(); } catch {}
+        wakeLockRef.current = null;
         setIsRecording(false);
         setRecordingDuration(0);
         if (audioChunksRef.current.length === 0) {
@@ -1829,15 +1851,28 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       recorder.onerror = (ev: any) => {
         console.error("[voice] MediaRecorder error:", ev?.error?.name, ev?.error?.message);
         try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        try { wakeLockRef.current?.release?.(); } catch {}
+        wakeLockRef.current = null;
         setIsRecording(false);
         setRecordingDuration(0);
         toast({ title: "Recording failed", description: "Could not record audio", variant: "destructive" });
       };
+      // Persist each chunk to IndexedDB as we record, so an interrupted note
+      // (lock / crash / reload / failed upload) can be recovered on next open.
+      await voiceRecovery.beginRecording(actualMime).catch(() => {});
       recorder.start(1000);
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
       setRecordingDuration(0);
       recordingTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000);
+      // Hold a screen wake lock so iOS auto-lock can't suspend the WebView and
+      // kill the recording mid-dictation (the main cause of lost voice notes).
+      // Re-acquired on visibilitychange below, since iOS drops it when hidden.
+      try {
+        if ((navigator as any).wakeLock?.request) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch { /* unsupported / denied — best effort */ }
     } catch (err: any) {
       console.error("[voice] getUserMedia error:", err?.name, err?.message);
       toast({ title: "Microphone access denied", description: "Please allow microphone access to record voice notes", variant: "destructive" });
@@ -1855,6 +1890,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     };
   }, []);
+
+  // iOS releases the screen wake lock whenever the page is hidden, so re-acquire
+  // it when the user comes back to the app while a recording is still running.
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.visibilityState === "visible" && isRecording && !wakeLockRef.current) {
+        try {
+          if ((navigator as any).wakeLock?.request) {
+            wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+          }
+        } catch { /* best effort */ }
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [isRecording]);
 
   const isSending = aiSendMutation.isPending || teamSendMutation.isPending || chatbgpMentionMutation.isPending || uploading;
   // Array-based queue so the user can stack multiple ChatBGP requests while
