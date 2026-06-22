@@ -1174,6 +1174,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wakeLockRef = useRef<any>(null);
   const canRecord = typeof window !== "undefined"
     && typeof navigator !== "undefined"
     && !!navigator.mediaDevices?.getUserMedia
@@ -1776,6 +1777,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
   const stopRecording = useCallback(() => {
     if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    try { wakeLockRef.current?.release?.(); } catch {}
+    wakeLockRef.current = null;
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
@@ -1813,6 +1816,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = () => {
         try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        try { wakeLockRef.current?.release?.(); } catch {}
+        wakeLockRef.current = null;
         setIsRecording(false);
         setRecordingDuration(0);
         if (audioChunksRef.current.length === 0) {
@@ -1829,6 +1834,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       recorder.onerror = (ev: any) => {
         console.error("[voice] MediaRecorder error:", ev?.error?.name, ev?.error?.message);
         try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        try { wakeLockRef.current?.release?.(); } catch {}
+        wakeLockRef.current = null;
         setIsRecording(false);
         setRecordingDuration(0);
         toast({ title: "Recording failed", description: "Could not record audio", variant: "destructive" });
@@ -1838,6 +1845,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       setIsRecording(true);
       setRecordingDuration(0);
       recordingTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000);
+      // Hold a screen wake lock so iOS auto-lock can't suspend the WebView and
+      // kill the recording mid-dictation (the main cause of lost voice notes).
+      // Re-acquired on visibilitychange below, since iOS drops it when hidden.
+      try {
+        if ((navigator as any).wakeLock?.request) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch { /* unsupported / denied — best effort */ }
     } catch (err: any) {
       console.error("[voice] getUserMedia error:", err?.name, err?.message);
       toast({ title: "Microphone access denied", description: "Please allow microphone access to record voice notes", variant: "destructive" });
@@ -1855,6 +1870,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     };
   }, []);
+
+  // iOS releases the screen wake lock whenever the page is hidden, so re-acquire
+  // it when the user comes back to the app while a recording is still running.
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.visibilityState === "visible" && isRecording && !wakeLockRef.current) {
+        try {
+          if ((navigator as any).wakeLock?.request) {
+            wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+          }
+        } catch { /* best effort */ }
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [isRecording]);
 
   const isSending = aiSendMutation.isPending || teamSendMutation.isPending || chatbgpMentionMutation.isPending || uploading;
   // Array-based queue so the user can stack multiple ChatBGP requests while
