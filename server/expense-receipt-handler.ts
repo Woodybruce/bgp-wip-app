@@ -84,6 +84,19 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
   // sender is on the BGP team (phone matches users.phone). Anything else
   // falls through so the photo flows to ChatBGP.
   if (!ch || pending.length === 0) {
+    // Auto-creating an expense from a photo is destructive (it can post to
+    // Xero), so the receipts-only path must NOT fire for every image a team
+    // member sends — otherwise screenshots, property photos, headshots, etc.
+    // get force-parsed and logged as junk expenses. Require an explicit
+    // receipt/expense signal in the caption. Without one, fall through so the
+    // image flows to ChatBGP vision (parity with the web app, where images are
+    // conversational, not auto-logged). Cardholders with a pending card
+    // transaction still match automatically above — that path needs no caption
+    // because the pending Stripe txn is itself the signal.
+    const captionSignalsReceipt = /\b(receipt|expense|claim|reimburse)\w*/i.test(args.caption || "");
+    if (!captionSignalsReceipt) {
+      return false;
+    }
     const allUsers = phoneTail ? await db.select().from(users) : [];
     const matchingUser = phoneTail
       ? allUsers.find((u) => (u.phone || "").replace(/\D/g, "").slice(-10) === phoneTail)

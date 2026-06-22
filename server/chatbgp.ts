@@ -3876,7 +3876,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "send_whatsapp",
-      description: "Send a WhatsApp message to a phone number. Use when the user asks you to message someone on WhatsApp. The message is sent from the BGP business WhatsApp number. Always confirm with the user before sending.",
+      description: "Send a WhatsApp message to a phone number. Use when the user asks you to message someone on WhatsApp. The message is sent from the BGP business WhatsApp number. CONSTRAINT: WhatsApp only permits free-form messages to a person who has messaged the BGP business number within the last 24 hours — to anyone else (e.g. a contact you're introducing yourself to cold) the send WILL FAIL and the result will contain an error. HONESTY: never tell the user a message was sent unless you actually called this tool AND it returned success:true. If you did not call it, or it returned an error, say so plainly — do not claim it was sent. Confirm the number and message with the user before sending.",
       parameters: {
         type: "object",
         properties: {
