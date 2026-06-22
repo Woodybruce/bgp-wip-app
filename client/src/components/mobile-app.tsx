@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
+import * as voiceRecovery from "@/lib/voice-recovery";
 import { AuthDownloadLink } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
@@ -1751,7 +1752,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       const res = await fetch("/api/chat/upload", { method: "POST", body: formData, headers: { ...getAuthHeaders() }, credentials: "include" });
       const data = await res.json();
       if (!res.ok || !data.files?.[0]) {
-        toast({ title: "Voice note failed", description: "Could not upload recording", variant: "destructive" });
+        toast({ title: "Voice note upload failed", description: "Saved — we'll recover it next time you open the app.", variant: "destructive" });
         return;
       }
       if (unmountedRef.current) return;
@@ -1767,13 +1768,29 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         setMessages(prev => [...prev, userMessage]);
         teamSendMutation.mutate({ content, tid: threadId, attachments: [attachmentJson] });
       }
+      // Sent successfully — drop the crash-recovery copy.
+      voiceRecovery.clearPending().catch(() => {});
     } catch {
-      toast({ title: "Voice note failed", description: "Network error", variant: "destructive" });
+      toast({ title: "Voice note upload failed", description: "Network error — saved, we'll recover it next time you open the app.", variant: "destructive" });
     } finally { setUploading(false); }
   }, [threadId, isActiveThreadAi, currentUser, messages, toast, aiSendMutation, teamSendMutation]);
 
   const sendVoiceNoteRef = useRef(sendVoiceNote);
   useEffect(() => { sendVoiceNoteRef.current = sendVoiceNote; }, [sendVoiceNote]);
+
+  // On open, recover any voice note that was interrupted (lock / crash /
+  // reload) or whose upload failed last time — so a long dictation is never
+  // silently lost. Runs once; clears itself on a successful send.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const pending = await voiceRecovery.loadPending();
+      if (cancelled || !pending) return;
+      toast({ title: "Recovered a voice note", description: "An unfinished recording was saved — transcribing it now." });
+      sendVoiceNoteRef.current(pending.blob);
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const stopRecording = useCallback(() => {
     if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
@@ -1813,7 +1830,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       }
       const actualMime = recorder.mimeType || mimeType || "audio/mp4";
       audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) { audioChunksRef.current.push(e.data); voiceRecovery.appendChunk(e.data).catch(() => {}); } };
       recorder.onstop = () => {
         try { stream.getTracks().forEach(t => t.stop()); } catch {}
         try { wakeLockRef.current?.release?.(); } catch {}
@@ -1840,6 +1857,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         setRecordingDuration(0);
         toast({ title: "Recording failed", description: "Could not record audio", variant: "destructive" });
       };
+      // Persist each chunk to IndexedDB as we record, so an interrupted note
+      // (lock / crash / reload / failed upload) can be recovered on next open.
+      await voiceRecovery.beginRecording(actualMime).catch(() => {});
       recorder.start(1000);
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
