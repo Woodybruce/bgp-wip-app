@@ -1042,12 +1042,15 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
       // (we saw "Grand centra" instead of the full subject, and bodies
       // collapsing to bodyPreview). Fetching by ID gives the full data.
       // Fall back to the list payload if the by-id call fails.
-      const msg = (await getSharedMailboxMessageById(messageId).catch(() => null)) || listMsg;
+      const fullMsg = await getSharedMailboxMessageById(messageId).catch(() => null);
+      if (!fullMsg) console.warn(`[email-processor] full-message fetch returned null for ${messageId} — falling back to truncated list payload (subject/body may be incomplete)`);
+      const msg = fullMsg || listMsg;
 
       const fromEmail = msg.from?.emailAddress?.address || "";
       const fromName = msg.from?.emailAddress?.name || "";
       const subject = msg.subject || "";
       const bodyText = extractEmailBodyText(msg);
+      if (bodyText.trim().length < 50) console.warn(`[email-processor] near-empty body (${bodyText.trim().length} chars) from "${subject}" by ${fromEmail} — forward may be image-only / an attachment, or the message fetch was truncated`);
       const receivedAt = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
       const toRecipients = (msg.toRecipients || []).map((r: any) => r.emailAddress?.address || "");
       const ccRecipients = (msg.ccRecipients || []).map((r: any) => r.emailAddress?.address || "");

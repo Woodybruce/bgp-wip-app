@@ -113,7 +113,8 @@ export async function getSharedMailboxMessageById(messageId: string): Promise<an
       `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,conversationId,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
     );
     return data;
-  } catch {
+  } catch (err: any) {
+    console.warn(`[shared-mailbox] getSharedMailboxMessageById failed for ${messageId}: ${err?.message || err}`);
     return null;
   }
 }
