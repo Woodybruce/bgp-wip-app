@@ -111,24 +111,13 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
 function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
-  // Decode HTML entities FIRST. Forwarded / re-wrapped emails often
-  // arrive with their markup entity-encoded ("&lt;p&gt;£5M&lt;/p&gt;").
-  // If we strip tags before decoding, the entity-encoded tags survive
-  // tag-stripping, then get decoded into real tags AFTER stripping,
-  // leaving raw "<p>" markers behind and — when subsequent prompt
-  // assembly collapses or quotes them — eating the actual content. We
-  // saw the Green Street News bulletin collapse to literally "£" this
-  // way. Decode-first then single-pass strip works for both shapes.
-  s = s.replace(/&nbsp;/g, " ")
-       .replace(/&amp;/g, "&")
-       .replace(/&lt;/g, "<")
-       .replace(/&gt;/g, ">")
-       .replace(/&quot;/g, '"')
-       .replace(/&#39;/g, "'")
-       .replace(/&apos;/g, "'")
-       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-       .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
-  // Drop scripts/styles entirely.
+  // Work on the RAW markup first so real tags are removed while any
+  // entity-encoded tags ("&lt;p&gt;…") are still inert text. Decoding
+  // entities FIRST (the previous approach) let the tag-stripper swallow
+  // real content whenever the decoded text contained a stray "<…>" pair —
+  // that's what collapsed the Green Street News bulletin to a single word
+  // ("Bond", and "£" before that).
+  // Drop scripts/styles/comments entirely.
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
   s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
   s = s.replace(/<!--[\s\S]*?-->/g, "");
@@ -143,8 +132,29 @@ function htmlToText(html: string): string {
   s = s.replace(/<\s*br\s*\/?\s*>/gi, "\n");
   s = s.replace(/<\/(p|div|li|tr|td|th|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
   s = s.replace(/<\s*hr\s*\/?\s*>/gi, "\n---\n");
-  // Strip all remaining tags.
+  // Strip all remaining real tags.
   s = s.replace(/<[^>]+>/g, " ");
+  // NOW decode HTML entities. Forwarded / re-wrapped emails sometimes
+  // arrive with their markup entity-encoded ("&lt;p&gt;£5M&lt;/p&gt;");
+  // at this point those become literal "<p>" markers in the text.
+  s = s.replace(/&nbsp;/g, " ")
+       .replace(/&amp;/g, "&")
+       .replace(/&lt;/g, "<")
+       .replace(/&gt;/g, ">")
+       .replace(/&quot;/g, '"')
+       .replace(/&#39;/g, "'")
+       .replace(/&apos;/g, "'")
+       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+       .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  // ...so do ONE more strip to clear any de-encoded tag markers. This pass
+  // only matches KNOWN tag names (incl. Office "o:p"/"v:"/"w:" namespaces),
+  // so genuine prose like "Bond <Street deal>" or "rent < £50/sqft"
+  // survives untouched — important so we don't re-introduce the
+  // content-eating bug on text that legitimately contains angle brackets.
+  s = s.replace(
+    /<\/?(?:[a-z]+:[a-z0-9-]+|(?:p|div|span|a|br|hr|img|table|tbody|thead|tfoot|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|b|strong|i|em|u|font|center|blockquote|article|section|header|footer|nav|main|aside|figure|figcaption|html|body|head|meta|link|title|style|script|pre|code|sup|sub|small|mark|abbr|cite|q|time|label|button))\b[^>]*>/gi,
+    " ",
+  );
   // Collapse runs of whitespace but keep paragraph breaks.
   s = s.replace(/[ \t]+/g, " ")
        .replace(/\n[ \t]+/g, "\n")
@@ -179,24 +189,27 @@ function extractEmailBodyText(msg: any): string {
     }
   }
 
-  // bodyPreview fallback — used to fire whenever extracted text was
-  // empty, which routinely landed the 255-char Graph preview snippet
-  // (often just the forwarding envelope "FW: From: ... Sent: ...
-  // Subject:") in front of Claude. That's the "body looks empty or
-  // truncated" symptom Layla kept seeing.
+  // bodyPreview safety net. Graph's bodyPreview (~255 chars) is an
+  // INDEPENDENT extraction of the message text. If our htmlToText came
+  // back empty OR shorter than the preview, we almost certainly
+  // under-extracted (malformed / entity-encoded markup), so we'd be
+  // feeding Claude a collapsed fragment — the "I can only see the word
+  // 'Bond'" symptom. In that case lead with the preview instead.
   //
-  // New rule: only use bodyPreview when (a) there's nothing else, and
-  // (b) the preview itself doesn't look like a bare forwarding header.
-  // Better to send an empty body to the classifier (it'll surface that
-  // honestly) than to send a misleading 255-char header snippet.
-  if (!text.trim() && msg?.bodyPreview) {
-    const preview = String(msg.bodyPreview).trim();
+  // Guard: skip when the preview is just a forwarding envelope
+  // ("FW: From: … Sent: … Subject:") — that's noise, and better to send
+  // the real (if short) body than a misleading header snippet.
+  const preview = String(msg?.bodyPreview || "").trim();
+  if (preview && preview.length > text.trim().length) {
     const looksLikeForwardingEnvelope =
       /^(fw|fwd|re):/i.test(preview) ||
       /^from:\s/im.test(preview.slice(0, 200)) ||
       /^-+\s*(forwarded|original)\s+message/i.test(preview);
-    if (preview && !looksLikeForwardingEnvelope) {
-      text = preview;
+    if (!looksLikeForwardingEnvelope) {
+      // Keep any real text we did extract, but only when the preview
+      // doesn't already contain it (avoids duplicating the same words).
+      const extracted = text.trim();
+      text = extracted && !preview.includes(extracted) ? `${preview}\n\n${extracted}` : preview;
     }
   }
   // Cap at 60k chars — long forwarded threads (especially with the full
