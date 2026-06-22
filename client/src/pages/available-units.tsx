@@ -906,6 +906,23 @@ export default function AvailableUnitsPage() {
     updateMutation.mutate({ id, data: { [field]: value } });
   };
 
+  // Inline "search and set up" — create the CRM record when the typed name
+  // matches nothing, then return it so the cell can link it.
+  const createProperty = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/properties", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+    toast({ title: "Property created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+  const createCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+
   const uniqueProperties = useMemo(() => {
     const ids = new Set(teamUnits.map(u => u.propertyId));
     return properties.filter(p => ids.has(p.id));
@@ -1395,6 +1412,7 @@ export default function AvailableUnitsPage() {
                               options={properties.map(p => ({ id: p.id, name: p.name }))}
                               href={`/properties/${u.propertyId}`}
                               onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
+                              onCreate={async (name) => { const c = await createProperty(name); inlineUpdate(u.id, "propertyId", c.id); }}
                               placeholder="Link property"
                             />
                           </div>
@@ -1435,6 +1453,7 @@ export default function AvailableUnitsPage() {
                               options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={value ? `/companies/${value}` : undefined}
                               onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field, value: v || null })}
+                              onCreate={async (name) => { const c = await createCompany(name); dealInlineUpdate.mutate({ id: deal.id, field, value: c.id }); }}
                               placeholder="Link client"
                             />
                           );
@@ -1447,6 +1466,7 @@ export default function AvailableUnitsPage() {
                             options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
                             href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
                             onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: v || null })}
+                            onCreate={async (name) => { const c = await createCompany(name); dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: c.id }); }}
                             placeholder="Link tenant"
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}

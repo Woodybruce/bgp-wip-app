@@ -1930,6 +1930,23 @@ export default function Comps() {
     [contacts]
   );
 
+  // Inline "search and set up" — create the CRM record when the typed name
+  // matches nothing, then return it so the cell can link it.
+  const createProperty = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/properties", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+    toast({ title: "Property created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+  const createContact = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+
   const contactById = useMemo(() => {
     const m = new Map<string, any>();
     contacts.forEach((c: any) => m.set(c.id, c));
@@ -2797,6 +2814,10 @@ export default function Comps() {
                             }
                           }
                         }}
+                        onCreate={async (name) => {
+                          const c = await createProperty(name);
+                          updateMutation.mutate({ id: comp.id, field: "propertyId", value: c.id });
+                        }}
                         compact
                       />
                       {!comp.propertyId && !propertyByName.get(normName(comp.name || "")) && (
@@ -3026,6 +3047,10 @@ export default function Comps() {
                           options={contactOptions}
                           href={(comp as any).sourceContactId ? `/contacts/${(comp as any).sourceContactId}` : undefined}
                           onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceContactId", value: v })}
+                          onCreate={async (name) => {
+                            const c = await createContact(name);
+                            updateMutation.mutate({ id: comp.id, field: "sourceContactId", value: c.id });
+                          }}
                           compact
                         />
                       );

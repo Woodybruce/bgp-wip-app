@@ -956,12 +956,13 @@ function LeaseTermsCell({
 // a popover with the property picker + the unit picker (which supports
 // inline-create of new tenancy rows on that property).
 function PropertyUnitCell({
-  deal, properties, propertyUnits, onPropertySave, onUnitSave, onUnitCreated,
+  deal, properties, propertyUnits, onPropertySave, onPropertyCreate, onUnitSave, onUnitCreated,
 }: {
   deal: any;
   properties: CrmProperty[];
   propertyUnits: PropertyUnit[];
   onPropertySave: (v: string | null) => void;
+  onPropertyCreate?: (name: string) => void;
   onUnitSave: (v: string | null) => void;
   onUnitCreated?: (tenancyRow: any) => void;
 }) {
@@ -1003,6 +1004,7 @@ function PropertyUnitCell({
             options={properties.map(p => ({ id: p.id, name: p.name }))}
             href={deal.propertyId ? `/properties/${deal.propertyId}` : undefined}
             onSave={onPropertySave}
+            onCreate={onPropertyCreate}
             placeholder="Link property"
           />
         </div>
@@ -5116,6 +5118,49 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
   }, [deals, companies, toast]);
 
+  // Inline "search and set up" for party cells — when the typed name matches
+  // no existing CRM record, create it (with the right company type) and link
+  // it to the deal in one step, mirroring the deal-detail panel.
+  const createCompanyForDeal = async (dealId: string, field: string, companyType: string, name: string) => {
+    try {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType,
+        isTrackedBrand: companyType.startsWith("Tenant"),
+      });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      handleInlineSave(dealId, field, String(created.id));
+      toast({ title: `${companyType} created`, description: `${created.name || name} added.` });
+    } catch (e: any) {
+      toast({ title: "Create failed", description: e?.message || "Try again", variant: "destructive" });
+    }
+  };
+
+  const createContactForDeal = async (dealId: string, field: string, name: string) => {
+    try {
+      const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim() });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      handleInlineSave(dealId, field, String(created.id));
+      toast({ title: "Contact created", description: `${created.name || name} added.` });
+    } catch (e: any) {
+      toast({ title: "Create failed", description: e?.message || "Try again", variant: "destructive" });
+    }
+  };
+
+  const createPropertyForDeal = async (dealId: string, name: string) => {
+    try {
+      const r = await apiRequest("POST", "/api/crm/properties", { name: name.trim() });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      handleInlineSave(dealId, "propertyId", String(created.id));
+      toast({ title: "Property created", description: `${created.name || name} added to CRM.` });
+    } catch (e: any) {
+      toast({ title: "Create failed", description: e?.message || "Try again", variant: "destructive" });
+    }
+  };
+
   const toggleColumn = useCallback((key: string) => {
     setVisibleColumns((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
@@ -5900,6 +5945,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           properties={properties}
                           propertyUnits={propertyUnits}
                           onPropertySave={(v) => handleInlineSave(deal.id, "propertyId", v)}
+                          onPropertyCreate={(name) => createPropertyForDeal(deal.id, name)}
                           onUnitSave={(v) => handleInlineSave(deal.id, "unitId", v)}
                           onUnitCreated={() => invalidateDealCaches()}
                         />
@@ -5947,6 +5993,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
                             href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
                             onSave={(v) => handleInlineSave(deal.id, "landlordId", v || null)}
+                            onCreate={(name) => createCompanyForDeal(deal.id, "landlordId", "Landlord / Client", name)}
                             placeholder="Link landlord"
                           />
                         </TableCell>
@@ -5994,6 +6041,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
                               href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
+                              onCreate={(name) => createCompanyForDeal(deal.id, "tenantId", "Tenant", name)}
                               placeholder="Link tenant"
                             />
                           </div>
@@ -6061,6 +6109,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             options={contacts.map(c => ({ id: c.id, name: c.name || c.email || "Unknown" }))}
                             href={deal.clientContactId ? `/contacts/${deal.clientContactId}` : undefined}
                             onSave={(v) => handleInlineSave(deal.id, "clientContactId", v || null)}
+                            onCreate={(name) => createContactForDeal(deal.id, "clientContactId", name)}
                             placeholder="Link contact"
                           />
                         </TableCell>
@@ -6073,6 +6122,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
                               href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "vendorId", v || null)}
+                              onCreate={(name) => createCompanyForDeal(deal.id, "vendorId", "Vendor", name)}
                               placeholder="Link vendor"
                             />
                           </div>
@@ -6086,6 +6136,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
                               href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "purchaserId", v || null)}
+                              onCreate={(name) => createCompanyForDeal(deal.id, "purchaserId", "Purchaser", name)}
                               placeholder="Link purchaser"
                             />
                           </div>
@@ -6099,6 +6150,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.vendorAgentId ? `/companies/${deal.vendorAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "vendorAgentId", v || null)}
+                              onCreate={(name) => createCompanyForDeal(deal.id, "vendorAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>
@@ -6112,6 +6164,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.acquisitionAgentId ? `/companies/${deal.acquisitionAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "acquisitionAgentId", v || null)}
+                              onCreate={(name) => createCompanyForDeal(deal.id, "acquisitionAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>
@@ -6125,6 +6178,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.purchaserAgentId ? `/companies/${deal.purchaserAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "purchaserAgentId", v || null)}
+                              onCreate={(name) => createCompanyForDeal(deal.id, "purchaserAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>
@@ -6138,6 +6192,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.leasingAgentId ? `/companies/${deal.leasingAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "leasingAgentId", v || null)}
+                              onCreate={(name) => createCompanyForDeal(deal.id, "leasingAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>

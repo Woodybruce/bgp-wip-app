@@ -497,6 +497,16 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     [companies]
   );
 
+  // Inline "search and set up" — create the CRM company when the typed name
+  // matches nothing, then return it so the cell can link it.
+  const createCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+
   const uniqueCities = useMemo(() =>
     [...new Set(comps.map(c => c.city).filter(Boolean) as string[])].sort(),
     [comps]
@@ -735,6 +745,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               options={companyOptions}
               href={comp.buyerCompanyId ? `/companies?highlight=${comp.buyerCompanyId}` : undefined}
               onSave={(v) => handleUpdate(id, "buyerCompanyId", v)}
+              onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "buyerCompanyId", c.id); }}
               compact
             />
           </div>
@@ -753,6 +764,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               options={companyOptions}
               href={comp.sellerCompanyId ? `/companies?highlight=${comp.sellerCompanyId}` : undefined}
               onSave={(v) => handleUpdate(id, "sellerCompanyId", v)}
+              onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "sellerCompanyId", c.id); }}
               compact
             />
           </div>
