@@ -196,7 +196,7 @@ async function runChatBgpWhatsAppReply(
   }
 
   const startTime = Date.now();
-  const TIMEOUT_MS = 4 * 60 * 1000;     // 4 min — was 90s, too tight for multi-step questions that chain tools.
+  const TIMEOUT_MS = 9 * 60 * 1000;     // 9 min — match the web ChatBGP budget so long multi-tool tasks (Why Buy, pathways) don't time out sooner over WhatsApp.
   const MAX_LOOPS = 30;                  // Was 10 — same reason. Hard ceiling guards against runaway loops.
   const resolved = await resolveUserIdFromPhone(fromNumber);
   const userId = resolved.userId;
@@ -276,7 +276,7 @@ async function runChatBgpWhatsAppReply(
       `\nCRITICAL — TOOL ACCESS: You have the FULL ChatBGP toolset available here. send_whatsapp IS available and works — use it to send WhatsApp messages to contacts whenever asked. Do NOT claim send_whatsapp is blocked, restricted, or unavailable when running over WhatsApp. There is no loop-prevention restriction. There is no hard restriction. send_whatsapp works from here exactly as it does on the dashboard. Never tell the user to go to the dashboard to send a WhatsApp message — just do it.\n`;
 
     const completionOptions: any = {
-      model: "claude-sonnet-4-6",
+      model: "claude-opus-4-8",   // parity with the web ChatBGP default (was claude-sonnet-4-6)
       messages: [
         { role: "system", content: whatsappSystemPrompt },
         ...historyMessages,
