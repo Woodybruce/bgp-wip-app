@@ -129,6 +129,85 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
   }
 }
 
+// Forwarded-as-attachment extractor. When a newsletter/email is forwarded
+// "as an attachment" (Outlook → an itemAttachment carrying the original
+// message; or a dragged-in .eml file), the outer body is just the covering
+// note and the real content lives inside the attachment. The body extractor
+// then sees almost nothing — the recurring "bulletin came through truncated"
+// symptom. Graph exposes the nested message via
+// $expand=microsoft.graph.itemAttachment/item; .eml files arrive as raw
+// RFC822 bytes. Pull whatever readable text we can so the classifier + reply
+// read the actual bulletin.
+async function extractForwardedMessageText(messageId: string): Promise<string> {
+  try {
+    const attList = await graphRequest(
+      `/users/${SHARED_MAILBOX}/messages/${messageId}/attachments?$expand=microsoft.graph.itemAttachment/item`
+    );
+    const parts: string[] = [];
+    for (const att of (attList.value || [])) {
+      const odataType = String(att["@odata.type"] || "");
+      // (a) Outlook "forward as attachment" → itemAttachment whose .item is the
+      //     original message. Reuse the robust body extractor on the nested item.
+      if (/itemAttachment/i.test(odataType) && att.item) {
+        const inner = extractEmailBodyText(att.item);
+        if (inner && inner.trim().length > 20) {
+          parts.push(`--- Forwarded message: "${att.item.subject || att.name || "message"}" ---\n${inner.trim()}`);
+        }
+        continue;
+      }
+      // (b) Dragged-in .eml (raw RFC822 file attachment).
+      if (/\.eml$/i.test(att.name || "") || /message\/rfc822/i.test(att.contentType || "")) {
+        try {
+          const detail = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/attachments/${att.id}`);
+          if (detail?.contentBytes) {
+            const txt = rfc822ToText(Buffer.from(detail.contentBytes, "base64").toString("utf8"));
+            if (txt && txt.trim().length > 20) parts.push(`--- Attached email: "${att.name}" ---\n${txt.trim()}`);
+          }
+        } catch (emlErr: any) {
+          console.warn(`[email-processor] .eml parse failed for ${att.name}: ${emlErr?.message}`);
+        }
+      }
+    }
+    return parts.join("\n\n");
+  } catch (err: any) {
+    console.warn(`[email-processor] extractForwardedMessageText failed: ${err?.message}`);
+    return "";
+  }
+}
+
+// Best-effort RFC822 → text for raw .eml attachments (no MIME-parser dep).
+// Picks the text/html part (preferred) or text/plain, quoted-printable-decodes
+// it, and runs HTML through htmlToText. Guarded: if the result still looks like
+// a binary/base64 blob (high non-printable ratio) we return "" rather than feed
+// Claude garbage — the itemAttachment path above covers the common case anyway.
+function rfc822ToText(rfc: string): string {
+  const norm = rfc.replace(/\r\n/g, "\n");
+  const slicePart = (ctRe: RegExp): string | null => {
+    const idx = norm.search(ctRe);
+    if (idx < 0) return null;
+    const bodyStart = norm.indexOf("\n\n", idx);
+    if (bodyStart < 0) return null;
+    let chunk = norm.slice(bodyStart + 2);
+    const boundary = chunk.search(/\n--[-_A-Za-z0-9]+/);
+    if (boundary > 0) chunk = chunk.slice(0, boundary);
+    return chunk;
+  };
+  const decodeQP = (s: string) =>
+    s.replace(/=\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  const clean = (s: string): string => {
+    const t = s.trim();
+    if (!t) return "";
+    const nonPrintable = (t.match(/[^\x09\x0A\x0D\x20-\x7E -￿]/g) || []).length;
+    return nonPrintable / t.length > 0.15 ? "" : t; // looks like base64/binary → bail
+  };
+  const html = slicePart(/content-type:\s*text\/html/i);
+  if (html) { const out = clean(htmlToText(decodeQP(html))); if (out) return out; }
+  const plain = slicePart(/content-type:\s*text\/plain/i);
+  if (plain) { const out = clean(decodeQP(plain)); if (out) return out; }
+  const blank = norm.indexOf("\n\n");
+  return blank > 0 ? clean(htmlToText(norm.slice(blank + 2))) : "";
+}
+
 // Convert Microsoft Graph message HTML/text body to a plain-text string
 // that preserves readable structure. The old extractor preferred
 // bodyPreview (always just ~255 chars from Graph) or did a crude tag
@@ -1208,7 +1287,7 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
       const fromEmail = msg.from?.emailAddress?.address || "";
       const fromName = msg.from?.emailAddress?.name || "";
       const subject = msg.subject || "";
-      const bodyText = extractEmailBodyText(msg);
+      let bodyText = extractEmailBodyText(msg);
       // Rich diagnostic for the recurring "forwarded bulletin came through
       // empty / only the header" reports. Fires when extraction is tiny OR
       // when the email is image-dominated but yielded little text (the
@@ -1228,6 +1307,18 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
             `| contentType=${rawType} rawLen=${rawContent.length} imgTags=${imgCount} hasAttachments=${!!msg?.hasAttachments} fullFetch=${!!fullMsg} ` +
             `| previewLen=${String(msg?.bodyPreview || "").length} | rawSnippet="${rawSnippet}"`,
           );
+        }
+      }
+
+      // Recovery: a thin body on a message WITH attachments is almost always a
+      // forward-as-attachment — the bulletin is the attached message, not the
+      // covering note. Pull the attached message's text in so the classifier
+      // and reply read the actual content instead of "the body looks truncated".
+      if (bodyText.trim().length < 200 && msg?.hasAttachments) {
+        const forwarded = await extractForwardedMessageText(messageId);
+        if (forwarded && forwarded.trim().length > bodyText.trim().length) {
+          bodyText = `${bodyText.trim()}\n\n${forwarded}`.trim().slice(0, 60000);
+          console.log(`[email-processor] recovered ${forwarded.trim().length} chars from forwarded attachment(s) for "${subject}"`);
         }
       }
       const receivedAt = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
