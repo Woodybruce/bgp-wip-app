@@ -8,38 +8,34 @@
  * Supported inputs (optionally inside a .zip):
  *   - .gml             — raw INSPIRE Index Polygons (EPSG:27700 / BNG)
  *   - .geojson / .json — a GeoJSON FeatureCollection (EPSG:4326)
- *   - .ndjson          — one GeoJSON Feature per line (EPSG:4326), e.g.
- *                        ogr2ogr GeoJSONSeq output
+ *   - .ndjson          — one GeoJSON Feature per line (EPSG:4326)
  *
- * POSTGIS-FREE: this database has no PostGIS, so we DON'T use geometry
- * types. Boundaries are stored as GeoJSON in a jsonb column (already in
- * WGS84 / EPSG:4326) plus a min/max lng/lat bounding box for fast viewport
- * queries. GML coordinates are British National Grid (EPSG:27700) and are
- * reprojected to 4326 in JS with proj4 at ingest time. ~metre accuracy,
- * invisible at map-shading zoom.
+ * STREAMING: zips are read with `unzipper` (random-access on the central
+ * directory) and each data entry is piped straight into a streaming parser
+ * — so a multi-GB national zip never gets buffered whole (Node's 2 GiB
+ * Buffer limit) and the decompressed GML never lands on disk in full. GML
+ * is parsed feature-block by feature-block, so memory stays bounded even
+ * for the ~24M-parcel national set.
  *
- * INSPIRE carries NO title numbers, so title_number is left NULL — this
- * powers map boundary shading only, not title-linked official plans (the
- * paid £20k/yr National Polygon Service is the title-linked version).
+ * POSTGIS-FREE: this database has no PostGIS, so geometry is stored as
+ * GeoJSON in a jsonb column (WGS84) + a numeric min/max lng/lat bbox.
+ * GML coords (EPSG:27700) are reprojected to 4326 in JS with proj4.
  *
- * NOTE: the GML parser is written to the standard Land Registry INSPIRE
- * Index Polygons schema (GML2 <gml:coordinates> and GML3 <gml:posList>,
- * one Polygon per feature). It streams the file so memory stays bounded,
- * and logs skip reasons so a schema mismatch on a real file is diagnosable
- * from the hmlr_ingest_runs row rather than silent.
+ * INSPIRE carries NO title numbers, so title_number stays NULL — map
+ * boundary shading only, not title-linked plans.
  */
 
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import * as readline from "readline";
 import proj4 from "proj4";
+import unzipper from "unzipper";
 import { pool } from "./db";
 import { isHmlrPolygonsAvailable, resetHmlrAvailabilityCache } from "./hmlr-direct";
 
-// British National Grid (EPSG:27700) → WGS84. The +towgs84 Helmert params
-// are the Ordnance Survey published values (~metre accuracy without the
-// OSTN15 grid — ample for map shading).
+// British National Grid (EPSG:27700) → WGS84. +towgs84 = the Ordnance
+// Survey published Helmert params (~metre accuracy without OSTN15 — ample
+// for map shading).
 proj4.defs(
   "EPSG:27700",
   "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.1502,0.247,0.8421,-20.4894 +units=m +no_defs",
@@ -58,18 +54,16 @@ interface PolygonRow {
 
 export interface InspireIngestResult {
   runId: string;
-  format: "gml" | "geojson" | "ndjson";
   processed: number;
   inserted: number;
   updated: number;
   skipped: number;
 }
 
-const BATCH = 500;
+const BATCH = 1000;
 
 // ─── Coordinate parsing ────────────────────────────────────────────────
 
-/** GML3 <gml:posList>: "e1 n1 e2 n2 …" (whitespace-separated). */
 function parsePosList(text: string): number[][] {
   const nums = text.trim().split(/\s+/).map(Number).filter((n) => Number.isFinite(n));
   if (nums.length < 6 || nums.length % 2 !== 0) return [];
@@ -78,7 +72,6 @@ function parsePosList(text: string): number[][] {
   return ring;
 }
 
-/** GML2 <gml:coordinates>: "e1,n1 e2,n2 …" (comma within a point). */
 function parseCoordinates(text: string): number[][] {
   const ring: number[][] = [];
   for (const tuple of text.trim().split(/\s+/)) {
@@ -90,7 +83,6 @@ function parseCoordinates(text: string): number[][] {
   return ring.length >= 3 ? ring : [];
 }
 
-/** Ensure a linear ring is explicitly closed (GeoJSON requires it). */
 function closeRing(ring: number[][]): number[][] {
   if (ring.length < 3) return ring;
   const a = ring[0], b = ring[ring.length - 1];
@@ -120,24 +112,15 @@ function ringsFrom(block: string): number[][][] {
   return rings;
 }
 
-/**
- * Turn one GML feature block into a GeoJSON Polygon in SOURCE coords
- * (reprojection happens later). Exterior = first ring inside
- * exterior/outerBoundaryIs (or the first ring found); interior rings =
- * those inside interior/innerBoundaryIs.
- */
 function featureToGeometry(block: string): { inspireId: number; geometry: any } | { skip: string } {
   const idMatch = block.match(/<(?:[\w.]+:)?INSPIREID>\s*(\d+)\s*<\/(?:[\w.]+:)?INSPIREID>/);
   if (!idMatch) return { skip: "missing INSPIREID" };
   const inspireId = Number(idMatch[1]);
   if (!Number.isFinite(inspireId)) return { skip: "INSPIREID not numeric" };
-
   const exteriorBlock = block.match(/<gml:(?:exterior|outerBoundaryIs)>([\s\S]*?)<\/gml:(?:exterior|outerBoundaryIs)>/);
   const interiorBlocks = block.match(/<gml:(?:interior|innerBoundaryIs)>([\s\S]*?)<\/gml:(?:interior|innerBoundaryIs)>/g) || [];
-
   const exterior = exteriorBlock ? (ringsFrom(exteriorBlock[1])[0] || null) : (ringsFrom(block)[0] || null);
   if (!exterior) return { skip: "no exterior ring" };
-
   const coordinates: number[][][] = [exterior];
   for (const ib of interiorBlocks) {
     const hole = ringsFrom(ib)[0];
@@ -196,9 +179,6 @@ function computeBbox(geom: any): [number, number, number, number] | null {
 
 // ─── DB ─────────────────────────────────────────────────────────────────
 
-/** Create the table + indexes if missing — keeps the ingest self-sufficient
- *  regardless of whether the boot migration has run on this deploy. No
- *  PostGIS: geometry lives in a jsonb column + numeric bbox. */
 async function ensurePolygonTable(): Promise<void> {
   await pool.query(`CREATE TABLE IF NOT EXISTS hmlr_title_polygons (
     inspire_id    BIGINT PRIMARY KEY,
@@ -248,7 +228,6 @@ async function flushBatch(
       params,
     };
   };
-
   try {
     const q = buildSql(batch);
     const r = await pool.query<{ inserted: boolean }>(q.text, q.params);
@@ -256,7 +235,6 @@ async function flushBatch(
     for (const row of r.rows) (row.inserted ? inserted++ : updated++);
     return { inserted, updated, failed: 0 };
   } catch {
-    // Retry row by row so one bad row can't sink the whole batch.
     let inserted = 0, updated = 0, failed = 0;
     for (const row of batch) {
       try {
@@ -269,49 +247,31 @@ async function flushBatch(
   }
 }
 
-// ─── Streaming parsers ─────────────────────────────────────────────────
+// ─── Streaming parsers (accept any Readable) ───────────────────────────
 
-async function unzipToTemp(zipPath: string): Promise<string> {
-  const AdmZip = (await import("adm-zip")).default;
-  const zip = new AdmZip(zipPath);
-  const entries = zip.getEntries().filter((e) => !e.isDirectory);
-  const byPriority = [".geojson", ".ndjson", ".json", ".gml"];
-  let chosen: typeof entries[number] | undefined;
-  for (const ext of byPriority) {
-    chosen = entries.find((e) => e.entryName.toLowerCase().endsWith(ext));
-    if (chosen) break;
-  }
-  if (!chosen) {
-    throw new Error(`No .gml/.geojson/.ndjson/.json inside zip. Entries: ${entries.map((e) => e.entryName).slice(0, 20).join(", ") || "(empty)"}`);
-  }
-  const out = path.join(os.tmpdir(), `inspire-${Date.now()}-${path.basename(chosen.entryName).replace(/[^a-zA-Z0-9._-]/g, "_")}`);
-  fs.writeFileSync(out, chosen.getData());
-  return out;
+function formatOf(name: string): "gml" | "ndjson" | "geojson" | null {
+  const n = name.toLowerCase();
+  if (n.endsWith(".gml")) return "gml";
+  if (n.endsWith(".ndjson")) return "ndjson";
+  if (n.endsWith(".geojson") || n.endsWith(".json")) return "geojson";
+  return null;
 }
 
-function detectFormat(filePath: string): "gml" | "geojson" | "ndjson" {
-  const lower = filePath.toLowerCase();
-  if (lower.endsWith(".gml")) return "gml";
-  if (lower.endsWith(".ndjson")) return "ndjson";
-  return "geojson";
-}
-
-/** Stream a GML file, emitting feature blocks split on the member end-tag. */
-async function parseGml(
-  filePath: string,
+async function parseGmlStream(
+  input: NodeJS.ReadableStream,
   onFeature: (inspireId: number, geometrySource: any) => Promise<void>,
   onSkip: (reason: string) => void,
 ): Promise<void> {
   const END_TAGS = ["</gml:featureMember>", "</gml:member>", "</member>"];
-  const stream = fs.createReadStream(filePath, { encoding: "utf-8" });
+  input.setEncoding("utf8");
   let buf = "";
   const handleBlock = async (block: string) => {
-    if (!/INSPIREID/.test(block)) return; // header / non-feature chunk
+    if (!/INSPIREID/.test(block)) return;
     const geom = featureToGeometry(block);
     if ("skip" in geom) { onSkip(geom.skip); return; }
     await onFeature(geom.inspireId, geom.geometry);
   };
-  for await (const chunk of stream) {
+  for await (const chunk of input as AsyncIterable<string>) {
     buf += chunk;
     let cut = true;
     while (cut) {
@@ -332,13 +292,30 @@ async function parseGml(
   if (/INSPIREID/.test(buf)) await handleBlock(buf);
 }
 
+async function parseNdjsonStream(
+  input: NodeJS.ReadableStream,
+  onRow: (r: { inspireId: number; titleNumber: string | null; geometry: any }) => Promise<void>,
+  onSkip: (reason: string) => void,
+): Promise<void> {
+  input.setEncoding("utf8");
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
+  for await (const line of rl) {
+    const t = line.trim();
+    if (!t) continue;
+    let f: any;
+    try { f = JSON.parse(t); } catch { onSkip("invalid JSON line"); continue; }
+    const row = featureFromGeoJson(f);
+    if ("skip" in row) onSkip(row.skip); else await onRow(row);
+  }
+}
+
 // ─── Orchestration ─────────────────────────────────────────────────────
 
 /**
  * Ingest one INSPIRE polygon file (.zip/.gml/.geojson/.ndjson) into
  * hmlr_title_polygons. Tracks progress in hmlr_ingest_runs (dataset
- * 'inspire'). GML is treated as EPSG:27700 and reprojected to 4326 in JS;
- * GeoJSON/NDJSON is treated as already 4326.
+ * 'inspire'). GML treated as EPSG:27700 and reprojected to 4326; GeoJSON
+ * / NDJSON treated as already 4326. A .zip is streamed entry-by-entry.
  */
 export async function ingestInspirePolygonsFile(
   filePath: string,
@@ -349,9 +326,6 @@ export async function ingestInspirePolygonsFile(
 
   await ensurePolygonTable();
 
-  // Reuse a run row reserved by the caller (the fetch route reserves it
-  // before downloading, so download/size failures are visible too);
-  // otherwise create one here.
   let runId = opts.runId;
   if (!runId) {
     const runRes = await pool.query<{ id: string }>(
@@ -361,63 +335,66 @@ export async function ingestInspirePolygonsFile(
     runId = runRes.rows[0].id;
   }
 
-  const tmpFiles: string[] = [];
   let processed = 0, inserted = 0, updated = 0, skipped = 0;
   const skipReasons: Record<string, number> = {};
   const note = (reason: string) => { skipped++; skipReasons[reason] = (skipReasons[reason] || 0) + 1; };
 
-  try {
-    let dataPath = filePath;
-    if (filePath.toLowerCase().endsWith(".zip")) {
-      dataPath = await unzipToTemp(filePath);
-      tmpFiles.push(dataPath);
-    }
-    const format = detectFormat(dataPath);
-    const srid = format === "gml" ? 27700 : 4326;
-
-    let batch: PolygonRow[] = [];
-    const flush = async () => {
-      if (batch.length === 0) return;
-      const f = await flushBatch(batch, region, runId);
-      inserted += f.inserted; updated += f.updated; skipped += f.failed;
-      if (f.failed) skipReasons["geometry rejected"] = (skipReasons["geometry rejected"] || 0) + f.failed;
-      batch = [];
-    };
-    const handle = async (inspireId: number, titleNumber: string | null, geometrySource: any) => {
-      processed++;
-      const geometry = reprojectGeometry(geometrySource, srid);
-      const bbox = computeBbox(geometry);
-      if (!bbox) { note("empty/invalid geometry"); return; }
-      batch.push({ inspireId, titleNumber, geometry, bbox });
-      if (batch.length >= BATCH) {
-        await flush();
-        if (processed % 10_000 === 0) {
-          await pool.query(
-            `UPDATE hmlr_ingest_runs SET rows_processed=$1, rows_inserted=$2, rows_updated=$3, rows_skipped=$4 WHERE id=$5`,
-            [processed, inserted, updated, skipped, runId],
-          );
-          console.log(`[inspire-ingest] processed=${processed} inserted=${inserted} updated=${updated} skipped=${skipped}`);
-        }
+  let batch: PolygonRow[] = [];
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const f = await flushBatch(batch, region, runId!);
+    inserted += f.inserted; updated += f.updated; skipped += f.failed;
+    if (f.failed) skipReasons["geometry rejected"] = (skipReasons["geometry rejected"] || 0) + f.failed;
+    batch = [];
+  };
+  const handle = async (inspireId: number, titleNumber: string | null, geometrySource: any, srid: number) => {
+    processed++;
+    const geometry = reprojectGeometry(geometrySource, srid);
+    const bbox = computeBbox(geometry);
+    if (!bbox) { note("empty/invalid geometry"); return; }
+    batch.push({ inspireId, titleNumber, geometry, bbox });
+    if (batch.length >= BATCH) {
+      await flush();
+      if (processed % 50_000 === 0) {
+        await pool.query(
+          `UPDATE hmlr_ingest_runs SET rows_processed=$1, rows_inserted=$2, rows_updated=$3, rows_skipped=$4 WHERE id=$5`,
+          [processed, inserted, updated, skipped, runId],
+        );
+        console.log(`[inspire-ingest] processed=${processed} inserted=${inserted} updated=${updated} skipped=${skipped}`);
       }
-    };
+    }
+  };
 
-    if (format === "gml") {
-      await parseGml(dataPath, (id, geom) => handle(id, null, geom), note);
-    } else if (format === "ndjson") {
-      const rl = readline.createInterface({ input: fs.createReadStream(dataPath, { encoding: "utf-8" }), crlfDelay: Infinity });
-      for await (const line of rl) {
-        const t = line.trim();
-        if (!t) continue;
-        let f: any;
-        try { f = JSON.parse(t); } catch { note("invalid JSON line"); continue; }
-        const row = featureFromGeoJson(f);
-        if ("skip" in row) note(row.skip); else await handle(row.inspireId, row.titleNumber, row.geometry);
+  const parseSource = async (stream: NodeJS.ReadableStream, format: "gml" | "ndjson" | "geojson") => {
+    const srid = format === "gml" ? 27700 : 4326;
+    if (format === "gml") await parseGmlStream(stream, (id, g) => handle(id, null, g, srid), note);
+    else if (format === "ndjson") await parseNdjsonStream(stream, (r) => handle(r.inspireId, r.titleNumber, r.geometry, srid), note);
+    else note("geojson FeatureCollection inside a zip isn't streamed — convert to .ndjson");
+  };
+
+  try {
+    if (filePath.toLowerCase().endsWith(".zip")) {
+      const dir = await unzipper.Open.file(filePath);
+      const dataFiles = dir.files.filter((f) => f.type === "File" && formatOf(f.path));
+      if (dataFiles.length === 0) {
+        throw new Error(`No .gml/.geojson/.ndjson inside zip. Entries: ${dir.files.slice(0, 20).map((f) => f.path).join(", ") || "(empty)"}`);
+      }
+      for (const f of dataFiles) {
+        const fmt = formatOf(f.path)!;
+        console.log(`[inspire-ingest] entry ${f.path} (${fmt})`);
+        await parseSource(f.stream(), fmt);
       }
     } else {
-      const fc = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
-      for (const f of fc?.features || []) {
-        const row = featureFromGeoJson(f);
-        if ("skip" in row) note(row.skip); else await handle(row.inspireId, row.titleNumber, row.geometry);
+      const fmt = formatOf(filePath);
+      if (fmt === "gml" || fmt === "ndjson") {
+        await parseSource(fs.createReadStream(filePath), fmt);
+      } else {
+        // Single GeoJSON FeatureCollection — small files only (read whole).
+        const fc = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        for (const ft of fc?.features || []) {
+          const r = featureFromGeoJson(ft);
+          if ("skip" in r) note(r.skip); else await handle(r.inspireId, r.titleNumber, r.geometry, 4326);
+        }
       }
     }
     await flush();
@@ -429,8 +406,8 @@ export async function ingestInspirePolygonsFile(
     );
     resetHmlrAvailabilityCache();
     void isHmlrPolygonsAvailable();
-    console.log(`[inspire-ingest] DONE ${sourceFilename} (${format}) — processed=${processed} inserted=${inserted} updated=${updated} skipped=${skipped}${notes ? ` [${notes}]` : ""}`);
-    return { runId, format, processed, inserted, updated, skipped };
+    console.log(`[inspire-ingest] DONE ${sourceFilename} — processed=${processed} inserted=${inserted} updated=${updated} skipped=${skipped}${notes ? ` [${notes}]` : ""}`);
+    return { runId, processed, inserted, updated, skipped };
   } catch (err: any) {
     await pool.query(
       `UPDATE hmlr_ingest_runs SET status='error', error=$1, rows_processed=$2, rows_inserted=$3, rows_updated=$4, rows_skipped=$5, finished_at=now() WHERE id=$6`,
@@ -438,7 +415,5 @@ export async function ingestInspirePolygonsFile(
     ).catch(() => {});
     console.error(`[inspire-ingest] FAILED ${sourceFilename}:`, err?.message);
     throw err;
-  } finally {
-    for (const t of tmpFiles) { try { fs.unlinkSync(t); } catch { /* ignore */ } }
   }
 }
