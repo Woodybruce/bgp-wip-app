@@ -607,6 +607,21 @@ export function setupWhatsAppRoutes(app: Express) {
                   let imageAttachment: { mediaType: string; base64: string } | undefined;
                   try {
                     const { bytes, mimeType } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
+                    if (bytes && bytes.length > 0) {
+                      // Persist the inbound photo to durable file_storage (same
+                      // chat-media/ pattern as the document branch + ChatBGP
+                      // uploads) so it's retrievable later instead of being lost
+                      // after the transient vision pass.
+                      try {
+                        const imgExt = (mimeType.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
+                        const safeImgName = `${msg.image?.id || "image"}.${imgExt}`.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+                        const stamped = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeImgName}`;
+                        const { saveFile } = await import("./file-storage");
+                        await saveFile(`chat-media/${stamped}`, bytes, mimeType.startsWith("image/") ? mimeType : "image/jpeg", safeImgName);
+                      } catch (saveErr: any) {
+                        console.error(`[whatsapp-ai] Image save failed: ${saveErr?.message}`);
+                      }
+                    }
                     if (bytes && bytes.length > 0 && bytes.length < 5 * 1024 * 1024) {
                       imageAttachment = {
                         mediaType: mimeType.startsWith("image/") ? mimeType : "image/jpeg",

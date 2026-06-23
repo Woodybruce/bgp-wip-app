@@ -24,7 +24,16 @@ const DATA_MIME_TYPES = new Set([
 function isDataFile(filename: string, contentType?: string): boolean {
   if (contentType && DATA_MIME_TYPES.has(contentType.split(";")[0].trim().toLowerCase())) return true;
   const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
-  return ["xlsx", "xls", "csv", "pdf", "txt", "ods"].includes(ext);
+  // .docx (Word) was previously dropped — it isn't in DATA_MIME_TYPES and
+  // wasn't in this list, so emailed Word docs were silently skipped. Include
+  // it (and .doc) so they're persisted/processed like other data files.
+  return ["xlsx", "xls", "csv", "pdf", "txt", "ods", "docx", "doc"].includes(ext);
+}
+
+function isImageFile(filename: string, contentType?: string): boolean {
+  if (contentType && contentType.split(";")[0].trim().toLowerCase().startsWith("image/")) return true;
+  const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
+  return ["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "tiff"].includes(ext);
 }
 
 async function fetchAndIngestAttachments(messageId: string, fromEmail: string): Promise<string> {
@@ -32,8 +41,12 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
     const attList = await graphRequest(
       `/users/${SHARED_MAILBOX}/messages/${messageId}/attachments?$select=id,name,contentType,size,isInline`
     );
+    // Inline attachments are no longer excluded — inline images (and inline
+    // data files) carry real content and were being dropped by the old
+    // `!a.isInline` guard. Images are persisted to durable storage below;
+    // data files (incl. .docx) flow through the existing ingest path.
     const dataAtts = (attList.value || []).filter(
-      (a: any) => !a.isInline && isDataFile(a.name, a.contentType) && (a.size || 0) < 25 * 1024 * 1024
+      (a: any) => (isDataFile(a.name, a.contentType) || isImageFile(a.name, a.contentType)) && (a.size || 0) < 25 * 1024 * 1024
     );
     if (dataAtts.length === 0) return "";
     const summaries: string[] = [];
@@ -41,6 +54,25 @@ async function fetchAndIngestAttachments(messageId: string, fromEmail: string): 
       try {
         const detail = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/attachments/${att.id}`);
         const bytes = Buffer.from(detail.contentBytes, "base64");
+
+        // Images — persist to durable file_storage (same chat-media/ pattern
+        // as ChatBGP uploads + the WhatsApp media handler) so an emailed/
+        // inline photo is retrievable later. They aren't run through
+        // ingestBytes (which is for tabular/document data, not raw photos).
+        if (isImageFile(att.name, att.contentType)) {
+          try {
+            const crypto = await import("crypto");
+            const safeName = (att.name || "image").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+            const stamped = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`;
+            const { saveFile } = await import("./file-storage");
+            await saveFile(`chat-media/${stamped}`, bytes, att.contentType || "image/jpeg", att.name);
+            summaries.push(`**${att.name}**: image saved to media library`);
+          } catch (imgErr: any) {
+            console.warn(`[email-ingest] image save failed for ${att.name}: ${imgErr?.message}`);
+            summaries.push(`**${att.name}**: image could not be saved (${imgErr?.message})`);
+          }
+          continue;
+        }
 
         // Try brochure pipeline first for PDFs — match/create the property,
         // file the brochure under it, run bespoke ingest. If it's not a
@@ -767,6 +799,71 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
             break;
           }
 
+          case "update_contact":
+          case "create_contact":
+          case "create_company":
+          case "update_company":
+          case "create_deal":
+          case "update_deal": {
+            // Delegate explicit emailed CRM instructions to the agentic CRM
+            // executor (executeCrmToolRaw) in chatbgp.ts rather than
+            // reimplementing write logic here. Dynamic import avoids a circular
+            // dependency (chatbgp ↔ email-processor) — matching the dynamic
+            // import style used throughout this file. These writes only fire
+            // for an explicit instruction action; we never auto-create records
+            // from email prose.
+            try {
+              const { executeCrmToolRaw } = await import("./chatbgp");
+              // Normalize the email-instruction action shape onto the flat
+              // fnArgs the CRM executor expects. The prompt emits
+              // create_deal/details, and update_*/email + fields.
+              let fnArgs: any = { ...action };
+              delete fnArgs.type;
+              if (action.details && typeof action.details === "object") fnArgs = { ...fnArgs, ...action.details };
+              if (action.fields && typeof action.fields === "object") fnArgs = { ...fnArgs, ...action.fields };
+              delete fnArgs.details;
+              delete fnArgs.fields;
+              // The CRM update tools key on id; the email prompt addresses
+              // contacts/companies by email/name. Resolve to an id when we
+              // only have an email (update_contact) so the write can land.
+              if ((action.type === "update_contact") && !fnArgs.id && fnArgs.email) {
+                const match = allContacts.find(c => c.email && c.email.toLowerCase() === String(fnArgs.email).toLowerCase());
+                if (match) fnArgs.id = match.id;
+              }
+              if ((action.type === "update_company") && !fnArgs.id && fnArgs.name) {
+                const match = allCompanies.find(c => c.name.toLowerCase() === String(fnArgs.name).toLowerCase());
+                if (match) fnArgs.id = match.id;
+              }
+              if ((action.type === "update_contact" || action.type === "update_company" || action.type === "update_deal") && !fnArgs.id) {
+                executedActions.push({
+                  type: action.type,
+                  result: `Could not resolve which record to update (no matching ${action.type.replace(/^update_/, "")} found) — skipped`,
+                  success: false,
+                });
+                break;
+              }
+              // executeCrmToolRaw's CRM write paths use db/fnArgs only, not the
+              // request — a minimal stub is safe here (no session/cookies).
+              const raw = await executeCrmToolRaw(action.type, fnArgs, { headers: {} } as any);
+              const data = raw?.data || {};
+              executedActions.push({
+                type: action.type,
+                result: data.error
+                  ? `CRM ${action.type} failed: ${data.error}`
+                  : `${data.action || "executed"} ${data.entity || ""}${data.name ? ` "${data.name}"` : ""}${data.fields ? ` (${(data.fields as string[]).join(", ")})` : ""}`.trim(),
+                success: !data.error,
+              });
+            } catch (delErr: any) {
+              console.warn(`[email-processor] CRM delegation for "${action.type}" failed: ${delErr?.message}`);
+              executedActions.push({
+                type: action.type,
+                result: `Error executing ${action.type}: ${delErr?.message}`,
+                success: false,
+              });
+            }
+            break;
+          }
+
           default: {
             executedActions.push({
               type: action.type,
@@ -845,6 +942,23 @@ async function trackCcCorrespondence(
 
   const isBgpOutbound = from.toLowerCase().endsWith(BGP_DOMAIN);
 
+  // Bounded auto-create scope: only addresses that appeared in the CC line of
+  // this tracked correspondence are eligible. Noise (automated senders,
+  // bounce/daemon addresses, calendar invites) and internal firm addresses
+  // are excluded so we don't pollute the CRM with non-people.
+  const ccSet = new Set(ccRecipients.map(e => (e || "").toLowerCase().trim()).filter(Boolean));
+  const isNoiseAddress = (email: string): boolean => {
+    const e = (email || "").toLowerCase().trim();
+    if (!e || !e.includes("@")) return true;
+    if (e.endsWith(BGP_DOMAIN)) return true; // internal firm domain
+    const local = e.split("@")[0];
+    const domain = e.split("@")[1] || "";
+    if (/^(no-?reply|do-?not-?reply|noreply|donotreply|mailer-daemon|postmaster|bounce|bounces|notifications?|notify|auto|automated|calendar|invite|invites|invitations?|via-)/.test(local)) return true;
+    if (/(no-?reply|do-?not-?reply|mailer-daemon|bounce|postmaster)/.test(local)) return true;
+    if (/(calendar|calendly|mailer-daemon|bounce|email\.|mailgun|sendgrid|amazonses|mcsv\.net|sparkpostmail)/.test(domain)) return true;
+    return false;
+  };
+
   for (const extEmail of allEmails) {
     const normalized = extEmail.toLowerCase().trim();
     const matchedContact = allContacts.find(c => c.email && c.email.toLowerCase().trim() === normalized);
@@ -877,17 +991,49 @@ async function trackCcCorrespondence(
         }
       }
     } else {
-      if (classification.externalContacts?.length) {
-        const extContact = classification.externalContacts.find(
-          ec => ec.email && ec.email.toLowerCase() === normalized
-        );
-        if (extContact) {
+      const extContact = classification.externalContacts?.find(
+        ec => ec.email && ec.email.toLowerCase() === normalized
+      );
+      // Bounded auto-create: a genuinely-unknown person who was CC'd on a
+      // thread we're already tracking. Skip automated/noise/internal
+      // addresses. Anything outside the CC line (an unknown From/To, or
+      // a noise address) falls back to a non-committal suggestion only —
+      // we never auto-create deals or records from prose.
+      if (ccSet.has(normalized) && !isNoiseAddress(normalized)) {
+        try {
+          const derivedName = extContact?.name
+            || normalized.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+            || normalized;
+          const { executeCrmToolRaw } = await import("./chatbgp");
+          const raw = await executeCrmToolRaw("create_contact", {
+            name: derivedName,
+            email: normalized,
+            companyName: extContact?.company || null,
+            contactType: "external",
+            notes: `Auto-added from CC on tracked correspondence "${(subject || "").slice(0, 120)}"`,
+          }, { headers: {} } as any);
+          const data = raw?.data || {};
           actions.push({
-            type: "suggest_contact",
-            result: `Unknown contact: ${extContact.name} (${extContact.email}${extContact.company ? ", " + extContact.company : ""}) — consider adding to CRM`,
-            success: true,
+            type: "create_contact",
+            result: data.error
+              ? `Could not auto-add CC contact ${normalized}: ${data.error}`
+              : `Auto-added CC contact ${derivedName} (${normalized})${extContact?.company ? `, ${extContact.company}` : ""}`,
+            success: !data.error,
+          });
+        } catch (ccErr: any) {
+          console.warn(`[email-processor] CC contact auto-create failed for ${normalized}: ${ccErr?.message}`);
+          actions.push({
+            type: "create_contact",
+            result: `Could not auto-add CC contact ${normalized}: ${ccErr?.message}`,
+            success: false,
           });
         }
+      } else if (extContact) {
+        actions.push({
+          type: "suggest_contact",
+          result: `Unknown contact: ${extContact.name} (${extContact.email}${extContact.company ? ", " + extContact.company : ""}) — consider adding to CRM`,
+          success: true,
+        });
       }
     }
   }

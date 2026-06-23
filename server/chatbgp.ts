@@ -454,6 +454,8 @@ function getToolProgressLabel(toolName: string): string {
     update_company: "Updating company...",
     get_company_accounts: "Reading filed accounts...",
     create_property: "Creating property...",
+    upsert_tenancy_schedule: "Updating tenancy schedule...",
+    add_property_imagery: "Attaching imagery...",
     create_requirement: "Logging requirement...",
     create_available_unit: "Creating unit...",
     update_available_unit: "Updating unit...",
@@ -2200,8 +2202,12 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           niy: { type: "number" },
           eqy: { type: "number" },
           sqft: { type: "number" },
-          currentRent: { type: "number" },
-          ervPa: { type: "number" },
+          currentRent: { type: "number", description: "Passing rent per annum (£)" },
+          ervPa: { type: "number", description: "Estimated rental value per annum (£)" },
+          waultBreak: { type: "number", description: "WAULT to break (years)" },
+          waultExpiry: { type: "number", description: "WAULT to expiry (years)" },
+          occupancy: { type: "number", description: "Occupancy as a fraction (0.95 = 95%)" },
+          capexRequired: { type: "number", description: "Capex required (£)" },
           notes: { type: "string" },
           tenure: { type: "string" },
           boardType: { type: "string", enum: ["Purchases", "Sales"] },
@@ -2675,8 +2681,12 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           niy: { type: "number", description: "Net initial yield %" },
           eqy: { type: "number", description: "Equivalent yield %" },
           sqft: { type: "number" },
-          currentRent: { type: "number" },
-          ervPa: { type: "number" },
+          currentRent: { type: "number", description: "Passing rent per annum (£)" },
+          ervPa: { type: "number", description: "Estimated rental value per annum (£)" },
+          waultBreak: { type: "number", description: "WAULT to break (years)" },
+          waultExpiry: { type: "number", description: "WAULT to expiry (years)" },
+          occupancy: { type: "number", description: "Occupancy as a fraction (0.95 = 95%)" },
+          capexRequired: { type: "number", description: "Capex required (£)" },
           tenure: { type: "string" },
           fee: { type: "number" },
           feeType: { type: "string" },
@@ -2808,12 +2818,20 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           name: { type: "string", description: "Property name (e.g. '10 Grosvenor Street', 'One Hyde Park')" },
           address: { type: "object", description: "Address as JSON object with fields: street, city, postcode, country", properties: { street: { type: "string" }, city: { type: "string" }, postcode: { type: "string" }, country: { type: "string" } } },
+          postcode: { type: "string", description: "Postcode (also drives auto-enrich and geocoding if not in address)" },
+          latitude: { type: "string", description: "Latitude (decimal degrees). Set when known to skip geocoding." },
+          longitude: { type: "string", description: "Longitude (decimal degrees)." },
           agent: { type: "string", description: "BGP agent responsible (e.g. 'Rupert', 'Lucy')" },
           assetClass: { type: "string", description: "e.g. Retail, Office, Residential, Mixed-Use, Leisure, Industrial" },
           tenure: { type: "string", description: "e.g. Freehold, Leasehold, Virtual Freehold" },
           sqft: { type: "number", description: "Size in square feet" },
           status: { type: "string", description: "e.g. Active, Pipeline, Completed" },
           notes: { type: "string" },
+          website: { type: "string", description: "Property or scheme website URL" },
+          tags: { type: "string", description: "Free-text tags" },
+          groupName: { type: "string", description: "CRM group/board this property sits under" },
+          titleNumber: { type: "string", description: "Land Registry title number (if already known)" },
+          competitorAgent: { type: "string", description: "Competitor agent instructed on non-BGP stock e.g. 'CBRE'" },
           folderTeams: { type: "array", items: { type: "string" }, description: "Teams this property belongs to e.g. ['London Retail', 'Investment']" },
           autoEnrich: { type: "boolean", description: "If true (default), automatically runs Land Registry lookup, AI title matching, proprietor identification, and landlord linking after creation. Set false to skip." },
         },
@@ -2876,12 +2894,20 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           id: { type: "string", description: "The property ID (UUID)" },
           name: { type: "string", description: "Property name" },
           address: { type: "object", description: "Address as JSON object with fields: street, city, postcode", properties: { street: { type: "string" }, city: { type: "string" }, postcode: { type: "string" } } },
+          postcode: { type: "string", description: "Postcode" },
+          latitude: { type: "string", description: "Latitude (decimal degrees)" },
+          longitude: { type: "string", description: "Longitude (decimal degrees)" },
           agent: { type: "string", description: "BGP agent responsible" },
           assetClass: { type: "string", description: "e.g. Retail, Office, Residential, Mixed-Use" },
           tenure: { type: "string", description: "e.g. Freehold, Leasehold" },
           sqft: { type: "number", description: "Size in square feet" },
           status: { type: "string", description: "e.g. Active, Pipeline, Completed" },
           notes: { type: "string" },
+          website: { type: "string", description: "Property or scheme website URL" },
+          tags: { type: "string", description: "Free-text tags" },
+          groupName: { type: "string", description: "CRM group/board this property sits under" },
+          titleNumber: { type: "string", description: "Land Registry title number" },
+          competitorAgent: { type: "string", description: "Competitor agent instructed on this stock e.g. 'CBRE'" },
           folderTeams: { type: "array", items: { type: "string" }, description: "Teams this property belongs to" },
         },
         required: ["id"],
@@ -4120,6 +4146,82 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           companyId: { type: "string", description: "Filter by anchor company." },
           dealId: { type: "string", description: "Filter by anchor deal." },
         },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "upsert_tenancy_schedule",
+      description: "Add or update tenancy schedule rows on a property (one row per let/vacant unit). Use to populate a full tenancy schedule from a brochure, datatape, or the user's notes. Pass the property ID and an array of unit rows. Each row with an `id` updates that row; rows without an `id` are inserted. Search for the property first to get its ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          propertyId: { type: "string", description: "crm_properties.id this schedule belongs to" },
+          rows: {
+            type: "array",
+            description: "Tenancy schedule unit rows",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", description: "Existing tenancy_schedule_units.id — provide to update, omit to insert" },
+                unitNumber: { type: "string", description: "Unit number / reference e.g. 'Unit 4'" },
+                premises: { type: "string", description: "Demise / premises e.g. 'Ground Floor'" },
+                permittedUse: { type: "string", description: "Permitted use e.g. 'Retail', 'Class E'" },
+                tenantName: { type: "string", description: "Tenant legal name. Leave blank/'Vacant' for void units." },
+                tradingName: { type: "string", description: "Tenant trading name" },
+                leaseStart: { type: "string", description: "Lease start date (ISO YYYY-MM-DD)" },
+                leaseExpiry: { type: "string", description: "Lease expiry date (ISO YYYY-MM-DD)" },
+                breakDate: { type: "string", description: "Next break date (ISO YYYY-MM-DD)" },
+                nextReviewDate: { type: "string", description: "Next rent review date (ISO YYYY-MM-DD)" },
+                termYears: { type: "number", description: "Lease term in years" },
+                passingRentPa: { type: "number", description: "Passing rent per annum (£)" },
+                ervPa: { type: "number", description: "Estimated rental value per annum (£)" },
+                niaSqft: { type: "number", description: "Net internal area (sq ft)" },
+                giaSqft: { type: "number", description: "Gross internal area (sq ft)" },
+                rateableValue: { type: "number", description: "Rateable value (£)" },
+                status: { type: "string", description: "e.g. Occupied, Vacant" },
+                comments: { type: "string", description: "Free-text commentary for this unit" },
+              },
+            },
+          },
+        },
+        required: ["propertyId", "rows"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "add_property_imagery",
+      description: "Attach one or more images to a property's imagery gallery (hero, internal, floor plan, location plan, etc.). Use after sourcing an image URL or an Image Studio asset for a property. Search for the property first to get its ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          propertyId: { type: "string", description: "crm_properties.id to attach imagery to" },
+          images: {
+            type: "array",
+            description: "Images to attach",
+            items: {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["hero", "internal", "secondary_external", "location_plan", "floor_plan", "covenant_card", "comps_chart", "erv_walk", "overlay"], description: "Role this image plays for the property" },
+                source: { type: "string", enum: ["brochure", "sharepoint", "street_view", "planning_portal", "os_ngd", "google_static", "edozo", "cad_measure", "image_studio", "generated_chart", "manual_upload"], description: "Where the image came from (provenance)" },
+                sourceUrl: { type: "string", description: "Raw image URL for provenance / re-fetch" },
+                imageStudioId: { type: "string", description: "image_studio_images.id when the image already lives in Image Studio" },
+                caption: { type: "string", description: "Caption / description" },
+                score: { type: "number", description: "Relevance ranking 0-1 (higher = more relevant); defaults to 0.6" },
+                width: { type: "number", description: "Pixel width if known" },
+                height: { type: "number", description: "Pixel height if known" },
+                pinned: { type: "boolean", description: "Mark as the definitive image for its kind" },
+              },
+              required: ["kind", "source"],
+            },
+          },
+        },
+        required: ["propertyId", "images"],
       },
     },
   });
@@ -5391,7 +5493,9 @@ export async function executeCrmToolRaw(
       boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
       vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
       niy: fnArgs.niy, eqy: fnArgs.eqy, sqft: fnArgs.sqft, currentRent: fnArgs.currentRent,
-      ervPa: fnArgs.ervPa, tenure: fnArgs.tenure, fee: fnArgs.fee, feeType: fnArgs.feeType, notes: fnArgs.notes,
+      ervPa: fnArgs.ervPa, waultBreak: fnArgs.waultBreak, waultExpiry: fnArgs.waultExpiry,
+      occupancy: fnArgs.occupancy, capexRequired: fnArgs.capexRequired,
+      tenure: fnArgs.tenure, fee: fnArgs.fee, feeType: fnArgs.feeType, notes: fnArgs.notes,
     }).returning();
     return { data: { success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName }, action: { type: "crm_created", entityType: "investment", id: created.id } };
   }
@@ -5467,17 +5571,25 @@ export async function executeCrmToolRaw(
     const created = await db.insert(crmProperties).values({
       name: fnArgs.name,
       address: fnArgs.address || null,
+      postcode: fnArgs.postcode || fnArgs.address?.postcode || null,
+      latitude: fnArgs.latitude || null,
+      longitude: fnArgs.longitude || null,
       agent: fnArgs.agent || null,
       assetClass: fnArgs.assetClass || null,
       tenure: fnArgs.tenure || null,
       sqft: fnArgs.sqft || null,
       status: fnArgs.status || "Active",
       notes: fnArgs.notes || null,
+      website: fnArgs.website || null,
+      tags: fnArgs.tags || null,
+      groupName: fnArgs.groupName || null,
+      titleNumber: fnArgs.titleNumber || null,
+      competitorAgent: fnArgs.competitorAgent || null,
       folderTeams: fnArgs.folderTeams || null,
     }).returning();
 
     const propertyId = created[0].id;
-    const postcode = fnArgs.address?.postcode;
+    const postcode = fnArgs.address?.postcode || fnArgs.postcode;
     const willEnrich = !!(postcode && fnArgs.autoEnrich !== false);
     if (willEnrich) {
       const baseUrl = process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT || 5000}`;
@@ -5551,6 +5663,65 @@ export async function executeCrmToolRaw(
     if (Object.keys(cleanUpdates).length === 0) return { data: { success: false, error: "No fields to update" } };
     await db.update(crmProperties).set(cleanUpdates).where(eq(crmProperties.id, id));
     return { data: { success: true, action: "updated", entity: "property", id, name: existing[0].name, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "property", id } };
+  }
+
+  if (fnName === "upsert_tenancy_schedule") {
+    const { tenancyScheduleUnits, crmProperties } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const propertyId = fnArgs.propertyId as string;
+    const rows: any[] = Array.isArray(fnArgs.rows) ? fnArgs.rows : [];
+    const prop = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
+    if (!prop.length) return { data: { success: false, error: `No property found with ID "${propertyId}"` } };
+    if (!rows.length) return { data: { success: false, error: "No tenancy rows provided" } };
+    const toDate = (v: any) => (v ? new Date(v) : null);
+    let inserted = 0, updated = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const values: any = {
+        propertyId,
+        unitNumber: r.unitNumber ?? null, premises: r.premises ?? null, permittedUse: r.permittedUse ?? null,
+        tenantName: r.tenantName ?? null, tradingName: r.tradingName ?? null,
+        leaseStart: toDate(r.leaseStart), leaseExpiry: toDate(r.leaseExpiry), breakDate: toDate(r.breakDate), nextReviewDate: toDate(r.nextReviewDate),
+        termYears: r.termYears ?? null, passingRentPa: r.passingRentPa ?? null, ervPa: r.ervPa ?? null,
+        niaSqft: r.niaSqft ?? null, giaSqft: r.giaSqft ?? null, rateableValue: r.rateableValue ?? null,
+        status: r.status ?? (r.tenantName && String(r.tenantName).toLowerCase() !== "vacant" ? "Occupied" : "Vacant"),
+        comments: r.comments ?? null,
+      };
+      if (r.id) {
+        const clean: any = { updatedAt: new Date() };
+        for (const [k, v] of Object.entries(values)) { if (v !== undefined && v !== null && k !== "propertyId") clean[k] = v; }
+        await db.update(tenancyScheduleUnits).set(clean).where(eq(tenancyScheduleUnits.id, r.id));
+        updated++;
+      } else {
+        values.sortOrder = i;
+        await db.insert(tenancyScheduleUnits).values(values);
+        inserted++;
+      }
+    }
+    return { data: { success: true, action: "upserted", entity: "tenancy schedule", propertyId, name: prop[0].name, inserted, updated }, action: { type: "crm_updated", entityType: "property", id: propertyId } };
+  }
+
+  if (fnName === "add_property_imagery") {
+    const { propertyImageryAssets, crmProperties } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const propertyId = fnArgs.propertyId as string;
+    const images: any[] = Array.isArray(fnArgs.images) ? fnArgs.images : [];
+    const prop = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
+    if (!prop.length) return { data: { success: false, error: `No property found with ID "${propertyId}"` } };
+    if (!images.length) return { data: { success: false, error: "No images provided" } };
+    let added = 0;
+    for (const img of images) {
+      if (!img?.kind || !img?.source) continue;
+      await db.insert(propertyImageryAssets).values({
+        propertyId, kind: img.kind, source: img.source,
+        sourceUrl: img.sourceUrl ?? null, imageStudioId: img.imageStudioId ?? null,
+        caption: img.caption ?? null, score: img.score ?? 0.6,
+        width: img.width ?? null, height: img.height ?? null, pinned: img.pinned ?? false,
+        generatedBy: req.session?.userId || (req as any).tokenUserId || null,
+      } as any);
+      added++;
+    }
+    return { data: { success: true, action: "added", entity: "property imagery", propertyId, name: prop[0].name, added }, action: { type: "crm_updated", entityType: "property", id: propertyId } };
   }
 
   if (fnName === "update_requirement") {
@@ -10346,6 +10517,10 @@ export async function handleCrmToolCall(
       sqft: fnArgs.sqft,
       currentRent: fnArgs.currentRent,
       ervPa: fnArgs.ervPa,
+      waultBreak: fnArgs.waultBreak,
+      waultExpiry: fnArgs.waultExpiry,
+      occupancy: fnArgs.occupancy,
+      capexRequired: fnArgs.capexRequired,
       tenure: fnArgs.tenure,
       fee: fnArgs.fee,
       feeType: fnArgs.feeType,
@@ -10467,9 +10642,15 @@ export async function handleCrmToolCall(
   if (fnName === "create_property") {
     const { crmProperties } = await import("@shared/schema");
     const created = await db.insert(crmProperties).values({
-      name: fnArgs.name, address: fnArgs.address || null, agent: fnArgs.agent || null,
+      name: fnArgs.name, address: fnArgs.address || null,
+      postcode: fnArgs.postcode || fnArgs.address?.postcode || null,
+      latitude: fnArgs.latitude || null, longitude: fnArgs.longitude || null,
+      agent: fnArgs.agent || null,
       assetClass: fnArgs.assetClass || null, tenure: fnArgs.tenure || null, sqft: fnArgs.sqft || null,
-      status: fnArgs.status || "Active", notes: fnArgs.notes || null, folderTeams: fnArgs.folderTeams || null,
+      status: fnArgs.status || "Active", notes: fnArgs.notes || null,
+      website: fnArgs.website || null, tags: fnArgs.tags || null, groupName: fnArgs.groupName || null,
+      titleNumber: fnArgs.titleNumber || null, competitorAgent: fnArgs.competitorAgent || null,
+      folderTeams: fnArgs.folderTeams || null,
     }).returning();
     const reply = await summaryHelper({ success: true, action: "created", entity: "property", name: created[0].name, id: created[0].id });
     return { handled: true, response: { reply: reply || `Property "${created[0].name}" created.`, action: { type: "crm_created", entityType: "property", id: created[0].id } } };
@@ -10493,6 +10674,67 @@ export async function handleCrmToolCall(
     await db.update(crmProperties).set(cleanUpdates).where(eq(crmProperties.id, id));
     const reply = await summaryHelper({ success: true, action: "updated", entity: "property", id, name: existing[0].name, fields: Object.keys(cleanUpdates) });
     return { handled: true, response: { reply: reply || `Property "${existing[0].name}" updated.`, action: { type: "crm_updated", entityType: "property", id } } };
+  }
+
+  if (fnName === "upsert_tenancy_schedule") {
+    const { tenancyScheduleUnits, crmProperties } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const propertyId = fnArgs.propertyId as string;
+    const rows: any[] = Array.isArray(fnArgs.rows) ? fnArgs.rows : [];
+    const prop = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
+    if (!prop.length) return { handled: true, response: { reply: `No property found with ID "${propertyId}". Please search first.` } };
+    if (!rows.length) return { handled: true, response: { reply: "No tenancy rows provided." } };
+    const toDate = (v: any) => (v ? new Date(v) : null);
+    let inserted = 0, updated = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const values: any = {
+        propertyId,
+        unitNumber: r.unitNumber ?? null, premises: r.premises ?? null, permittedUse: r.permittedUse ?? null,
+        tenantName: r.tenantName ?? null, tradingName: r.tradingName ?? null,
+        leaseStart: toDate(r.leaseStart), leaseExpiry: toDate(r.leaseExpiry), breakDate: toDate(r.breakDate), nextReviewDate: toDate(r.nextReviewDate),
+        termYears: r.termYears ?? null, passingRentPa: r.passingRentPa ?? null, ervPa: r.ervPa ?? null,
+        niaSqft: r.niaSqft ?? null, giaSqft: r.giaSqft ?? null, rateableValue: r.rateableValue ?? null,
+        status: r.status ?? (r.tenantName && String(r.tenantName).toLowerCase() !== "vacant" ? "Occupied" : "Vacant"),
+        comments: r.comments ?? null,
+      };
+      if (r.id) {
+        const clean: any = { updatedAt: new Date() };
+        for (const [k, v] of Object.entries(values)) { if (v !== undefined && v !== null && k !== "propertyId") clean[k] = v; }
+        await db.update(tenancyScheduleUnits).set(clean).where(eq(tenancyScheduleUnits.id, r.id));
+        updated++;
+      } else {
+        values.sortOrder = i;
+        await db.insert(tenancyScheduleUnits).values(values);
+        inserted++;
+      }
+    }
+    const reply = await summaryHelper({ success: true, action: "upserted", entity: "tenancy schedule", name: prop[0].name, inserted, updated });
+    return { handled: true, response: { reply: reply || `Tenancy schedule updated for "${prop[0].name}" (${inserted} added, ${updated} updated).`, action: { type: "crm_updated", entityType: "property", id: propertyId } } };
+  }
+
+  if (fnName === "add_property_imagery") {
+    const { propertyImageryAssets, crmProperties } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const propertyId = fnArgs.propertyId as string;
+    const images: any[] = Array.isArray(fnArgs.images) ? fnArgs.images : [];
+    const prop = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
+    if (!prop.length) return { handled: true, response: { reply: `No property found with ID "${propertyId}". Please search first.` } };
+    if (!images.length) return { handled: true, response: { reply: "No images provided." } };
+    let added = 0;
+    for (const img of images) {
+      if (!img?.kind || !img?.source) continue;
+      await db.insert(propertyImageryAssets).values({
+        propertyId, kind: img.kind, source: img.source,
+        sourceUrl: img.sourceUrl ?? null, imageStudioId: img.imageStudioId ?? null,
+        caption: img.caption ?? null, score: img.score ?? 0.6,
+        width: img.width ?? null, height: img.height ?? null, pinned: img.pinned ?? false,
+        generatedBy: req.session?.userId || (req as any).tokenUserId || null,
+      } as any);
+      added++;
+    }
+    const reply = await summaryHelper({ success: true, action: "added", entity: "property imagery", name: prop[0].name, added });
+    return { handled: true, response: { reply: reply || `Attached ${added} image(s) to "${prop[0].name}".`, action: { type: "crm_updated", entityType: "property", id: propertyId } } };
   }
 
   if (fnName === "update_requirement") {
@@ -11543,6 +11785,42 @@ export function setupChatBGPRoutes(app: Express) {
           } else if (isAudioVideo) {
             documentTexts.push(`=== AUDIO/VIDEO FILE: ${file.originalname} ===\nThis is an audio/video file uploaded by the user. File URL: /api/chat-media/${chatMediaName}\nUse the transcribe_audio tool with fileUrl="/api/chat-media/${chatMediaName}" to transcribe this recording. Then use the transcript to help the user with whatever they need — update trackers, create notes, log actions, etc.`);
           } else {
+            // Brochure-shaped PDF? Route it through the rich brochure pipeline
+            // (Claude vision → property match-or-create, tenancy schedule,
+            // ownership, agent contacts, filed images, geocode) — the same one
+            // email + WhatsApp use — instead of the lite text-only path.
+            // tryIngestBrochure does the page-count heuristic itself and
+            // returns handled=false for non-brochure PDFs, so we just gate on
+            // the PDF mimetype here and fall through on handled=false / failure.
+            const isPdf = ext === ".pdf" || file.mimetype === "application/pdf";
+            if (isPdf) {
+              try {
+                const { tryIngestBrochure } = await import("./whatsapp-brochure-pipeline");
+                const pipelineMessages: string[] = [];
+                const broResult = await tryIngestBrochure({
+                  bytes: fileData,
+                  mimeType: file.mimetype || "application/pdf",
+                  filename: file.originalname,
+                  source: "other",
+                  userId: req.session.userId || (req as any).tokenUserId || null,
+                  sendReply: async (text: string) => { pipelineMessages.push(text); },
+                });
+                if (broResult.handled) {
+                  // Surface the pipeline's own progress/summary replies so the
+                  // agent and user can see what was captured (property name,
+                  // tenancy rows, contacts, images). Skip the lite path.
+                  const detail = pipelineMessages.length > 0 ? `\n${pipelineMessages.join("\n")}` : "";
+                  documentTexts.push(
+                    `=== BROCHURE: ${file.originalname} ===\n` +
+                    `This PDF was processed through the rich brochure pipeline (not raw text extraction). ` +
+                    `It was matched/created in the property CRM and its tenancy schedule, ownership, agent contacts, and images were captured where present.${detail}`
+                  );
+                  continue;
+                }
+              } catch (err: any) {
+                console.error(`[ChatBGP file-chat] Brochure pipeline failed for ${file.originalname}:`, err?.message);
+              }
+            }
             try {
               const text = await extractTextFromFile(file.path, file.originalname);
               // Include the chat-media filename so the agent can pass it to

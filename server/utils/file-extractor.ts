@@ -55,22 +55,39 @@ export async function extractTextFromFile(filePath: string, originalName: string
         const { PDFParse } = await import("pdf-parse");
         const pdfBuffer = await fs.promises.readFile(filePath);
         const parser = new (PDFParse as any)(new Uint8Array(pdfBuffer));
+        let text = "";
         try {
           const data = await parser.getText();
-          const text = typeof data === "string" ? data : (data as any).text || String(data);
-          return text;
+          text = typeof data === "string" ? data : (data as any).text || String(data);
         } catch (pdfErr: any) {
           // Malformed or image-only PDFs — treat as no extractable text rather
           // than blowing up the whole indexing job. Common on scanned forms.
           const msg = pdfErr?.message || String(pdfErr);
-          if (/InvalidPDFException|Invalid PDF|password|encrypted/i.test(msg)) {
-            console.warn(`[FileExtractor] Skipping unreadable PDF "${originalName}": ${msg}`);
-            return "";
+          if (!/InvalidPDFException|Invalid PDF|password|encrypted/i.test(msg)) {
+            throw pdfErr;
           }
-          throw pdfErr;
+          console.warn(`[FileExtractor] pdf-parse couldn't read "${originalName}": ${msg}`);
         } finally {
           try { parser.destroy(); } catch {}
         }
+        // Scanned / image-only PDFs leave an empty (or near-empty) text layer.
+        // Fall back to Azure OCR, mirroring server/archivist.ts. Guarded so it
+        // no-ops gracefully (returns "") when OCR isn't configured.
+        if (!text || text.trim().length < 50) {
+          try {
+            const { isOcrConfigured, ocrPdfBuffer } = await import("../ocr");
+            if (isOcrConfigured()) {
+              const ocrText = await ocrPdfBuffer(pdfBuffer, originalName);
+              if (ocrText && ocrText.trim().length >= 50) {
+                console.log(`[FileExtractor] OCR recovered ${ocrText.trim().length} chars from "${originalName}"`);
+                return ocrText;
+              }
+            }
+          } catch (ocrErr: any) {
+            console.warn(`[FileExtractor] OCR fallback failed for "${originalName}": ${ocrErr?.message || ocrErr}`);
+          }
+        }
+        return text;
       }
 
       case ".pptx": {

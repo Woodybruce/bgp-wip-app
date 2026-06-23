@@ -108,7 +108,8 @@ const chatMediaUpload = multer({
 const GROUP_CHAT_TOOLS = [
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
-  "create_property", "create_available_unit", "update_available_unit",
+  "create_property", "upsert_tenancy_schedule", "add_property_imagery",
+  "create_available_unit", "update_available_unit",
   "update_investment_tracker", "create_investment_tracker",
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry",
   "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup",
