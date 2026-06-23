@@ -2723,7 +2723,13 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
 
       const [inserted] = await db.insert(imageStudioImages).values({
         fileName: fileName || "Stock Image",
-        category: category || "Stock",
+        // Stock imports are treated as prunable junk by the cleanup scripts
+        // (image-studio-categorise-and-prune.sql keys off source='stock' +
+        // an uncategorised category). The UI has no 'Stock' category, so an
+        // un-curated import stays in the 'Uncategorised' bucket (carrying the
+        // 'Stock' tag + source='stock' so it's filterable/prunable) unless the
+        // caller explicitly files it under a real category.
+        category: category || "Uncategorised",
         tags: [...(tags || []), "Stock", photographer ? `Photo: ${photographer}` : ""].filter(Boolean),
         description: `Stock photo by ${photographer || "Unknown"}`,
         source: "stock",

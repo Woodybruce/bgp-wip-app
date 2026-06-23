@@ -1090,16 +1090,43 @@ function BrandPipelineImagesLink({ propertyId, propertyName }: { propertyId: str
     },
     staleTime: 5 * 60_000,
   });
-  const count = Array.isArray(data) ? data.length : 0;
+  const images = Array.isArray(data) ? data : [];
+  const count = images.length;
   if (count === 0) return null;
+  const SHOWN = 12;
+  const thumbSrc = (img: any) =>
+    img.thumbnailData || ((img as any).hasThumbnail ? `/api/image-studio/${img.id}/thumb` : `/api/image-studio/${img.id}/full`);
   return (
-    <div className="mt-2 pt-2 border-t border-border/60">
+    <div className="mt-3 pt-3 border-t border-border/60">
+      <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-2">
+        Landlord-auto images ({count})
+      </p>
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+        {images.slice(0, SHOWN).map((img: any) => (
+          <a
+            key={img.id}
+            href={`/api/image-studio/${img.id}/full`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block aspect-square rounded-md overflow-hidden border border-border/60 hover:border-foreground/40 transition"
+            title={img.title || img.caption || "Open full image"}
+            data-testid={`thumb-brand-pipeline-${img.id}`}
+          >
+            <img
+              src={thumbSrc(img)}
+              alt={img.title || "Property image"}
+              className="w-full h-full object-cover"
+              loading="lazy"
+            />
+          </a>
+        ))}
+      </div>
       <Link
         href={`/image-studio?property=${encodeURIComponent(propertyName)}&propertyId=${encodeURIComponent(propertyId)}`}
-        className="text-[11px] text-muted-foreground hover:text-foreground underline flex items-center gap-1"
+        className="text-[11px] text-muted-foreground hover:text-foreground underline inline-flex items-center gap-1 mt-2"
         data-testid="link-brand-pipeline-images"
       >
-        View {count} landlord-auto image{count === 1 ? "" : "s"} for this property in Image Studio →
+        {count > SHOWN ? `View all ${count} landlord-auto images in Image Studio →` : `Open in Image Studio →`}
       </Link>
     </div>
   );

@@ -249,7 +249,7 @@ export async function importInstagramImagesIntoGallery(
       await storeImageFromBuffer({
         buffer: buf,
         fileName: `${brandName} — instagram${p.caption ? `: ${p.caption.slice(0, 80)}` : ""}`,
-        category: "Brand",
+        category: "Brands",
         tags: ["brand-auto", brandName, "instagram"],
         description: `Auto-imported from Instagram (${p.permalink}) for ${brandName}`,
         source: "instagram",

@@ -405,7 +405,7 @@ async function fetchBrandImages(_companyId: string, _brandName: string, _industr
 
       await db.insert(imageStudioImages).values({
         fileName: `${brandName} — ${hit.description}`.slice(0, 200),
-        category: "Brand",
+        category: "Brands",
         tags: ["brand-auto", brandName, hit.source],
         description: `Auto-fetched from ${hit.source} for ${brandName}. Photo: ${hit.photographer}`,
         source: hit.source,

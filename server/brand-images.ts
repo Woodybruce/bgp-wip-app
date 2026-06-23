@@ -534,7 +534,7 @@ export async function refreshBrandImages(companyId: string, opts: {
       await storeImageFromBuffer({
         buffer: fetched.buffer,
         fileName: `${brand.name} — ${c.source}${c.caption ? `: ${c.caption.slice(0, 80)}` : ""}`,
-        category: "Brand",
+        category: "Brands",
         tags: ["brand-auto", brand.name, c.source],
         description: c.pageUrl ? `Auto-fetched from ${c.source} (${c.pageUrl}) for ${brand.name}` : `Auto-fetched from ${c.source} for ${brand.name}`,
         source: c.source,
