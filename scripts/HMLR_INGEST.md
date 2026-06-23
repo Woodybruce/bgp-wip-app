@@ -135,21 +135,31 @@ dashboard → Postgres → Connect → public URL; the `.railway.internal` host
 only resolves inside Railway):
 
 ```bash
-# 1. Unzip the national download — do NOT feed the 5GB zip to the app route.
-unzip Use-Land-Property-Data.zip            # → one or more *.gml
+# 1. The national download is a ZIP OF PER-COUNCIL ZIPS, so unzip twice:
+#    the outer zip yields *_Council.zip (one per local authority), and each
+#    of those holds the council's GML. (Do NOT feed the 5GB zip to the app
+#    route — it stalls the web dyno; this offline CLI is the way.)
+mkdir -p councils && cd councils
+unzip ../Use-Land-Property-Data.zip          # → e.g. Coventry_City_Council.zip, ...
+for z in *.zip; do unzip -o "$z"; done       # → *.gml (one or more per council)
 
 # 2. GML → NDJSON, REPROJECTING British National Grid → WGS84.
 #    -t_srs is ESSENTIAL: without it coords stay in EPSG:27700 and the ingest
 #    (which assumes NDJSON is already 4326) stores them in the wrong place.
 for f in *.gml; do
-  ogr2ogr -f GeoJSONSeq -t_srs EPSG:4326 -append national.ndjson "$f"
+  ogr2ogr -f GeoJSONSeq -t_srs EPSG:4326 -append ../national.ndjson "$f"
 done
+cd ..
 
 # 3. Load against prod — streams, batches, idempotent upsert on inspire_id,
 #    progress tracked in hmlr_ingest_runs (dataset='inspire'). ~1-3 hours.
 DATABASE_URL='<prod PUBLIC connection string>' \
-  npx tsx scripts/ingest-hmlr-polygons.ts national.ndjson --region national
+  npx tsx scripts/ingest-hmlr-polygons.ts national.ndjson --region national --batch 2000
 ```
+
+(For just a few areas, unzip only those councils' zips in step 1 — e.g.
+`unzip ../Use-Land-Property-Data.zip "Coventry_City_Council.zip"` — or use the
+in-app per-LA route above, which handles a single council zip directly.)
 
 Before starting, confirm the DB has headroom (national is ~10-30GB):
 `SELECT pg_size_pretty(pg_database_size(current_database()));`
