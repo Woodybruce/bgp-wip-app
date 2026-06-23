@@ -39,7 +39,6 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
-import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { BrandComplianceCard } from "@/components/brand-profile-panel";
 import {
@@ -862,27 +861,17 @@ export function PropertyDetail({ id }: { id: string }) {
                 the right sidebar's Compliance & KYC dropdown so the
                 board isn't duplicated. */}
 
-            {/* Property Intelligence + Leasing Pitch are pre-instruction
-                 tools (catchment / Land Registry research; brand pitch
-                 to landlords we don't yet act for). Once the property
-                 is on any kind of instruction (Leasing / Lease
-                 Advisory / Sales / generic 'BGP Instruction') we're
-                 past pitching, into delivery — hide both so the page
-                 focuses on the operational view. */}
+            {/* Property Intelligence is a pre-instruction tool (catchment /
+                 Land Registry research). Once the property is on any kind of
+                 instruction (Leasing / Lease Advisory / Sales / generic 'BGP
+                 Instruction') we're past research, into delivery — hide it so
+                 the page focuses on the operational view. */}
             {!/instruction/i.test(property.status || "") && (
-              <>
-                <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
-                  <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
-                    <PropertyIntelligencePanel property={property} />
-                  </CollapsibleCard>
-                </ErrorBoundary>
-
-                <ErrorBoundary compact name="Leasing pitch">
-                  <CollapsibleCard open={mainSections.pitch} onToggle={() => toggleMain("pitch")} icon={Sparkles} title="Leasing Pitch" testId="toggle-pitch">
-                    <LeasingPitchPanel propertyId={property.id} />
-                  </CollapsibleCard>
-                </ErrorBoundary>
-              </>
+              <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
+                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
+                  <PropertyIntelligencePanel property={property} />
+                </CollapsibleCard>
+              </ErrorBoundary>
             )}
 
             {/* Brand Gap moved to the top of the main column (above
