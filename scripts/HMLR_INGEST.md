@@ -114,21 +114,50 @@ path. PropertyData becomes a fallback for properties NOT in CCOD/OCOD
 
 You should see **one** correct title for 18-22 Haymarket, not 30.
 
-## (Optional) INSPIRE polygons for map shading
+## INSPIRE polygons for map shading
 
-If you also want the title boundaries on the map, the free INSPIRE Index
-Polygons download will work. They have NO title_number, so they're
-purely for visualisation — they don't help with ownership lookup.
+Boundaries on the property-intelligence map come from the free INSPIRE
+Index Polygons. They have NO title_number, so they're purely visual.
+Stored PostGIS-free: GeoJSON in a `jsonb` column + a numeric bbox (WGS84).
+
+**Small / per-local-authority files** go through the app — an admin POSTs a
+SharePoint share link to `POST /api/admin/hmlr/fetch-polygons-from-sharepoint`
+(`{shareUrl, region}`); it streams, reprojects (27700→4326 via proj4), and
+loads. Capped at ~500MB.
+
+### National batch-load (~24M parcels / 5GB)
+
+The national set is too big for the app route (Node's 2 GiB unzip limit, and
+a multi-hour run would kill the web dyno). Load it OFFLINE with the CLI, on a
+machine with ~40GB free disk + GDAL (`brew install gdal` / `apt install
+gdal-bin`), against the prod DB's **PUBLIC** connection string (Railway
+dashboard → Postgres → Connect → public URL; the `.railway.internal` host
+only resolves inside Railway):
 
 ```bash
-# Convert INSPIRE GML → NDJSON (requires GDAL: brew install gdal)
-ogr2ogr -f GeoJSONSeq polygons.ndjson Land_Registry_Cadastral_Parcels.gml
+# 1. Unzip the national download — do NOT feed the 5GB zip to the app route.
+unzip Use-Land-Property-Data.zip            # → one or more *.gml
 
-# Ingest (~22M rows for E&W — takes ~1-2 hours, or filter to London first)
-npx tsx scripts/ingest-hmlr-polygons.ts ./polygons.ndjson --region "England"
+# 2. GML → NDJSON, REPROJECTING British National Grid → WGS84.
+#    -t_srs is ESSENTIAL: without it coords stay in EPSG:27700 and the ingest
+#    (which assumes NDJSON is already 4326) stores them in the wrong place.
+for f in *.gml; do
+  ogr2ogr -f GeoJSONSeq -t_srs EPSG:4326 -append national.ndjson "$f"
+done
+
+# 3. Load against prod — streams, batches, idempotent upsert on inspire_id,
+#    progress tracked in hmlr_ingest_runs (dataset='inspire'). ~1-3 hours.
+DATABASE_URL='<prod PUBLIC connection string>' \
+  npx tsx scripts/ingest-hmlr-polygons.ts national.ndjson --region national
 ```
 
-Skip this if you're not adding map polygon shading right now.
+Before starting, confirm the DB has headroom (national is ~10-30GB):
+`SELECT pg_size_pretty(pg_database_size(current_database()));`
+
+If the load dies mid-run, just re-run it (idempotent), or split first so a
+crash only costs one chunk: `split -l 2000000 national.ndjson chunk_` then
+load each `chunk_*`. Query speed at national scale leans on plain bbox btree
+indexes (no PostGIS GiST), so very zoomed-out views may lag.
 
 ## Refresh schedule
 
@@ -143,11 +172,14 @@ can either:
 ## Storage footprint
 
 - `hmlr_proprietors`: ~600MB (~3M rows + indexes)
-- `hmlr_title_polygons` (only if you ingest INSPIRE): ~10GB for all E&W
+- `hmlr_title_polygons`: per-LA is tens of MB; **national (~24M parcels) is
+  ~10-30GB** including bbox indexes — confirm the Railway DB plan has room
+  before the national batch-load
 - `hmlr_ingest_runs`: tiny
 
 Without polygons, the whole HMLR foundation costs <1GB. Easy on any
-Railway tier.
+Railway tier; the national polygon set is the one thing that needs a plan
+with real storage headroom.
 
 ## What this replaces
 
