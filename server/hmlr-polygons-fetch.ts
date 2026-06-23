@@ -11,33 +11,49 @@
  *   - .ndjson          — one GeoJSON Feature per line (EPSG:4326), e.g.
  *                        ogr2ogr GeoJSONSeq output
  *
- * Reprojection is done in PostGIS, NOT in JS: geometry is inserted with
- * its source SRID and ST_Transform(...) converts it to 4326 on the way in.
- * That avoids a proj4 / GDAL dependency entirely.
+ * POSTGIS-FREE: this database has no PostGIS, so we DON'T use geometry
+ * types. Boundaries are stored as GeoJSON in a jsonb column (already in
+ * WGS84 / EPSG:4326) plus a min/max lng/lat bounding box for fast viewport
+ * queries. GML coordinates are British National Grid (EPSG:27700) and are
+ * reprojected to 4326 in JS with proj4 at ingest time. ~metre accuracy,
+ * invisible at map-shading zoom.
  *
  * INSPIRE carries NO title numbers, so title_number is left NULL — this
  * powers map boundary shading only, not title-linked official plans (the
  * paid £20k/yr National Polygon Service is the title-linked version).
  *
- * NOTE: the GML parser below is written to the standard Land Registry
- * INSPIRE Index Polygons schema (GML2 <gml:coordinates> and GML3
- * <gml:posList>, one Polygon per feature). It streams the file so memory
- * stays bounded, and logs skip reasons so a schema mismatch on a real
- * file is diagnosable from the hmlr_ingest_runs row rather than silent.
+ * NOTE: the GML parser is written to the standard Land Registry INSPIRE
+ * Index Polygons schema (GML2 <gml:coordinates> and GML3 <gml:posList>,
+ * one Polygon per feature). It streams the file so memory stays bounded,
+ * and logs skip reasons so a schema mismatch on a real file is diagnosable
+ * from the hmlr_ingest_runs row rather than silent.
  */
 
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as readline from "readline";
+import proj4 from "proj4";
 import { pool } from "./db";
 import { isHmlrPolygonsAvailable, resetHmlrAvailabilityCache } from "./hmlr-direct";
+
+// British National Grid (EPSG:27700) → WGS84. The +towgs84 Helmert params
+// are the Ordnance Survey published values (~metre accuracy without the
+// OSTN15 grid — ample for map shading).
+proj4.defs(
+  "EPSG:27700",
+  "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.1502,0.247,0.8421,-20.4894 +units=m +no_defs",
+);
+function toWgs84(easting: number, northing: number): [number, number] {
+  const [lng, lat] = proj4("EPSG:27700", "WGS84", [easting, northing]) as [number, number];
+  return [lng, lat];
+}
 
 interface PolygonRow {
   inspireId: number;
   titleNumber: string | null;
-  /** GeoJSON geometry string (Polygon or MultiPolygon). */
-  geometryJson: string;
+  geometry: any;                                   // GeoJSON Polygon/MultiPolygon, EPSG:4326
+  bbox: [number, number, number, number];          // [minLng, minLat, maxLng, maxLat]
 }
 
 export interface InspireIngestResult {
@@ -83,7 +99,6 @@ function closeRing(ring: number[][]): number[][] {
 }
 
 function ringsFrom(block: string): number[][][] {
-  // posList (GML3) first, fall back to coordinates (GML2).
   const rings: number[][][] = [];
   const posList = block.match(/<gml:posList[^>]*>([\s\S]*?)<\/gml:posList>/g);
   if (posList) {
@@ -106,11 +121,12 @@ function ringsFrom(block: string): number[][][] {
 }
 
 /**
- * Turn one GML feature block into a GeoJSON Polygon. Exterior ring =
- * first ring inside exterior/outerBoundaryIs (or just the first ring
- * found); interior rings = those inside interior/innerBoundaryIs.
+ * Turn one GML feature block into a GeoJSON Polygon in SOURCE coords
+ * (reprojection happens later). Exterior = first ring inside
+ * exterior/outerBoundaryIs (or the first ring found); interior rings =
+ * those inside interior/innerBoundaryIs.
  */
-function featureToGeometry(block: string): { inspireId: number; geometryJson: string } | { skip: string } {
+function featureToGeometry(block: string): { inspireId: number; geometry: any } | { skip: string } {
   const idMatch = block.match(/<(?:[\w.]+:)?INSPIREID>\s*(\d+)\s*<\/(?:[\w.]+:)?INSPIREID>/);
   if (!idMatch) return { skip: "missing INSPIREID" };
   const inspireId = Number(idMatch[1]);
@@ -119,13 +135,7 @@ function featureToGeometry(block: string): { inspireId: number; geometryJson: st
   const exteriorBlock = block.match(/<gml:(?:exterior|outerBoundaryIs)>([\s\S]*?)<\/gml:(?:exterior|outerBoundaryIs)>/);
   const interiorBlocks = block.match(/<gml:(?:interior|innerBoundaryIs)>([\s\S]*?)<\/gml:(?:interior|innerBoundaryIs)>/g) || [];
 
-  let exterior: number[][] | null = null;
-  if (exteriorBlock) {
-    exterior = ringsFrom(exteriorBlock[1])[0] || null;
-  } else {
-    // No boundary wrappers — take the first ring in the whole block.
-    exterior = ringsFrom(block)[0] || null;
-  }
+  const exterior = exteriorBlock ? (ringsFrom(exteriorBlock[1])[0] || null) : (ringsFrom(block)[0] || null);
   if (!exterior) return { skip: "no exterior ring" };
 
   const coordinates: number[][][] = [exterior];
@@ -133,33 +143,104 @@ function featureToGeometry(block: string): { inspireId: number; geometryJson: st
     const hole = ringsFrom(ib)[0];
     if (hole) coordinates.push(hole);
   }
-  return { inspireId, geometryJson: JSON.stringify({ type: "Polygon", coordinates }) };
+  return { inspireId, geometry: { type: "Polygon", coordinates } };
 }
 
-// ─── DB upsert (PostGIS reprojects via ST_Transform) ───────────────────
+function featureFromGeoJson(f: any): { inspireId: number; titleNumber: string | null; geometry: any } | { skip: string } {
+  if (f?.type !== "Feature") return { skip: "not a Feature" };
+  const props = f.properties || {};
+  const inspireRaw = props.INSPIREID ?? props.inspireid ?? props.INSPIRE_ID ?? props.inspire_id;
+  if (inspireRaw == null) return { skip: "missing INSPIREID" };
+  const inspireId = Number(inspireRaw);
+  if (!Number.isFinite(inspireId)) return { skip: "INSPIREID not numeric" };
+  const geom = f.geometry;
+  if (!geom || (geom.type !== "Polygon" && geom.type !== "MultiPolygon")) {
+    return { skip: `geometry not Polygon/MultiPolygon (${geom?.type})` };
+  }
+  const titleRaw = props.TITLE_NO ?? props.title_no ?? props.TITLE_NUMBER ?? props.title_number;
+  const titleNumber = (titleRaw == null || String(titleRaw).trim() === "") ? null : String(titleRaw).trim();
+  return { inspireId, titleNumber, geometry: geom };
+}
+
+// ─── Reprojection + bounding box ───────────────────────────────────────
+
+function reprojectGeometry(geom: any, srid: number): any {
+  if (srid === 4326) return geom;
+  const fn = (c: number[]) => toWgs84(c[0], c[1]);
+  if (geom.type === "Polygon") {
+    return { type: "Polygon", coordinates: geom.coordinates.map((ring: number[][]) => ring.map(fn)) };
+  }
+  if (geom.type === "MultiPolygon") {
+    return { type: "MultiPolygon", coordinates: geom.coordinates.map((poly: number[][][]) => poly.map((ring: number[][]) => ring.map(fn))) };
+  }
+  return geom;
+}
+
+function computeBbox(geom: any): [number, number, number, number] | null {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  const rings: number[][][] = geom.type === "Polygon" ? geom.coordinates
+    : geom.type === "MultiPolygon" ? geom.coordinates.flat()
+    : [];
+  for (const ring of rings) {
+    for (const c of ring) {
+      const lng = c[0], lat = c[1];
+      if (lng < minLng) minLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lng > maxLng) maxLng = lng;
+      if (lat > maxLat) maxLat = lat;
+    }
+  }
+  if (!Number.isFinite(minLng) || !Number.isFinite(minLat)) return null;
+  return [minLng, minLat, maxLng, maxLat];
+}
+
+// ─── DB ─────────────────────────────────────────────────────────────────
+
+/** Create the table + indexes if missing — keeps the ingest self-sufficient
+ *  regardless of whether the boot migration has run on this deploy. No
+ *  PostGIS: geometry lives in a jsonb column + numeric bbox. */
+async function ensurePolygonTable(): Promise<void> {
+  await pool.query(`CREATE TABLE IF NOT EXISTS hmlr_title_polygons (
+    inspire_id    BIGINT PRIMARY KEY,
+    title_number  TEXT,
+    geojson       JSONB NOT NULL,
+    min_lng       DOUBLE PRECISION NOT NULL,
+    min_lat       DOUBLE PRECISION NOT NULL,
+    max_lng       DOUBLE PRECISION NOT NULL,
+    max_lat       DOUBLE PRECISION NOT NULL,
+    region        TEXT,
+    ingest_run_id UUID,
+    inserted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS hmlr_title_polygons_bbox_lng_idx ON hmlr_title_polygons (min_lng, max_lng)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS hmlr_title_polygons_bbox_lat_idx ON hmlr_title_polygons (min_lat, max_lat)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS hmlr_title_polygons_title_idx ON hmlr_title_polygons (title_number) WHERE title_number IS NOT NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS hmlr_title_polygons_region_idx ON hmlr_title_polygons (region)`);
+}
 
 async function flushBatch(
   batch: PolygonRow[],
-  srid: number,
   region: string | null,
   runId: string,
 ): Promise<{ inserted: number; updated: number; failed: number }> {
   if (batch.length === 0) return { inserted: 0, updated: 0, failed: 0 };
-  const sridInt = srid === 4326 ? 4326 : 27700; // whitelist — inlined safely
   const buildSql = (rows: PolygonRow[]) => {
     const values: string[] = [];
     const params: any[] = [];
     let p = 1;
     for (const r of rows) {
-      values.push(`($${p++}, $${p++}, ST_Multi(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON($${p++}), ${sridInt}), 4326)), $${p++}, $${p++})`);
-      params.push(r.inspireId, r.titleNumber, r.geometryJson, region, runId);
+      values.push(`($${p++}, $${p++}, $${p++}::jsonb, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+      params.push(r.inspireId, r.titleNumber, JSON.stringify(r.geometry), r.bbox[0], r.bbox[1], r.bbox[2], r.bbox[3], region, runId);
     }
     return {
-      text: `INSERT INTO hmlr_title_polygons (inspire_id, title_number, polygon, region, ingest_run_id)
+      text: `INSERT INTO hmlr_title_polygons (inspire_id, title_number, geojson, min_lng, min_lat, max_lng, max_lat, region, ingest_run_id)
              VALUES ${values.join(",")}
              ON CONFLICT (inspire_id) DO UPDATE
                SET title_number = EXCLUDED.title_number,
-                   polygon = EXCLUDED.polygon,
+                   geojson = EXCLUDED.geojson,
+                   min_lng = EXCLUDED.min_lng, min_lat = EXCLUDED.min_lat,
+                   max_lng = EXCLUDED.max_lng, max_lat = EXCLUDED.max_lat,
                    region = COALESCE(EXCLUDED.region, hmlr_title_polygons.region),
                    ingest_run_id = EXCLUDED.ingest_run_id,
                    updated_at = now()
@@ -175,25 +256,21 @@ async function flushBatch(
     for (const row of r.rows) (row.inserted ? inserted++ : updated++);
     return { inserted, updated, failed: 0 };
   } catch {
-    // One bad geometry fails the whole multi-row insert — retry row by row
-    // so the rest still load and we can count (and skip) the offenders.
+    // Retry row by row so one bad row can't sink the whole batch.
     let inserted = 0, updated = 0, failed = 0;
     for (const row of batch) {
       try {
         const q = buildSql([row]);
         const r = await pool.query<{ inserted: boolean }>(q.text, q.params);
         if (r.rows[0]?.inserted) inserted++; else updated++;
-      } catch {
-        failed++;
-      }
+      } catch { failed++; }
     }
     return { inserted, updated, failed };
   }
 }
 
-// ─── Format detection + parsing ────────────────────────────────────────
+// ─── Streaming parsers ─────────────────────────────────────────────────
 
-/** Extract a single geometry file from a .zip to a temp path, by extension priority. */
 async function unzipToTemp(zipPath: string): Promise<string> {
   const AdmZip = (await import("adm-zip")).default;
   const zip = new AdmZip(zipPath);
@@ -222,7 +299,7 @@ function detectFormat(filePath: string): "gml" | "geojson" | "ndjson" {
 /** Stream a GML file, emitting feature blocks split on the member end-tag. */
 async function parseGml(
   filePath: string,
-  onRow: (r: PolygonRow) => Promise<void>,
+  onFeature: (inspireId: number, geometrySource: any) => Promise<void>,
   onSkip: (reason: string) => void,
 ): Promise<void> {
   const END_TAGS = ["</gml:featureMember>", "</gml:member>", "</member>"];
@@ -232,7 +309,7 @@ async function parseGml(
     if (!/INSPIREID/.test(block)) return; // header / non-feature chunk
     const geom = featureToGeometry(block);
     if ("skip" in geom) { onSkip(geom.skip); return; }
-    await onRow({ inspireId: geom.inspireId, titleNumber: null, geometryJson: geom.geometryJson });
+    await onFeature(geom.inspireId, geom.geometry);
   };
   for await (const chunk of stream) {
     buf += chunk;
@@ -255,46 +332,13 @@ async function parseGml(
   if (/INSPIREID/.test(buf)) await handleBlock(buf);
 }
 
-/** Parse an NDJSON (one GeoJSON Feature per line) stream. */
-async function parseNdjson(
-  filePath: string,
-  onRow: (r: PolygonRow) => Promise<void>,
-  onSkip: (reason: string) => void,
-): Promise<void> {
-  const rl = readline.createInterface({ input: fs.createReadStream(filePath, { encoding: "utf-8" }), crlfDelay: Infinity });
-  for await (const line of rl) {
-    const t = line.trim();
-    if (!t) continue;
-    let f: any;
-    try { f = JSON.parse(t); } catch { onSkip("invalid JSON line"); continue; }
-    const row = featureFromGeoJson(f);
-    if ("skip" in row) onSkip(row.skip); else await onRow(row);
-  }
-}
-
-function featureFromGeoJson(f: any): PolygonRow | { skip: string } {
-  if (f?.type !== "Feature") return { skip: "not a Feature" };
-  const props = f.properties || {};
-  const inspireRaw = props.INSPIREID ?? props.inspireid ?? props.INSPIRE_ID ?? props.inspire_id;
-  if (inspireRaw == null) return { skip: "missing INSPIREID" };
-  const inspireId = Number(inspireRaw);
-  if (!Number.isFinite(inspireId)) return { skip: "INSPIREID not numeric" };
-  const geom = f.geometry;
-  if (!geom || (geom.type !== "Polygon" && geom.type !== "MultiPolygon")) {
-    return { skip: `geometry not Polygon/MultiPolygon (${geom?.type})` };
-  }
-  const titleRaw = props.TITLE_NO ?? props.title_no ?? props.TITLE_NUMBER ?? props.title_number;
-  const titleNumber = (titleRaw == null || String(titleRaw).trim() === "") ? null : String(titleRaw).trim();
-  return { inspireId, titleNumber, geometryJson: JSON.stringify(geom) };
-}
-
 // ─── Orchestration ─────────────────────────────────────────────────────
 
 /**
  * Ingest one INSPIRE polygon file (.zip/.gml/.geojson/.ndjson) into
  * hmlr_title_polygons. Tracks progress in hmlr_ingest_runs (dataset
- * 'inspire'). GML is treated as EPSG:27700 and reprojected by PostGIS;
- * GeoJSON/NDJSON is treated as EPSG:4326.
+ * 'inspire'). GML is treated as EPSG:27700 and reprojected to 4326 in JS;
+ * GeoJSON/NDJSON is treated as already 4326.
  */
 export async function ingestInspirePolygonsFile(
   filePath: string,
@@ -302,6 +346,8 @@ export async function ingestInspirePolygonsFile(
 ): Promise<InspireIngestResult> {
   const region = opts.region ?? null;
   const sourceFilename = opts.sourceFilename ?? path.basename(filePath);
+
+  await ensurePolygonTable();
 
   const runRes = await pool.query<{ id: string }>(
     `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
@@ -315,14 +361,6 @@ export async function ingestInspirePolygonsFile(
   const note = (reason: string) => { skipped++; skipReasons[reason] = (skipReasons[reason] || 0) + 1; };
 
   try {
-    // The table only exists once the PostGIS-guarded boot migration ran.
-    if (!(await isHmlrPolygonsAvailable())) {
-      resetHmlrAvailabilityCache();
-      if (!(await isHmlrPolygonsAvailable())) {
-        throw new Error("hmlr_title_polygons table not found — PostGIS may not be enabled on this database, or the app hasn't redeployed since the table was added. Check boot logs for '[auto-migrate] skipped (…postgis…)'.");
-      }
-    }
-
     let dataPath = filePath;
     if (filePath.toLowerCase().endsWith(".zip")) {
       dataPath = await unzipToTemp(filePath);
@@ -332,14 +370,21 @@ export async function ingestInspirePolygonsFile(
     const srid = format === "gml" ? 27700 : 4326;
 
     let batch: PolygonRow[] = [];
-    const onRow = async (r: PolygonRow) => {
+    const flush = async () => {
+      if (batch.length === 0) return;
+      const f = await flushBatch(batch, region, runId);
+      inserted += f.inserted; updated += f.updated; skipped += f.failed;
+      if (f.failed) skipReasons["geometry rejected"] = (skipReasons["geometry rejected"] || 0) + f.failed;
+      batch = [];
+    };
+    const handle = async (inspireId: number, titleNumber: string | null, geometrySource: any) => {
       processed++;
-      batch.push(r);
+      const geometry = reprojectGeometry(geometrySource, srid);
+      const bbox = computeBbox(geometry);
+      if (!bbox) { note("empty/invalid geometry"); return; }
+      batch.push({ inspireId, titleNumber, geometry, bbox });
       if (batch.length >= BATCH) {
-        const f = await flushBatch(batch, srid, region, runId);
-        inserted += f.inserted; updated += f.updated; skipped += f.failed;
-        if (f.failed) skipReasons["geometry rejected by PostGIS"] = (skipReasons["geometry rejected by PostGIS"] || 0) + f.failed;
-        batch = [];
+        await flush();
         if (processed % 10_000 === 0) {
           await pool.query(
             `UPDATE hmlr_ingest_runs SET rows_processed=$1, rows_inserted=$2, rows_updated=$3, rows_skipped=$4 WHERE id=$5`,
@@ -350,29 +395,34 @@ export async function ingestInspirePolygonsFile(
       }
     };
 
-    if (format === "gml") await parseGml(dataPath, onRow, note);
-    else if (format === "ndjson") await parseNdjson(dataPath, onRow, note);
-    else {
-      // Single GeoJSON FeatureCollection — parsed whole (memory note: fine
-      // for per-LA extracts; convert huge files to NDJSON upstream).
+    if (format === "gml") {
+      await parseGml(dataPath, (id, geom) => handle(id, null, geom), note);
+    } else if (format === "ndjson") {
+      const rl = readline.createInterface({ input: fs.createReadStream(dataPath, { encoding: "utf-8" }), crlfDelay: Infinity });
+      for await (const line of rl) {
+        const t = line.trim();
+        if (!t) continue;
+        let f: any;
+        try { f = JSON.parse(t); } catch { note("invalid JSON line"); continue; }
+        const row = featureFromGeoJson(f);
+        if ("skip" in row) note(row.skip); else await handle(row.inspireId, row.titleNumber, row.geometry);
+      }
+    } else {
       const fc = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
       for (const f of fc?.features || []) {
         const row = featureFromGeoJson(f);
-        if ("skip" in row) note(row.skip); else await onRow(row);
+        if ("skip" in row) note(row.skip); else await handle(row.inspireId, row.titleNumber, row.geometry);
       }
     }
-
-    if (batch.length > 0) {
-      const f = await flushBatch(batch, srid, region, runId);
-      inserted += f.inserted; updated += f.updated; skipped += f.failed;
-    }
+    await flush();
 
     const notes = Object.entries(skipReasons).map(([k, v]) => `${v}×${k}`).join("; ") || null;
     await pool.query(
       `UPDATE hmlr_ingest_runs SET status='ok', rows_processed=$1, rows_inserted=$2, rows_updated=$3, rows_skipped=$4, notes=$5, finished_at=now() WHERE id=$6`,
       [processed, inserted, updated, skipped, notes, runId],
     );
-    resetHmlrAvailabilityCache(); // table now has rows — let the map see them
+    resetHmlrAvailabilityCache();
+    void isHmlrPolygonsAvailable();
     console.log(`[inspire-ingest] DONE ${sourceFilename} (${format}) — processed=${processed} inserted=${inserted} updated=${updated} skipped=${skipped}${notes ? ` [${notes}]` : ""}`);
     return { runId, format, processed, inserted, updated, skipped };
   } catch (err: any) {

@@ -49,11 +49,13 @@ Each is a single CSV. Latest monthly file is what you want.
 npm run db:push
 ```
 
-This enables PostGIS + pg_trgm extensions and creates the HMLR tables.
-If Railway's Postgres rejects `CREATE EXTENSION postgis` (some plans
-restrict superuser actions), open a Railway support ticket — they enable
-PostGIS on request. (PostGIS is reserved here for future polygon work;
-the v1 ownership lookup uses pg_trgm + a btree index, both standard.)
+This enables the `pg_trgm` extension and creates the HMLR tables.
+NOTE: this database has **no PostGIS** (it's not in `pg_available_extensions`
+and can't be added on this plan), so the polygon layer is **PostGIS-free** —
+boundaries are stored as GeoJSON (`jsonb`) + a numeric min/max lng/lat bbox,
+and British National Grid → WGS84 reprojection is done in JS (proj4) at
+ingest. No geometry types or spatial indexes are used; ownership lookups
+use `pg_trgm` + btree, both standard.
 
 ### 4. Run the two ingests
 

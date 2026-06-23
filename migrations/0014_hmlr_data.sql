@@ -22,25 +22,35 @@
 -- Coverage: England & Wales only. Scotland uses Registers of Scotland
 -- (different format, separate ingest later). Out of scope for v1.
 
-CREATE EXTENSION IF NOT EXISTS postgis;
-
 -- INSPIRE polygons WITHOUT title_number (free path). Useful for map
 -- visualisation; can also be linked to CCOD/OCOD rows later by
 -- geocoding property_address to lat/lng and point-in-polygon. For
 -- ownership lookups in v1 we use CCOD/OCOD address-text matching
 -- directly — polygons are optional.
+--
+-- POSTGIS-FREE: the live database has no PostGIS, so geometry is stored
+-- as GeoJSON (jsonb, EPSG:4326) plus a numeric min/max lng/lat bbox for
+-- viewport queries. GML coords (EPSG:27700) are reprojected to 4326 in
+-- JS (proj4) at ingest time. See server/hmlr-polygons-fetch.ts.
 CREATE TABLE IF NOT EXISTS hmlr_title_polygons (
   inspire_id        BIGINT PRIMARY KEY,
   title_number      TEXT,                                       -- nullable: only present if loaded from paid NPS dataset
-  polygon           GEOMETRY(MultiPolygon, 4326) NOT NULL,
+  geojson           JSONB NOT NULL,                             -- Polygon/MultiPolygon, EPSG:4326
+  min_lng           DOUBLE PRECISION NOT NULL,
+  min_lat           DOUBLE PRECISION NOT NULL,
+  max_lng           DOUBLE PRECISION NOT NULL,
+  max_lat           DOUBLE PRECISION NOT NULL,
   region            TEXT,
   ingest_run_id     UUID,
   inserted_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS hmlr_title_polygons_geom_idx
-  ON hmlr_title_polygons USING GIST (polygon);
+CREATE INDEX IF NOT EXISTS hmlr_title_polygons_bbox_lng_idx
+  ON hmlr_title_polygons (min_lng, max_lng);
+
+CREATE INDEX IF NOT EXISTS hmlr_title_polygons_bbox_lat_idx
+  ON hmlr_title_polygons (min_lat, max_lat);
 
 CREATE INDEX IF NOT EXISTS hmlr_title_polygons_title_idx
   ON hmlr_title_polygons (title_number)

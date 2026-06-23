@@ -1985,22 +1985,28 @@ import { pool } from "./db";
        ON hmlr_ingest_runs (dataset, started_at DESC)`,
 
     // INSPIRE Index Polygons (free, no title_number) — boundary shapes for
-    // map shading on the property-intelligence map. PostGIS-guarded: if the
-    // extension isn't available these are skipped and the app still boots.
-    // The table stays empty until scripts/ingest-hmlr-polygons.ts loads an
-    // INSPIRE NDJSON (see replit.md runbook). Mirrors migrations/0014.
-    `CREATE EXTENSION IF NOT EXISTS postgis`,
+    // map shading on the property-intelligence map. PostGIS-FREE: this DB
+    // has no PostGIS, so geometry is stored as GeoJSON in a jsonb column
+    // (WGS84) + a numeric min/max lng/lat bbox for fast viewport queries.
+    // Stays empty until the INSPIRE ingest runs (server/hmlr-polygons-fetch.ts
+    // via POST /api/admin/hmlr/fetch-polygons-from-sharepoint). See replit.md.
     `CREATE TABLE IF NOT EXISTS hmlr_title_polygons (
       inspire_id        BIGINT PRIMARY KEY,
       title_number      TEXT,
-      polygon           GEOMETRY(MultiPolygon, 4326) NOT NULL,
+      geojson           JSONB NOT NULL,
+      min_lng           DOUBLE PRECISION NOT NULL,
+      min_lat           DOUBLE PRECISION NOT NULL,
+      max_lng           DOUBLE PRECISION NOT NULL,
+      max_lat           DOUBLE PRECISION NOT NULL,
       region            TEXT,
       ingest_run_id     UUID,
       inserted_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
     )`,
-    `CREATE INDEX IF NOT EXISTS hmlr_title_polygons_geom_idx
-       ON hmlr_title_polygons USING GIST (polygon)`,
+    `CREATE INDEX IF NOT EXISTS hmlr_title_polygons_bbox_lng_idx
+       ON hmlr_title_polygons (min_lng, max_lng)`,
+    `CREATE INDEX IF NOT EXISTS hmlr_title_polygons_bbox_lat_idx
+       ON hmlr_title_polygons (min_lat, max_lat)`,
     `CREATE INDEX IF NOT EXISTS hmlr_title_polygons_title_idx
        ON hmlr_title_polygons (title_number)
        WHERE title_number IS NOT NULL`,

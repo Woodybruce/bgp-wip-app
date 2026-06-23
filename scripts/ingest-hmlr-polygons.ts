@@ -116,23 +116,44 @@ async function finishRun(
   );
 }
 
+function bboxOfGeoJson(geomStr: string): [number, number, number, number] | null {
+  let geom: any;
+  try { geom = JSON.parse(geomStr); } catch { return null; }
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  const rings: number[][][] = geom?.type === "Polygon" ? geom.coordinates
+    : geom?.type === "MultiPolygon" ? geom.coordinates.flat() : [];
+  for (const ring of rings) for (const c of ring) {
+    if (c[0] < minLng) minLng = c[0];
+    if (c[1] < minLat) minLat = c[1];
+    if (c[0] > maxLng) maxLng = c[0];
+    if (c[1] > maxLat) maxLat = c[1];
+  }
+  return Number.isFinite(minLng) ? [minLng, minLat, maxLng, maxLat] : null;
+}
+
 async function flushBatch(batch: FeatureRow[], region: string | null, runId: string): Promise<{ inserted: number; updated: number }> {
   if (batch.length === 0) return { inserted: 0, updated: 0 };
-  // Build a multi-row insert using ST_GeomFromGeoJSON for each polygon. We
-  // upsert on inspire_id so re-running with a fresher file just overwrites.
+  // PostGIS-free: store GeoJSON in a jsonb column + a numeric bbox. Input
+  // must already be EPSG:4326 (convert with ogr2ogr -t_srs EPSG:4326).
+  // Upsert on inspire_id so re-running with a fresher file just overwrites.
   const values: string[] = [];
   const params: any[] = [];
   let p = 1;
   for (const r of batch) {
-    values.push(`($${p++}, $${p++}, ST_Multi(ST_GeomFromGeoJSON($${p++})), $${p++}, $${p++})`);
-    params.push(r.inspireId, r.titleNumber, r.geometryJson, region, runId);
+    const bbox = bboxOfGeoJson(r.geometryJson);
+    if (!bbox) continue;
+    values.push(`($${p++}, $${p++}, $${p++}::jsonb, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+    params.push(r.inspireId, r.titleNumber, r.geometryJson, bbox[0], bbox[1], bbox[2], bbox[3], region, runId);
   }
+  if (values.length === 0) return { inserted: 0, updated: 0 };
   const sql = `
-    INSERT INTO hmlr_title_polygons (inspire_id, title_number, polygon, region, ingest_run_id)
+    INSERT INTO hmlr_title_polygons (inspire_id, title_number, geojson, min_lng, min_lat, max_lng, max_lat, region, ingest_run_id)
     VALUES ${values.join(",")}
     ON CONFLICT (inspire_id) DO UPDATE
       SET title_number = EXCLUDED.title_number,
-          polygon = EXCLUDED.polygon,
+          geojson = EXCLUDED.geojson,
+          min_lng = EXCLUDED.min_lng, min_lat = EXCLUDED.min_lat,
+          max_lng = EXCLUDED.max_lng, max_lat = EXCLUDED.max_lat,
           region = COALESCE(EXCLUDED.region, hmlr_title_polygons.region),
           ingest_run_id = EXCLUDED.ingest_run_id,
           updated_at = now()

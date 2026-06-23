@@ -246,22 +246,26 @@ export function registerMapAnnotationsRoutes(app: Express) {
       // freehold/leasehold colour split. Some polygons have no matching
       // proprietor row (especially smaller estates) — those come back
       // with tenure NULL and the client paints them grey.
+      // PostGIS-free: rectangle-overlap on the stored bbox columns, return
+      // the GeoJSON jsonb directly. (north=$3 ≥ min_lat, south=$4 ≤ max_lat …)
       const r = await pool.query<any>(
         `SELECT p.title_number,
                 p.region,
-                ST_AsGeoJSON(p.polygon) AS gj,
+                p.geojson AS gj,
                 (SELECT lower(pr.tenure)
                    FROM hmlr_proprietors pr
                   WHERE pr.title_number = p.title_number
                   LIMIT 1) AS tenure
            FROM hmlr_title_polygons p
-          WHERE p.polygon && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+          WHERE p.min_lng <= $1 AND p.max_lng >= $2
+            AND p.min_lat <= $3 AND p.max_lat >= $4
           LIMIT 500`,
-        [west, south, east, north],
+        [east, west, north, south],
       );
       const features = r.rows.map((row) => {
+        // jsonb comes back already parsed; tolerate a string too.
         let geom: any = null;
-        try { geom = JSON.parse(row.gj); } catch {}
+        try { geom = typeof row.gj === "string" ? JSON.parse(row.gj) : row.gj; } catch {}
         // Normalise tenure — HMLR uses "Freehold" / "Leasehold" but
         // the casing isn't always consistent. lower() above, then
         // contains-check for safety.

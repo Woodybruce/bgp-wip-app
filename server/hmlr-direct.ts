@@ -88,30 +88,71 @@ export function resetHmlrAvailabilityCache(): void {
   _hmlrProprietorsAvailable = null;
 }
 
+// ─── Point-in-polygon (PostGIS-free) ────────────────────────────────────
+// This DB has no PostGIS, so polygons are stored as GeoJSON + a numeric
+// bbox. We prefilter by bbox (indexed) then confirm with a JS ray-cast.
+
+function safeJson(v: any): any {
+  if (v && typeof v === "object") return v;
+  try { return typeof v === "string" ? JSON.parse(v) : null; } catch { return null; }
+}
+function pointInRing(x: number, y: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if (((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function pointInPolygon(x: number, y: number, rings: number[][][]): boolean {
+  if (!rings.length || !pointInRing(x, y, rings[0])) return false;
+  for (let i = 1; i < rings.length; i++) if (pointInRing(x, y, rings[i])) return false; // in a hole
+  return true;
+}
+function pointInGeometry(x: number, y: number, geom: any): boolean {
+  if (!geom) return false;
+  if (geom.type === "Polygon") return pointInPolygon(x, y, geom.coordinates);
+  if (geom.type === "MultiPolygon") return geom.coordinates.some((poly: number[][][]) => pointInPolygon(x, y, poly));
+  return false;
+}
+/** Rough area of the first exterior ring (shoelace) — orders matches smallest-first. */
+function ringArea(geom: any): number {
+  const ring: number[][] | undefined = geom?.type === "Polygon" ? geom.coordinates?.[0]
+    : geom?.type === "MultiPolygon" ? geom.coordinates?.[0]?.[0] : undefined;
+  if (!ring || ring.length < 4) return Number.MAX_VALUE;
+  let a = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    a += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+  }
+  return Math.abs(a / 2);
+}
+
 /**
- * Find every HMLR title polygon containing the given lat/lng. Returns
- * an empty array if no polygon contains the point (common for properties
- * outside England & Wales, very new registrations not yet in INSPIRE,
- * or unregistered land).
- *
- * EPSG:4326 (WGS84). lng comes first in ST_MakePoint by PostGIS convention.
+ * Find every HMLR title polygon containing the given lat/lng. Returns an
+ * empty array if no polygon contains the point (outside England & Wales,
+ * very new registrations not yet in INSPIRE, or unregistered land).
+ * Smallest (most specific) parcel first. EPSG:4326 (WGS84).
  */
 export async function findTitlesAtPoint(lat: number, lng: number): Promise<HmlrTitleMatch[]> {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
   if (!(await isHmlrPolygonsAvailable())) return [];
-  const r = await pool.query<{ inspire_id: string; title_number: string; region: string | null }>(
-    `SELECT inspire_id, title_number, region
+  // bbox prefilter (indexed) then confirm with JS point-in-polygon.
+  const r = await pool.query<{ inspire_id: string; title_number: string; region: string | null; geojson: any }>(
+    `SELECT inspire_id, title_number, region, geojson
        FROM hmlr_title_polygons
-      WHERE ST_Contains(polygon, ST_SetSRID(ST_MakePoint($1, $2), 4326))
-      ORDER BY ST_Area(polygon) ASC
-      LIMIT 20`,
+      WHERE min_lng <= $1 AND max_lng >= $1 AND min_lat <= $2 AND max_lat >= $2
+      LIMIT 200`,
     [lng, lat],
   );
-  return r.rows.map((row) => ({
-    inspireId: Number(row.inspire_id),
-    titleNumber: row.title_number,
-    region: row.region,
-  }));
+  const hits: Array<HmlrTitleMatch & { _area: number }> = [];
+  for (const row of r.rows) {
+    const geom = safeJson(row.geojson);
+    if (pointInGeometry(lng, lat, geom)) {
+      hits.push({ inspireId: Number(row.inspire_id), titleNumber: row.title_number, region: row.region, _area: ringArea(geom) });
+    }
+  }
+  hits.sort((a, b) => a._area - b._area);
+  return hits.slice(0, 20).map(({ _area, ...m }) => m);
 }
 
 /**
