@@ -1053,6 +1053,7 @@ You have read AND write access to almost every operational table in the BGP data
 The hmlr_proprietors table holds HMLR's corporate ownership register — CCOD (UK companies) + OCOD (overseas companies), millions of title rows already loaded. For ANY "who owns X", "all titles / freeholds owned by <company>", "what does <company> hold", or estate-assembly question, query it with sql_query — do NOT try to read raw Land Registry files for this. Match proprietor-name variants broadly (punctuation/suffixes differ) and prefix-style so the name index is used, e.g.:
   SELECT title_number, proprietor_name, property_address, postcode, tenure, proprietor_category, company_registration_no FROM hmlr_proprietors WHERE lower(proprietor_name) LIKE 'young%' ORDER BY proprietor_name;
 Run each plausible variant (e.g. 'young%', 'wellington pub%') plus any known subsidiaries / SPVs, then reconcile. Useful columns: title_number, proprietor_name, proprietor_category, company_registration_no, property_address, postcode, tenure, dataset. If a name returns no rows, say so — never invent titles.
+Identifying the owner/parcel for a title or address is ALWAYS this free register first. The paid property_data_lookup land-registry-documents endpoint is ONLY for buying the official stamped Title Plan/Register PDF (the legal pack) — and it's unreliable on regional/OCOD titles. When it returns delivered:false, don't retry or report "nothing happened": relay what our register already knows (registerKnown) and give the user the direct-HMLR order link (manualOrder.url, £3/doc).
 
 ## CRITICAL Rules
 1. **ACT FIRST, REPORT AFTER.** Never ask "shall I proceed?" — just do it and confirm.
@@ -1441,6 +1442,23 @@ interface LandRegDocResult {
   files: Array<{ filename: string; text?: string; note?: string }>;
   proprietorData?: any;
   error?: string;
+  // True once PropertyData actually returns a document. When false the
+  // order didn't complete — never report that as a delivered plan/register.
+  delivered?: boolean;
+  // What our own ingested HMLR register knows about this title, filled in
+  // when PropertyData yields nothing so the ownership question is still
+  // answered (free, instant) instead of dead-ending.
+  registerKnown?: {
+    source: string;
+    proprietors: string[];
+    propertyAddress: string | null;
+    tenure: string | null;
+    pricePaid: string | null;
+    dataset: string | null;
+  } | null;
+  // Actionable next step when PropertyData can't fulfil the stamped PDF —
+  // order it direct from HMLR rather than retrying a broken endpoint.
+  manualOrder?: { url: string; note: string };
 }
 
 async function fetchLandRegistryDocuments(
@@ -1451,7 +1469,41 @@ async function fetchLandRegistryDocuments(
 ): Promise<LandRegDocResult[]> {
   const MAX_TITLES = 4;          // cost guard — each title is a paid purchase
   const MAX_TEXT_PER_PDF = 15000; // keep tool results inside sane token budgets
+  const HMLR_ORDER_URL = "https://search-property-information.service.gov.uk/"; // gov.uk official-copy ordering (£3/doc)
   const results: LandRegDocResult[] = [];
+
+  // PropertyData's land-registry-documents reseller is flaky on regional /
+  // OCOD-held titles — it 404s or returns alreadyPurchased:false with no
+  // document, even when the title is valid. When that happens we must NOT
+  // dead-end: answer the ownership question from our own ingested HMLR
+  // register (free, instant) and hand back the direct-HMLR order link for
+  // the official stamped PDF.
+  const finalize = async (out: LandRegDocResult) => {
+    out.delivered = !!out.documentUrl;
+    if (out.delivered) return;
+    try {
+      const { findProprietorsByTitle } = await import("./hmlr-direct");
+      const props = await findProprietorsByTitle(out.title);
+      if (props.length) {
+        out.registerKnown = {
+          source: "in-house HMLR register (CCOD/OCOD)",
+          proprietors: props.map((p) => p.proprietorName).filter((n): n is string => !!n),
+          propertyAddress: props[0].propertyAddress || null,
+          tenure: props[0].tenure || null,
+          pricePaid: props[0].pricePaid || null,
+          dataset: props[0].dataset || null,
+        };
+      }
+    } catch {
+      // Register lookup is best-effort — the manual-order step below still
+      // gives the user an actionable path.
+    }
+    out.manualOrder = {
+      url: HMLR_ORDER_URL,
+      note: `PropertyData could not return a document for ${out.title}. Order the official title plan/register direct from HMLR (£3 each) at the link, searching by title number ${out.title}.`,
+    };
+  };
+
   for (const rawTitle of titles.slice(0, MAX_TITLES)) {
     const title = rawTitle.trim().toUpperCase();
     if (!title) continue;
@@ -1465,11 +1517,13 @@ async function fetchLandRegistryDocuments(
       const data = await res.json().catch(() => ({} as any)) as any;
       if (!res.ok && !data?.document_url) {
         out.error = `PropertyData HTTP ${res.status}`;
+        await finalize(out);
         results.push(out);
         continue;
       }
       if (data.status === "error" && !(data.code === "2906" && data.document_url)) {
         out.error = data.message || `PropertyData error (code ${data.code || "?"})`;
+        await finalize(out);
         results.push(out);
         continue;
       }
@@ -1512,6 +1566,7 @@ async function fetchLandRegistryDocuments(
     } catch (err: any) {
       out.error = err?.message || "Unknown error";
     }
+    await finalize(out);
     results.push(out);
   }
   return results;
@@ -3615,7 +3670,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           endpoint: {
             type: "string",
             enum: ["sold-prices", "prices", "prices-per-sqf", "sold-prices-per-sqf", "rents", "rents-commercial", "rents-hmo", "yields", "growth", "growth-psf", "planning-applications", "valuation-commercial-sale", "valuation-commercial-rent", "valuation-sale", "valuation-rent", "demand", "demand-rent", "demographics", "flood-risk", "floor-areas", "postcode-key-stats", "uprns", "energy-efficiency", "address-match-uprn", "uprn", "uprn-title", "analyse-buildings", "rebuild-cost", "ptal", "crime", "schools", "internet-speed", "restaurants", "conservation-area", "green-belt", "aonb", "national-park", "listed-buildings", "household-income", "population", "tenure-types", "property-types", "council-tax", "national-hmo-register", "freeholds", "politics", "agents", "area-type", "land-registry-documents"],
-            description: "Which data to retrieve. Market: sold-prices, prices, prices-per-sqf, sold-prices-per-sqf, rents-commercial, yields, growth, growth-psf, demand, demand-rent, demographics, postcode-key-stats. Residential: rents, rents-hmo, tenure-types, property-types, floor-areas. Valuations: valuation-commercial-sale/rent, valuation-sale/rent. Local: ptal, crime, schools, internet-speed, restaurants, agents, area-type, council-tax, household-income, population, politics. Planning: planning-applications, conservation-area, green-belt, aonb, national-park, listed-buildings, flood-risk, freeholds, national-hmo-register. Property Intelligence: uprns, energy-efficiency, address-match-uprn, uprn, uprn-title, analyse-buildings, rebuild-cost. Land Registry: land-registry-documents (purchase Title Register and/or Title Plan by title number — costs £7.50+VAT per document)."
+            description: "Which data to retrieve. Market: sold-prices, prices, prices-per-sqf, sold-prices-per-sqf, rents-commercial, yields, growth, growth-psf, demand, demand-rent, demographics, postcode-key-stats. Residential: rents, rents-hmo, tenure-types, property-types, floor-areas. Valuations: valuation-commercial-sale/rent, valuation-sale/rent. Local: ptal, crime, schools, internet-speed, restaurants, agents, area-type, council-tax, household-income, population, politics. Planning: planning-applications, conservation-area, green-belt, aonb, national-park, listed-buildings, flood-risk, freeholds, national-hmo-register. Property Intelligence: uprns, energy-efficiency, address-match-uprn, uprn, uprn-title, analyse-buildings, rebuild-cost. Land Registry: land-registry-documents (purchase the official stamped Title Register and/or Title Plan PDF by title number — costs £7.50+VAT per document). NOTE: to IDENTIFY a title's owner/parcel, query the in-house hmlr_proprietors register with sql_query FIRST (free, instant) — only use land-registry-documents when the user needs the actual stamped PDF. This reseller is flaky on regional/OCOD titles; if a result comes back with delivered:false, relay its registerKnown + manualOrder.url (order direct from HMLR) instead of retrying."
           },
           postcode: { type: "string", description: "UK postcode (full, district, or sector). e.g. W1K 3QB, SW1X, EC2A. Not required for 'uprn' endpoint." },
           address: { type: "string", description: "For address-match-uprn: the street address to match. e.g. '10 Lowndes Street'" },
@@ -7116,7 +7171,11 @@ export async function executeCrmToolRaw(
     if (endpoint === "land-registry-documents") {
       const titles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
       const docs = await fetchLandRegistryDocuments(apiKey, titles, (fnArgs.documents as string) || "both", fnArgs.extract_proprietor_data !== false);
-      return { data: { success: true, source: "PropertyData.co.uk", endpoint, results: docs, note: "Each result includes the extracted register text (files[].text) and a documentUrl download link. Present documentUrl as a bare URL on its own line so the chat UI renders it clickable." } };
+      const undelivered = docs.filter((d) => !d.delivered);
+      const noteParts: string[] = [];
+      if (docs.some((d) => d.delivered)) noteParts.push("Delivered documents include the extracted register text (files[].text) and a documentUrl download link — present documentUrl as a bare URL on its own line so the chat UI renders it clickable.");
+      if (undelivered.length) noteParts.push(`PropertyData returned NO document for ${undelivered.map((d) => d.title).join(", ")} — this is the known flakiness on regional/OCOD titles, NOT a 'nothing happened' result and nothing was charged. For each, relay registerKnown (verified owner/parcel from our own HMLR register) if present, and give the user manualOrder.url to order the official plan/register direct from HMLR (£3 each). Do NOT retry this endpoint for those titles.`);
+      return { data: { success: docs.some((d) => d.delivered), source: "PropertyData.co.uk", endpoint, results: docs, note: noteParts.join(" ") } };
     }
     try {
       const params = new URLSearchParams({ key: apiKey });
@@ -11033,6 +11092,19 @@ export async function handleCrmToolCall(
         for (const f of d.files) {
           if (f.text) lines.push(`  --- ${f.filename} ---\n${f.text}`);
           else if (f.note) lines.push(`  ${f.filename}: ${f.note}`);
+        }
+        // PropertyData returned nothing — don't leave a bare "Title X:" line.
+        // Give what our own register knows plus the direct-HMLR order link.
+        if (!d.delivered) {
+          if (d.registerKnown) {
+            const who = d.registerKnown.proprietors.join(", ") || "—";
+            const extras = [d.registerKnown.tenure, d.registerKnown.propertyAddress].filter(Boolean).join(" · ");
+            lines.push(`  Our HMLR register: ${who}${extras ? ` (${extras})` : ""}`);
+          }
+          if (d.manualOrder) {
+            lines.push(`  ${d.manualOrder.note}`);
+            lines.push(`  ${d.manualOrder.url}`);
+          }
         }
         return lines.join("\n");
       });
