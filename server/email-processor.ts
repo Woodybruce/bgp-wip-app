@@ -1063,7 +1063,27 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
       const fromName = msg.from?.emailAddress?.name || "";
       const subject = msg.subject || "";
       const bodyText = extractEmailBodyText(msg);
-      if (bodyText.trim().length < 50) console.warn(`[email-processor] near-empty body (${bodyText.trim().length} chars) from "${subject}" by ${fromEmail} — forward may be image-only / an attachment, or the message fetch was truncated`);
+      // Rich diagnostic for the recurring "forwarded bulletin came through
+      // empty / only the header" reports. Fires when extraction is tiny OR
+      // when the email is image-dominated but yielded little text (the
+      // image-based-newsletter case — content baked into <img>, so the only
+      // text is the forwarding header). One log line tells us which case it
+      // is. Grep Railway logs for "[email-processor] thin body".
+      {
+        const rawContent = String(msg?.body?.content || "");
+        const rawType = (msg?.body?.contentType || "?").toLowerCase();
+        const imgCount = (rawContent.match(/<img\b/gi) || []).length;
+        const extractedLen = bodyText.trim().length;
+        const thin = extractedLen < 50 || (imgCount >= 5 && extractedLen < 500);
+        if (thin) {
+          const rawSnippet = rawContent.replace(/\s+/g, " ").slice(0, 600);
+          console.warn(
+            `[email-processor] thin body (extracted=${extractedLen} chars) from "${subject}" by ${fromEmail} ` +
+            `| contentType=${rawType} rawLen=${rawContent.length} imgTags=${imgCount} hasAttachments=${!!msg?.hasAttachments} fullFetch=${!!fullMsg} ` +
+            `| previewLen=${String(msg?.bodyPreview || "").length} | rawSnippet="${rawSnippet}"`,
+          );
+        }
+      }
       const receivedAt = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
       const toRecipients = (msg.toRecipients || []).map((r: any) => r.emailAddress?.address || "");
       const ccRecipients = (msg.ccRecipients || []).map((r: any) => r.emailAddress?.address || "");
