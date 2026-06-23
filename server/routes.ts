@@ -3774,6 +3774,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!shareUrl) return res.status(400).json({ error: "shareUrl required in body" });
       const region: string | null = req.body?.region ? String(req.body.region).trim() : null;
 
+      // Councils mode: pull only the named local authorities straight out of
+      // the national zip via HTTP range requests — no whole-file download,
+      // web-dyno-safe for a handful of councils. (NOT a way to load all 348 —
+      // 24M parcels still needs the offline CLI.)
+      const councils: string[] = Array.isArray(req.body?.councils)
+        ? req.body.councils.map((c: any) => String(c)).filter(Boolean)
+        : [];
+      if (councils.length) {
+        const { ingestInspireCouncilsFromShareLink } = await import("./hmlr-polygons-fetch");
+        const rr = await pool.query<{ id: string }>(
+          `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
+          [`councils: ${councils.join(",")}`],
+        );
+        const runId = rr.rows[0].id;
+        setImmediate(() => {
+          (async () => {
+            try { await ingestInspireCouncilsFromShareLink(shareUrl, { councils, region, runId }); }
+            catch (err: any) { console.error("[inspire-councils] failed:", err?.message); }
+          })();
+        });
+        return res.status(202).json({ ok: true, mode: "councils", councils, message: `Started council ingest for ${councils.join(", ")} — poll /api/admin/hmlr/runs` });
+      }
+
       const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
       const { ingestInspirePolygonsFile } = await import("./hmlr-polygons-fetch");
 

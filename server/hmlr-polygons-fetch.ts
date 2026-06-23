@@ -28,6 +28,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
+import { PassThrough, Readable } from "stream";
 import proj4 from "proj4";
 import unzipper from "unzipper";
 import { pool } from "./db";
@@ -430,6 +431,124 @@ export async function ingestInspirePolygonsFile(
       [err?.message || String(err), processed, inserted, updated, skipped, runId],
     ).catch(() => {});
     console.error(`[inspire-ingest] FAILED ${sourceFilename}:`, err?.message);
+    throw err;
+  }
+}
+
+/**
+ * Random-access source over an HTTP(S) URL using Range requests, so
+ * unzipper can read a remote zip's directory + selected entries WITHOUT
+ * downloading the whole file. Needs the server to honour Range (Azure
+ * blob / SharePoint @microsoft.graph.downloadUrl do).
+ */
+function rangedSource(url: string, totalSize: number) {
+  return {
+    size: async () => totalSize,
+    stream: (offset: number, length?: number) => {
+      const pt = new PassThrough();
+      const end = (typeof length === "number" && length >= 0) ? String(offset + length - 1) : "";
+      fetch(url, { headers: { Range: `bytes=${offset}-${end}` } })
+        .then((res) => {
+          if (res.status !== 206 && res.status !== 200) { pt.destroy(new Error(`Range request unsupported (HTTP ${res.status})`)); return; }
+          if (!res.body) { pt.end(); return; }
+          Readable.fromWeb(res.body as any).pipe(pt);
+        })
+        .catch((e) => pt.destroy(e));
+      return pt;
+    },
+  };
+}
+
+/**
+ * Ingest only the NAMED local-authority councils out of the national
+ * INSPIRE zip, read straight from the SharePoint share link via HTTP Range
+ * requests — only those councils' chunks are fetched (tens of MB each),
+ * never the whole 5GB, and nothing needs extracting or re-sharing.
+ *
+ * This is web-dyno-safe for a HANDFUL of councils. It is NOT a way to load
+ * the whole national set — 24M parcels still can't be parsed on the web
+ * dyno; that's the offline CLI job.
+ */
+export async function ingestInspireCouncilsFromShareLink(
+  shareUrl: string,
+  opts: { councils: string[]; region?: string | null; runId?: string },
+): Promise<InspireIngestResult> {
+  const wanted = opts.councils.map((c) => c.toLowerCase().trim()).filter(Boolean);
+  const region = opts.region ?? "national";
+
+  await ensurePolygonTable();
+  let runId = opts.runId;
+  if (!runId) {
+    const rr = await pool.query<{ id: string }>(
+      `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
+      [`councils: ${wanted.join(",")}`],
+    );
+    runId = rr.rows[0].id;
+  }
+
+  let processed = 0, inserted = 0, updated = 0, skipped = 0;
+  const skipReasons: Record<string, number> = {};
+  const note = (r: string) => { skipped++; skipReasons[r] = (skipReasons[r] || 0) + 1; };
+  let batch: PolygonRow[] = [];
+  const flush = async () => {
+    if (!batch.length) return;
+    const f = await flushBatch(batch, region, runId!);
+    inserted += f.inserted; updated += f.updated; skipped += f.failed;
+    batch = [];
+  };
+  const handle = async (inspireId: number, titleNumber: string | null, geometrySource: any, srid: number) => {
+    processed++;
+    const geometry = reprojectGeometry(geometrySource, srid);
+    const bbox = computeBbox(geometry);
+    if (!bbox) { note("empty/invalid geometry"); return; }
+    batch.push({ inspireId, titleNumber, geometry, bbox });
+    if (batch.length >= BATCH) await flush();
+  };
+
+  try {
+    const { resolveSharePointShareLinkMetadata } = await import("./sharepoint-resolver");
+    const meta = await resolveSharePointShareLinkMetadata(shareUrl);
+    if (!meta.downloadUrl || !meta.size) {
+      throw new Error(`Share link didn't resolve to a downloadable file with a known size (isFolder=${meta.isFolder}).`);
+    }
+    const dir = await unzipper.Open.custom(rangedSource(meta.downloadUrl, meta.size));
+    const councilZips = dir.files.filter((f) => f.type === "File" && /\.zip$/i.test(f.path) && wanted.some((w) => f.path.toLowerCase().includes(w)));
+    if (councilZips.length === 0) {
+      throw new Error(`No council zips matched [${wanted.join(", ")}]. Sample of ${dir.files.length} entries: ${dir.files.slice(0, 15).map((f) => f.path).join(", ")}`);
+    }
+    for (const cz of councilZips) {
+      console.log(`[inspire-councils] ${cz.path} — fetching + ingesting`);
+      const buf = await cz.buffer(); // ranged fetch of just this council's bytes
+      const innerDir = await unzipper.Open.buffer(buf);
+      for (const f of innerDir.files) {
+        if (f.type !== "File") continue;
+        const fmt = formatOf(f.path);
+        if (fmt === "gml") await parseGmlStream(f.stream(), (id, g) => handle(id, null, g, 27700), note);
+        else if (fmt === "ndjson") await parseNdjsonStream(f.stream(), (r) => handle(r.inspireId, r.titleNumber, r.geometry, 4326), note);
+      }
+      await flush();
+      await pool.query(
+        `UPDATE hmlr_ingest_runs SET rows_processed=$1, rows_inserted=$2, rows_updated=$3, rows_skipped=$4 WHERE id=$5`,
+        [processed, inserted, updated, skipped, runId],
+      );
+      console.log(`[inspire-councils] ${cz.path} done — processed=${processed} inserted=${inserted}`);
+    }
+    await flush();
+    const notes = Object.entries(skipReasons).map(([k, v]) => `${v}×${k}`).join("; ") || null;
+    await pool.query(
+      `UPDATE hmlr_ingest_runs SET status='ok', rows_processed=$1, rows_inserted=$2, rows_updated=$3, rows_skipped=$4, notes=$5, finished_at=now() WHERE id=$6`,
+      [processed, inserted, updated, skipped, notes, runId],
+    );
+    resetHmlrAvailabilityCache();
+    void isHmlrPolygonsAvailable();
+    console.log(`[inspire-councils] DONE — councils=${councilZips.length} processed=${processed} inserted=${inserted} updated=${updated} skipped=${skipped}`);
+    return { runId, processed, inserted, updated, skipped };
+  } catch (err: any) {
+    await pool.query(
+      `UPDATE hmlr_ingest_runs SET status='error', error=$1, rows_processed=$2, rows_inserted=$3, rows_updated=$4, rows_skipped=$5, finished_at=now() WHERE id=$6`,
+      [err?.message || String(err), processed, inserted, updated, skipped, runId],
+    ).catch(() => {});
+    console.error(`[inspire-councils] FAILED:`, err?.message);
     throw err;
   }
 }
