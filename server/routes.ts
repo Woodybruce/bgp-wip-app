@@ -3759,6 +3759,69 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Fetch INSPIRE Index Polygons from a SharePoint share link and ingest
+  // them into hmlr_title_polygons (map boundary shading). Mirrors the
+  // CCOD/OCOD fetch above but routes to the polygon ingest, which handles
+  // .zip/.gml/.geojson/.ndjson and lets PostGIS reproject 27700 → 4326.
+  app.post("/api/admin/hmlr/fetch-polygons-from-sharepoint", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+      const shareUrl: string = req.body?.shareUrl;
+      if (!shareUrl) return res.status(400).json({ error: "shareUrl required in body" });
+      const region: string | null = req.body?.region ? String(req.body.region).trim() : null;
+
+      const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
+      const { ingestInspirePolygonsFile } = await import("./hmlr-polygons-fetch");
+
+      const meta = await resolveSharePointShareLinkMetadata(shareUrl);
+      const candidates: { filename: string; downloadUrl: string; size: number }[] = meta.isFolder
+        ? (meta.children || [])
+        : meta.downloadUrl
+          ? [{ filename: meta.name, downloadUrl: meta.downloadUrl, size: meta.size || 0 }]
+          : [];
+      const polygonFiles = candidates.filter((c) => /\.(zip|gml|geojson|ndjson)$/i.test(c.filename));
+      if (polygonFiles.length === 0) {
+        return res.status(400).json({
+          error: `No INSPIRE polygon files (.zip/.gml/.geojson/.ndjson) found at share link. Filtered children: ${candidates.map((c) => c.filename).join(", ") || "(empty)"}. Raw folder contents: ${meta.rawChildSummary ? `${meta.rawChildSummary.total} items, sample: ${meta.rawChildSummary.sample.join(", ")}` : "(no folder)"}.`,
+          rawChildSummary: meta.rawChildSummary,
+          candidates: candidates.map((c) => c.filename),
+        });
+      }
+
+      // Fire-and-forget: stream each file to /tmp then ingest. 202 now;
+      // each file gets its own hmlr_ingest_runs row (dataset='inspire').
+      setImmediate(() => {
+        (async () => {
+          for (const f of polygonFiles) {
+            const localPath = path.join(os.tmpdir(), `inspire-sp-${Date.now()}-${f.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+            try {
+              console.log(`[inspire-sp] streaming ${f.filename} (${(f.size / 1024 / 1024).toFixed(1)} MB) to ${localPath}`);
+              await streamUrlToFile(f.downloadUrl, localPath);
+              await ingestInspirePolygonsFile(localPath, { region, sourceFilename: f.filename });
+            } catch (err: any) {
+              console.error(`[inspire-sp] failed for ${f.filename}:`, err?.message);
+            } finally {
+              try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+            }
+          }
+        })();
+      });
+
+      res.status(202).json({
+        ok: true,
+        message: `Started INSPIRE polygon ingest for ${polygonFiles.length} file(s) — poll /api/admin/hmlr/runs for progress`,
+        files: polygonFiles.map((f) => ({ filename: f.filename, sizeMB: Math.round(f.size / 1024 / 1024) })),
+      });
+    } catch (e: any) {
+      console.error("[inspire-sp] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Clear HMLR ingest data — useful when a mislabelled upload has put
   // bad data into the table and you want to start fresh. Caller passes
   // dataset='ccod' | 'ocod' | 'all' to scope the delete.
