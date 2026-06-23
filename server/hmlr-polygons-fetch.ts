@@ -342,18 +342,24 @@ async function parseGml(
  */
 export async function ingestInspirePolygonsFile(
   filePath: string,
-  opts: { region?: string | null; sourceFilename?: string } = {},
+  opts: { region?: string | null; sourceFilename?: string; runId?: string } = {},
 ): Promise<InspireIngestResult> {
   const region = opts.region ?? null;
   const sourceFilename = opts.sourceFilename ?? path.basename(filePath);
 
   await ensurePolygonTable();
 
-  const runRes = await pool.query<{ id: string }>(
-    `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
-    [sourceFilename],
-  );
-  const runId = runRes.rows[0].id;
+  // Reuse a run row reserved by the caller (the fetch route reserves it
+  // before downloading, so download/size failures are visible too);
+  // otherwise create one here.
+  let runId = opts.runId;
+  if (!runId) {
+    const runRes = await pool.query<{ id: string }>(
+      `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
+      [sourceFilename],
+    );
+    runId = runRes.rows[0].id;
+  }
 
   const tmpFiles: string[] = [];
   let processed = 0, inserted = 0, updated = 0, skipped = 0;

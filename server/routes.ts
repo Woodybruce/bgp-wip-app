@@ -3792,17 +3792,35 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         });
       }
 
-      // Fire-and-forget: stream each file to /tmp then ingest. 202 now;
-      // each file gets its own hmlr_ingest_runs row (dataset='inspire').
+      // Fire-and-forget: reserve a run row up-front (so the attempt + any
+      // download/size failure is visible in /api/admin/hmlr/runs, not just
+      // server logs), then stream each file to /tmp and ingest. 202 now.
+      // ~500MB cap: the in-memory unzip hits Node's 2 GiB Buffer limit, and
+      // the national INSPIRE bulk is 5GB+. Per-LA files are tens of MB.
+      const MAX_INSPIRE_BYTES = 500 * 1024 * 1024;
       setImmediate(() => {
         (async () => {
           for (const f of polygonFiles) {
+            const rr = await pool.query<{ id: string }>(
+              `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
+              [f.filename],
+            );
+            const runId = rr.rows[0].id;
+            if (f.size > MAX_INSPIRE_BYTES) {
+              await pool.query(
+                `UPDATE hmlr_ingest_runs SET status='error', error=$1, finished_at=now() WHERE id=$2`,
+                [`File is ${Math.round(f.size / 1024 / 1024)}MB — too large for in-app ingest (Node's 2 GiB buffer limit). Download INSPIRE Index Polygons per LOCAL AUTHORITY (each is tens of MB), or clip the national set to the area you need; don't ingest the national bulk here.`, runId],
+              );
+              console.warn(`[inspire-sp] ${f.filename} too large (${Math.round(f.size / 1024 / 1024)}MB) — skipped`);
+              continue;
+            }
             const localPath = path.join(os.tmpdir(), `inspire-sp-${Date.now()}-${f.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
             try {
               console.log(`[inspire-sp] streaming ${f.filename} (${(f.size / 1024 / 1024).toFixed(1)} MB) to ${localPath}`);
               await streamUrlToFile(f.downloadUrl, localPath);
-              await ingestInspirePolygonsFile(localPath, { region, sourceFilename: f.filename });
+              await ingestInspirePolygonsFile(localPath, { region, sourceFilename: f.filename, runId });
             } catch (err: any) {
+              await pool.query(`UPDATE hmlr_ingest_runs SET status='error', error=$1, finished_at=now() WHERE id=$2`, [String(err?.message || err).slice(0, 500), runId]).catch(() => {});
               console.error(`[inspire-sp] failed for ${f.filename}:`, err?.message);
             } finally {
               try { fs.unlinkSync(localPath); } catch { /* ignore */ }
