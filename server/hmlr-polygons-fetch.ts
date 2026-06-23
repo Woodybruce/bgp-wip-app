@@ -372,17 +372,33 @@ export async function ingestInspirePolygonsFile(
     else note("geojson FeatureCollection inside a zip isn't streamed — convert to .ndjson");
   };
 
+  // The national download is a zip-of-per-local-authority-zips, so recurse
+  // into nested .zip entries. Inner LA zips are small (tens of MB), so we
+  // buffer + open each one in memory, then stream its GML.
+  let dataEntriesSeen = 0;
+  const processFiles = async (files: any[], depth: number): Promise<void> => {
+    for (const f of files) {
+      if (f.type !== "File") continue;
+      const fmt = formatOf(f.path);
+      if (fmt) {
+        dataEntriesSeen++;
+        console.log(`[inspire-ingest] entry ${f.path} (${fmt})`);
+        await parseSource(f.stream(), fmt);
+      } else if (/\.zip$/i.test(f.path) && depth < 3) {
+        console.log(`[inspire-ingest] nested zip ${f.path} — opening`);
+        const buf = await f.buffer();
+        const innerDir = await unzipper.Open.buffer(buf);
+        await processFiles(innerDir.files, depth + 1);
+      }
+    }
+  };
+
   try {
     if (filePath.toLowerCase().endsWith(".zip")) {
       const dir = await unzipper.Open.file(filePath);
-      const dataFiles = dir.files.filter((f) => f.type === "File" && formatOf(f.path));
-      if (dataFiles.length === 0) {
-        throw new Error(`No .gml/.geojson/.ndjson inside zip. Entries: ${dir.files.slice(0, 20).map((f) => f.path).join(", ") || "(empty)"}`);
-      }
-      for (const f of dataFiles) {
-        const fmt = formatOf(f.path)!;
-        console.log(`[inspire-ingest] entry ${f.path} (${fmt})`);
-        await parseSource(f.stream(), fmt);
+      await processFiles(dir.files, 0);
+      if (dataEntriesSeen === 0) {
+        throw new Error(`No .gml/.geojson/.ndjson found (incl. nested zips). Top-level entries: ${dir.files.slice(0, 20).map((f) => f.path).join(", ") || "(empty)"}`);
       }
     } else {
       const fmt = formatOf(filePath);
