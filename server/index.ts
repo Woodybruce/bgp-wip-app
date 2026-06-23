@@ -1923,10 +1923,12 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS crm_properties_voa_idx ON crm_properties (voa_ba_reference) WHERE voa_ba_reference IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS crm_properties_inspire_idx ON crm_properties (inspire_polygon_id) WHERE inspire_polygon_id IS NOT NULL`,
 
-    // ── Migration 0014 (HMLR ownership) — proprietors table only.
-    // Polygons + PostGIS deferred to when INSPIRE map shading is wanted.
-    // pg_trgm enables fast ILIKE on property_address for the
-    // postcode + street-number match.
+    // ── Migration 0014 (HMLR ownership). pg_trgm enables fast ILIKE on
+    // property_address for the postcode + street-number match. The INSPIRE
+    // polygon layer + PostGIS are created below too (was previously
+    // deferred) — both are PostGIS-guarded: if the extension isn't
+    // available on this Postgres the tolerant runner skips them and boot
+    // continues; the table just stays empty until the INSPIRE ingest runs.
     `CREATE EXTENSION IF NOT EXISTS pg_trgm`,
     `CREATE TABLE IF NOT EXISTS hmlr_proprietors (
       title_number                       TEXT NOT NULL,
@@ -1981,6 +1983,29 @@ import { pool } from "./db";
     )`,
     `CREATE INDEX IF NOT EXISTS hmlr_ingest_runs_dataset_idx
        ON hmlr_ingest_runs (dataset, started_at DESC)`,
+
+    // INSPIRE Index Polygons (free, no title_number) — boundary shapes for
+    // map shading on the property-intelligence map. PostGIS-guarded: if the
+    // extension isn't available these are skipped and the app still boots.
+    // The table stays empty until scripts/ingest-hmlr-polygons.ts loads an
+    // INSPIRE NDJSON (see replit.md runbook). Mirrors migrations/0014.
+    `CREATE EXTENSION IF NOT EXISTS postgis`,
+    `CREATE TABLE IF NOT EXISTS hmlr_title_polygons (
+      inspire_id        BIGINT PRIMARY KEY,
+      title_number      TEXT,
+      polygon           GEOMETRY(MultiPolygon, 4326) NOT NULL,
+      region            TEXT,
+      ingest_run_id     UUID,
+      inserted_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS hmlr_title_polygons_geom_idx
+       ON hmlr_title_polygons USING GIST (polygon)`,
+    `CREATE INDEX IF NOT EXISTS hmlr_title_polygons_title_idx
+       ON hmlr_title_polygons (title_number)
+       WHERE title_number IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS hmlr_title_polygons_region_idx
+       ON hmlr_title_polygons (region)`,
 
     // ── Shopping centres + tenants ─────────────────────────────────────
     // Hand-curated (or scraped) tenant directory for major UK shopping
