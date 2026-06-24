@@ -682,7 +682,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         updates.isPersonal === true && existing?.isPersonal !== true;
       if (flippingToPersonal) {
         updates.category = "Personal (deduct from payroll)";
-        updates.xeroAccountCode = "910";
+        updates.xeroAccountCode = "1106";
       }
 
       await db.update(expenses).set(updates as any).where(eq(expenses.id, id));
@@ -1674,7 +1674,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       await db.update(expenses).set({
         isPersonal: true,
         category: "Personal (deduct from payroll)",
-        xeroAccountCode: "910",
+        xeroAccountCode: "1106",
         updatedAt: new Date(),
       }).where(eq(expenses.id, String(req.params.id)));
       const { submitForApproval } = await import("./expense-approval");
