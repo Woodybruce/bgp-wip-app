@@ -1150,6 +1150,7 @@ interface WorkbookInfo {
     frozenRows: number;
     frozenCols: number;
     headers: string[];
+    data: string;
   }>;
   activeSheetData: string;
 }
@@ -1232,7 +1233,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
       const activeSheetName = activeSheet.name;
       const sheetInfos: WorkbookInfo["sheets"] = [];
 
-      const rangeInfos: Array<{sheet: any; usedRange: any; headerRange: any; frozenRange: any}> = [];
+      const rangeInfos: Array<{sheet: any; usedRange: any; headerRange: any; frozenRange: any; dataRange: any}> = [];
       for (const sheet of sheets.items) {
         const usedRange = sheet.getUsedRangeOrNullObject();
         usedRange.load(["rowCount", "columnCount"]);
@@ -1241,15 +1242,25 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
           frozenRange = sheet.freezePanes.getLocationOrNullObject();
           frozenRange.load(["rowIndex", "columnIndex", "rowCount", "columnCount"]);
         } catch {}
-        rangeInfos.push({ sheet, usedRange, headerRange: null, frozenRange });
+        rangeInfos.push({ sheet, usedRange, headerRange: null, frozenRange, dataRange: null });
       }
       await context.sync();
 
+      let dataSheetsLoaded = 0;
       for (const info of rangeInfos) {
         if (!info.usedRange.isNullObject && info.usedRange.columnCount > 0) {
           const colCount = Math.min(info.usedRange.columnCount, EXCEL_MAX_COLS);
           info.headerRange = info.sheet.getRangeByIndexes(0, 0, 1, colCount);
           info.headerRange.load("values");
+          // Pull EACH sheet's data (capped) so ChatBGP sees the whole workbook,
+          // not just the active sheet. Bounded to keep the payload sane.
+          if (dataSheetsLoaded < 25) {
+            const capRows = info.sheet.name === activeSheetName ? 200 : 150;
+            const rowCount = Math.min(info.usedRange.rowCount, capRows);
+            info.dataRange = info.sheet.getRangeByIndexes(0, 0, rowCount, colCount);
+            info.dataRange.load("values");
+            dataSheetsLoaded++;
+          }
         }
       }
       await context.sync();
@@ -1271,6 +1282,11 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
             .filter((s: string) => s.length > 0);
         }
 
+        let sheetData = "";
+        if (info.dataRange && info.dataRange.values) {
+          sheetData = valuesToCsv(info.dataRange.values, isActive ? 200 : 150, EXCEL_MAX_COLS);
+        }
+
         sheetInfos.push({
           name: info.sheet.name,
           rows: info.usedRange.isNullObject ? 0 : info.usedRange.rowCount,
@@ -1279,6 +1295,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
           frozenRows,
           frozenCols,
           headers,
+          data: sheetData,
         });
       }
 
@@ -1318,8 +1335,15 @@ function formatWorkbookContext(info: WorkbookInfo): string {
       ctx += `    Columns: ${sheet.headers.join(" | ")}\n`;
     }
   }
-  ctx += `\n=== ACTIVE SHEET DATA: ${info.activeSheetName} ===\n`;
-  ctx += info.activeSheetData;
+  // Dump each sheet's data so ChatBGP can work across the whole workbook,
+  // not just the active sheet. Total-size guard so a huge workbook can't
+  // blow the context window.
+  const MAX_CTX = 60000;
+  for (const sheet of info.sheets) {
+    if (!sheet.data) continue;
+    if (ctx.length > MAX_CTX) { ctx += `\n…[further sheet data truncated — ask me to read a specific sheet]\n`; break; }
+    ctx += `\n=== SHEET: ${sheet.name}${sheet.isActive ? " (ACTIVE)" : ""} ===\n${sheet.data}\n`;
+  }
   return ctx;
 }
 
