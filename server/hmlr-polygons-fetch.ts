@@ -263,7 +263,10 @@ async function parseGmlStream(
   onFeature: (inspireId: number, geometrySource: any) => Promise<void>,
   onSkip: (reason: string) => void,
 ): Promise<void> {
-  const END_TAGS = ["</gml:featureMember>", "</gml:member>", "</member>"];
+  // Land Registry's WFS 2.0 INSPIRE export wraps each parcel in <wfs:member>
+  // (not the gml:featureMember tags older INSPIRE GML used) — keep all the
+  // variants so any vintage parses.
+  const END_TAGS = ["</wfs:member>", "</gml:featureMember>", "</gml:member>", "</member>"];
   input.setEncoding("utf8");
   let buf = "";
   const handleBlock = async (block: string) => {
