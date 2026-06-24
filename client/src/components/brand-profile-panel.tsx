@@ -1037,7 +1037,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
   return (
     <div className={isLandlord
-      ? "flex flex-col gap-3 items-start w-full min-w-0"
+      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
       : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
     <Card data-testid="brand-profile-panel" className="flex-1 min-w-0 max-w-full overflow-hidden">
       <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
