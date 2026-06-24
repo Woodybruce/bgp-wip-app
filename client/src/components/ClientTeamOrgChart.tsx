@@ -374,7 +374,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
         </div>
       ) : (
         <div className="overflow-x-auto pb-2">
-          <div className="flex gap-2 min-w-max">
+          <div className="flex gap-2 w-full">
             {columnList
               // Hide the auto-added Unassigned column when nothing's
               // in it — it's a catch-all for orphans, not a column
@@ -393,7 +393,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                   onDragOver={(e) => { e.preventDefault(); setDragOverCol(col.name); }}
                   onDragLeave={() => setDragOverCol(prev => prev === col.name ? null : prev)}
                   onDrop={() => handleDropOnColumn(col.name)}
-                  className={`w-[220px] shrink-0 rounded-lg border ${style.border} ${isOver ? "ring-2 ring-primary/60 ring-offset-1" : ""} ${style.bg} p-2 flex flex-col gap-2`}
+                  className={`flex-1 min-w-[220px] rounded-lg border ${style.border} ${isOver ? "ring-2 ring-primary/60 ring-offset-1" : ""} ${style.bg} p-2 flex flex-col gap-2`}
                   data-testid={`team-column-${col.name.replace(/\s+/g, "-").toLowerCase()}`}
                 >
                   <div className="flex items-center justify-between px-1 group">
