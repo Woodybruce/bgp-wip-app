@@ -1855,15 +1855,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                  For now the block surfaces what's in our CRM and points
                  at the gaps so the user can spot a landlord with 0
                  properties → known portfolio, time to ingest CCOD. */}
-            {isLandlord && (
-              <LandlordOwnershipBlock
-                companyId={companyId}
-                hasDomain={!!(c.domain || c.domain_url)}
-                ownedProperties={ownedProperties}
-                landRegistryTitles={landRegistryTitles}
-                findings={data.landlordWebsiteFindings || null}
-              />
-            )}
+            {/* Ownership map + scraped/Land-Registry discovery moved into the
+                unified Properties board (CompanyPropertiesBoard) on the
+                company page — the board owns the map and the auto-scrape now. */}
 
             {/* ── Zone 4: BGP Relationship ──────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
@@ -2105,17 +2099,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </Badge>
                   )}
                 </div>
-                {data.deals.slice(0, 5).length > 0 && (
-                  <div className="mt-1.5 space-y-0.5">
-                    {data.deals.slice(0, 5).map((d: any) => (
-                      <Link key={d.id} href={`/deals/${d.id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
-                        <Badge variant="outline" className="text-[10px] shrink-0">{d.role}</Badge>
-                        <span className="truncate flex-1">{d.name}</span>
-                        <span className="text-[10px] text-muted-foreground shrink-0">{d.stage || d.status}</span>
-                      </Link>
-                    ))}
-                  </div>
-                )}
+                {/* Per-deal list lives on the unified Properties board now —
+                    this zone keeps just the headline counts. */}
               </div>
             )}
 
