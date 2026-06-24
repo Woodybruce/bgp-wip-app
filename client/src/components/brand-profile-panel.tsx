@@ -1036,7 +1036,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   };
 
   return (
-    <div className="flex flex-col md:flex-row gap-3 items-start w-full min-w-0">
+    <div className={isLandlord
+      ? "flex flex-col gap-3 items-start w-full min-w-0"
+      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
     <Card data-testid="brand-profile-panel" className="flex-1 min-w-0 max-w-full overflow-hidden">
       <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
         <div className="flex flex-col gap-1 min-w-0 flex-1">
@@ -4603,7 +4605,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const topContacts = (data.contacts || []).slice(0, 5);
 
   return (
-    <aside className="w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start">
+    <aside className={isLandlord
+      ? "w-full shrink-0 space-y-3 self-start"
+      : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
@@ -5029,7 +5033,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               // Scrollable grid — show every image, capped at a sensible
               // height so the gallery doesn't dominate the sidebar. 3-col
               // gives bigger thumbnails than the previous 4-col.
-              <div className="grid grid-cols-3 gap-1 max-h-[420px] overflow-y-auto pr-1">
+              <div className={isLandlord
+                ? "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 pr-1"
+                : "grid grid-cols-3 gap-1 max-h-[420px] overflow-y-auto pr-1"}>
                 {data.images.map((img: any) => {
                   const thumbSrc = img.thumbnail_data
                     ? (img.thumbnail_data.startsWith("data:")
