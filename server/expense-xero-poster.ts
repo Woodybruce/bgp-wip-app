@@ -27,6 +27,14 @@ import {
 // 1230 as a Bank Account in Xero for posts to land.
 const STRIPE_CARDS_ACCOUNT_CODE = "1230";
 
+// Xero requires a Contact on every SPEND bank transaction — without one the
+// API rejects the whole post with "A Contact must be specified for this type
+// of transaction" (the error blocking the Revolut card-expense queue). Card
+// spend reconciles against a single supplier contact rather than one per
+// merchant: it keeps Xero's supplier ledger clean and matches how the card
+// feed is reconciled. Xero find-or-creates this contact by name on first post.
+const CARD_SPEND_XERO_CONTACT = "Revolut Expenses";
+
 export async function postExpenseToXero(args: {
   session: any;
   expenseId: string;
@@ -155,6 +163,7 @@ export async function postExpenseToXero(args: {
   // are gross (what actually left the card), matching the receipt total.
   const body = {
     Type: "SPEND",
+    Contact: { Name: CARD_SPEND_XERO_CONTACT },
     BankAccount: { Code: STRIPE_CARDS_ACCOUNT_CODE },
     Date: exp.transactionDate ? new Date(exp.transactionDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
     Reference: exp.merchant?.slice(0, 50) || "BGP Card",
