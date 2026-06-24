@@ -2,6 +2,7 @@ import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
+import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -1204,6 +1205,17 @@ function CompanyDetail({ id }: { id: string }) {
     return { grouped: Array.from(grouped.values()), unlinkedDeals };
   }, [relatedDeals, propertyMap]);
 
+  // Company-kind detection — drives which profile panel renders and whether
+  // the unified Properties board (landlords + lenders) replaces the legacy
+  // Linked Properties / Leasing Schedule / Properties & Deals sections.
+  const companyTypeLower = (company?.companyType || "").toLowerCase();
+  const isLenderCo = companyTypeLower.includes("lender") || companyTypeLower.includes("clearing bank") || companyTypeLower.includes("investment bank")
+    || companyTypeLower.includes("debt fund") || companyTypeLower.includes("private credit") || companyTypeLower.includes("mezzanine")
+    || companyTypeLower.includes("bridging") || companyTypeLower.includes("development finance") || companyTypeLower.includes("building society")
+    || companyTypeLower.includes("insurance lender") || companyTypeLower.includes("pension fund");
+  const isLandlordCo = !isLenderCo && (companyTypeLower.includes("landlord") || companyTypeLower.includes("investor") || companyTypeLower.includes("developer") || companyTypeLower.includes("fund"));
+  const usePropertiesBoard = isLenderCo || isLandlordCo;
+
   const deleteMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("DELETE", `/api/crm/companies/${id}`);
@@ -1384,29 +1396,11 @@ function CompanyDetail({ id }: { id: string }) {
 
           <SubCompaniesPanel parentId={id} parentName={company.name} />
 
-          {(() => {
-            const t = (company.companyType || "").toLowerCase();
-            const isLender = t.includes("lender") || t.includes("clearing bank") || t.includes("investment bank")
-              || t.includes("debt fund") || t.includes("private credit") || t.includes("mezzanine")
-              || t.includes("bridging") || t.includes("development finance") || t.includes("building society")
-              || t.includes("insurance lender") || t.includes("pension fund");
-            const isLandlord = !isLender && (t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund"));
-            if (isLender) {
-              return <LenderPanel companyId={id} company={company} />;
-            }
-            if (isLandlord) {
-              return <BrandProfilePanel companyId={id} />;
-            }
-            return <BrandProfilePanel companyId={id} />;
-          })()}
+          {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} />}
 
-          {/* BGP Team — kept for Landlords only (they're a separate workflow
+          {/* BGP Team — kept for Landlords + Lenders (a separate workflow
               now). Removed from brand/occupier profiles to declutter. */}
-          {id && (() => {
-            const t = (company.companyType || "").toLowerCase();
-            const isLandlordCo = t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund");
-            if (!isLandlordCo) return null;
-            return (
+          {id && usePropertiesBoard && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <Card className="md:col-span-2">
                   <CardContent className="p-3 space-y-2">
@@ -1418,57 +1412,62 @@ function CompanyDetail({ id }: { id: string }) {
                   </CardContent>
                 </Card>
               </div>
-            );
-          })()}
+          )}
 
-          {linkedProperties.length > 0 && (() => {
-            const userIdToName = new Map<string, string>();
-            if (allUsers) {
-              for (const u of allUsers) {
-                userIdToName.set(u.id, u.name);
-              }
-            }
-            return (
-            <Card>
-              <CardContent className="p-3 space-y-2">
-                <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                  <Building2 className="w-3.5 h-3.5 text-teal-500" />
-                  Linked Properties ({linkedProperties.length})
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[300px] overflow-y-auto">
-                  {linkedProperties.map((property) => {
-                    const agentUserIds = propertyAgentLinks.filter(l => l.propertyId === property.id).map(l => l.userId);
-                    const agentNames = agentUserIds.map(uid => userIdToName.get(uid)).filter(Boolean) as string[];
-                    const isLeasing = property.status === "Leasing Instruction";
-                    return (
-                    <Link key={property.id} href={`/properties/${property.id}`}>
-                      <div className={`flex flex-col p-2 rounded-md transition-colors cursor-pointer ${isLeasing ? "border border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20" : "border border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-900/10 hover:bg-purple-50 dark:hover:bg-purple-900/20"}`} data-testid={`link-property-${property.id}`}>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} />
-                          <p className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">{property.name}</p>
-                        </div>
-                        {agentNames.length > 0 && (
-                          <div className="flex flex-wrap gap-0.5 mt-1 ml-4">
-                            {agentNames.map((name) => (
-                              <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
-                            ))}
+          {usePropertiesBoard ? (
+            <CompanyPropertiesBoard companyId={id} kind={isLenderCo ? "lender" : "landlord"} />
+          ) : (
+            <>
+              {linkedProperties.length > 0 && (() => {
+                const userIdToName = new Map<string, string>();
+                if (allUsers) {
+                  for (const u of allUsers) {
+                    userIdToName.set(u.id, u.name);
+                  }
+                }
+                return (
+                <Card>
+                  <CardContent className="p-3 space-y-2">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5 text-teal-500" />
+                      Linked Properties ({linkedProperties.length})
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[300px] overflow-y-auto">
+                      {linkedProperties.map((property) => {
+                        const agentUserIds = propertyAgentLinks.filter(l => l.propertyId === property.id).map(l => l.userId);
+                        const agentNames = agentUserIds.map(uid => userIdToName.get(uid)).filter(Boolean) as string[];
+                        const isLeasing = property.status === "Leasing Instruction";
+                        return (
+                        <Link key={property.id} href={`/properties/${property.id}`}>
+                          <div className={`flex flex-col p-2 rounded-md transition-colors cursor-pointer ${isLeasing ? "border border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20" : "border border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-900/10 hover:bg-purple-50 dark:hover:bg-purple-900/20"}`} data-testid={`link-property-${property.id}`}>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} />
+                              <p className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">{property.name}</p>
+                            </div>
+                            {agentNames.length > 0 && (
+                              <div className="flex flex-wrap gap-0.5 mt-1 ml-4">
+                                {agentNames.map((name) => (
+                                  <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </Link>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-            );
-          })()}
+                        </Link>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+                );
+              })()}
 
-          <CompanyLeasingScheduleSection companyId={id} />
+              <CompanyLeasingScheduleSection companyId={id} />
+            </>
+          )}
 
         </div>
 
-        {(propertiesWithDeals.grouped.length > 0 || propertiesWithDeals.unlinkedDeals.length > 0) && (
+        {!usePropertiesBoard && (propertiesWithDeals.grouped.length > 0 || propertiesWithDeals.unlinkedDeals.length > 0) && (
           <Card className="lg:col-span-3">
             <CardContent className="p-3 space-y-3">
               <h3 className="font-semibold text-xs flex items-center gap-1.5">
