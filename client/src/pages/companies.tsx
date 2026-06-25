@@ -1398,9 +1398,10 @@ function CompanyDetail({ id }: { id: string }) {
 
           {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} />}
 
-          {/* BGP Team — kept for Landlords + Lenders (a separate workflow
-              now). Removed from brand/occupier profiles to declutter. */}
-          {id && usePropertiesBoard && (
+          {/* BGP Team — landlords get it in the brand-profile sidebar (next
+              to the Gallery) so the right column fills and stays aligned.
+              Lenders have no sidebar, so they keep the page-level block. */}
+          {id && isLenderCo && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <Card className="md:col-span-2">
                   <CardContent className="p-3 space-y-2">
