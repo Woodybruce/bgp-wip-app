@@ -471,14 +471,22 @@ export function setupAuth(app: Express) {
         return res.status(500).json({ message: "Microsoft SSO not configured" });
       }
       const useBasic = req.query.basic === "1";
+      const isAddin = req.query.addin === "1";
       const scopes = useBasic ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const state = crypto.randomBytes(32).toString("hex");
       req.session.ssoState = state;
       if (useBasic) {
         (req.session as any).ssoBasicMode = true;
       }
+      // Office add-in task panes open this in a dialog window. The dialog can't
+      // read a JSON body, so it needs a real redirect to Microsoft; and the
+      // callback must bounce back to the add-in completion page (which posts
+      // the one-time code to the task pane) rather than the main app.
+      if (isAddin) {
+        (req.session as any).ssoAddin = true;
+      }
       const redirectUri = getSsoRedirectUri(req);
-      console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic);
+      console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic, "addin:", isAddin);
 
       const authUrl = await client.getAuthCodeUrl({
         scopes,
@@ -489,7 +497,8 @@ export function setupAuth(app: Express) {
       });
 
       req.session.save(() => {
-        res.json({ authUrl });
+        if (isAddin) res.redirect(authUrl);
+        else res.json({ authUrl });
       });
     } catch (err: any) {
       console.error("SSO auth error:", err.message);
@@ -553,6 +562,9 @@ export function setupAuth(app: Express) {
       const redirectUri = getSsoRedirectUri(req);
       const useBasicScopes = !!(req.session as any).ssoBasicMode;
       delete (req.session as any).ssoBasicMode;
+      // Capture the add-in flag now — req.session.regenerate() below wipes it.
+      const isAddinFlow = !!(req.session as any).ssoAddin;
+      delete (req.session as any).ssoAddin;
       const scopes = useBasicScopes ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const result = await client.acquireTokenByCode({
         code: code as string,
@@ -655,8 +667,12 @@ export function setupAuth(app: Express) {
           trackLogin(user.id, 'sso', true);
           ensureAdminFlag(user.id, msEmail);
 
+          // Add-in dialog flow lands on a tiny completion page that posts the
+          // one-time code back to the task pane via Office.messageParent; the
+          // normal web flow drops the code on the main app for exchange.
+          // (isAddinFlow was captured above, before session.regenerate wiped it.)
           req.session.save(() => {
-            res.redirect("/?sso_code=" + exchangeCode);
+            res.redirect((isAddinFlow ? "/addin-sso-complete.html?sso_code=" : "/?sso_code=") + exchangeCode);
           });
         })();
       });

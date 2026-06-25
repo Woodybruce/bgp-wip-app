@@ -25,7 +25,7 @@
     </Sets>
   </Requirements>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin-excel.html"/>
+    <SourceLocation DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/excel"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
 
@@ -81,8 +81,8 @@
       <bt:Urls>
         <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
         <bt:Url id="LearnMoreUrl" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
-        <bt:Url id="Commands.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin-excel.html"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin-excel.html"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/excel"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/excel"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title" DefaultValue="ChatBGP is ready"/>

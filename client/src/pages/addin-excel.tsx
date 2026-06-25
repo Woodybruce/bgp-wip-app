@@ -121,6 +121,53 @@ function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => voi
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [msLoading, setMsLoading] = useState(false);
+
+  // Sign in with Microsoft — opens the existing SSO flow in an Office dialog
+  // (reusing /api/auth/microsoft + the registered callback, so no new Azure
+  // redirect URI). The completion page posts a one-time code back here, which
+  // we swap for a bearer token via /api/auth/sso-exchange.
+  const signInWithMicrosoft = () => {
+    setError("");
+    const OfficeRef = (window as any).Office;
+    if (!OfficeRef?.context?.ui?.displayDialogAsync) {
+      setError("Microsoft sign-in needs to run inside the Office task pane.");
+      return;
+    }
+    setMsLoading(true);
+    const url = `${window.location.origin}/api/auth/microsoft?addin=1`;
+    OfficeRef.context.ui.displayDialogAsync(url, { height: 60, width: 30, promptBeforeOpen: false }, (result: any) => {
+      if (result.status !== "succeeded" || !result.value) {
+        setMsLoading(false);
+        setError("Couldn't open the Microsoft sign-in window.");
+        return;
+      }
+      const dialog = result.value;
+      const finish = () => { try { dialog.close(); } catch {} setMsLoading(false); };
+      dialog.addEventHandler(OfficeRef.EventType.DialogMessageReceived, async (arg: any) => {
+        let msg: any = {};
+        try { msg = JSON.parse(arg.message || "{}"); } catch {}
+        if (msg.sso_code) {
+          finish();
+          try {
+            const r = await fetch("/api/auth/sso-exchange", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ code: msg.sso_code }),
+            });
+            const data = await r.json();
+            if (r.ok && data.token) onLogin(data.token, data.name || data.username || "");
+            else setError(data.message || "Microsoft sign-in failed.");
+          } catch { setError("Microsoft sign-in failed. Please try again."); }
+        } else {
+          finish();
+          setError(msg.error || "Microsoft sign-in was cancelled.");
+        }
+      });
+      dialog.addEventHandler(OfficeRef.EventType.DialogEventReceived, () => { finish(); });
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,6 +225,34 @@ function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => voi
           <img src={bgpLogoBlack} alt="BGP" style={{ width: 144, height: "auto", marginBottom: 16, opacity: 0.9 }} />
           <h2 style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.01em", margin: 0 }}>ChatBGP for Excel</h2>
           <p style={{ fontSize: 11, color: "#6b7280", marginTop: 4, margin: 0 }}>Sign in to get started</p>
+        </div>
+        <button
+          type="button"
+          onClick={signInWithMicrosoft}
+          disabled={msLoading}
+          data-testid="button-login-microsoft"
+          style={{
+            width: "100%", height: 40, borderRadius: 12, fontSize: 13, fontWeight: 500,
+            background: "#fff", color: "#111", border: "1px solid rgba(0,0,0,0.15)", cursor: msLoading ? "wait" : "pointer",
+            display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14,
+          }}
+        >
+          {msLoading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 23 23" aria-hidden="true">
+              <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+              <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
+              <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
+              <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+            </svg>
+          )}
+          Sign in with Microsoft
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+          <div style={{ flex: 1, height: 1, background: "rgba(0,0,0,0.1)" }} />
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>or sign in with email</span>
+          <div style={{ flex: 1, height: 1, background: "rgba(0,0,0,0.1)" }} />
         </div>
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <input
