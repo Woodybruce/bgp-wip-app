@@ -2349,6 +2349,53 @@ export async function registerRoutes(
     }
   });
 
+  // Dismiss a discovered (not-yet-in-CRM) portfolio row from the
+  // Properties board — wrong matches or dupes already in the CRM under
+  // a different name. Body: { key } using the board's stable discovery
+  // key ("scraped:<name>" / "lr:<title_number>"). The dismissal is
+  // remembered so the weekly re-scrape won't re-surface it. POST again
+  // with { restore: true } to bring it back.
+  app.post("/api/landlord/:companyId/dismiss-discovery", requireAuth, async (req, res) => {
+    try {
+      const companyId = String(req.params.companyId);
+      const key = String(req.body?.key || "").trim();
+      if (!key) return res.status(400).json({ error: "key is required" });
+      const { dismissDiscovery, restoreDiscovery } = await import("./landlord-scraper");
+      if (req.body?.restore) {
+        await restoreDiscovery(companyId, key);
+        return res.json({ ok: true, restored: true });
+      }
+      await dismissDiscovery(companyId, key);
+      res.json({ ok: true, dismissed: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "dismiss failed" });
+    }
+  });
+
+  // Detach a CRM property from THIS landlord without deleting it.
+  // Clears landlord_id only if it currently points at this company (so
+  // we never steal a property owned by a different landlord that's
+  // merely link-attached here), and removes any explicit company↔property
+  // link. The property and its deals/units survive untouched.
+  app.post("/api/landlord/:companyId/unlink-property", requireAuth, async (req, res) => {
+    try {
+      const companyId = String(req.params.companyId);
+      const propertyId = String(req.body?.propertyId || "").trim();
+      if (!propertyId) return res.status(400).json({ error: "propertyId is required" });
+      await pool.query(
+        `UPDATE crm_properties SET landlord_id = NULL WHERE id = $1 AND landlord_id = $2`,
+        [propertyId, companyId]
+      );
+      await pool.query(
+        `DELETE FROM crm_company_properties WHERE company_id = $1 AND property_id = $2`,
+        [companyId, propertyId]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "unlink failed" });
+    }
+  });
+
   app.get("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const status = await getPipnetCredsStatus();
