@@ -508,13 +508,17 @@ function MessageRow({
 
   return (
     <div className="relative overflow-hidden border-b border-border/40" data-testid={`mail-row-wrap-${message.id}`}>
-      {/* Red delete layer revealed when swiping left */}
-      <div className="absolute inset-y-0 right-0 left-0 flex items-center justify-end pr-5 bg-red-500">
-        <Trash2 className="w-5 h-5 text-white" />
-      </div>
+      {/* Red delete layer — only while actively swiping left, so it never
+          bleeds through a translucent selected/active row background (that
+          bleed was making the selected email look red). */}
+      {dragX < 0 && (
+        <div className="absolute inset-y-0 right-0 left-0 flex items-center justify-end pr-5 bg-red-500">
+          <Trash2 className="w-5 h-5 text-white" />
+        </div>
+      )}
       <button
         className={`relative w-full text-left pl-2 pr-4 py-3 flex items-start gap-2.5 ${
-          selected ? "bg-primary/10 dark:bg-primary/20" : "bg-white dark:bg-card active:bg-muted/50"
+          selected ? "bg-blue-100 dark:bg-blue-900/40" : "bg-white dark:bg-card active:bg-muted/50"
         }`}
         style={{ transform: `translateX(${dragX}px)`, transition: startX.current == null ? "transform 0.18s ease" : "none" }}
         onTouchStart={onTouchStart}
