@@ -432,6 +432,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     ).catch(() => ({ rows: [] })); // table may not exist yet if CCOD never ingested
 
+    // Discovery rows the user has dismissed from the Properties board.
+    // The board filters these out so wrong/dupe finds stay hidden.
+    const dismissedDiscoveriesQ = pool.query(
+      `SELECT discovery_key FROM landlord_dismissed_discoveries WHERE company_id = $1`,
+      [companyId]
+    ).catch(() => ({ rows: [] })); // table may not exist if scraper never loaded
+
     // Turnover data — most recent per period
     const turnoverQ = pool.query(
       `SELECT period, turnover, turnover_per_sqft, confidence, source, notes
@@ -614,7 +621,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
       rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings, contactInteractionStats,
-      liveLocations,
+      liveLocations, dismissedDiscoveries,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
@@ -622,7 +629,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
       safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ), safe(contactInteractionStatsQ),
-      safe(liveLocationsQ),
+      safe(liveLocationsQ), safe(dismissedDiscoveriesQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -921,6 +928,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       ownedProperties: ownedProperties.rows,
       landRegistryTitles: landRegistry.rows,
       landlordWebsiteFindings: landlordFindings.rows[0] || null,
+      dismissedDiscoveries: (dismissedDiscoveries.rows || []).map((r: any) => r.discovery_key),
       turnover: turnover.rows,
       covenant,
       coverers,

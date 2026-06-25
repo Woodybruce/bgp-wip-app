@@ -70,6 +70,18 @@ async function ensureTable() {
   `);
   // Additive for rows that pre-date image_urls.
   await pool.query(`ALTER TABLE landlord_website_findings ADD COLUMN IF NOT EXISTS image_urls JSONB`).catch(() => {});
+  // User-dismissed discovery rows (wrong matches, dupes already in the
+  // CRM under a different name). Keyed by the same stable discovery key
+  // the board uses ("scraped:<name>" / "lr:<title_number>") so a
+  // dismissal survives the weekly re-scrape — the key still matches.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS landlord_dismissed_discoveries (
+      company_id TEXT NOT NULL,
+      discovery_key TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (company_id, discovery_key)
+    )
+  `);
   _tableEnsured = true;
 }
 
@@ -624,6 +636,36 @@ export async function createPropertyFromScraped(
     [item.name, item.postcode || null, addr ? JSON.stringify(addr) : null, companyId, assetClass]
   );
   return { id: rows[0].id };
+}
+
+// Discovery keys this landlord has dismissed from the Properties board.
+export async function getDismissedDiscoveries(companyId: string): Promise<string[]> {
+  await ensureTable();
+  const { rows } = await pool.query<{ discovery_key: string }>(
+    `SELECT discovery_key FROM landlord_dismissed_discoveries WHERE company_id = $1`,
+    [companyId]
+  );
+  return rows.map(r => r.discovery_key);
+}
+
+// Hide a discovered row permanently. Idempotent — re-dismissing a key
+// is a no-op.
+export async function dismissDiscovery(companyId: string, key: string): Promise<void> {
+  await ensureTable();
+  await pool.query(
+    `INSERT INTO landlord_dismissed_discoveries (company_id, discovery_key)
+     VALUES ($1, $2) ON CONFLICT (company_id, discovery_key) DO NOTHING`,
+    [companyId, key]
+  );
+}
+
+// Un-dismiss (restore) a previously dismissed discovery key.
+export async function restoreDiscovery(companyId: string, key: string): Promise<void> {
+  await ensureTable();
+  await pool.query(
+    `DELETE FROM landlord_dismissed_discoveries WHERE company_id = $1 AND discovery_key = $2`,
+    [companyId, key]
+  );
 }
 
 export async function getLandlordFindings(companyId: string): Promise<LandlordFindings & { scraped_at: string } | null> {

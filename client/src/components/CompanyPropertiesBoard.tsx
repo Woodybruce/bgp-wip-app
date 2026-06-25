@@ -4,9 +4,16 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, ChevronDown, ChevronRight, Plus, Loader2, ExternalLink } from "lucide-react";
+import { Building2, ChevronDown, ChevronRight, Plus, Loader2, ExternalLink, X, Unlink, ArrowRightLeft, Trash2 } from "lucide-react";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import type { CrmDeal, CrmProperty } from "@shared/schema";
@@ -73,6 +80,7 @@ interface BrandProfileSlice {
     scraped_at: string;
     properties: ScrapedProperty[];
   } | null;
+  dismissedDiscoveries?: string[];
 }
 
 interface SecuredProperty {
@@ -140,6 +148,132 @@ function addressText(addr: any, postcode?: string | null): string | null {
 
 function normName(s: string | null | undefined): string {
   return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Per-row management for an in-CRM property: detach it from this
+// landlord, reallocate it to a different landlord, or delete it from
+// the CRM entirely. Lives in its own component so each row owns its
+// reallocate-search and confirm-dialog state independently.
+function PropertyManageActions({ companyId, property }: { companyId: string; property: BoardProperty }) {
+  const { toast } = useToast();
+  const [reallocOpen, setReallocOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/company-property-links"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+  };
+
+  const { data: results = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/companies/search", debounced],
+    queryFn: async () => {
+      if (!debounced || debounced.length < 2) return [];
+      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debounced)}&limit=8`, { credentials: "include" });
+      if (!r.ok) return [];
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d.companies || []);
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name })).filter((c: any) => c.id !== companyId);
+    },
+    staleTime: 30_000,
+    enabled: reallocOpen,
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: async () => { await apiRequest("POST", `/api/landlord/${companyId}/unlink-property`, { propertyId: property.id }); },
+    onSuccess: () => { toast({ title: "Removed", description: `${property.name} is no longer linked to this landlord.` }); invalidate(); },
+    onError: (e: any) => toast({ title: "Couldn't remove", description: e?.message, variant: "destructive" }),
+  });
+
+  const reallocateMutation = useMutation({
+    mutationFn: async (target: { id: string; name: string }) => {
+      await apiRequest("PUT", `/api/crm/properties/${property.id}`, { landlordId: target.id });
+      return target;
+    },
+    onSuccess: (target) => { toast({ title: "Reallocated", description: `${property.name} → ${target.name}.` }); setReallocOpen(false); setQuery(""); invalidate(); },
+    onError: (e: any) => toast({ title: "Couldn't reallocate", description: e?.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => { await apiRequest("DELETE", `/api/crm/properties/${property.id}`); },
+    onSuccess: () => { toast({ title: "Deleted", description: `${property.name} removed from the CRM.` }); invalidate(); },
+    onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex items-center gap-2 pt-1.5 border-t border-border/40 flex-wrap">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Manage</span>
+      <Button
+        size="sm" variant="ghost" className="h-6 text-[10px]"
+        disabled={unlinkMutation.isPending}
+        onClick={() => unlinkMutation.mutate()}
+        data-testid={`btn-unlink-property-${property.id}`}
+      >
+        <Unlink className="w-3 h-3 mr-1" />Remove from landlord
+      </Button>
+      <Popover open={reallocOpen} onOpenChange={setReallocOpen}>
+        <PopoverTrigger asChild>
+          <Button size="sm" variant="ghost" className="h-6 text-[10px]" data-testid={`btn-reallocate-property-${property.id}`}>
+            <ArrowRightLeft className="w-3 h-3 mr-1" />Reallocate
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64 p-2" align="start">
+          <Input
+            autoFocus
+            placeholder="Search landlord…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            className="h-7 text-xs mb-1"
+          />
+          <div className="max-h-48 overflow-y-auto">
+            {results.length === 0 && (
+              <p className="text-[10px] text-muted-foreground px-1 py-1">{query.length < 2 ? "Type at least 2 characters" : "No matches"}</p>
+            )}
+            {results.map(c => (
+              <button
+                key={c.id}
+                onClick={() => reallocateMutation.mutate(c)}
+                disabled={reallocateMutation.isPending}
+                className="w-full text-left text-xs px-2 py-1 rounded hover:bg-muted truncate disabled:opacity-50"
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button size="sm" variant="ghost" className="h-6 text-[10px] text-destructive hover:text-destructive ml-auto" data-testid={`btn-delete-property-${property.id}`}>
+            <Trash2 className="w-3 h-3 mr-1" />Delete
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {property.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the property from the CRM. Any deals stay but are detached from it; units, agent and company links are removed. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleteMutation.mutate()}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
 }
 
 export function CompanyPropertiesBoard({
@@ -265,6 +399,39 @@ export function CompanyPropertiesBoard({
     onError: (e: any) => toast({ title: "Couldn't create", description: e?.message, variant: "destructive" }),
   });
 
+  const dismissDiscoveryMutation = useMutation({
+    mutationFn: async (item: { key: string; name: string }) => {
+      await apiRequest("POST", `/api/landlord/${companyId}/dismiss-discovery`, { key: item.key });
+      return item;
+    },
+    onSuccess: (item) => {
+      toast({
+        title: "Hidden from board",
+        description: `${item.name} won't show as a discovery again.`,
+        action: (
+          <ToastAction
+            altText="Undo"
+            onClick={() => restoreDiscoveryMutation.mutate(item.key)}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't hide", description: e?.message, variant: "destructive" }),
+  });
+
+  const restoreDiscoveryMutation = useMutation({
+    mutationFn: async (key: string) => {
+      await apiRequest("POST", `/api/landlord/${companyId}/dismiss-discovery`, { key, restore: true });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't restore", description: e?.message, variant: "destructive" }),
+  });
+
   // ── Build the unioned in-CRM property set ──
   const boardProperties = useMemo<BoardProperty[]>(() => {
     const byId = new Map<string, BoardProperty>();
@@ -340,6 +507,7 @@ export function CompanyPropertiesBoard({
   // ── Discovered (not-yet-in-CRM) portfolio — landlords only ──
   const discovered = useMemo<DiscoveredItem[]>(() => {
     if (kind !== "landlord") return [];
+    const dismissed = new Set(brand?.dismissedDiscoveries || []);
     const linkedSigs = new Set<string>();
     for (const bp of boardProperties) {
       if (normName(bp.name)) linkedSigs.add(`name:${normName(bp.name)}`);
@@ -376,7 +544,7 @@ export function CompanyPropertiesBoard({
         seed: { name: t.property_address || `Title ${t.title_number}`, address: t.property_address || undefined, postcode: t.postcode || undefined },
       });
     }
-    return out;
+    return out.filter(d => !dismissed.has(d.key));
   }, [kind, brand, boardProperties]);
 
   // ── Map markers ──
@@ -531,6 +699,7 @@ export function CompanyPropertiesBoard({
                     {p.units.length === 0 && p.deals.length === 0 && (
                       <p className="text-[10px] text-muted-foreground">No units or deals recorded yet.</p>
                     )}
+                    {kind === "landlord" && <PropertyManageActions companyId={companyId} property={p} />}
                   </div>
                 )}
               </div>
@@ -553,6 +722,17 @@ export function CompanyPropertiesBoard({
                 data-testid={`btn-add-to-crm-${d.key}`}
               >
                 <Plus className="w-3 h-3 mr-1" />Add to CRM
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
+                disabled={dismissDiscoveryMutation.isPending}
+                onClick={() => dismissDiscoveryMutation.mutate({ key: d.key, name: d.name })}
+                title="Hide this — wrong match or already in the CRM"
+                data-testid={`btn-dismiss-discovery-${d.key}`}
+              >
+                <X className="w-3 h-3" />
               </Button>
             </div>
           ))}
