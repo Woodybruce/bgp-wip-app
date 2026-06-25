@@ -1036,7 +1036,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   };
 
   return (
-    <div className={isLandlord
+    <div className={(isLandlord || isBrand)
       ? "flex flex-col gap-3 items-stretch w-full min-w-0"
       : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
     <Card data-testid="brand-profile-panel" className="flex-1 min-w-0 max-w-full overflow-hidden">
@@ -4460,6 +4460,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     if (!t) return false;
     return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
   })();
+  const isBrand = !!c.is_tracked_brand;
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
   const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
@@ -4605,7 +4606,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const topContacts = (data.contacts || []).slice(0, 5);
 
   return (
-    <aside className={isLandlord
+    <aside className={(isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
       {/* Compliance / AML board — gates every downstream check on knowing
@@ -5033,8 +5034,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               // Scrollable grid — show every image, capped at a sensible
               // height so the gallery doesn't dominate the sidebar. 3-col
               // gives bigger thumbnails than the previous 4-col.
-              <div className={isLandlord
-                ? "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 pr-1"
+              <div className={(isLandlord || isBrand)
+                ? "grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[640px] overflow-y-auto pr-1"
                 : "grid grid-cols-3 gap-1 max-h-[420px] overflow-y-auto pr-1"}>
                 {data.images.map((img: any) => {
                   const thumbSrc = img.thumbnail_data
