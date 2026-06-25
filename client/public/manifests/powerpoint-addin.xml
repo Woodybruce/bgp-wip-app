@@ -4,12 +4,12 @@
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
-  <Id>73f41e37-23c8-4a24-bb23-f72e7f7319e8</Id>
-  <Version>2.3.0</Version>
+  <Id>b7e8c2a4-5f31-4d6e-9a2b-1c3d4e5f6a7b</Id>
+  <Version>1.0.0</Version>
   <ProviderName>Bruce Gillingham Pollard</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
-  <DisplayName DefaultValue="ChatBGP for Excel"/>
-  <Description DefaultValue="AI-powered Excel assistant with CRM integration, financial model building, and SharePoint file management for BGP."/>
+  <DisplayName DefaultValue="ChatBGP for PowerPoint"/>
+  <Description DefaultValue="AI-powered PowerPoint assistant with BGP CRM integration — pull deal, property and comp data and draft slide content you can insert with one click."/>
   <IconUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/icon-64.png"/>
   <SupportUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
@@ -17,23 +17,18 @@
     <AppDomain>https://bgp-wip-app-production-efac.up.railway.app</AppDomain>
   </AppDomains>
   <Hosts>
-    <Host Name="Workbook"/>
+    <Host Name="Presentation"/>
   </Hosts>
-  <Requirements>
-    <Sets>
-      <Set Name="ExcelApi" MinVersion="1.1"/>
-    </Sets>
-  </Requirements>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin-excel.html"/>
+    <SourceLocation DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/powerpoint"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
 
   <!-- VersionOverrides adds a persistent ribbon button so the add-in stays
-       accessible without having to re-open it from My Add-ins each time. -->
+       accessible from the Home tab without re-opening it from My Add-ins. -->
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
-      <Host xsi:type="Workbook">
+      <Host xsi:type="Presentation">
         <DesktopFormFactor>
           <GetStarted>
             <Title resid="GetStarted.Title"/>
@@ -81,8 +76,8 @@
       <bt:Urls>
         <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
         <bt:Url id="LearnMoreUrl" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
-        <bt:Url id="Commands.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin-excel.html"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin-excel.html"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/powerpoint"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/powerpoint"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title" DefaultValue="ChatBGP is ready"/>
@@ -91,7 +86,7 @@
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description" DefaultValue="Click the ChatBGP button in the Home tab to open the panel."/>
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open ChatBGP — AI assistant with BGP CRM integration"/>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open ChatBGP — AI assistant with BGP CRM integration for building decks"/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

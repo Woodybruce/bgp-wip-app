@@ -54,7 +54,7 @@ export const EXPENSE_CATEGORY_MAP: Record<string, { code: string; name: string }
   "Staff Gifts":                    { code: "780", name: "Staff Gifts" },                  // seed
   "Client Gifts":                   { code: "781", name: "Client Gifts" },                 // seed
   "Other Expenses":                 { code: "900", name: "Other Expenses" },               // seed
-  "Personal (deduct from payroll)": { code: "910", name: "Personal (deduct from payroll)" },
+  "Personal (deduct from payroll)": { code: "1106", name: "Personal (deduct from payroll)" },
   "Sainsburys / Tesco / Ocado":     { code: "8205", name: "Sainsburys / Tesco / Ocado" },
 };
 

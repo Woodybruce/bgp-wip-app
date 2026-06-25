@@ -13480,55 +13480,42 @@ export function setupChatBGPRoutes(app: Express) {
 
       const excelSupplement = `
 
-## EXCEL ADD-IN CONTEXT
-You are running inside the Microsoft Excel task pane as "ChatBGP for Excel". In addition to all your usual BGP capabilities (CRM lookups, SharePoint search, property/deal data, document generation, etc.), you have these Excel-specific abilities:
+## EXCEL ADD-IN — you are the FULL ChatBGP, inside Excel
+You're running in the Microsoft Excel task pane, but you are the SAME ChatBGP as the main app — the full brain, with all your BGP knowledge and tools: CRM (companies, properties, deals, contacts), SharePoint, property pathways, KYC, market data, news, document generation, sql_query, all of it. Answer strategy, market, CRM, deal and "tell me about X" questions as fully and thoughtfully as you would in the main app, using your tools to pull real BGP data. You are NOT a cut-down formula bot — don't reduce everything to formulas, and don't be terse when the question deserves a proper answer.
 
-- You can see the workbook structure (all sheets, their column headers + dimensions) plus the ACTIVE sheet's full data (provided below as "Current Workbook Data" when available).
-- You can **READ ANY OTHER SHEET OR RANGE ON DEMAND.** To see a sheet you don't yet have data for (e.g. TS, Mthly_CF, Sheet 1), emit a read action (see below) — the add-in reads it live from Excel and sends the data straight back to you next turn, so you can work across the ENTIRE workbook, not just the active sheet. ALWAYS read the sheets a formula will reference BEFORE writing it, so you use real cell addresses, never guesses.
-- You can cross-reference spreadsheet data against BGP's CRM (companies, properties, deals, contacts).
+On top of that, you have live read/write access to the user's OPEN workbook:
+- You see the workbook structure (all sheets, headers, dimensions) plus each sheet's data (provided below as "Workbook Data" when available — that's the whole workbook, not just the active sheet).
+- You can READ ANY SHEET/RANGE ON DEMAND — emit a read action (below) and the add-in reads it live and sends it back next turn. ALWAYS read the sheets a formula will reference before writing it, so you use real cell addresses, never guesses.
+- Cross-reference the spreadsheet against the CRM whenever the question touches BGP data — pull deal/property/pathway/company records with your tools rather than working only from the cells on screen.
 
-### ⚠️ IMPORTANT — Writing to the open workbook (DO THIS by default)
-**You CAN write formulas and values directly into the user's open workbook in real time via Office.js.** Never tell the user you can't — you can. The add-in renders an "Apply" button next to every JSON action block you emit, and clicking it writes the formula/value to the exact cell specified.
-
-Whenever the user asks you to "build", "amend", "fill in", "add", "update", "put", "populate", "write", or otherwise modify their open workbook, you MUST respond with one or more JSON action blocks — NOT a downloadable file. Emit one block per cell, in the order the user should apply them:
+### Writing to the open workbook
+You CAN write formulas and values straight into the open workbook via Office.js — never say you can't. When the user asks you to build / amend / fill in / add / update / populate the workbook, respond with one or more JSON action blocks (the add-in renders an "Apply" button per block, plus "Apply All"):
 
 \`\`\`json
 {"action": "writeFormula", "sheet": "Summary", "cell": "C10", "formula": "=B10*(1+0.025)"}
 \`\`\`
-
 \`\`\`json
 {"action": "writeValue", "sheet": "Summary", "cell": "A1", "value": "Investment Summary"}
 \`\`\`
 
-For a full model, emit dozens of action blocks in order (headers → assumptions → formulas → totals). The user can click "Apply" on each, or "Apply All" to write the entire model at once.
+For a full model, emit the blocks in order (headers → assumptions → formulas → totals).
 
 ### Action types
-The add-in implements these action verbs:
-- \`writeValue\`  — write a literal value (string/number) into one cell
-- \`writeFormula\` — write a formula (must start with =) into one cell
-- \`readRange\`  — READ a specific range so you can see it: \`{"action": "readRange", "sheet": "TS", "range": "A1:L60"}\`
-- \`readSheet\`  — READ a whole sheet's used range: \`{"action": "readSheet", "sheet": "Mthly_CF"}\`
+- \`writeValue\` — literal value (string/number) into one cell
+- \`writeFormula\` — formula (must start with =) into one cell
+- \`readRange\` — read a range: \`{"action":"readRange","sheet":"TS","range":"A1:L60"}\`
+- \`readSheet\` — read a whole sheet's used range: \`{"action":"readSheet","sheet":"Mthly_CF"}\`
+Read actions are fulfilled automatically (the data returns next turn, no user click). Workflow for changing a model: emit read actions for the sheets you need → then write with the real addresses you found. Don't invent other verbs (\`highlightCell\`, \`setFormat\`, \`mergeCells\`, \`createSheet\`…) — the add-in drops them; write a label into an adjacent cell with \`writeValue\` instead.
 
-**Read actions are fulfilled AUTOMATICALLY** — when you emit one, the add-in reads that data from Excel and immediately sends it back to you in the next turn (no user click). So the workflow for changing a model is: emit read actions FIRST for the sheets you need → wait for the data to come back → THEN emit your \`writeValue\`/\`writeFormula\` actions using the real addresses you discovered. This is how you "see" and rewrite the whole model rather than working blind on the active sheet.
+### export_to_excel
+Only when the user explicitly wants a SEPARATE downloadable file ("send me an Excel file", "export as xlsx"). Never for changes to the workbook that's already open.
 
-DO NOT emit \`highlightCell\`, \`setFormat\`, \`mergeCells\`, \`applyColour\`, \`addBorder\`, \`autoFit\`, \`createSheet\`, or any other invented verb. The add-in silently drops unrecognised actions. If you need to draw attention to columns/rows, write a label into an adjacent cell using \`writeValue\`.
+### Response style
+- **Match depth to the question.** Analysis, strategy, CRM, market, "tell me about this deal/property" → give a full, considered answer (you're the real ChatBGP, not a formula bot). "Build / amend / fill in the model" → lead with the JSON action blocks. If they ask for both, do both.
+- When you show a formula, also emit its JSON action block so it's one click to apply — don't just paste formulas as text.
+- Reference real cell addresses from the user's actual sheets. UK English and UK number formatting.
 
-### When to emit a downloadable file instead (export_to_excel)
-Only use the \`export_to_excel\` tool when the user explicitly asks for a **separate file** they can download — phrases like "send me an Excel file", "export this as xlsx", "give me a downloadable spreadsheet". Never use \`export_to_excel\` when the user wants changes in the workbook that's already open.
-
-### Multi-sheet models
-If the user asks to build a full investment appraisal (multi-sheet), you may either:
-1. Emit many JSON action blocks across multiple sheets (user applies them cell-by-cell or "Apply All"), OR
-2. Recommend the **Model Builder tab** which can generate a full 6-sheet investment appraisal (Summary, Assumptions, Cash Flow, Debt Schedule, Sensitivity, Returns Analysis) in one click.
-
-### Excel response style
-- Wrap formulas in \`\`\`excel code blocks so they're easy to copy.
-- ALSO emit a JSON action block for every formula/value you want the user to apply directly — don't just show formulas as text, make them actionable.
-- Reference specific cell addresses from the user's actual sheet.
-- Be concise — the user is working in Excel and wants quick answers.
-- Use UK English and UK number formatting.
-
-${safeExcelContext ? `**Current Workbook Data (automatically read from the user's open Excel workbook):**\n${safeExcelContext}\n` : "**Note:** No spreadsheet data was provided. If the user asks you to analyse their sheet, suggest they click the refresh button next to the input."}
+${safeExcelContext ? `**Workbook Data (read live from the user's open Excel workbook — all sheets):**\n${safeExcelContext}\n` : "**Note:** No spreadsheet data was provided. If the user asks about their sheet, suggest the refresh button next to the input."}
 `;
 
       // Lean context — keep the task-relevant Excel supplement; fetch the rest on demand.
@@ -13646,6 +13633,286 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
       } catch {}
     } finally {
       // Clean up uploaded temp files
+      for (const f of uploadedFiles) {
+        try { fs.unlinkSync(f.path); } catch {}
+      }
+    }
+  });
+
+  // ChatBGP inside PowerPoint — same brain + tools as the main app, plus the
+  // ability to draft presentation-ready slide content and insert it into the
+  // open deck. Mirrors /api/chatbgp/excel-chat; the only PowerPoint-specific
+  // bits are the supplement and the `insertText` action (client-parsed, same
+  // way Excel parses writeFormula/writeValue out of the reply).
+  app.post("/api/chatbgp/powerpoint-chat", requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
+    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ message: "AI API key not configured" });
+    }
+
+    const isMultipart = (req.headers["content-type"] || "").startsWith("multipart/form-data");
+    const uploadedFiles = (req.files as Express.Multer.File[]) || [];
+
+    let messages: any[] = [];
+    let pptContext: string | undefined;
+    try {
+      if (isMultipart) {
+        messages = JSON.parse(req.body.messages || "[]");
+        pptContext = req.body.pptContext || undefined;
+      } else {
+        messages = req.body.messages;
+        pptContext = req.body.pptContext;
+      }
+    } catch {
+      return res.status(400).json({ message: "Invalid messages format" });
+    }
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ message: "messages array required" });
+    }
+    if (messages.length > 40) {
+      messages = [messages[0], ...messages.slice(-39)];
+    }
+    for (const m of messages) {
+      if (!m || !["user", "assistant"].includes(m.role)) {
+        return res.status(400).json({ message: "Each message must have role (user/assistant)" });
+      }
+      const contentLen = typeof m.content === "string" ? m.content.length : 0;
+      if (contentLen > 50000) {
+        return res.status(400).json({ message: "Message content too long (max 50000 chars)" });
+      }
+    }
+    if (pptContext && (typeof pptContext !== "string" || pptContext.length > 100000)) {
+      return res.status(400).json({ message: "pptContext must be a string under 100000 chars" });
+    }
+
+    // /opus or /sonnet slash-command interception (powerpoint-chat).
+    const pptThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+    let pptSlashOverride: "opus" | "sonnet" | null = null;
+    {
+      const lastIdx = messages.length - 1;
+      const lastText = lastIdx >= 0 && typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
+      const slash = parseSlashCommand(lastText);
+      if (slash.command) {
+        await setThreadModel(pptThreadId, slash.command);
+        if (slash.wasJustCommand) {
+          return res.json({ reply: ackMessage(slash.command) });
+        }
+        pptSlashOverride = slash.command;
+        messages[lastIdx] = { ...messages[lastIdx], content: slash.strippedContent };
+      }
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    const heartbeat = setInterval(() => {
+      try { res.write(": heartbeat\n\n"); } catch {}
+    }, 5000);
+
+    let clientClosed = false;
+    req.on("close", () => { clientClosed = true; clearInterval(heartbeat); });
+
+    const sendProgress = (status: string) => {
+      try { if (!clientClosed) res.write(`data: ${JSON.stringify({ progress: status })}\n\n`); } catch {}
+    };
+
+    try {
+      const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
+      const AUDIO_VIDEO_EXTENSIONS = [".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac", ".wma", ".mov", ".avi", ".mkv", ".wmv", ".flv"];
+      const documentTexts: string[] = [];
+      const imageContentParts: Array<{ type: "image_url"; image_url: { url: string; detail: "auto" } }> = [];
+
+      if (uploadedFiles.length > 0) {
+        sendProgress(`Reading ${uploadedFiles.length} file${uploadedFiles.length === 1 ? "" : "s"}...`);
+        for (const file of uploadedFiles) {
+          const ext = "." + (file.originalname.split(".").pop()?.toLowerCase() || "");
+          const isImage = IMAGE_EXTENSIONS.includes(ext) || file.mimetype?.startsWith("image/");
+          const isAudioVideo = AUDIO_VIDEO_EXTENSIONS.includes(ext) || file.mimetype?.startsWith("audio/") || file.mimetype?.startsWith("video/");
+          const fileData = fs.readFileSync(file.path);
+          const chatMediaName = `${Date.now()}-${path.basename(file.path)}${ext}`;
+          const storageKey = `chat-media/${chatMediaName}`;
+          try {
+            await saveFile(storageKey, fileData, file.mimetype || "application/octet-stream", file.originalname);
+          } catch (err: any) {
+            console.error(`[ChatBGP PowerPoint] File DB save error (${file.originalname}):`, err?.message);
+          }
+          if (isImage) {
+            try {
+              const normalised = await normaliseImageForClaude(fileData, file.mimetype, file.originalname);
+              const base64 = normalised.buffer.toString("base64");
+              imageContentParts.push({
+                type: "image_url",
+                image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" },
+              });
+            } catch (err: any) {
+              console.error(`[ChatBGP PowerPoint] Image read error (${file.originalname}):`, err?.message);
+            }
+          } else if (isAudioVideo) {
+            documentTexts.push(`=== AUDIO/VIDEO FILE: ${file.originalname} ===\nFile URL: /api/chat-media/${chatMediaName}\nUse transcribe_audio with fileUrl="/api/chat-media/${chatMediaName}".`);
+          } else {
+            try {
+              const text = await extractTextFromFile(file.path, file.originalname);
+              documentTexts.push(`=== FILE: ${file.originalname} ===\n${text.slice(0, 15000)}`);
+            } catch (err: any) {
+              console.error(`[ChatBGP PowerPoint] File extract error (${file.originalname}):`, err?.message);
+            }
+          }
+        }
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && lastMsg.role === "user") {
+          if (documentTexts.length > 0) {
+            const textContent = typeof lastMsg.content === "string" ? lastMsg.content : "";
+            lastMsg.content = `${textContent}\n\n--- ATTACHED DOCUMENTS ---\n${documentTexts.join("\n\n")}`;
+          }
+          if (imageContentParts.length > 0) {
+            const textContent = typeof lastMsg.content === "string" ? lastMsg.content : "";
+            lastMsg.content = [
+              { type: "text" as const, text: textContent || "What do you see in this image?" },
+              ...imageContentParts,
+            ];
+          }
+        }
+      }
+
+      let safePptContext = pptContext || "";
+      if (safePptContext.length > 60000) {
+        safePptContext = safePptContext.substring(0, 60000) + "\n... (slide text truncated for size)\n";
+      }
+
+      let baseSystemPrompt: string;
+      try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
+
+      const pptSupplement = `
+
+## POWERPOINT ADD-IN — you are the FULL ChatBGP, inside PowerPoint
+You're running in the Microsoft PowerPoint task pane, but you are the SAME ChatBGP as the main app — the full brain, with all your BGP knowledge and tools: CRM (companies, properties, deals, contacts), SharePoint, property pathways, KYC, market data, comparables, news, document generation, sql_query, all of it. Answer strategy, market, CRM, deal and "tell me about X" questions as fully and thoughtfully as you would in the main app, using your tools to pull real BGP data. You are NOT a cut-down slide bot — don't be terse when the question deserves a proper answer.
+
+You're here to help build a deck. Typical asks: "pull the comps for X and draft a slide", "summarise this deal for the investment committee", "three bullets on the tenant covenant", "what's our available space in Soho — make a slide". Use your tools to get the REAL BGP data first, then turn it into clean, presentation-ready slide copy.
+
+### Inserting content into the open presentation
+When the user wants something put ON a slide (draft / write / add / make a slide / insert / put this on a slide), respond with one or more JSON action blocks — the add-in renders an "Insert into slide" button per block (plus "Insert all"). The text drops into the currently selected text box / placeholder on the active slide:
+
+\`\`\`json
+{"action": "insertText", "text": "Investment Summary\\n• £4.2m lot size, 5.75% net initial yield\\n• 12-year unexpired term to M&S\\n• Soho — resilient rental growth"}
+\`\`\`
+
+Use \\n for line breaks and • for bullets. Keep slide text tight and scannable — a headline plus short bullets, not paragraphs. One block per slide's worth of content; for several slides, emit several blocks in order.
+
+### Action type
+- \`insertText\` — insert a block of text into the selected slide placeholder: \`{"action":"insertText","text":"..."}\`
+Don't invent other verbs (\`addSlide\`, \`setLayout\`, \`insertImage\`, \`setFont\`…) — the add-in drops them. For multiple slides, emit multiple \`insertText\` blocks and remind the user to click into the target placeholder before inserting each.
+
+### Response style
+- **Match depth to the question.** Analysis / strategy / CRM / "tell me about this deal" → a full, considered answer (you're the real ChatBGP). "Draft a slide / write bullets / make a slide" → lead with the insertText block(s), each with a one-line note on what it covers.
+- When you draft slide copy, ALWAYS emit it as an \`insertText\` block so it's one click to place — don't just paste the text and stop.
+- UK English and UK number formatting. Keep it boardroom-clean.
+
+${safePptContext ? `**Current slide / selection (read live from the open PowerPoint):**\n${safePptContext}\n` : "**Note:** No slide text was provided (the user may not have selected anything). Draft content freely; they'll click into a placeholder before inserting."}
+`;
+
+      const dynamicContext = pptSupplement;
+      const systemContent = baseSystemPrompt + dynamicContext;
+
+      const { tools } = await getAvailableTools();
+      let msToken: string | null = null;
+      try { msToken = await getValidMsToken(req); } catch {}
+
+      const pptResolved = await resolveChatModel({ threadId: pptThreadId, override: pptSlashOverride });
+      let convMessages: any[] = [
+        { role: "system", content: systemContent },
+        ...messages.slice(-20),
+      ];
+      let lastAction: any = null;
+      let loopCount = 0;
+      const maxLoops = 100;
+      const deadline = Date.now() + 10 * 60 * 1000;
+
+      while (loopCount < maxLoops) {
+        if (clientClosed || Date.now() > deadline) {
+          console.log(`[ChatBGP PowerPoint] Deadline/close after ${loopCount} loops`);
+          break;
+        }
+        loopCount++;
+        const isLastLoop = loopCount >= maxLoops;
+        const loopOpts: any = {
+          model: pptResolved.model,
+          messages: convMessages,
+          max_completion_tokens: 4096,
+        };
+        if (!isLastLoop && tools.length > 0) {
+          loopOpts.tools = tools;
+          loopOpts.tool_choice = "auto";
+        }
+
+        const completion = await callClaude(loopOpts);
+        const message = completion.choices[0]?.message;
+        if (!message) break;
+
+        console.log(`[ChatBGP PowerPoint] Loop ${loopCount}: tool_calls=${message.tool_calls?.length || 0}, has_content=${!!message.content}`);
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          convMessages.push(message);
+          const toolNames = (message.tool_calls as unknown as ToolCall[]).map(tc => tc.function.name);
+          sendProgress(toolNames.length === 1 ? getToolProgressLabel(toolNames[0]) : `Running ${toolNames.length} operations...`);
+
+          for (const tc of message.tool_calls as unknown as ToolCall[]) {
+            if (clientClosed || Date.now() > deadline) {
+              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: "Ran out of time" }) });
+              continue;
+            }
+            const tcName = tc.function.name;
+            let tcArgs: any;
+            try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
+            try {
+              const toolResult = await withTimeout(
+                executeAnyTool(tcName, tcArgs, req, msToken),
+                10 * 60 * 1000,
+                { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
+              );
+              if (toolResult.action) lastAction = toolResult.action;
+              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
+              convMessages.push({
+                role: "tool" as const,
+                tool_call_id: tc.id,
+                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+              });
+            } catch (toolErr: any) {
+              console.error(`[ChatBGP PowerPoint] Tool ${tcName} error:`, toolErr?.message);
+              convMessages.push({
+                role: "tool" as const,
+                tool_call_id: tc.id,
+                content: JSON.stringify({ error: toolErr?.message || "Tool execution failed" }),
+              });
+            }
+          }
+        } else {
+          const reply = message.content || "Sorry, I couldn't generate a response.";
+          clearInterval(heartbeat);
+          try {
+            res.write(`data: ${JSON.stringify({ reply, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
+            res.end();
+          } catch {}
+          return;
+        }
+      }
+
+      clearInterval(heartbeat);
+      try {
+        res.write(`data: ${JSON.stringify({ reply: "This is taking longer than expected — try breaking your request into smaller steps.", partial: true, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
+        res.end();
+      } catch {}
+    } catch (err: any) {
+      console.error("[ChatBGP PowerPoint] Error:", err?.message);
+      clearInterval(heartbeat);
+      try {
+        res.write(`data: ${JSON.stringify({ reply: "Failed to get AI response. Please try again.", error: true })}\n\n`);
+        res.end();
+      } catch {}
+    } finally {
       for (const f of uploadedFiles) {
         try { fs.unlinkSync(f.path); } catch {}
       }
