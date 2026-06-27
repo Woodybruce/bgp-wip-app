@@ -4837,7 +4837,7 @@ async function downloadAndExtractFile(
   token: string
 ): Promise<string | null> {
   const ext = path.extname(fileName).toLowerCase();
-  const supportedExts = [".xlsx", ".xls", ".docx", ".pdf", ".csv", ".txt", ".doc", ".pptx"];
+  const supportedExts = [".xlsx", ".xls", ".docx", ".pdf", ".pptx", ".csv", ".tsv", ".txt", ".md", ".markdown", ".json", ".xml", ".html", ".htm", ".log", ".yaml", ".yml", ".rtf"];
   if (!supportedExts.includes(ext)) return null;
 
   try {
@@ -5160,7 +5160,7 @@ async function executeReadSharePointFile(
     }
 
     const ext = path.extname(fileName).toLowerCase();
-    const supportedExts = [".xlsx", ".xls", ".docx", ".pdf", ".csv", ".txt", ".doc"];
+    const supportedExts = [".xlsx", ".xls", ".docx", ".pdf", ".pptx", ".csv", ".tsv", ".txt", ".md", ".markdown", ".json", ".xml", ".html", ".htm", ".log", ".yaml", ".yml", ".rtf"];
     if (!supportedExts.includes(ext)) {
       return {
         success: true,
@@ -5282,8 +5282,25 @@ export async function extractTextFromFile(filePath: string, originalName: string
     return out.join("\n");
   }
 
-  if ([".csv", ".txt", ".doc"].includes(ext)) {
+  if ([".csv", ".tsv", ".txt", ".md", ".markdown", ".json", ".xml", ".html", ".htm", ".log", ".yaml", ".yml"].includes(ext)) {
     return fs.readFileSync(filePath, "utf-8");
+  }
+
+  if (ext === ".rtf") {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    return raw
+      .replace(/\{\\\*[^{}]*\}/g, " ")
+      .replace(/\\par[d]?\b/g, "\n")
+      .replace(/\\'[0-9a-fA-F]{2}/g, "")
+      .replace(/\\[a-zA-Z]+-?\d* ?/g, "")
+      .replace(/[{}]/g, "")
+      .replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  // Legacy binary Office formats can't be read directly (reading them as text
+  // returns garbage), so fail with clear guidance instead.
+  if ([".doc", ".ppt", ".pps"].includes(ext)) {
+    throw new Error(`Legacy binary ${ext} file — please re-save as ${ext === ".doc" ? ".docx" : ".pptx"} and re-upload; the old binary format can't be read directly.`);
   }
 
   throw new Error(`Unsupported file format: ${ext}`);
