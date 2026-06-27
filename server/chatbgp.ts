@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import multer from "multer";
 import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage } from "./chatbgp-model-router";
 import mammoth from "mammoth";
