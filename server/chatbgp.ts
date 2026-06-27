@@ -3440,7 +3440,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "read_document",
-      description: "Universal document reader. Reads any document (PDF / Word / Excel / CSV / text / image) from chat-media storage, a property's brochure storage, or any file_storage key. Returns extracted text plus, for PDFs and images, base64-encoded page images so you can use vision on visual material. Use this AUTOMATICALLY whenever the user shares a document in chat — read it without being asked, then file the relevant info into the CRM via sql_write / standard tools. Brochures, HoTs, leases, tenancy schedules, KYC docs, news articles, comp evidence — all flow through here.",
+      description: "Universal document reader. Reads any document (PDF / Word / PowerPoint / Excel / CSV / text / image) from chat-media storage, a property's brochure storage, or any file_storage key. PowerPoint (.pptx) returns each slide's text + tables. Returns extracted text plus, for PDFs and images, base64-encoded page images so you can use vision on visual material. Use this AUTOMATICALLY whenever the user shares a document in chat — read it without being asked, then file the relevant info into the CRM via sql_write / standard tools. Brochures, HoTs, leases, tenancy schedules, KYC docs, news articles, comp evidence, presentations — all flow through here.",
       parameters: {
         type: "object",
         properties: {
@@ -5243,6 +5243,43 @@ export async function extractTextFromFile(filePath: string, originalName: string
       }
     }
     return lines.join("\n");
+  }
+
+  if (ext === ".pptx") {
+    // PowerPoint: pull each slide's text + tables straight from the OOXML (no
+    // external service). Mirrors the universal reader's other formats.
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+    const dec = (s: string) => s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+      .replace(/&#(\d+);/g, (_m, d) => String.fromCodePoint(parseInt(d, 10)));
+    const linesOf = (xml: string) => (xml.match(/<a:p>[\s\S]*?<\/a:p>/g) || [])
+      .map((para) => dec((para.match(/<a:t>([\s\S]*?)<\/a:t>/g) || []).map((x) => x.replace(/<\/?a:t>/g, "")).join("")).trim())
+      .filter(Boolean);
+    const names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+      .sort((a, b) => parseInt(a.match(/(\d+)/)![1], 10) - parseInt(b.match(/(\d+)/)![1], 10));
+    const out: string[] = [];
+    for (let i = 0; i < names.length; i++) {
+      const xml = (await zip.file(names[i])!.async("string")) || "";
+      out.push(`--- Slide ${i + 1} ---`);
+      const tables: string[][][] = [];
+      for (const tbl of xml.match(/<a:tbl>[\s\S]*?<\/a:tbl>/g) || []) {
+        const rows: string[][] = [];
+        for (const tr of tbl.match(/<a:tr[\s\S]*?<\/a:tr>/g) || []) {
+          const cells: string[] = [];
+          for (const tc of tr.match(/<a:tc>[\s\S]*?<\/a:tc>/g) || []) cells.push(linesOf(tc).join(" ").trim());
+          if (cells.some((c) => c)) rows.push(cells);
+        }
+        if (rows.length) tables.push(rows);
+      }
+      const noTbl = xml.replace(/<a:tbl>[\s\S]*?<\/a:tbl>/g, "");
+      const lines: string[] = [];
+      for (const sp of noTbl.match(/<p:sp>[\s\S]*?<\/p:sp>/g) || []) lines.push(...linesOf(sp));
+      if (lines.length) out.push(lines.join("\n"));
+      for (const t of tables) { out.push("[table]"); for (const r of t) out.push("| " + r.join(" | ") + " |"); }
+    }
+    return out.join("\n");
   }
 
   if ([".csv", ".txt", ".doc"].includes(ext)) {
