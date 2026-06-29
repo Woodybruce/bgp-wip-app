@@ -139,6 +139,11 @@ export default function MobileHome() {
     queryFn: () => apiRequest("GET", `/api/hr/staff/${user?.id}/commission`).then(r => r.json()),
     enabled: !!user?.id,
   });
+  // Team/firm total billing — the WIP roll-up (same figure the desktop WIP
+  // card shows as "Total net fees"). amtWip/amtInvoice are in pounds.
+  const { data: wipResp } = useQuery<any>({ queryKey: ["/api/wip"], staleTime: 5 * 60 * 1000 });
+  const wipEntries = Array.isArray(wipResp) ? wipResp : (wipResp?.entries || []);
+  const totalBilling = wipEntries.reduce((s: number, e: any) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0);
 
   const completeTask = useMutation({
     mutationFn: (id: string) => apiRequest("PATCH", `/api/tasks/${id}`, { status: "done" }),
@@ -226,6 +231,24 @@ export default function MobileHome() {
               </div>
             </div>
           )}
+        </Link>
+      )}
+
+      {/* Total billing — team/firm WIP roll-up; taps through to the full WIP report */}
+      {totalBilling > 0 && (
+        <Link
+          href="/wip-report"
+          className="block rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border shadow-sm active:bg-gray-50 px-4 py-3.5"
+          data-testid="mobile-home-total-billing"
+        >
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-muted-foreground shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Total billing</p>
+              <p className="text-2xl font-bold tabular-nums leading-tight">£{Math.round(totalBilling).toLocaleString("en-GB")}</p>
+            </div>
+            <ChevronRight className="w-4 h-4 ml-auto text-muted-foreground shrink-0" />
+          </div>
         </Link>
       )}
 

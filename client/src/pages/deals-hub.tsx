@@ -60,11 +60,10 @@ export default function DealsHub() {
     if (t) setTab(t);
   }, [location, isProfile]);
 
-  // WIP Report leads on desktop — it's the financial roll-up every agent
-  // wants. It's hidden from the mobile hub tabs (phone-unfriendly) but still
-  // reachable by URL.
+  // WIP Report — the financial roll-up every agent wants. Now shown on both
+  // desktop and mobile (the wide table scrolls horizontally on a phone).
   const allTabs = useMemo(() => [
-    ...(isMobile ? [] : [{ key: "wip-report" as const, label: "WIP Report", icon: FileText }]),
+    { key: "wip-report" as const, label: "WIP Report", icon: FileText },
     { key: "properties" as const, label: "Properties", icon: Building2 },
     { key: "deals" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
