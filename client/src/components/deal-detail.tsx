@@ -455,7 +455,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // repeating them in this card was pure duplication.
   const textFields: { label: string; value: string | null | undefined; colorMap?: Record<string, string>; href?: string }[] = [
     { label: "Team", value: Array.isArray(deal.team) ? deal.team.join(", ") : deal.team, colorMap: DEAL_TEAM_COLORS },
-    { label: "Asset Class", value: deal.assetClass, colorMap: DEAL_ASSET_CLASS_COLORS },
     { label: "Tenure", value: deal.tenureText },
     { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
     { label: "Instructed", value: deal.instructedAt ? formatDate(deal.instructedAt) : null },

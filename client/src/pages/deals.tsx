@@ -2946,19 +2946,24 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
           </div>
         ) : allocations && allocations.length > 0 ? (
           <div className="space-y-1">
-            {allocations.map((alloc, idx) => {
+            {allocations.filter((a) => !(a as any).isBgpHouse).map((alloc, idx) => {
               const amount = alloc.allocationType === "percentage"
                 ? totalFee * (alloc.percentage || 0) / 100
                 : alloc.fixedAmount || 0;
+              // agentName is blank on rows saved with only the canonical
+              // agentUserId — resolve the name from the BGP user list so the
+              // split always shows who it's for (and never crashes on a null
+              // name). BGP House (firm overhead) rows are hidden here.
+              const agentLabel = alloc.agentName || users?.find((u: any) => u.id === (alloc as any).agentUserId)?.name || "Unknown";
               return (
                 <div key={alloc.id} className="flex items-center justify-between py-1.5 px-2 rounded-md bg-muted/30" data-testid={`fee-alloc-display-${idx}`}>
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
                       <span className="text-[9px] font-semibold">
-                        {alloc.agentName.split(" ").map(n => n[0]).join("").slice(0, 2)}
+                        {agentLabel.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
                       </span>
                     </div>
-                    <span className="text-xs font-medium">{alloc.agentName}</span>
+                    <span className="text-xs font-medium">{agentLabel}</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     {alloc.allocationType === "percentage" && (
@@ -5371,12 +5376,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const statusCounts = useMemo(() => {
     return statusValues
       .filter(s => isCompsMode ? COMPLETED_STATUS_CODES.includes(s as DealStatusCode) : true)
-      .map((s) => ({
-        name: s,
+      .map((s) => {
+        const inStatus = teamFilteredDeals.filter((d) => legacyToCode(d.status) === s);
         // statusValues are canonical codes across all modes — match via
         // legacyToCode so older free-text rows still bucket into the right chip.
-        count: teamFilteredDeals.filter((d) => legacyToCode(d.status) === s).length,
-      }))
+        return {
+          name: s,
+          count: inStatus.length,
+          feeTotal: inStatus.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0),
+        };
+      })
       .filter(s => s.count > 0);
   }, [teamFilteredDeals, statusValues, isCompsMode, mode]);
 
@@ -5565,6 +5574,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 <div>
                   <p className="text-lg font-bold">{teamFilteredDeals.length}</p>
                   <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
+                  <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(teamFilteredDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
                 </div>
               </div>
             </CardContent>
@@ -5584,6 +5594,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   <div>
                     <p className="text-lg font-bold">{s.count}</p>
                     <p className="text-xs text-muted-foreground truncate max-w-[100px]">{s.name}</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
                   </div>
                 </div>
               </CardContent>

@@ -1318,21 +1318,20 @@ export default function WipReport() {
                       />
                     </th>
                     {[
-                      { key: "dealRef", label: "Ref", width: "w-16" },
-                      { key: "ref", label: "Deal", width: "w-40" },
-                      { key: "client", label: "Client", width: "w-28" },
-                      { key: "tenant", label: "Tenant", width: "w-32" },
-                      { key: "project", label: "Property", width: "w-32" },
-                      { key: "billingEntity", label: "Billing Entity", width: "w-32" },
-                      { key: "team", label: "Team", width: "w-32" },
-                      { key: "amtWip", label: "Fee", width: "w-24" },
-                      { key: "amtInvoice", label: "Fee Split", width: "w-24" },
-                      { key: "dealDate", label: "Target Date", width: "w-28" },
-                      { key: "dealType", label: "Deal Type", width: "w-24" },
-                      { key: "assetClass", label: "Asset Class", width: "w-24" },
+                      { key: "dealRef", label: "Ref", width: "w-12" },
+                      { key: "ref", label: "Deal", width: "w-32" },
+                      { key: "client", label: "Client", width: "w-24" },
+                      { key: "tenant", label: "Tenant", width: "w-28" },
+                      { key: "project", label: "Property", width: "w-28" },
+                      { key: "billingEntity", label: "Billing Entity", width: "w-24" },
+                      { key: "team", label: "Team", width: "w-24" },
+                      { key: "amtWip", label: "Fee", width: "w-20" },
+                      { key: "amtInvoice", label: "Fee Split", width: "w-20" },
+                      { key: "dealDate", label: "Target Date", width: "w-24" },
+                      { key: "dealType", label: "Deal Type", width: "w-20" },
                       { key: "agent", label: "BGP Contact", width: "w-20" },
-                      { key: "dealStatus", label: "Deal Status", width: "w-24" },
-                      { key: "stage", label: "Stage", width: "w-24" },
+                      { key: "dealStatus", label: "Deal Status", width: "w-20" },
+                      { key: "stage", label: "Stage", width: "w-20" },
                     ].map((col) => (
                       <th
                         key={col.key}
@@ -1428,7 +1427,6 @@ export default function WipReport() {
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
                         ) : <span className="text-gray-400">—</span>}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[100px]">{e.assetClass || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
                       <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
