@@ -70,6 +70,7 @@ import {
   EyeOff,
   ChevronDown,
   ChevronUp,
+  ChevronsUpDown,
   Download,
   Check,
   RefreshCw,
@@ -5449,6 +5450,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const sortedFilteredDeals = dealsSort.sortKey
     ? dealsSort.sorted(filteredDeals as any[], {
         ref: (d: any) => d.dealRef,
+        type: (d: any) => d.dealType || "",
+        status: (d: any) => legacyToCode(d.status) || d.status || "",
         property: (d: any) => propertyMap.get(d.propertyId) || d.name,
         unit: (d: any) => d.unitId ? unitMap.get(d.unitId) || "" : "",
         landlord: (d: any) => companyMap.get(d.landlordId),
@@ -5831,22 +5834,32 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {visibleColumns.type && (
                       <TableHead className="min-w-[120px]">
-                        <ColumnFilterPopover
-                          label="Deal Type"
-                          options={typeValues}
-                          activeFilters={columnFilters["type"] || []}
-                          onToggleFilter={(val) => toggleFilter("type", val)}
-                        />
+                        <div className="flex items-center gap-1">
+                          <ColumnFilterPopover
+                            label="Deal Type"
+                            options={typeValues}
+                            activeFilters={columnFilters["type"] || []}
+                            onToggleFilter={(val) => toggleFilter("type", val)}
+                          />
+                          <button type="button" onClick={() => dealsSort.toggle("type")} title="Sort by deal type" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "type" ? "text-primary" : "opacity-50"}`} data-testid="sort-type">
+                            {dealsSort.sortKey === "type" ? (dealsSort.direction === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3" />}
+                          </button>
+                        </div>
                       </TableHead>
                     )}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[120px]">
-                        <ColumnFilterPopover
-                          label="Deal Status"
-                          options={statusValues}
-                          activeFilters={columnFilters["status"] || []}
-                          onToggleFilter={(val) => toggleFilter("status", val)}
-                        />
+                        <div className="flex items-center gap-1">
+                          <ColumnFilterPopover
+                            label="Deal Status"
+                            options={statusValues}
+                            activeFilters={columnFilters["status"] || []}
+                            onToggleFilter={(val) => toggleFilter("status", val)}
+                          />
+                          <button type="button" onClick={() => dealsSort.toggle("status")} title="Sort by deal status" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "status" ? "text-primary" : "opacity-50"}`} data-testid="sort-status">
+                            {dealsSort.sortKey === "status" ? (dealsSort.direction === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3" />}
+                          </button>
+                        </div>
                       </TableHead>
                     )}
                     {visibleColumns.team && (
@@ -6450,6 +6463,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       </TableCell>
                     </TableRow>
                   ))}
+                  {filteredDeals.length > 0 && (
+                    <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
+                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-right py-2 text-xs">
+                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"} · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}
+                      </TableCell>
+                    </TableRow>
+                  )}
                   {filteredDeals.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-12 text-muted-foreground">
