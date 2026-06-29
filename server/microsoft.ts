@@ -2775,8 +2775,11 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const result = await uploadRes.json();
       res.json({ id: result.id, name: result.name, webUrl: result.webUrl, size: result.size });
     } catch (err: any) {
-      console.error("File upload error:", err);
-      res.status(500).json({ message: "Failed to upload file" });
+      // Surface the real reason instead of a blank 500 — otherwise an
+      // upload failure (token expiry, Graph 4xx, oversize, network) is
+      // indistinguishable to the user. The message is safe to show.
+      console.error("[SharePoint upload] error:", err?.message, err?.stack);
+      res.status(500).json({ message: `Upload failed: ${err?.message || "unknown error"}` });
     }
   });
 }
