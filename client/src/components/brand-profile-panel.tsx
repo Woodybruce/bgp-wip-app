@@ -9,6 +9,7 @@ import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
 import { InteractionsBoard } from "@/components/interactions-board";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
+import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
 import { InlineMultiSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
@@ -369,7 +370,7 @@ type RepForm = {
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
 
-export function BrandProfilePanel({ companyId }: { companyId: string }) {
+export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { companyId: string; showPropertiesBoard?: boolean }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
@@ -1488,6 +1489,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <BgpTakeStrip companyId={companyId} tab="brand" />
               <AskChatBGPInline brandName={c.name} />
             </div>
+
+            {/* Properties board — for landlords it sits directly under Ask ChatBGP
+                and above the BGP Relationship zone (order-4, between order-2 and
+                order-6). Rendered inside the panel flex (rather than page-level)
+                so it slots into the section order Woody asked for. */}
+            {showPropertiesBoard && (
+              <div className="mt-2 order-4">
+                <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
+              </div>
+            )}
 
 
             {/* Visual brand banner. Hero images come from any

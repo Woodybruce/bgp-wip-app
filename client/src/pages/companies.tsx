@@ -1396,7 +1396,7 @@ function CompanyDetail({ id }: { id: string }) {
 
           <SubCompaniesPanel parentId={id} parentName={company.name} />
 
-          {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} />}
+          {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard} />}
 
           {/* BGP Team — landlords get it in the brand-profile sidebar (next
               to the Gallery) so the right column fills and stays aligned.
@@ -1416,7 +1416,9 @@ function CompanyDetail({ id }: { id: string }) {
           )}
 
           {usePropertiesBoard ? (
-            <CompanyPropertiesBoard companyId={id} kind={isLenderCo ? "lender" : "landlord"} />
+            /* Landlords now render the board inside BrandProfilePanel (between
+               Ask ChatBGP and BGP Relationship); only lenders keep it here. */
+            isLenderCo ? <CompanyPropertiesBoard companyId={id} kind="lender" /> : null
           ) : (
             <>
               {linkedProperties.length > 0 && (() => {
