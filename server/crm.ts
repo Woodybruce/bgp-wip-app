@@ -6137,27 +6137,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         });
       }
 
-      // Per-team scoping for regular agents; same fullView bypass. A user
-      // always sees rows where THEY are a named agent (so e.g. Alex Todd sees
-      // his own deals even if his users.team is unset or doesn't exactly match
-      // the deal's team tag), plus everything on their own team.
-      if (!isAdmin && !fullView) {
-        const ut = userTeam ? userTeam.toLowerCase() : null;
-        const myName = (currentUser?.name || "").trim().toLowerCase();
-        entries = entries.filter(e => {
-          if (myName && e.agent) {
-            const agents = (e.agent as string).split(",").map((a: string) => a.trim().toLowerCase());
-            if (agents.includes(myName)) return true;
-          }
-          if (ut && e.team) {
-            const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
-            if (teams.some((t: string) => t === ut)) return true;
-          }
-          return false;
-        });
-      }
+      // Consistent firm-wide "Normal" view: every user sees the whole firm's
+      // WIP, so the report reads the same for everyone (fixes the "each person
+      // sees something different" complaint). The only rows hidden from
+      // non-senior users are the restricted-director fees, stripped above.
+      // Senior / full-view users additionally see those — the "Admin" view.
+      // (The old per-team scoping was what made each person's view differ.)
 
-      res.json({ entries, isAdmin, userTeam });
+      res.json({ entries, isAdmin, userTeam, canSeeAll: senior || fullView });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
