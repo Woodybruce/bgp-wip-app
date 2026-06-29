@@ -3507,7 +3507,7 @@ function HotsChecklistDialog({
                     <SelectContent>{bgpAgents.map(name => <SelectItem key={name} value={name}><span className="flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${colorMap?.[name] || "bg-zinc-500"}`} />{name}</span></SelectItem>)}</SelectContent>
                   </Select>
                   <div className="flex items-center gap-1 w-24">
-                    <Input type="number" className="w-16" value={row.percentage || ""}
+                    <Input type="number" className="w-16" value={row.percentage || ""} step="any"
                       onChange={(e) => setFeeRows(prev => prev.map((r, i) => i === idx ? { ...r, percentage: parseFloat(e.target.value) || 0 } : r))} />
                     <span className="text-xs text-muted-foreground">%</span>
                   </div>
