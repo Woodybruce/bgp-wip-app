@@ -717,6 +717,39 @@ export default function WipReport() {
     direction: "desc",
   });
 
+  // Deal Detail column show/hide. Checkbox + Ref + Deal stay; the rest can be
+  // toggled off to fit more on screen. Persisted per browser. The lead/trail
+  // key groups drive the footer's colSpans so the totals stay column-aligned.
+  const WIP_DETAIL_COLS: { key: string; label: string; width: string }[] = [
+    { key: "dealRef", label: "Ref", width: "w-12" },
+    { key: "ref", label: "Deal", width: "w-32" },
+    { key: "client", label: "Client", width: "w-24" },
+    { key: "tenant", label: "Tenant", width: "w-28" },
+    { key: "project", label: "Property", width: "w-28" },
+    { key: "billingEntity", label: "Billing Entity", width: "w-24" },
+    { key: "team", label: "Team", width: "w-24" },
+    { key: "amtWip", label: "Fee", width: "w-20" },
+    { key: "amtInvoice", label: "Fee Split", width: "w-20" },
+    { key: "dealDate", label: "Target Date", width: "w-24" },
+    { key: "dealType", label: "Deal Type", width: "w-20" },
+    { key: "agent", label: "BGP Contact", width: "w-20" },
+    { key: "dealStatus", label: "Deal Status", width: "w-20" },
+    { key: "stage", label: "Stage", width: "w-20" },
+  ];
+  const WIP_LEAD_KEYS = ["dealRef", "ref", "client", "tenant", "project", "billingEntity", "team"];
+  const WIP_TRAIL_KEYS = ["dealDate", "dealType", "agent", "dealStatus", "stage"];
+  const [hiddenWipCols, setHiddenWipCols] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_wip_hidden_cols") || "[]")); } catch { return new Set(); }
+  });
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const showCol = (k: string) => !hiddenWipCols.has(k);
+  const toggleWipCol = (k: string) => setHiddenWipCols((prev) => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    try { localStorage.setItem("bgp_wip_hidden_cols", JSON.stringify([...n])); } catch {}
+    return n;
+  });
+
   const handleClickFilter = useCallback((field: string, value: string) => {
     setClickFilter((prev) => {
       if (prev && prev.field === field && prev.value === value) return null;
@@ -1288,11 +1321,36 @@ export default function WipReport() {
                 </span>
                 <span className="text-xs text-gray-500 ml-2">({sortedDetailEntries.length} rows)</span>
               </div>
-              {clickFilter && (
-                <Badge variant="secondary" className="text-[10px]">
-                  Filtered by {clickFilter.field === "client" || clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
-                </Badge>
-              )}
+              <div className="flex items-center gap-2">
+                {clickFilter && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    Filtered by {clickFilter.field === "client" || clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
+                  </Badge>
+                )}
+                <div className="relative no-print">
+                  <button
+                    onClick={() => setColMenuOpen((o) => !o)}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-600 hover:text-gray-900 border border-gray-200 rounded px-2 py-1 bg-white"
+                    data-testid="wip-columns-button"
+                  >
+                    Columns{hiddenWipCols.size > 0 ? ` (${WIP_DETAIL_COLS.length - hiddenWipCols.size}/${WIP_DETAIL_COLS.length})` : ""}
+                  </button>
+                  {colMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setColMenuOpen(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-xl p-2 w-48 max-h-[320px] overflow-y-auto">
+                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide px-1 pb-1">Show columns</p>
+                        {WIP_DETAIL_COLS.map((c) => (
+                          <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-gray-50 cursor-pointer text-xs text-gray-700">
+                            <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleWipCol(c.key)} className="h-3.5 w-3.5" />
+                            <span>{c.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
             {selectedIds.size > 0 && (
               <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b">
@@ -1317,22 +1375,7 @@ export default function WipReport() {
                         data-testid="checkbox-select-all"
                       />
                     </th>
-                    {[
-                      { key: "dealRef", label: "Ref", width: "w-12" },
-                      { key: "ref", label: "Deal", width: "w-32" },
-                      { key: "client", label: "Client", width: "w-24" },
-                      { key: "tenant", label: "Tenant", width: "w-28" },
-                      { key: "project", label: "Property", width: "w-28" },
-                      { key: "billingEntity", label: "Billing Entity", width: "w-24" },
-                      { key: "team", label: "Team", width: "w-24" },
-                      { key: "amtWip", label: "Fee", width: "w-20" },
-                      { key: "amtInvoice", label: "Fee Split", width: "w-20" },
-                      { key: "dealDate", label: "Target Date", width: "w-24" },
-                      { key: "dealType", label: "Deal Type", width: "w-20" },
-                      { key: "agent", label: "BGP Contact", width: "w-20" },
-                      { key: "dealStatus", label: "Deal Status", width: "w-20" },
-                      { key: "stage", label: "Stage", width: "w-20" },
-                    ].map((col) => (
+                    {WIP_DETAIL_COLS.filter((col) => showCol(col.key)).map((col) => (
                       <th
                         key={col.key}
                         className={`px-2 py-2 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 ${col.width}`}
@@ -1360,9 +1403,12 @@ export default function WipReport() {
                           />
                         )}
                       </td>
+                      {showCol("dealRef") && (
                       <td className="px-2 py-1.5 text-xs font-mono text-gray-400 whitespace-nowrap">
                         {e.dealRef ? `#${e.dealRef}` : "—"}
                       </td>
+                      )}
+                      {showCol("ref") && (
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
@@ -1370,17 +1416,23 @@ export default function WipReport() {
                           </Link>
                         ) : (e.ref || "—")}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>
+                      )}
+                      {showCol("client") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>}
+                      {showCol("tenant") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>}
+                      {showCol("project") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>}
+                      {showCol("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
+                      {showCol("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
+                      {showCol("amtWip") && (
                       <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                         {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
                       </td>
+                      )}
+                      {showCol("amtInvoice") && (
                       <td className="px-2 py-1.5 text-green-700 font-mono text-right">
                         {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
                       </td>
+                      )}
+                      {showCol("dealDate") && (
                       <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
                         {(() => {
                           const isActual = !!(e.exchangedAt || e.completedAt || e.invoicedAt);
@@ -1422,13 +1474,17 @@ export default function WipReport() {
                           );
                         })()}
                       </td>
+                      )}
+                      {showCol("dealType") && (
                       <td className="px-2 py-1.5">
                         {e.dealType ? (
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
                         ) : <span className="text-gray-400">—</span>}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
+                      )}
+                      {showCol("agent") && <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
+                      {showCol("dealStatus") && <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
+                      {showCol("stage") && (
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Pipeline</span>
@@ -1440,19 +1496,26 @@ export default function WipReport() {
                           <span className="text-gray-500">{e.stage || "—"}</span>
                         )}
                       </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={8} className="px-2 py-1.5 text-gray-800">Total</td>
-                    <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
-                      {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
-                    </td>
-                    <td className="px-2 py-1.5 text-green-700 font-mono text-right">
-                      {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
-                    </td>
-                    <td colSpan={6} className="px-2 py-1.5" />
+                    <td colSpan={1 + WIP_LEAD_KEYS.filter(showCol).length} className="px-2 py-1.5 text-gray-800">Total</td>
+                    {showCol("amtWip") && (
+                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
+                      </td>
+                    )}
+                    {showCol("amtInvoice") && (
+                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
+                      </td>
+                    )}
+                    {WIP_TRAIL_KEYS.filter(showCol).length > 0 && (
+                      <td colSpan={WIP_TRAIL_KEYS.filter(showCol).length} className="px-2 py-1.5" />
+                    )}
                   </tr>
                 </tfoot>
               </table>
