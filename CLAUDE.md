@@ -43,6 +43,24 @@ equivalent ("ship it", "send it up", "save to GitHub").
 **Never force-push, rebase published commits, or reset --hard** without
 explicit permission.
 
+## Collaborators
+
+Woody's two environments (laptop terminal + web) share the single branch
+`claude/terminal-coding-interface-JOGQK` via the sync protocol above. That
+works for one person on two machines but **collides if two people commit to
+it.** So anyone other than Woody works **branch-per-person**:
+
+1. Branch off `main`: `git checkout main && git pull && git checkout -b claude/<name>-<task>`.
+2. Do the work on that branch; commit in the project's commit style.
+3. Open a **PR into `main`** (`gh pr create`) — don't push to Woody's JOGQK branch.
+4. Keep `claude/terminal-coding-interface-JOGQK` for Woody's in-flight work only.
+
+Each person uses **their own Claude Code account** and their **own Railway
+access** (invited to the `jubilant-cat` project). Secrets are never committed —
+the DB is reached via the Railway CLI (`railway login` + `railway link`, then
+`railway run …`, using the Postgres service's `DATABASE_PUBLIC_URL` off-network).
+New collaborator setup is in `ONBOARDING.md`.
+
 ## Commit style
 
 - Match the existing commit style (see `git log --oneline -20`).
