@@ -1271,6 +1271,28 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Mark an expense as having no receipt and submit for approval. The expense
+  // will land in the flagged inbox (missing_receipt reason) so Wendy/Layla can
+  // review it rather than leaving it stuck in pending_receipt indefinitely.
+  app.post("/api/expenses/:id/no-receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.status !== "pending_receipt") {
+        return res.status(409).json({ error: "Expense is not awaiting a receipt" });
+      }
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      const { submitForApproval } = await import("./expense-approval");
+      await submitForApproval(id, userId);
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses/no-receipt] error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // View a receipt (image / PDF) for an expense. Powers the in-app receipt
   // viewer in the approvals inbox + My Expenses so Layla / Wendy can actually
   // see the photo before approving — not just a "receipt attached" badge.

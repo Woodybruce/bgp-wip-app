@@ -174,6 +174,18 @@ export default function MyExpenses() {
     onError: (e: any) => toast({ title: "Resubmit failed", description: e?.message, variant: "destructive" }),
   });
 
+  const noReceiptMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("POST", `/api/expenses/${id}/no-receipt`, {});
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Submitted without receipt", description: "Sent to Wendy & Layla for review." });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
   const handleFile = (id: string, file: File) => {
     setUploadingFor(id);
     uploadMutation.mutate({ id, file });
@@ -488,6 +500,21 @@ export default function MyExpenses() {
                             >
                               {uploadingFor === e.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}
                               Receipt
+                            </Button>
+                          )}
+                          {e.status === "pending_receipt" && !e.isPersonal && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs text-muted-foreground"
+                              disabled={noReceiptMutation.isPending && noReceiptMutation.variables === e.id}
+                              onClick={() => noReceiptMutation.mutate(e.id)}
+                              data-testid={`button-no-receipt-${e.id}`}
+                            >
+                              {noReceiptMutation.isPending && noReceiptMutation.variables === e.id
+                                ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                : <XIcon className="w-3 h-3 mr-1" />}
+                              No receipt
                             </Button>
                           )}
                           {e.receiptFilename && (

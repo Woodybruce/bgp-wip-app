@@ -1085,6 +1085,22 @@ export default function MobileExpenses() {
     },
   });
 
+  const noReceiptMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/expenses/${id}/no-receipt`, { method: "POST", credentials: "include" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "Failed");
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Submitted without receipt", description: "Sent to Wendy & Layla for review." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Failed", description: e?.message, variant: "destructive" });
+    },
+  });
+
   const askDelete = (e: Expense) => {
     if (!window.confirm(`Delete this ${fmtPence(e.amountPence)} expense at ${e.merchant || "unknown merchant"}?`)) return;
     deleteMutation.mutate(e.id);
@@ -1336,6 +1352,18 @@ export default function MobileExpenses() {
                     <Camera className="w-4 h-4" />
                   )}
                   {uploadingFor === e.id ? "Uploading…" : "Snap"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => noReceiptMutation.mutate(e.id)}
+                  disabled={noReceiptMutation.isPending && noReceiptMutation.variables === e.id}
+                  className="shrink-0 h-11 px-3 rounded-full border border-border text-muted-foreground flex items-center gap-1.5 text-sm font-medium disabled:opacity-50 active:scale-95 transition-transform"
+                  data-testid={`mobile-expense-no-receipt-${e.id}`}
+                >
+                  {noReceiptMutation.isPending && noReceiptMutation.variables === e.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : null}
+                  No receipt
                 </button>
               </div>
             ))}
