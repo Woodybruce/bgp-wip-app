@@ -47,6 +47,7 @@ interface Expense {
 }
 interface NominalCode { code: string; name: string; }
 interface CrmContact { id: string; name: string; email?: string | null; companyId?: string | null; }
+interface BgpUser { id: number; name: string; email?: string | null; }
 interface CrmProperty { id: string; name: string; postcode?: string | null; }
 interface CrmDeal { id: string; name: string; status?: string | null; }
 interface Cardholder {
@@ -631,6 +632,10 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     queryKey: ["/api/crm/contacts"],
     enabled: open,
   });
+  const { data: bgpUsers = [] } = useQuery<BgpUser[]>({
+    queryKey: ["/api/users"],
+    enabled: open,
+  });
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
     enabled: open,
@@ -679,6 +684,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
 
   const showEntertainmentFields = ENTERTAINMENT_CATEGORIES.has(category);
   const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
+  const bgpUserById = useMemo(() => new Map(bgpUsers.map(u => [`bgp:${u.id}`, u])), [bgpUsers]);
 
   const isCard = !!(expense?.revolutTransactionId || expense?.stripeTransactionId);
 
@@ -908,13 +914,14 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
             <Label className="text-xs flex items-center gap-1.5"><UsersIcon className="w-3 h-3" /> Attendees</Label>
             <ContactMultiPicker
               contacts={contacts}
+              bgpUsers={bgpUsers}
               selected={attendeeIds}
               onChange={setAttendeeIds}
             />
             {attendeeIds.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-2">
                 {attendeeIds.map((id) => {
-                  const c = contactById.get(id);
+                  const c = contactById.get(id) ?? bgpUserById.get(id);
                   return (
                     <Badge key={id} variant="secondary" className="text-[10px] gap-1 pl-2 pr-1">
                       {c?.name || id.slice(0, 8)}
@@ -1041,9 +1048,10 @@ function SearchableCombobox({
 // Multi-pick contact picker. Always-on inline command so adding several
 // attendees in sequence is cheap (no dropdown re-open per addition).
 function ContactMultiPicker({
-  contacts: rawContacts, selected, onChange,
+  contacts: rawContacts, bgpUsers = [], selected, onChange,
 }: {
   contacts: CrmContact[];
+  bgpUsers?: BgpUser[];
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
@@ -1051,15 +1059,19 @@ function ContactMultiPicker({
   // Defensive alphabetical sort. Filter applied after sort so the visible
   // 200-row cap doesn't truncate late-alphabet names from the searchable set.
   const contacts = useMemo(
-    () => [...rawContacts].sort((a, b) => (a.name || "").localeCompare(b.name || "", "en-GB", { sensitivity: "base" })),
+    () => [...rawContacts].sort((a, b) => (a.name || "").localeCompare(a.name || "", "en-GB", { sensitivity: "base" })),
     [rawContacts],
+  );
+  const staff = useMemo(
+    () => [...bgpUsers].sort((a, b) => (a.name || "").localeCompare(b.name || "", "en-GB", { sensitivity: "base" })),
+    [bgpUsers],
   );
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="outline" className="w-full justify-between font-normal" data-testid="button-add-attendee">
           <span className="text-muted-foreground">
-            {selected.length === 0 ? "Add attendee from CRM…" : `${selected.length} added — click to add more`}
+            {selected.length === 0 ? "Add attendee…" : `${selected.length} added — click to add more`}
           </span>
           <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 ml-2" />
         </Button>
@@ -1076,7 +1088,28 @@ function ContactMultiPicker({
           <CommandInput placeholder="Search contacts…" />
           <CommandList>
             <CommandEmpty>No contacts found.</CommandEmpty>
-            <CommandGroup>
+            {staff.length > 0 && (
+              <CommandGroup heading="BGP Team">
+                {staff.map((u) => {
+                  const id = `bgp:${u.id}`;
+                  const isSelected = selected.includes(id);
+                  return (
+                    <CommandItem
+                      key={id}
+                      value={`${u.name} ${u.email || ""}`}
+                      onSelect={() => {
+                        onChange(isSelected ? selected.filter(x => x !== id) : [...selected, id]);
+                      }}
+                    >
+                      <span className={`mr-2 text-emerald-600 ${isSelected ? "opacity-100" : "opacity-0"}`}>✓</span>
+                      <span>{u.name}</span>
+                      {u.email && <span className="ml-2 text-xs text-muted-foreground">{u.email}</span>}
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            )}
+            <CommandGroup heading="CRM Contacts">
               {contacts.slice(0, 200).map((c) => {
                 const isSelected = selected.includes(c.id);
                 return (

@@ -460,10 +460,20 @@ export function setupStripeIssuingRoutes(app: Express) {
             .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
             .where(inArray(expenseAttendees.expenseId, ids))
         : [];
+      // Resolve bgp: prefixed attendees (BGP staff) from the users table.
+      const bgpUserIds = [...new Set(attRows.filter(a => a.contactId?.startsWith("bgp:")).map(a => Number(a.contactId!.slice(4))).filter(n => !isNaN(n)))];
+      const bgpStaffMap = new Map<number, string>();
+      if (bgpUserIds.length > 0) {
+        const staffRows = await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable).where(inArray(usersTable.id, bgpUserIds));
+        staffRows.forEach(u => bgpStaffMap.set(u.id, u.name));
+      }
       const byExpense = new Map<string, { id: string; name: string | null }[]>();
       for (const a of attRows) {
         if (!byExpense.has(a.expenseId)) byExpense.set(a.expenseId, []);
-        byExpense.get(a.expenseId)!.push({ id: a.contactId, name: a.name });
+        const name = a.contactId?.startsWith("bgp:")
+          ? bgpStaffMap.get(Number(a.contactId.slice(4))) ?? a.name
+          : a.name;
+        byExpense.get(a.expenseId)!.push({ id: a.contactId, name });
       }
       const enriched = rows.map(r => ({ ...r, attendeeContacts: byExpense.get(r.id) || [] }));
       res.json(enriched);
@@ -510,7 +520,22 @@ export function setupStripeIssuingRoutes(app: Express) {
         .from(expenseAttendees)
         .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
         .where(eq(expenseAttendees.expenseId, id));
-      res.json(rows);
+      // Resolve bgp: prefixed IDs (BGP staff) from the users table.
+      const bgpIds = rows.filter(r => r.id?.startsWith("bgp:")).map(r => Number(r.id!.slice(4))).filter(n => !isNaN(n));
+      let staffMap: Map<number, { name: string; email: string | null }> = new Map();
+      if (bgpIds.length > 0) {
+        const staffRows = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+          .from(usersTable).where(inArray(usersTable.id, bgpIds));
+        staffRows.forEach(u => staffMap.set(u.id, { name: u.name, email: u.email ?? null }));
+      }
+      res.json(rows.map(r => {
+        if (r.id?.startsWith("bgp:")) {
+          const uid = Number(r.id.slice(4));
+          const staff = staffMap.get(uid);
+          return { id: r.id, name: staff?.name ?? r.id, email: staff?.email ?? null, companyId: null };
+        }
+        return r;
+      }));
     } catch (e: any) {
       console.error("[expenses] attendees-get error:", e?.message);
       res.status(500).json({ error: e?.message });
