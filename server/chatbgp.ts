@@ -14,6 +14,7 @@ import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage } from 
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
+import { rectifyRows } from "./pptx-rectify";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
@@ -7566,7 +7567,7 @@ export async function executeCrmToolRaw(
           slideData.table.rows.forEach((row: string[], ri: number) => {
             tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
           });
-          slide.addTable(tableRows, { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
+          slide.addTable(rectifyRows(tableRows, slideData.table.headers.length), { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
         }
 
         if (slideData.notes) {
@@ -11474,7 +11475,7 @@ export async function handleCrmToolCall(
           slideData.table.rows.forEach((row: string[], ri: number) => {
             tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
           });
-          slide.addTable(tableRows, { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
+          slide.addTable(rectifyRows(tableRows, slideData.table.headers.length), { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
         }
 
         if (slideData.notes) {
