@@ -1296,6 +1296,30 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Remove a receipt from an expense and reset it to pending_receipt so a new
+  // one can be uploaded. Blocked if the expense is already posted to Xero.
+  app.delete("/api/expenses/:id/receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.status === "posted_to_xero") {
+        return res.status(409).json({ error: "Cannot remove a receipt from an expense already posted to Xero." });
+      }
+      await db.update(expenses).set({
+        receiptFilename: null,
+        receiptUrl: null,
+        status: "pending_receipt",
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, id));
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] delete-receipt error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Mark an expense as having no receipt and submit for approval. The expense
   // will land in the flagged inbox (missing_receipt reason) so Wendy/Layla can
   // review it rather than leaving it stuck in pending_receipt indefinitely.

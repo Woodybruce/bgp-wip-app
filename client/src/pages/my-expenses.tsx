@@ -16,7 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import {
   CreditCard, Eye, EyeOff, Copy, Check, Upload, Receipt, AlertCircle,
   CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil,
-  Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown, CalendarClock,
+  Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown, CalendarClock, Trash2,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -755,6 +755,42 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     onError: (e: any) => toast({ title: "Re-read failed", description: e?.message, variant: "destructive" }),
   });
 
+  const removeReceiptMutation = useMutation({
+    mutationFn: async () => {
+      if (!expense) throw new Error("No expense");
+      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error((await r.json()).error || "Failed to remove receipt");
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Receipt removed", description: "You can now upload a new one." });
+      onSaved();
+    },
+    onError: (e: any) => toast({ title: "Failed to remove receipt", description: e?.message, variant: "destructive" }),
+  });
+
+  const replaceReceiptMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!expense) throw new Error("No expense");
+      const fd = new FormData();
+      fd.append("receipt", file);
+      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "POST", credentials: "include", body: fd });
+      if (!r.ok) throw new Error((await r.json()).error || "Upload failed");
+      return r.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      if (data.parsed) {
+        toast({ title: "New receipt uploaded", description: `${data.parsed.merchant || "Receipt"} — fields updated.` });
+      } else {
+        toast({ title: "New receipt uploaded", description: "Couldn't auto-parse — check the fields." });
+      }
+      onSaved();
+    },
+    onError: (e: any) => toast({ title: "Upload failed", description: e?.message, variant: "destructive" }),
+  });
+
   if (!expense) return null;
   const isPosted = !!expense.xeroExpenseId;
 
@@ -797,9 +833,49 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
               Saving teaches it (merchant→category memory + the note). */}
           {expense.receiptFilename && (
             <div className="rounded-lg border border-violet-200 dark:border-violet-900/40 bg-violet-50/50 dark:bg-violet-950/20 px-3 py-2.5 space-y-2">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                <span className="text-xs font-medium">Receipt AI got something wrong?</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                  <span className="text-xs font-medium">Receipt: {expense.receiptFilename}</span>
+                </div>
+                {!isPosted && (
+                  <div className="flex items-center gap-1">
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="sr-only"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) replaceReceiptMutation.mutate(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <span
+                        className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-border bg-background text-xs text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                        title="Upload a different receipt"
+                      >
+                        {replaceReceiptMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImagePlus className="w-3 h-3" />}
+                        Replace
+                      </span>
+                    </label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        if (confirm("Remove this receipt? The expense will go back to 'receipt needed' so you can upload a new one.")) {
+                          removeReceiptMutation.mutate();
+                        }
+                      }}
+                      disabled={removeReceiptMutation.isPending}
+                      title="Remove receipt"
+                    >
+                      {removeReceiptMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                    </Button>
+                  </div>
+                )}
               </div>
               <Textarea
                 value={aiNote}
