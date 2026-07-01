@@ -1013,7 +1013,7 @@ function SearchableCombobox({
       <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
         <Command>
           <CommandInput placeholder="Search…" />
-          <CommandList>
+          <CommandList className="max-h-64 overflow-y-auto">
             <CommandEmpty>None found.</CommandEmpty>
             <CommandGroup>
               {value && (
