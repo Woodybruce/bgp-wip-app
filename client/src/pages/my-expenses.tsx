@@ -1077,16 +1077,16 @@ function ContactMultiPicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="p-0 w-[--radix-popover-trigger-width]"
+        className="p-0 w-[--radix-popover-trigger-width] max-h-72 flex flex-col overflow-hidden"
         align="start"
         onOpenAutoFocus={(e) => {
           e.preventDefault();
           (e.currentTarget.querySelector("input") as HTMLElement | null)?.focus();
         }}
       >
-        <Command>
+        <Command className="flex flex-col overflow-hidden">
           <CommandInput placeholder="Search contacts…" />
-          <CommandList className="max-h-64 overflow-y-auto">
+          <CommandList className="flex-1 overflow-y-auto max-h-none">
             <CommandEmpty>No contacts found.</CommandEmpty>
             {staff.length > 0 && (
               <CommandGroup heading="BGP Team">
