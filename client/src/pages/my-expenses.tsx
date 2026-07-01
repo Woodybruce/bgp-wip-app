@@ -1086,7 +1086,7 @@ function ContactMultiPicker({
       >
         <Command>
           <CommandInput placeholder="Search contacts…" />
-          <CommandList>
+          <CommandList className="max-h-64 overflow-y-auto">
             <CommandEmpty>No contacts found.</CommandEmpty>
             {staff.length > 0 && (
               <CommandGroup heading="BGP Team">
