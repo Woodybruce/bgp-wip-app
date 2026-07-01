@@ -4012,7 +4012,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "deep_investigate",
-      description: "Run a deep intelligence investigation on a company, person, and/or property. Combines Companies House (full profile, officers, PSCs, corporate ownership chain, ultimate parent/brand identification), Apollo.io (contact details — emails, phone numbers, LinkedIn), UK Sanctions List screening, web search (recent news and activity), and CRM cross-referencing into a comprehensive intelligence report. Use when someone asks to 'investigate', 'dig into', 'research', 'find out about', 'who owns', 'who to contact', 'find the owner', 'known associates', 'deep dive', or wants to find key decision-makers and contact routes for a company, person, or property. This is the D&B-style corporate intelligence tool. When a property address is provided, it will trace ownership back through SPVs to the real owner, find all associated people and companies, and suggest who to speak to about acquiring or managing the property.",
+      description: "Run a deep intelligence investigation on a company, person, and/or property. Combines Companies House (full profile, officers, PSCs, corporate ownership chain, ultimate parent/brand identification), Apollo.io and RocketReach (contact details — emails, phone numbers, LinkedIn), UK Sanctions List screening, web search (recent news and activity), and CRM cross-referencing into a comprehensive intelligence report. Use when someone asks to 'investigate', 'dig into', 'research', 'find out about', 'who owns', 'who to contact', 'find the owner', 'known associates', 'deep dive', or wants to find key decision-makers and contact routes for a company, person, or property. This is the D&B-style corporate intelligence tool. When a property address is provided, it will trace ownership back through SPVs to the real owner, find all associated people and companies, and suggest who to speak to about acquiring or managing the property.",
       parameters: {
         type: "object",
         properties: {
@@ -10105,6 +10105,41 @@ Be thorough — include every unit row you can classify, across all properties i
             }
           } else if (!apolloApiKey) {
             report.sourcesStatus.apollo = "not_configured";
+          }
+
+          // RocketReach — runs when Apollo found nothing or isn't configured.
+          // Searches by company domain (preferred) or company name, returns
+          // C-suite / property decision-makers with best available email.
+          const rrNoResults = !apolloApiKey || (report.company.contactIntelligence || []).length === 0;
+          if (rrNoResults) {
+            try {
+              const { searchRocketReach, isRocketReachConfigured } = await import("./rocketreach-contacts");
+              if (isRocketReachConfigured()) {
+                const domain = report.company.profile?.registeredOffice
+                  ? undefined
+                  : undefined; // domain not available here — fall back to name
+                const rrPeople = await searchRocketReach({
+                  companyName: report.company.profile?.companyName || targetCompanyName,
+                  scope: "tenant",
+                });
+                if (rrPeople.length > 0) {
+                  report.company.contactIntelligence = rrPeople.slice(0, 10).map((p: any) => ({
+                    name: p.name,
+                    title: p.current_title,
+                    linkedin: p.linkedin_url,
+                    email: p.emails?.[0]?.email || null,
+                    source: "rocketreach",
+                  }));
+                  report.sourcesStatus.rocketreach = `ok (${rrPeople.length} found)`;
+                } else {
+                  report.sourcesStatus.rocketreach = "no_matches";
+                }
+              } else {
+                report.sourcesStatus.rocketreach = "not_configured";
+              }
+            } catch (rrErr: any) {
+              report.sourcesStatus.rocketreach = `failed: ${rrErr.message}`;
+            }
           }
 
           try {

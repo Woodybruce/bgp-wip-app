@@ -135,7 +135,7 @@ export function isRocketReachConfigured(): boolean {
   return !!process.env.ROCKETREACH_API_KEY;
 }
 
-async function searchRocketReach(opts: {
+export async function searchRocketReach(opts: {
   companyName?: string;
   domain?: string;
   country?: string[];
