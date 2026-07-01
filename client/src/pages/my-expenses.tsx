@@ -277,7 +277,7 @@ export default function MyExpenses() {
     : 0;
 
   return (
-    <div className="container mx-auto p-6 max-w-5xl space-y-6">
+    <div className="container mx-auto p-6 max-w-7xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">My Card & Expenses</h1>
@@ -483,8 +483,8 @@ export default function MyExpenses() {
                       <td className="px-4 py-2 text-right font-mono">{fmt(e.amountPence)}</td>
                       <td className="px-4 py-2 text-muted-foreground">{e.category || "—"}</td>
                       <td className="px-4 py-2"><StatusBadge status={e.status} isPersonal={e.isPersonal} /></td>
-                      <td className="px-4 py-2 text-right">
-                        <div className="flex justify-end gap-1">
+                      <td className="px-4 py-2 text-right whitespace-nowrap">
+                        <div className="flex justify-end gap-1 flex-nowrap">
                           {!e.receiptFilename && !e.isPersonal && e.status !== "posted_to_xero" && (
                             <Button
                               size="sm"
