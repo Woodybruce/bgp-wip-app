@@ -1045,8 +1045,8 @@ function SearchableCombobox({
   );
 }
 
-// Multi-pick contact picker. Always-on inline command so adding several
-// attendees in sequence is cheap (no dropdown re-open per addition).
+// Inline attendee picker — avoids Radix Popover portal which gets
+// pointer-events:none from the parent Dialog's body lock.
 function ContactMultiPicker({
   contacts: rawContacts, bgpUsers = [], selected, onChange,
 }: {
@@ -1056,84 +1056,104 @@ function ContactMultiPicker({
   onChange: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // Defensive alphabetical sort. Filter applied after sort so the visible
-  // 200-row cap doesn't truncate late-alphabet names from the searchable set.
+  const [search, setSearch] = useState("");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
   const contacts = useMemo(
-    () => [...rawContacts].sort((a, b) => (a.name || "").localeCompare(a.name || "", "en-GB", { sensitivity: "base" })),
+    () => [...rawContacts].sort((a, b) => (a.name || "").localeCompare(b.name || "", "en-GB", { sensitivity: "base" })),
     [rawContacts],
   );
   const staff = useMemo(
     () => [...bgpUsers].sort((a, b) => (a.name || "").localeCompare(b.name || "", "en-GB", { sensitivity: "base" })),
     [bgpUsers],
   );
+
+  const q = search.toLowerCase();
+  const filteredStaff = staff.filter(u => !q || u.name.toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q));
+  const filteredContacts = contacts.filter(c => !q || (c.name || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q)).slice(0, 200);
+
   return (
-    <Popover open={open} onOpenChange={setOpen} modal={false}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" className="w-full justify-between font-normal" data-testid="button-add-attendee">
-          <span className="text-muted-foreground">
-            {selected.length === 0 ? "Add attendee…" : `${selected.length} added — click to add more`}
-          </span>
-          <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 ml-2" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="p-0 w-[--radix-popover-trigger-width] max-h-72 flex flex-col overflow-hidden"
-        align="start"
-        onOpenAutoFocus={(e) => {
-          e.preventDefault();
-          (e.currentTarget.querySelector("input") as HTMLElement | null)?.focus();
+    <div className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full justify-between font-normal"
+        data-testid="button-add-attendee"
+        onClick={() => {
+          setOpen((v) => !v);
+          setTimeout(() => inputRef.current?.focus(), 50);
         }}
       >
-        <Command className="flex flex-col overflow-hidden">
-          <CommandInput placeholder="Search contacts…" />
-          <CommandList className="flex-1 overflow-y-auto max-h-none">
-            <CommandEmpty>No contacts found.</CommandEmpty>
-            {staff.length > 0 && (
-              <CommandGroup heading="BGP Team">
-                {staff.map((u) => {
+        <span className="text-muted-foreground">
+          {selected.length === 0 ? "Add attendee…" : `${selected.length} added — click to add more`}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 ml-2" />
+      </Button>
+
+      {open && (
+        <div className="mt-1 rounded-md border bg-popover shadow-md z-10 relative flex flex-col" style={{ maxHeight: "260px" }}>
+          <div className="border-b px-3 py-2 flex-shrink-0">
+            <input
+              ref={inputRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search contacts…"
+              className="w-full text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="overflow-y-auto flex-1">
+            {filteredStaff.length === 0 && filteredContacts.length === 0 && (
+              <p className="py-6 text-center text-sm text-muted-foreground">No contacts found.</p>
+            )}
+            {filteredStaff.length > 0 && (
+              <div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">BGP Team</div>
+                {filteredStaff.map((u) => {
                   const id = `bgp:${u.id}`;
                   const isSelected = selected.includes(id);
                   return (
-                    <CommandItem
+                    <button
                       key={id}
-                      value={`${u.name} ${u.email || ""}`}
-                      onSelect={() => {
-                        onChange(isSelected ? selected.filter(x => x !== id) : [...selected, id]);
-                      }}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-accent"
+                      onClick={() => onChange(isSelected ? selected.filter(x => x !== id) : [...selected, id])}
                     >
-                      <span className={`mr-2 text-emerald-600 ${isSelected ? "opacity-100" : "opacity-0"}`}>✓</span>
+                      <span className={`text-emerald-600 w-3.5 ${isSelected ? "opacity-100" : "opacity-0"}`}>✓</span>
                       <span>{u.name}</span>
-                      {u.email && <span className="ml-2 text-xs text-muted-foreground">{u.email}</span>}
-                    </CommandItem>
+                      {u.email && <span className="text-xs text-muted-foreground">{u.email}</span>}
+                    </button>
                   );
                 })}
-              </CommandGroup>
+              </div>
             )}
-            <CommandGroup heading="CRM Contacts">
-              {contacts.slice(0, 200).map((c) => {
-                const isSelected = selected.includes(c.id);
-                return (
-                  <CommandItem
-                    key={c.id}
-                    value={`${c.name} ${c.email || ""}`}
-                    onSelect={() => {
-                      onChange(isSelected ? selected.filter(x => x !== c.id) : [...selected, c.id]);
-                    }}
-                    data-testid={`option-attendee-${c.id}`}
-                  >
-                    <Check className={`w-3.5 h-3.5 mr-2 ${isSelected ? "opacity-100" : "opacity-0"}`} />
-                    <div className="flex flex-col">
-                      <span>{c.name}</span>
-                      {c.email && <span className="text-[10px] text-muted-foreground">{c.email}</span>}
-                    </div>
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+            {filteredContacts.length > 0 && (
+              <div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">CRM Contacts</div>
+                {filteredContacts.map((c) => {
+                  const isSelected = selected.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-accent"
+                      data-testid={`option-attendee-${c.id}`}
+                      onClick={() => onChange(isSelected ? selected.filter(x => x !== c.id) : [...selected, c.id])}
+                    >
+                      <Check className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? "opacity-100" : "opacity-0"}`} />
+                      <div className="flex flex-col">
+                        <span>{c.name}</span>
+                        {c.email && <span className="text-[10px] text-muted-foreground">{c.email}</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
