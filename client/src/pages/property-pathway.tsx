@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { OfficialCopyButton } from "@/components/official-copy-button";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
@@ -2639,20 +2640,25 @@ function OwnershipCard({ titleNumber }: { titleNumber?: string | null }) {
           return (
             <div key={slot.kind} className="flex items-center justify-between py-1 border-b last:border-b-0">
               <span className="text-muted-foreground truncate">{slot.label}</span>
-              <button
-                type="button"
-                disabled={!enabled}
-                onClick={isOrderable ? () => orderDoc(slot.kind as "register" | "plan") : undefined}
-                title={tooltip}
-                className={`text-[10px] px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ${
-                  enabled
-                    ? "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
-                    : "bg-muted/20 text-muted-foreground cursor-not-allowed"
-                }`}
-              >
-                {isLoading && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                {isLoading ? "Ordering" : "Order"}
-              </button>
+              {slot.kind === "register" && title ? (
+                // The register IS the OC1 — order it straight from HM Land Registry.
+                <OfficialCopyButton titleNumber={title} label="Order" size="sm" className="text-[10px] h-6 px-1.5" />
+              ) : (
+                <button
+                  type="button"
+                  disabled={!enabled}
+                  onClick={isOrderable ? () => orderDoc(slot.kind as "register" | "plan") : undefined}
+                  title={tooltip}
+                  className={`text-[10px] px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ${
+                    enabled
+                      ? "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
+                      : "bg-muted/20 text-muted-foreground cursor-not-allowed"
+                  }`}
+                >
+                  {isLoading && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                  {isLoading ? "Ordering" : "Order"}
+                </button>
+              )}
             </div>
           );
         })}
