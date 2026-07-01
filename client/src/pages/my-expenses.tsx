@@ -1064,7 +1064,14 @@ function ContactMultiPicker({
           <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 ml-2" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
+      <PopoverContent
+        className="p-0 w-[--radix-popover-trigger-width]"
+        align="start"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          (e.currentTarget.querySelector("input") as HTMLElement | null)?.focus();
+        }}
+      >
         <Command>
           <CommandInput placeholder="Search contacts…" />
           <CommandList>
