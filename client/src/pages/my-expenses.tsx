@@ -1067,7 +1067,7 @@ function ContactMultiPicker({
     [bgpUsers],
   );
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={false}>
       <PopoverTrigger asChild>
         <Button variant="outline" className="w-full justify-between font-normal" data-testid="button-add-attendee">
           <span className="text-muted-foreground">
