@@ -50,6 +50,7 @@ import { setupHrRoutes } from "./hr-routes";
 import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { setupDocumentPreferencesRoutes } from "./document-preferences";
 import { setupDeckRoutes } from "./decks";
+import { setupDocumentRoutes } from "./documents";
 import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
 import { fetchPlanitPlanning } from "./planit-planning";
@@ -7117,6 +7118,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   setupWhyBuyDesignRoutes(app);
   setupDocumentPreferencesRoutes(app);
   setupDeckRoutes(app);
+  setupDocumentRoutes(app);
 
   return httpServer;
 }

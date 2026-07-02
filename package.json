@@ -158,6 +158,7 @@
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.18.2",
     "@types/heic-convert": "^2.1.1",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "20.19.27",
     "@types/passport": "^1.0.16",
     "@types/passport-local": "^1.0.38",

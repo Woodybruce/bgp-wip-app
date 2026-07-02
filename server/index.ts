@@ -2223,6 +2223,39 @@ import { pool } from "./db";
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deck_cards_deck ON deck_cards (deck_id, sort_order)`,
 
+    // Document Studio v2 — one library index for every deliverable (deck / word /
+    // pdf / sheet). The artifact file is the working copy (file_storage); the
+    // canonical record is mirrored to SharePoint. deck_id links deck-type docs
+    // back to deck_cards for card editing.
+    `CREATE TABLE IF NOT EXISTS studio_documents (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      title TEXT NOT NULL,
+      doc_type TEXT NOT NULL,
+      category TEXT,
+      template_key TEXT,
+      deck_id VARCHAR,
+      project TEXT,
+      property_id VARCHAR,
+      company_id VARCHAR,
+      deal_id VARCHAR,
+      storage_key TEXT,
+      file_name TEXT,
+      content_type TEXT,
+      size INTEGER,
+      preview_keys JSONB,
+      sharepoint_web_url TEXT,
+      sharepoint_item_id TEXT,
+      sharepoint_path TEXT,
+      status TEXT NOT NULL DEFAULT 'ready',
+      version INTEGER NOT NULL DEFAULT 1,
+      created_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_studio_documents_category ON studio_documents (category)`,
+    `CREATE INDEX IF NOT EXISTS idx_studio_documents_project  ON studio_documents (project)`,
+    `CREATE INDEX IF NOT EXISTS idx_studio_documents_type     ON studio_documents (doc_type)`,
+
     `CREATE TABLE IF NOT EXISTS deck_templates (
       key TEXT PRIMARY KEY,
       name TEXT NOT NULL,

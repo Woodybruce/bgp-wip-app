@@ -129,12 +129,12 @@ const unfinishedNav = [
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  // One Document Studio — the unified, engine-backed catalogue (Why Buy →
-  // Heads of Terms) that the old /templates "Document Briefs" pages merged
-  // into. Template authoring + Decks are reachable from inside it.
-  // Decks folded in as a tab of Document Studio (the one cockpit), so no
-  // standalone sidebar entry — /decks redirects into the Studio's Decks tab.
-  { title: "Document Studio", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
+  // Document Studio v2 — the unified documents hub (library + previews +
+  // upload + SharePoint filing), ported from Pave. The briefs cockpit
+  // (/document-briefs, with Templates + Decks folded in as tabs) stays as its
+  // own entry — the hub's "New document → AI briefs" also links into it.
+  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon },
+  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
   { title: "Leads", url: "/leads", icon: UserPlus },
@@ -528,7 +528,8 @@ export const mobileOverlayItems = [
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
-  { title: "Document Studio", url: "/document-briefs", icon: FileTextIcon, badge: "AI", adminOnly: true },
+  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon, adminOnly: true },
+  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI", adminOnly: true },
   // On mobile everyone uses the lightweight images page (works on auth; the
   // full /image-studio power page is desktop-admin only).
   { title: "Image Studio", url: "/m/images", icon: ImageIcon },
