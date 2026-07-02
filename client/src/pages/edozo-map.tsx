@@ -4488,39 +4488,55 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   // caches them in component state. The data is static — no pan-refetch
   // needed. The render effect below picks up changes to goadFeatures
   // (initial load) or excludedRetailCategories (band-filter changes).
+  // Loads the harvested occupier units (all 76 licensed areas, from goad_units)
+  // for the current viewport, and re-fetches on pan/zoom. Replaces the old
+  // static West-End-only /api/goad/{floor} files so the Retail Context layer
+  // covers everywhere. Fetches only at street zoom (units are tiny above that).
   useEffect(() => {
     if (!showRetailContext) {
       retailMarkersRef.current?.clearLayers();
       retailLabelLayerRef.current?.clearLayers();
       return;
     }
-    if (goadFeatures.length > 0) return; // already loaded
+    const map = mapRef.current;
+    if (!map) return;
     let cancelled = false;
-    (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastKey = "";
+
+    const fetchUnits = async () => {
+      if (map.getZoom() < 16) return; // too far out — units unreadable
+      const b = map.getBounds();
+      const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+      const key = `${b.getSouth().toFixed(3)},${b.getWest().toFixed(3)},${b.getNorth().toFixed(3)},${b.getEast().toFixed(3)}`;
+      if (key === lastKey) return;
+      lastKey = key;
       setRetailFetching(true);
       try {
-        const layerIds = ["lg", "gf", "f1", "f2"];
-        const responses = await Promise.all(
-          layerIds.map((id) =>
-            fetch(`/api/goad/${id}`, { credentials: "include" }).then((r) =>
-              r.ok ? r.json() : null,
-            ),
-          ),
-        );
+        const r = await fetch(`/api/map/retail-units?bbox=${bbox}`, { credentials: "include" });
+        const gj = r.ok ? await r.json() : null;
         if (cancelled) return;
-        const all: any[] = [];
-        for (const gj of responses) {
-          if (gj?.features) all.push(...gj.features);
-        }
-        setGoadFeatures(all);
+        setGoadFeatures(gj?.features || []);
       } catch {
-        /* swallow — toggle still works, just no data */
+        /* swallow — toggle still works, just no data this pan */
       } finally {
         if (!cancelled) setRetailFetching(false);
       }
-    })();
-    return () => { cancelled = true; };
-  }, [showRetailContext, goadFeatures.length]);
+    };
+
+    const onMove = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fetchUnits, 300);
+    };
+    map.on("moveend", onMove);
+    fetchUnits();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      map.off("moveend", onMove);
+    };
+  }, [showRetailContext]);
 
   // ── Persist last map centre to localStorage ───────────────────────────────
   // Lets sibling components (e.g. the MAP BGP "🌐 3D View" button) pick up
@@ -5070,7 +5086,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
     for (const feature of goadFeatures) {
       const props = feature.properties || {};
-      const category = classifyGoadCategory(props.Category || "", props.Activity || "");
+      const category = props._group || classifyGoadCategory(props.Category || "", props.Activity || "");
       if (excludedRetailCategories.has(category)) continue;
       const style = COLOURS[category] || COLOURS.other;
 
