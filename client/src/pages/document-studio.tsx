@@ -1,5 +1,4 @@
-// Document Studio v2 — the single hub for every BGP document. Ported from the
-// Pave platform's Document Studio and adapted to BGP's engines.
+// Document Studio v2 — the single hub for every BGP document.
 // Three panes: library (left), visual preview (centre), actions (right).
 // Generate from a deck template, see a page-image render of the real file,
 // edit in PowerPoint/Word (or in app when OnlyOffice is configured), and file

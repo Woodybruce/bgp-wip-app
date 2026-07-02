@@ -1,6 +1,4 @@
-// Document Studio v2 — the unified documents hub backend. Ported from the
-// Pave platform's Document Studio (pave-platform server/documents.ts) and
-// adapted to BGP's engines.
+// Document Studio v2 — the unified documents hub backend.
 //
 // One library for every deliverable (deck / word / pdf / sheet). It orchestrates
 // the proven engines rather than replacing them:

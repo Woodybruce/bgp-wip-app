@@ -130,9 +130,9 @@ const unfinishedNav = [
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   // Document Studio v2 — the unified documents hub (library + previews +
-  // upload + SharePoint filing), ported from Pave. The briefs cockpit
-  // (/document-briefs, with Templates + Decks folded in as tabs) stays as its
-  // own entry — the hub's "New document → AI briefs" also links into it.
+  // upload + SharePoint filing). The briefs cockpit (/document-briefs, with
+  // Templates + Decks folded in as tabs) stays as its own entry — the hub's
+  // "New document → AI briefs" also links into it.
   { title: "Document Studio", url: "/document-studio", icon: FileTextIcon },
   { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
