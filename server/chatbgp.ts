@@ -10107,10 +10107,11 @@ Be thorough — include every unit row you can classify, across all properties i
             report.sourcesStatus.apollo = "not_configured";
           }
 
-          // RocketReach — runs when Apollo found nothing or isn't configured.
-          // Searches by company domain (preferred) or company name, returns
-          // C-suite / property decision-makers with best available email.
-          const rrNoResults = !apolloApiKey || (report.company.contactIntelligence || []).length === 0;
+          // RocketReach — runs when Apollo found nothing useful (not configured,
+          // no results, or results with zero emails). Searches by company name,
+          // returns C-suite / property decision-makers with best available email.
+          const apolloHasEmails = (report.company.contactIntelligence || []).some((c: any) => c.email);
+          const rrNoResults = !apolloApiKey || !apolloHasEmails;
           if (rrNoResults) {
             try {
               const { searchRocketReach, isRocketReachConfigured } = await import("./rocketreach-contacts");
