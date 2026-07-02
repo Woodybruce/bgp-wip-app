@@ -243,7 +243,7 @@ function renderInlineImages(text: string) {
 }
 
 function renderFormattedText(text: string, isUserBubble?: boolean): (string | JSX.Element)[] {
-  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\*\*(.+?)\*\*|(https?:\/\/[^\s<>)\]]+)/g;
+  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((\/api\/chat-media\/[^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\*\*(.+?)\*\*|(https?:\/\/[^\s<>)\]]+)/g;
   const result: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
@@ -261,17 +261,33 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
         result.push(match[0]);
       }
     } else if (match[3] && match[4]) {
+      // [text](/api/chat-media/...) — download link with auth token in query
+      // so mobile browsers can download natively via <a href>
+      const dlToken = localStorage.getItem("bgp_auth_token") || "";
+      const dlSep = match[4].includes("?") ? "&" : "?";
+      const dlUrl = dlToken ? `${match[4]}${dlSep}token=${dlToken}` : match[4];
+      const dlName = match[4].split("/").pop()?.split("?")[0] || "download";
+      result.push(
+        <a key={key++} href={dlUrl} download={dlName} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 transition-colors text-sm font-medium no-underline min-h-[44px]"
+          data-testid="link-download-file"
+        >
+          <Download className="w-4 h-4" />
+          {match[3]}
+        </a>
+      );
+    } else if (match[5] && match[6]) {
       const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
       result.push(
-        <a key={key++} href={match[4]} target="_blank" rel="noopener noreferrer"
+        <a key={key++} href={match[6]} target="_blank" rel="noopener noreferrer"
           className={`underline ${linkColor}`}
-        >{match[3]}</a>
+        >{match[5]}</a>
       );
-    } else if (match[5]) {
-      result.push(<strong key={key++}>{match[5]}</strong>);
-    } else if (match[6]) {
-      const url = match[6].replace(/[.,;:!?]+$/, "");
-      const trailing = match[6].slice(url.length);
+    } else if (match[7]) {
+      result.push(<strong key={key++}>{match[7]}</strong>);
+    } else if (match[8]) {
+      const url = match[8].replace(/[.,;:!?]+$/, "");
+      const trailing = match[8].slice(url.length);
       const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
       result.push(
         <a key={key++} href={url} target="_blank" rel="noopener noreferrer"
