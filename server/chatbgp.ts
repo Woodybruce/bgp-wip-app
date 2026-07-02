@@ -140,6 +140,20 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
   contextCache.set(key, { data, expiresAt: Date.now() + ttlMs });
 }
 
+// Graph $search takes KQL. The model sometimes passes multi-term queries like
+// "Ottolenghi" OR "Kricket" — blindly wrapping those in another pair of quotes
+// produces invalid KQL ("" at the start) and Graph rejects the whole request.
+// Only wrap bare phrases; queries that already carry quotes or uppercase
+// KQL operators pass through as-is. Unbalanced quotes also 400, so strip
+// them when the count is odd.
+function toGraphSearchQuery(raw: string): string {
+  const q = String(raw || "").trim();
+  const quoteCount = (q.match(/"/g) || []).length;
+  const balanced = quoteCount % 2 === 0 ? q : q.replace(/"/g, "");
+  if (balanced.includes('"') || /\b(OR|AND|NOT)\b/.test(balanced)) return balanced;
+  return `"${balanced}"`;
+}
+
 // Shared implementation of the search_emails tool, used by two handler sites.
 // - Default (no mailbox arg): uses the current user's delegated token on /me/messages.
 // - mailbox === "all": fans out across the shared inbox + every active BGP user's mailbox
@@ -203,7 +217,7 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
       const errors: string[] = [];
       for (const mb of mailboxes) {
         try {
-          const url = `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${query}"`)}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
+          const url = `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(toGraphSearchQuery(query))}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
           const data = await graphRequest(url);
           for (const msg of data?.value || []) {
             if (seen.has(msg.id)) continue;
@@ -230,7 +244,7 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
     const token = await getValidMsToken(req);
     if (!token) return { error: "Not connected to Microsoft 365. Please sign in first." };
     const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
-      $search: `"${query}"`,
+      $search: toGraphSearchQuery(query),
       $top: String(top),
       $select: selectFields,
     });
@@ -7860,7 +7874,25 @@ export async function executeCrmToolRaw(
 
       const sheets = fnArgs.sheets as Array<{ name: string; headers: string[]; rows: string[][] }>;
 
+      // The model occasionally passes objects/arrays as cell values despite the
+      // string[][] schema — those stringify to "[object Object]" in the workbook.
+      // Coerce every cell to a clean primitive before it reaches ExcelJS.
+      const cellText = (val: any): string => {
+        if (val === null || val === undefined) return "";
+        if (typeof val === "string") return val;
+        if (typeof val === "number" || typeof val === "boolean") return String(val);
+        if (Array.isArray(val)) return val.map(cellText).filter(Boolean).join(", ");
+        if (typeof val === "object") {
+          const inner = val.text ?? val.value ?? val.email ?? val.name ?? val.label;
+          if (inner !== undefined) return cellText(inner);
+          try { return JSON.stringify(val); } catch { return ""; }
+        }
+        return String(val);
+      };
+
       for (const sheet of sheets) {
+        sheet.headers = (sheet.headers || []).map(cellText);
+        sheet.rows = (sheet.rows || []).map((r) => (r || []).map(cellText));
         const safeSheetName = sheet.name.replace(/[\\/*?\[\]:]/g, "").substring(0, 31) || "Sheet1";
         const ws = wb.addWorksheet(safeSheetName);
 

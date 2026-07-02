@@ -153,15 +153,14 @@ export async function searchRocketReach(opts: {
     page_size: scope === "landlord" ? 100 : 25,
     start: 1,
   };
-  // Field names per RocketReach v2 search API. They renamed
-  // current_employer_domain → current_employer_website and
-  // location_country → country some months back, which is what the
-  // "invalid fields: current_employer_domain, location_country" 400
-  // we were getting in prod is complaining about. Domain search now
-  // accepts the bare hostname (no protocol).
+  // Field names per RocketReach v2 search API. current_employer_domain and
+  // then current_employer_website were both retired (each now 400s with
+  // "invalid fields"), which silently killed the brand-page domain search
+  // in prod. The field that works — same as the company-search endpoint —
+  // is the plain `domain` query with a bare hostname (no protocol).
   if (opts.domain) {
     const cleanDomain = opts.domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
-    body.query.current_employer_website = [cleanDomain];
+    body.query.domain = [cleanDomain];
   } else if (opts.companyName) {
     body.query.current_employer = [opts.companyName];
   }
