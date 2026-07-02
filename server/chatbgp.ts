@@ -2247,12 +2247,13 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "get_company_accounts",
-      description: "Download and read the latest filed Companies House annual accounts for a company — returns turnover, gross profit, operating profit, profit before tax, net assets, cash and employee numbers. Works for any company with a Companies House number in the CRM. Triggers the PDF download if it isn't already cached, then reads the figures off the filing with vision.",
+      description: "Download and read the latest filed Companies House annual accounts for a company — returns turnover, gross profit, operating profit, profit before tax, net assets, cash and employee numbers. Works for ANY UK company: pass companyNumber (from deep_investigate/run_kyc_check) for companies not yet in the CRM — a minimal CRM record is created automatically so the filing is banked. Triggers the PDF download if it isn't already cached, then reads the figures off the filing with vision.",
       parameters: {
         type: "object",
         properties: {
           companyName: { type: "string", description: "Company name, e.g. 'Goyard Limited'. Used to look up the CRM company if companyId isn't known." },
           companyId: { type: "string", description: "CRM company UUID, if already known." },
+          companyNumber: { type: "string", description: "Companies House number, e.g. '08506610'. Use this for companies not yet in the CRM — the record is created automatically." },
         },
       },
     },
@@ -5584,7 +5585,35 @@ export async function executeCrmToolRaw(
 
   if (fnName === "get_company_accounts") {
     const companyName = fnArgs.companyName as string | undefined;
+    const companyNumber = fnArgs.companyNumber ? String(fnArgs.companyNumber).trim().toUpperCase() : undefined;
     let cid = fnArgs.companyId as string | undefined;
+
+    // Companies House number path — works for companies not yet in the CRM.
+    // A minimal record is created (or the number attached to a name match)
+    // so the downloaded filing is banked against a real company row.
+    if (!cid && companyNumber) {
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM crm_companies WHERE UPPER(companies_house_number) = $1 LIMIT 1`,
+        [companyNumber]
+      );
+      cid = rows[0]?.id;
+      if (!cid && companyName) {
+        const { rows: byName } = await pool.query<{ id: string }>(
+          `UPDATE crm_companies SET companies_house_number = $1
+            WHERE id = (SELECT id FROM crm_companies WHERE LOWER(name) LIKE LOWER($2) AND companies_house_number IS NULL LIMIT 1)
+            RETURNING id`,
+          [companyNumber, `%${companyName}%`]
+        );
+        cid = byName[0]?.id;
+      }
+      if (!cid) {
+        const { rows: created } = await pool.query<{ id: string }>(
+          `INSERT INTO crm_companies (name, companies_house_number) VALUES ($1, $2) RETURNING id`,
+          [companyName || `Company ${companyNumber}`, companyNumber]
+        );
+        cid = created[0]?.id;
+      }
+    }
 
     // Resolve the CRM company id by name if not supplied.
     if (!cid && companyName) {
@@ -5597,7 +5626,7 @@ export async function executeCrmToolRaw(
       );
       cid = rows[0]?.id;
     }
-    if (!cid) return { data: { error: "Company not found in CRM, or it has no Companies House number." } };
+    if (!cid) return { data: { error: "Company not found in CRM. Pass companyNumber (the Companies House number, e.g. from deep_investigate) and the record will be created automatically." } };
 
     const { fetchLatestAccountsForCompany, extractAccountsFigures } = await import("./ch-accounts");
     let fetchStatus: string;
