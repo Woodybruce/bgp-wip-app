@@ -1289,7 +1289,7 @@ function SimplifiedCreateBody({
   nameAutoFilled: boolean;
   setNameAutoFilled: (v: boolean) => void;
   companies: CrmCompany[];
-  users: { id: string; name: string }[];
+  users: { id: number; name: string }[];
   toggleAgent: (name: string) => void;
   setForm: any;
 }) {
@@ -1591,7 +1591,7 @@ function SimplifiedCreateBody({
                   value={form.landlordEntityId || null}
                   cachedName={form.landlordEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       landlordEntityId: c?.ContactID || "",
                       landlordEntityName: c?.Name || "",
@@ -1622,7 +1622,7 @@ function SimplifiedCreateBody({
                   value={form.tenantEntityId || null}
                   cachedName={form.tenantEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       tenantEntityId: c?.ContactID || "",
                       tenantEntityName: c?.Name || "",
@@ -1657,7 +1657,7 @@ function SimplifiedCreateBody({
                   value={form.vendorEntityId || null}
                   cachedName={form.vendorEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       vendorEntityId: c?.ContactID || "",
                       vendorEntityName: c?.Name || "",
@@ -1688,7 +1688,7 @@ function SimplifiedCreateBody({
                   value={form.purchaserEntityId || null}
                   cachedName={form.purchaserEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       purchaserEntityId: c?.ContactID || "",
                       purchaserEntityName: c?.Name || "",
@@ -3031,9 +3031,9 @@ function HotsChecklistDialog({
     amlCheckCompleted: "",
     invoicingNotes: "",
     poNumber: "",
-    leaseLength: "",
+    leaseLength: "" as string | number,
     breakOption: "",
-    rentFree: "",
+    rentFree: "" as string | number,
     capitalContribution: 0,
     dealType: "",
     assetClass: "",
@@ -3264,7 +3264,7 @@ function HotsChecklistDialog({
     },
   });
 
-  const canSubmit = (form.xeroContactId || form.xeroContactName) && form.fee > 0;
+  const canSubmit = (form.xeroContactId || form.xeroContactName) && (form.fee ?? 0) > 0;
   const bgpAgents = users.map(u => u.name);
 
   return (
@@ -3407,7 +3407,7 @@ function HotsChecklistDialog({
                           onClick={() => { setForm(prev => ({ ...prev, propertyId: p.id })); setPropertySearch(""); }}
                           data-testid={`hots-property-option-${p.id}`}>
                           <span className="font-medium">{p.name}</span>
-                          {p.address && <span className="text-muted-foreground ml-1">— {p.address}</span>}
+                          {(() => { const a = typeof p.address === "string" ? p.address : (p.address as any)?.formatted || ""; return a ? <span className="text-muted-foreground ml-1">— {a}</span> : null; })()}
                         </div>
                       ))}
                       {filteredProperties.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">No properties found</div>}
@@ -3524,7 +3524,7 @@ function HotsChecklistDialog({
               {feeRows.filter(r => r.agentName).length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Total: {feeRows.reduce((s, r) => s + (r.percentage || 0), 0).toFixed(1)}%
-                  {form.fee > 0 && ` — ${feeRows.filter(r => r.agentName).map(r => `${r.agentName}: £${((form.fee * r.percentage / 100)).toFixed(2)}`).join(", ")}`}
+                  {(form.fee ?? 0) > 0 && ` — ${feeRows.filter(r => r.agentName).map(r => `${r.agentName}: £${((form.fee! * r.percentage / 100)).toFixed(2)}`).join(", ")}`}
                 </p>
               )}
             </div>
@@ -4779,7 +4779,7 @@ function AiMatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 // still in the DB (e.g. "Under Negotiation", "Billed") match correctly.
 const NEGOTIATION_STATUS_CODES: DealStatusCode[] = ["NEG"];
 const COMPLETED_STATUS_CODES: DealStatusCode[] = ["EXC", "COM", "INV"];
-const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "negotiations" } = {}) {
   const isCompsMode = mode === "comps";

@@ -3,7 +3,6 @@
 import { db } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull } from "drizzle-orm";
-import { googleNewsRssUrl } from "./rssapp";
 import { googleNewsRssUrl, createRssAppFeed } from "./rssapp";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 

@@ -298,7 +298,7 @@ router.post("/api/client-teams/:clientCompanyId/columns", requireAuth, async (re
     // First time a client edits columns, materialise the defaults so the
     // new column slots in alongside the standard ones rather than
     // replacing them entirely.
-    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId as string);
     const r = await pool.query(`
       INSERT INTO crm_client_team_columns (client_company_id, name, sort_order, color_key)
       VALUES ($1, $2, COALESCE($3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM crm_client_team_columns WHERE client_company_id = $1)), $4)
@@ -342,10 +342,10 @@ router.patch("/api/client-teams/:clientCompanyId/columns/:oldName", requireAuth,
     const pool = await getPool();
     const { name } = req.body || {};
     if (!name || typeof name !== "string") return res.status(400).json({ error: "name required" });
-    const oldName = decodeURIComponent(req.params.oldName);
+    const oldName = decodeURIComponent(req.params.oldName as string);
     const newName = name.trim();
     if (newName === oldName) return res.json({ ok: true });
-    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId as string);
     await pool.query(`
       UPDATE crm_client_team_columns SET name = $1
        WHERE client_company_id = $2 AND name = $3
@@ -365,8 +365,8 @@ router.patch("/api/client-teams/:clientCompanyId/columns/:oldName", requireAuth,
 router.delete("/api/client-teams/:clientCompanyId/columns/:name", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const name = decodeURIComponent(req.params.name);
-    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    const name = decodeURIComponent(req.params.name as string);
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId as string);
     await pool.query(
       "DELETE FROM crm_client_team_columns WHERE client_company_id = $1 AND name = $2",
       [req.params.clientCompanyId, name]
@@ -388,7 +388,7 @@ router.post("/api/client-teams/:clientCompanyId/columns/reorder", requireAuth, a
     const pool = await getPool();
     const names: string[] = req.body?.names || [];
     if (!Array.isArray(names)) return res.status(400).json({ error: "names array required" });
-    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId);
+    await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId as string);
     for (let i = 0; i < names.length; i++) {
       await pool.query(
         "UPDATE crm_client_team_columns SET sort_order = $1 WHERE client_company_id = $2 AND name = $3",

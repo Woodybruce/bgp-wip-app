@@ -32,7 +32,7 @@ export interface CreateFromReceiptArgs {
     displayName?: string;
   };
   caption?: string;
-  source: "whatsapp" | "dashboard" | "email";
+  source: "whatsapp" | "dashboard" | "dashboard-bulk" | "email";
   // Optional overrides — caller knows better than the parser.
   category?: string;
   businessPurpose?: string;

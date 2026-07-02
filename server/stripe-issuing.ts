@@ -461,8 +461,8 @@ export function setupStripeIssuingRoutes(app: Express) {
             .where(inArray(expenseAttendees.expenseId, ids))
         : [];
       // Resolve bgp: prefixed attendees (BGP staff) from the users table.
-      const bgpUserIds = [...new Set(attRows.filter(a => a.contactId?.startsWith("bgp:")).map(a => Number(a.contactId!.slice(4))).filter(n => !isNaN(n)))];
-      const bgpStaffMap = new Map<number, string>();
+      const bgpUserIds = [...new Set(attRows.filter(a => a.contactId?.startsWith("bgp:")).map(a => a.contactId!.slice(4)))];
+      const bgpStaffMap = new Map<string, string>();
       if (bgpUserIds.length > 0) {
         const staffRows = await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable).where(inArray(usersTable.id, bgpUserIds));
         staffRows.forEach(u => bgpStaffMap.set(u.id, u.name));
@@ -471,7 +471,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       for (const a of attRows) {
         if (!byExpense.has(a.expenseId)) byExpense.set(a.expenseId, []);
         const name = a.contactId?.startsWith("bgp:")
-          ? bgpStaffMap.get(Number(a.contactId.slice(4))) ?? a.name
+          ? bgpStaffMap.get(a.contactId.slice(4)) ?? a.name
           : a.name;
         byExpense.get(a.expenseId)!.push({ id: a.contactId, name });
       }
@@ -521,8 +521,8 @@ export function setupStripeIssuingRoutes(app: Express) {
         .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
         .where(eq(expenseAttendees.expenseId, id));
       // Resolve bgp: prefixed IDs (BGP staff) from the users table.
-      const bgpIds = rows.filter(r => r.id?.startsWith("bgp:")).map(r => Number(r.id!.slice(4))).filter(n => !isNaN(n));
-      let staffMap: Map<number, { name: string; email: string | null }> = new Map();
+      const bgpIds = rows.filter(r => r.id?.startsWith("bgp:")).map(r => r.id!.slice(4));
+      let staffMap: Map<string, { name: string; email: string | null }> = new Map();
       if (bgpIds.length > 0) {
         const staffRows = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
           .from(usersTable).where(inArray(usersTable.id, bgpIds));
@@ -530,7 +530,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       }
       res.json(rows.map(r => {
         if (r.id?.startsWith("bgp:")) {
-          const uid = Number(r.id.slice(4));
+          const uid = r.id.slice(4);
           const staff = staffMap.get(uid);
           return { id: r.id, name: staff?.name ?? r.id, email: staff?.email ?? null, companyId: null };
         }

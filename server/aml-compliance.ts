@@ -1261,7 +1261,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
 // via OCR) and hands it to Claude for structured analysis. Result lands on
 // crm_deals.aml_sof_analysis as JSONB — multiple docs accumulate.
 router.post("/api/aml/deal/:id/sof", requireAuth, kycUpload.single("file"), async (req: Request, res: Response) => {
-  const dealId = req.params.id;
+  const dealId = req.params.id as string;
   if (!req.file) return res.status(400).json({ error: "file required" });
   try {
     const dealRow = await pool.query(`SELECT name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [dealId]);
@@ -1292,7 +1292,7 @@ router.post("/api/aml/deal/:id/sof", requireAuth, kycUpload.single("file"), asyn
 
 router.delete("/api/aml/deal/:id/sof/:index", requireAuth, async (req: Request, res: Response) => {
   const dealId = req.params.id;
-  const idx = parseInt(req.params.index, 10);
+  const idx = parseInt(req.params.index as string, 10);
   try {
     const r = await pool.query(`SELECT aml_sof_analysis FROM crm_deals WHERE id = $1`, [dealId]);
     const items = (r.rows[0]?.aml_sof_analysis?.items || []) as any[];
@@ -1486,7 +1486,7 @@ async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffe
 
 router.get("/api/aml/deal/:id/mlro-report", requireAuth, async (req: Request, res: Response) => {
   try {
-    const result = await generateMlroReportBuffer(req.params.id);
+    const result = await generateMlroReportBuffer(req.params.id as string);
     if (!result) return res.status(404).json({ error: "deal not found" });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", contentDispositionFor(result.filename));
@@ -1601,7 +1601,7 @@ router.post("/api/aml/deal/:id/upload-link", requireAuth, async (req: any, res: 
 router.get("/api/aml/deal/:id/upload-links", requireAuth, async (req: Request, res: Response) => {
   try {
     const { listUploadTokensForDeal } = await import("./aml-portal");
-    res.json(await listUploadTokensForDeal(req.params.id));
+    res.json(await listUploadTokensForDeal(req.params.id as string));
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
   }
@@ -1610,7 +1610,7 @@ router.get("/api/aml/deal/:id/upload-links", requireAuth, async (req: Request, r
 router.delete("/api/aml/upload-link/:token", requireAuth, async (req: Request, res: Response) => {
   try {
     const { revokeUploadToken } = await import("./aml-portal");
-    await revokeUploadToken(req.params.token);
+    await revokeUploadToken(req.params.token as string);
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
@@ -1621,7 +1621,7 @@ router.delete("/api/aml/upload-link/:token", requireAuth, async (req: Request, r
 router.get("/api/kyc-upload/:token", async (req: Request, res: Response) => {
   try {
     const { validateUploadToken } = await import("./aml-portal");
-    const r = await validateUploadToken(req.params.token);
+    const r = await validateUploadToken(req.params.token as string);
     if (!r.valid) return res.status(410).json({ error: r.reason });
     res.json({ deal: r.deal });
   } catch (err: any) {
@@ -1632,7 +1632,7 @@ router.get("/api/kyc-upload/:token", async (req: Request, res: Response) => {
 router.post("/api/kyc-upload/:token/file", kycUpload.single("file"), async (req: Request, res: Response) => {
   try {
     const { validateUploadToken, recordUploadTokenUse } = await import("./aml-portal");
-    const v = await validateUploadToken(req.params.token);
+    const v = await validateUploadToken(req.params.token as string);
     if (!v.valid) return res.status(410).json({ error: v.reason });
     if (!req.file) return res.status(400).json({ error: "file required" });
 
@@ -1646,10 +1646,10 @@ router.post("/api/kyc-upload/:token/file", kycUpload.single("file"), async (req:
       filename: req.file.originalname,
       contentType: req.file.mimetype,
       buffer,
-      token: req.params.token,
+      token: req.params.token as string,
     });
     try { fs.unlinkSync(req.file.path); } catch {}
-    await recordUploadTokenUse(req.params.token);
+    await recordUploadTokenUse(req.params.token as string);
     res.json({ ok: true, classification: result.classification?.documentType || "uncategorised" });
   } catch (err: any) {
     try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch {}

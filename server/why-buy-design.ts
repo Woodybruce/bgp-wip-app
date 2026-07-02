@@ -163,7 +163,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       if (!latestHash) return res.json({ hasDeck: true, stale: false });
       let currentHash: string;
       try {
-        const built = await buildBrief(req.params.runId);
+        const built = await buildBrief(req.params.runId as string);
         currentHash = briefHash(built.brief);
       } catch {
         return res.json({ hasDeck: true, stale: false });
@@ -197,7 +197,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("X-Frame-Options", "SAMEORIGIN");
       res.setHeader("Content-Security-Policy", "default-src 'unsafe-inline' data: blob:; img-src * data: blob:; font-src * data:; style-src 'unsafe-inline' *;");
-      res.send(await injectDeckAssets(rows[0].html, req.params.runId));
+      res.send(await injectDeckAssets(rows[0].html, req.params.runId as string));
     } catch (e: any) {
       res.status(500).send(`<pre>${e.message}</pre>`);
     }

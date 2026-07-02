@@ -106,7 +106,7 @@ export function SourcePicker({ evidence, url, title, onChange, noLink }: SourceP
                 "https://..."
               }
               value={url || ""}
-              onChange={(e) => onChange({ evidence: type, url: e.target.value || null, title })}
+              onChange={(e) => onChange({ evidence: type, url: e.target.value || null, title: title ?? null })}
               data-testid="input-source-url"
             />
           </div>
@@ -115,7 +115,7 @@ export function SourcePicker({ evidence, url, title, onChange, noLink }: SourceP
             <Input
               placeholder="What this is, e.g. 'Joe Bloggs email re: 12 High St'"
               value={title || ""}
-              onChange={(e) => onChange({ evidence: type, url, title: e.target.value || null })}
+              onChange={(e) => onChange({ evidence: type, url: url ?? null, title: e.target.value || null })}
               data-testid="input-source-title"
             />
           </div>

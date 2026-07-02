@@ -385,6 +385,7 @@ interface StageResults {
     documentUrl?: string;
     sharepointUrl?: string;
     pdfPath?: string;
+    designVersionId?: string;
   };
   marketIntel?: {
     leasingHistory: Array<{ tenant?: string; area?: string; rent?: string; date?: string; term?: string; notes?: string }>;

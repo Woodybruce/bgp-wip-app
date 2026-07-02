@@ -335,7 +335,7 @@ export function setupDeckRoutes(app: Express) {
   app.post("/api/decks/:id/assemble", requireAuth, async (req, res) => {
     try {
       const { assembleDeck } = await import("./deck-assembler");
-      const result = await assembleDeck(req.params.id);
+      const result = await assembleDeck(req.params.id as string);
       if (!result.success) return res.status(400).json(result);
       res.json(result);
     } catch (e: any) {

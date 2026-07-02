@@ -286,7 +286,7 @@ function expandQuarterColumns(modelDef: any): void {
       if (decoded.c >= col0Idx) continue;
       if (/XIRR|IRR|NPV/i.test(cd.f)) {
         const original = cd.f;
-        cd.f = cd.f.replace(rangeEndRe, (match, d1, startC, d2, startR, d3, _endC, d4, endR) => {
+        cd.f = cd.f.replace(rangeEndRe, (match: string, d1: string, startC: string, d2: string, startR: string, d3: string, _endC: string, d4: string, endR: string) => {
           const sColIdx = XLSX.utils.decode_col(startC);
           if (sColIdx > col1Idx) return match;
           return `${d1}${startC}${d2}${startR}:${d3}${lastColLetter}${d4}${endR}`;
@@ -1115,7 +1115,7 @@ export function setupModelsRoutes(app: Express) {
       if (propertyId !== undefined) updates.propertyId = propertyId || null;
       if (name !== undefined) updates.name = name;
       if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No updates provided" });
-      await db.update(excelTemplates).set(updates).where(eq(excelTemplates.id, req.params.id));
+      await db.update(excelTemplates).set(updates).where(eq(excelTemplates.id, req.params.id as string));
       const updated = await storage.getExcelTemplate(req.params.id as string);
       if (!updated) return res.status(404).json({ message: "Template not found" });
       res.json(updated);
@@ -1128,7 +1128,7 @@ export function setupModelsRoutes(app: Express) {
     try {
       const { propertyId } = req.body;
       if (propertyId === undefined) return res.status(400).json({ message: "No updates provided" });
-      await db.update(excelModelRuns).set({ propertyId: propertyId || null }).where(eq(excelModelRuns.id, req.params.id));
+      await db.update(excelModelRuns).set({ propertyId: propertyId || null }).where(eq(excelModelRuns.id, req.params.id as string));
       res.json({ message: "Updated" });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update run" });
@@ -2120,7 +2120,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
   }).array("documents", 10);
 
   app.get("/api/models/create-model/status/:jobId", requireAuth, (req: Request, res: Response) => {
-    const job = modelJobs.get(req.params.jobId);
+    const job = modelJobs.get(req.params.jobId as string);
     if (!job) return res.json({ status: "error", message: "Model creation was interrupted (server restarted). Please try again." });
     if (job.status === "processing") return res.json({ status: "processing" });
     if (job.status === "error") return res.json({ status: "error", message: job.error });
@@ -3929,8 +3929,8 @@ Use professional UK property investment language. Format currency as GBP (£).`;
         });
 
         if (response.stop_reason === "tool_use") {
-          const toolBlocks = response.content.filter((b: any) => b.type === "tool_use");
-          const textBlocks = response.content.filter((b: any) => b.type === "text");
+          const toolBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+          const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
 
           currentMessages.push({ role: "assistant", content: response.content });
 
@@ -3957,7 +3957,7 @@ Use professional UK property investment language. Format currency as GBP (£).`;
 
           currentMessages.push({ role: "user", content: toolResults });
         } else {
-          const text = response.content.find((b: any) => b.type === "text");
+          const text = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
           finalAnswer = text?.text || "I completed the request but have no additional comments.";
           break;
         }

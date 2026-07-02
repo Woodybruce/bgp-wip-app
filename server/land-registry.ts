@@ -1254,7 +1254,7 @@ export function registerLandRegistryRoutes(app: Express) {
       const PD_KEY = process.env.PROPERTYDATA_API_KEY;
       if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
 
-      const endpoint = req.params.endpoint;
+      const endpoint = req.params.endpoint as string;
       // Note: "leaseholds" is intentionally absent — PropertyData has no
       // postcode-level leaseholds endpoint (returns X01 "Invalid API endpoint").
       // Use "uprn-title" or per-freehold "title" lookups instead.

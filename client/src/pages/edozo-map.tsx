@@ -3691,7 +3691,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     L.control.zoom({ position: "bottomright" }).addTo(map);
     L.control.scale({ position: "bottomleft", imperial: false, maxWidth: 100 }).addTo(map);
 
-    buildingLayerRef.current = L.layerGroup({ pane: "buildingPane" }).addTo(map);
+    buildingLayerRef.current = L.layerGroup([], { pane: "buildingPane" }).addTo(map);
 
     // OS Data layer groups
     const osPane = map.createPane("osPane");
@@ -3700,15 +3700,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     osUprnPane.style.zIndex = "445";
     const osSitePane = map.createPane("osSitePane");
     osSitePane.style.zIndex = "443";
-    osBuildingLayerRef.current = L.layerGroup({ pane: "osPane" }).addTo(map);
-    osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
-    osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
+    osBuildingLayerRef.current = L.layerGroup([], { pane: "osPane" }).addTo(map);
+    osUprnLayerRef.current = L.layerGroup([], { pane: "osUprnPane" }).addTo(map);
+    osSiteLayerRef.current = L.layerGroup([], { pane: "osSitePane" }).addTo(map);
 
     // Land Registry title boundaries — always-on red-line layer. Sits above
     // buildings so proprietor polygons are the most visible feature.
     const titlePane = map.createPane("titlePane");
     titlePane.style.zIndex = "455";
-    titleBoundaryLayerRef.current = L.layerGroup({ pane: "titlePane" }).addTo(map);
+    titleBoundaryLayerRef.current = L.layerGroup([], { pane: "titlePane" }).addTo(map);
     centreTenantLayerRef.current = L.layerGroup().addTo(map);
 
     // CRM data layer groups — clustered (Deals / Comps / Lease Events)

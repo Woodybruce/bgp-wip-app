@@ -435,7 +435,7 @@ export function setupHrRoutes(app: Express) {
         if (cursor === userId) {
           return res.status(400).json({ error: "That would create a reporting cycle." });
         }
-        const { rows } = await pool.query<{ manager_id: string | null }>(
+        const { rows }: { rows: Array<{ manager_id: string | null }> } = await pool.query(
           "SELECT manager_id FROM staff_profiles WHERE user_id = $1",
           [cursor]
         );
@@ -4115,7 +4115,7 @@ Return ONLY valid JSON, nothing else.`,
                 type: "base64",
                 media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 data: buf.toString("base64"),
-              },
+              } as any,
             },
             {
               type: "text",

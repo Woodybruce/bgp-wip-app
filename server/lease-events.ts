@@ -74,7 +74,7 @@ export function registerLeaseEventRoutes(app: Express) {
       const updates: Record<string, any> = { ...req.body, updatedAt: new Date() };
       if (updates.eventDate) updates.eventDate = new Date(updates.eventDate);
       if (updates.noticeDate) updates.noticeDate = new Date(updates.noticeDate);
-      const [row] = await db.update(leaseEvents).set(updates).where(eq(leaseEvents.id, req.params.id)).returning();
+      const [row] = await db.update(leaseEvents).set(updates).where(eq(leaseEvents.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ error: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -84,7 +84,7 @@ export function registerLeaseEventRoutes(app: Express) {
 
   app.delete("/api/lease-events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await db.delete(leaseEvents).where(eq(leaseEvents.id, req.params.id));
+      await db.delete(leaseEvents).where(eq(leaseEvents.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

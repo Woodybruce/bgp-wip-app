@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import multer from "multer";
 import * as fs from "fs";
 import * as path from "path";
@@ -26,6 +26,7 @@ import {
   crmContacts, newsArticles, wipEntries, investmentComps, insertInvestmentCompSchema,
   xeroInvoices, availableUnits, investmentTracker,
   dealAuditLog,
+  type CrmCompany, type CrmContact,
 } from "@shared/schema";
 import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
@@ -1035,7 +1036,7 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
           [dealName, landlordId, tenantId]
         );
         if (dupes.length > 0) {
-          resolvedDealId = dupes[0].id;
+          resolvedDealId = dupes[0].id as string;
           wipRefToDealId.set(deal.ref, resolvedDealId);
         }
       }
@@ -1965,7 +1966,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       });
 
       const businessContacts = classified.filter(c => !c.isPersonal);
-      const existing = await storage.getCrmContacts({});
+      const existing = await storage.getCrmContacts({}) as CrmContact[];
       const existingNames = new Set(existing.map((e: any) => e.name?.toLowerCase().trim()));
       const existingEmails = new Set(existing.filter((e: any) => e.email).map((e: any) => e.email!.toLowerCase().trim()));
 
@@ -3428,7 +3429,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                   .where(eq(crmCompanies.id, deal.tenantId)).limit(1);
                 if (tenant) {
                   contactName = tenant.name;
-                  contactEmail = contactEmail || tenant.email || "";
+                  contactEmail = contactEmail || (tenant as any).email || "";
                 }
               }
 
@@ -3530,7 +3531,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // Related emails for a deal — searches user's Outlook inbox for emails mentioning the deal/property name
   app.get("/api/crm/deals/:id/related-emails", requireAuth, async (req, res) => {
     try {
-      const deal = await storage.getCrmDeal(req.params.id);
+      const deal = await storage.getCrmDeal(req.params.id as string);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
       const { getValidMsToken } = await import("./microsoft");
@@ -3590,7 +3591,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // Related calendar events for a deal — searches user's Outlook calendar for events mentioning the deal/property name
   app.get("/api/crm/deals/:id/related-events", requireAuth, async (req, res) => {
     try {
-      const deal = await storage.getCrmDeal(req.params.id);
+      const deal = await storage.getCrmDeal(req.params.id as string);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
       const { getValidMsToken } = await import("./microsoft");
@@ -4299,7 +4300,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
               name: clientName,
               companyType: "Investor",
               team: "Investment",
-            }).returning();
+            } as any).returning();
             companyId = newCompany.id;
             companyMap.set(clientName.toLowerCase().trim(), companyId);
             newCompanies.push(clientName);
@@ -4509,8 +4510,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.post("/api/crm/link-contacts-companies", async (req, res) => {
     try {
-      const companies = await storage.getCrmCompanies();
-      const contacts = await storage.getCrmContacts();
+      const companies = await storage.getCrmCompanies() as CrmCompany[];
+      const contacts = await storage.getCrmContacts() as CrmContact[];
 
       const domainToCompany = new Map<string, { id: string; name: string }>();
       for (const co of companies) {
@@ -4758,7 +4759,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         }));
 
         const contactSummaries = allContacts.map(c => ({
-          id: c.id, name: c.name, email: c.email, company: c.companyName, role: c.role,
+          id: c.id, name: c.name, email: c.email, company: c.company, role: c.role,
         }));
 
         const companySummaries = allCompanies.map(c => ({
@@ -5777,7 +5778,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
   app.get("/api/wip/agent-drilldown/:agentName", requireAuth, async (req, res) => {
     try {
       const senior = await isWipSenior(req);
-      const agentName = decodeURIComponent(req.params.agentName);
+      const agentName = decodeURIComponent(req.params.agentName as string);
 
       const deals = await db.select().from(crmDeals);
       const allocations = await db.select().from(dealFeeAllocations);
@@ -6287,7 +6288,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.put("/api/investment-comps/:id", requireAuth, async (req, res) => {
     try {
-      const [entry] = await db.update(investmentComps).set(req.body).where(eq(investmentComps.id, req.params.id)).returning();
+      const [entry] = await db.update(investmentComps).set(req.body).where(eq(investmentComps.id, req.params.id as string)).returning();
       if (!entry) return res.status(404).json({ error: "Not found" });
       res.json(entry);
     } catch (e: any) {
@@ -6297,7 +6298,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.delete("/api/investment-comps/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentComps).where(eq(investmentComps.id, req.params.id));
+      await db.delete(investmentComps).where(eq(investmentComps.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

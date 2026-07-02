@@ -90,7 +90,7 @@ function ProgressTickCell({
   onUpdate,
   testIdPrefix,
 }: {
-  item: { contacted: boolean; detailsSent: boolean; viewing: boolean; shortlisted: boolean; underOffer: boolean };
+  item: { contacted: boolean | null; detailsSent: boolean | null; viewing: boolean | null; shortlisted: boolean | null; underOffer: boolean | null };
   onUpdate: (data: Record<string, boolean>) => void;
   testIdPrefix: string;
 }) {
@@ -501,7 +501,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
   }, [deals]);
 
   const userMap = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; email: string; role: string; department: string }>();
+    const map = new Map<string, BgpUser>();
     users.forEach((u) => map.set(u.id, u));
     return map;
   }, [users]);
@@ -3477,7 +3477,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
                           value={item.comments || ""}
                           onSave={(v) => inlineUpdate(item.id, { comments: v || null })}
                           placeholder="Add comments..."
-                          testId={`input-inv-comments-${item.id}`}
+                          data-testid={`input-inv-comments-${item.id}`}
                           multiline
                           maxLines={2}
                         />

@@ -1129,7 +1129,7 @@ export default function PropertyMap() {
             <span>
               Click anywhere on the map to draw a <strong>{formatDistance(getEffectiveRadius())}</strong> radius circle.
               {radiusCircles.length > 0 && (
-                <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastCircle}>Undo last</Button>
+                <Button variant="ghost" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastCircle}>Undo last</Button>
               )}
             </span>
           )}
@@ -1137,9 +1137,9 @@ export default function PropertyMap() {
             <span>
               {distanceClickCount === 0
                 ? "Click a start point on the map to begin measuring."
-                : <>Now click an end point to see the distance. <Button variant="link" size="sm" className="h-auto p-0 ml-1 text-xs" onClick={cancelDistancePoint}>Cancel</Button></>}
+                : <>Now click an end point to see the distance. <Button variant="ghost" size="sm" className="h-auto p-0 ml-1 text-xs" onClick={cancelDistancePoint}>Cancel</Button></>}
               {distanceLines.length > 0 && (
-                <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastLine}>Undo last</Button>
+                <Button variant="ghost" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastLine}>Undo last</Button>
               )}
             </span>
           )}

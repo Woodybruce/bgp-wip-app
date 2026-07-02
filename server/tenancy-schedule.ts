@@ -320,7 +320,7 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
 router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { id } = req.params;
+    const id = req.params.id as string;
     const d = req.body;
     const fields: string[] = [];
     const values: any[] = [];
@@ -1164,7 +1164,7 @@ router.get("/api/tenancy-schedule/audit-legacy-columns", requireAuth, async (_re
 // one go.
 router.post("/api/properties/:propertyId/resolve-tenants", requireAuth, async (req, res) => {
   try {
-    const { propertyId } = req.params;
+    const propertyId = req.params.propertyId as string;
     const [tenants, units] = await Promise.all([
       backfillPropertyTenants(propertyId),
       backfillPropertyUnitFks(propertyId),
@@ -1275,7 +1275,7 @@ router.post("/api/properties/:propertyId/assign-tenant-brand", requireAuth, asyn
 router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { propertyId } = req.params;
+    const propertyId = req.params.propertyId as string;
 
     // Leasing rows without a matching tenancy unit on the same
     // property. Create one tenancy row per distinct unit_name, then

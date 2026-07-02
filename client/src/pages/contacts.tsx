@@ -1141,7 +1141,7 @@ export default function Contacts() {
   return <ContactList teamFilter={teamParam} />;
 }
 
-const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 function ContactList({ teamFilter }: { teamFilter?: string | null }) {
   const [search, setSearch] = useState("");

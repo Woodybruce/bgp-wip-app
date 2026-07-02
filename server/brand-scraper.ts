@@ -147,7 +147,7 @@ export async function scrapeBrand(brandId: string): Promise<ScrapeResult> {
       continue;
     }
 
-    let res: Response;
+    let res: globalThis.Response;
     try {
       res = await scraperFetch(url, { uk: true, render: false, timeoutMs: 25000 });
     } catch (err: any) {

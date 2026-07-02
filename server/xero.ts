@@ -732,7 +732,7 @@ export function setupXeroRoutes(app: Express) {
         }
       }
 
-      const invoiceLines = lineItems?.length > 0 ? lineItems : [{
+      const invoiceLines = lineItems && lineItems.length > 0 ? lineItems : [{
         Description: deal.name || "Professional fees",
         Quantity: 1,
         UnitAmount: deal.fee || 0,
@@ -822,7 +822,7 @@ export function setupXeroRoutes(app: Express) {
       const invoices = await db
         .select()
         .from(xeroInvoices)
-        .where(eq(xeroInvoices.dealId, req.params.dealId))
+        .where(eq(xeroInvoices.dealId, req.params.dealId as string))
         .orderBy(desc(xeroInvoices.createdAt));
       res.json(invoices);
     } catch (err: any) {
@@ -836,7 +836,7 @@ export function setupXeroRoutes(app: Express) {
       const [invoice] = await db
         .select()
         .from(xeroInvoices)
-        .where(eq(xeroInvoices.id, req.params.id));
+        .where(eq(xeroInvoices.id, req.params.id as string));
 
       if (!invoice) return res.status(404).json({ message: "Invoice record not found" });
       if (!invoice.xeroInvoiceId) return res.status(400).json({ message: "No Xero invoice ID to sync" });
@@ -858,7 +858,7 @@ export function setupXeroRoutes(app: Express) {
           lineAmount: firstLine?.LineAmount ?? invoice.lineAmount,
           syncedAt: new Date(),
           updatedAt: new Date(),
-        } as any).where(eq(xeroInvoices.id, req.params.id));
+        } as any).where(eq(xeroInvoices.id, req.params.id as string));
 
         if (invoice.dealId) {
           await autoPromoteDealToInvoiced(invoice.dealId, xeroInvoice.Status);
@@ -877,7 +877,7 @@ export function setupXeroRoutes(app: Express) {
   // invoices are locked once issued.
   app.put("/api/xero/invoices/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const [invoice] = await db.select().from(xeroInvoices).where(eq(xeroInvoices.id, req.params.id));
+      const [invoice] = await db.select().from(xeroInvoices).where(eq(xeroInvoices.id, req.params.id as string));
       if (!invoice) return res.status(404).json({ message: "Invoice record not found" });
       if (!invoice.xeroInvoiceId) return res.status(400).json({ message: "Invoice not yet sent to Xero" });
       if (invoice.status && !["DRAFT", "SUBMITTED"].includes(invoice.status)) {
@@ -927,7 +927,7 @@ export function setupXeroRoutes(app: Express) {
         poNumber: poNumber ?? invoice.poNumber,
         syncedAt: new Date(),
         updatedAt: new Date(),
-      } as any).where(eq(xeroInvoices.id, req.params.id));
+      } as any).where(eq(xeroInvoices.id, req.params.id as string));
 
       res.json({ success: true, status: updated.Status });
     } catch (err: any) {
@@ -983,7 +983,7 @@ export function setupXeroRoutes(app: Express) {
 
   app.delete("/api/xero/invoices/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await db.delete(xeroInvoices).where(eq(xeroInvoices.id, req.params.id));
+      await db.delete(xeroInvoices).where(eq(xeroInvoices.id, req.params.id as string));
       res.json({ success: true });
     } catch (err: any) {
       console.error("[Xero] Delete invoice error:", err);

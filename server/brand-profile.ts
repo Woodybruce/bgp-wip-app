@@ -1259,7 +1259,7 @@ export async function researchBrandStores(
   // single-word brands.
   const brandToken = company.name.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
   const brandFirstWord = brandToken.split(" ")[0] || brandToken;
-  const brandWords = brandToken.split(" ").filter((w) => w.length > 1);
+  const brandWords = brandToken.split(" ").filter((w: string) => w.length > 1);
   const NOISE = new Set([
     "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
     "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
@@ -1281,7 +1281,7 @@ export async function researchBrandStores(
     // in the place name. Catches "BrandName - Westfield London" and
     // "BrandName at Selfridges" without false-positives on single-token coincidence.
     if (brandWords.length > 1) {
-      return brandWords.every((w) => n.includes(w));
+      return brandWords.every((w: string) => n.includes(w));
     }
     // Single-word brand: brand must appear as a word, and no noise compound
     // immediately after (avoids "Supreme Pizza", "Coach Hire", etc.).

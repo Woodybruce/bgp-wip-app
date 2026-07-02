@@ -76,7 +76,7 @@ const TENURE_COLORS: Record<string, string> = {
   "Leasehold": "bg-orange-500",
   "Virtual Freehold": "bg-cyan-500",
 };
-const TEAM_OPTIONS = CRM_OPTIONS.dealTeam;
+const TEAM_OPTIONS: string[] = [...CRM_OPTIONS.dealTeam];
 const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
   "London F&B": "bg-rose-500",
