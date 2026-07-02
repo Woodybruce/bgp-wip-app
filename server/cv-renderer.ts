@@ -5,6 +5,7 @@
 // the why-buy renderer (fonts, BGP slate accent line, serif headlines)
 // so team CVs and investment memos read as one suite.
 import PDFDocument from "pdfkit";
+import { activeBrand } from "./brand";
 import fs from "fs";
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
@@ -49,7 +50,7 @@ export async function renderCvPdf(cv: CvData): Promise<Buffer> {
     margins: { top: topM, bottom: bottomM, left: leftM, right: rightM },
     info: {
       Title: `${cv.name} — CV`,
-      Author: "Bruce Gillingham Pollard",
+      Author: activeBrand().name,
       Creator: "BGP Dashboard",
     },
     bufferPages: true,

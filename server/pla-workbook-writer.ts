@@ -13,6 +13,7 @@
  */
 
 import ExcelJS from "exceljs";
+import { activeBrand } from "./brand";
 import { db } from "./db";
 import { plaMatters, plaMatterWorkbooks, crmProperties } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -33,11 +34,11 @@ export async function buildAndUploadNetEffectiveXlsx(args: {
 }): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
   try {
     const wb = new ExcelJS.Workbook();
-    wb.creator = "Bruce Gillingham Pollard";
+    wb.creator = activeBrand().name;
     wb.lastModifiedBy = "BGP Lease Advisory";
     wb.created = new Date();
     wb.modified = new Date();
-    wb.company = "Bruce Gillingham Pollard";
+    wb.company = activeBrand().name;
 
     const ws = wb.addWorksheet(SHEET_NAME, {
       properties: { defaultColWidth: 18, tabColor: { argb: "FF0E5BA8" } },
@@ -271,11 +272,11 @@ export async function buildAndUploadComparablesScheduleXlsx(args: {
 }): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
   try {
     const wb = new ExcelJS.Workbook();
-    wb.creator = "Bruce Gillingham Pollard";
+    wb.creator = activeBrand().name;
     wb.lastModifiedBy = "BGP Lease Advisory";
     wb.created = new Date();
     wb.modified = new Date();
-    wb.company = "Bruce Gillingham Pollard";
+    wb.company = activeBrand().name;
 
     const ws = wb.addWorksheet("Comparables", {
       properties: { defaultColWidth: 14, tabColor: { argb: "FF0E5BA8" } },
@@ -549,11 +550,11 @@ export async function buildAndUploadDevaluationXlsx(args: {
 
 function baseWorkbook(): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Bruce Gillingham Pollard";
+  wb.creator = activeBrand().name;
   wb.lastModifiedBy = "BGP Lease Advisory";
   wb.created = new Date();
   wb.modified = new Date();
-  wb.company = "Bruce Gillingham Pollard";
+  wb.company = activeBrand().name;
   return wb;
 }
 

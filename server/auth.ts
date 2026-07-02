@@ -8,16 +8,13 @@ import { storage } from "./storage";
 import { loginSchema } from "@shared/schema";
 import crypto from "crypto";
 import { resolveCompanyScope, getClientTeamInfo } from "./company-scope";
+import { activeBrand } from "./brand";
 
-export const ADMIN_EMAILS = new Set([
-  "woody@brucegillinghampollard.com",
-  "rupert@brucegillinghampollard.com",
-  "layla@brucegillinghampollard.com",
-  "wendy@brucegillinghampollard.com",
-  "accounts@brucegillinghampollard.com",   // Wendy McKenzie's actual login
-  "charlotte@brucegillinghampollard.com",
-  "jack@brucegillinghampollard.com",
-]);
+const BRAND = activeBrand();
+// Admin baseline + the org email domain come from the active brand's config
+// (white-label) — never hardcode a tenant's identity here.
+export const ADMIN_EMAILS = new Set(BRAND.adminEmails.map((e) => e.toLowerCase()));
+const EMAIL_DOMAIN = BRAND.emailDomain;
 
 async function ensureAdminFlag(userId: string, email: string) {
   const normalised = email.toLowerCase().trim();
@@ -237,8 +234,8 @@ export function setupAuth(app: Express) {
       if (!email || !password || !name) {
         return res.status(400).json({ message: "Name, email, and password are required" });
       }
-      if (!email.endsWith("@brucegillinghampollard.com")) {
-        return res.status(403).json({ message: "Only @brucegillinghampollard.com email addresses can register" });
+      if (!email.endsWith("@" + EMAIL_DOMAIN)) {
+        return res.status(403).json({ message: `Only @${EMAIL_DOMAIN} email addresses can register` });
       }
       if (password.length < 8) {
         return res.status(400).json({ message: "Password must be at least 8 characters" });
@@ -319,7 +316,7 @@ export function setupAuth(app: Express) {
     ensureAdminFlag(user.id, user.email || user.username || "");
 
     const scopeCompanyId = await resolveCompanyScope(req);
-    const isBgpStaff = (user.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+    const isBgpStaff = (user.email || "").toLowerCase().endsWith("@" + EMAIL_DOMAIN);
     let clientTeamInfo: { team: string; companyId: string; companyName: string } | null = null;
     if (isBgpStaff && user.team) {
       clientTeamInfo = await getClientTeamInfo(user.id);
@@ -381,7 +378,7 @@ export function setupAuth(app: Express) {
       (safeUser as any).companyScopeId = scopeCompanyId;
       (safeUser as any).companyScopeName = user.team;
     }
-    const isBgpStaff = (user.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+    const isBgpStaff = (user.email || "").toLowerCase().endsWith("@" + EMAIL_DOMAIN);
     if (isBgpStaff && user.team) {
       const clientTeamInfo = await getClientTeamInfo(userId);
       if (clientTeamInfo) {
@@ -402,7 +399,7 @@ export function setupAuth(app: Express) {
     const user = await storage.getUser(userId);
     if (!user) return res.status(401).json({ message: "Not authenticated" });
 
-    const isBgpStaff = (user.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+    const isBgpStaff = (user.email || "").toLowerCase().endsWith("@" + EMAIL_DOMAIN);
     if (!isBgpStaff) return res.status(403).json({ message: "Not available" });
 
     const clientTeamInfo = await getClientTeamInfo(userId);
@@ -493,7 +490,7 @@ export function setupAuth(app: Express) {
         redirectUri,
         prompt: "select_account",
         state,
-        domainHint: "brucegillinghampollard.com",
+        domainHint: EMAIL_DOMAIN,
       });
 
       req.session.save(() => {
@@ -531,7 +528,7 @@ export function setupAuth(app: Express) {
               redirectUri: retryRedirectUri,
               prompt: "select_account",
               state: retryState,
-              domainHint: "brucegillinghampollard.com",
+              domainHint: EMAIL_DOMAIN,
             });
             return req.session.save(() => res.redirect(retryAuthUrl));
           }
@@ -601,7 +598,7 @@ export function setupAuth(app: Express) {
       // Domain-restricted: only @brucegillinghampollard.com Microsoft accounts
       // can create themselves. Anyone else with a matching record must
       // already exist in the users table.
-      if (!user && msEmail.endsWith("@brucegillinghampollard.com")) {
+      if (!user && msEmail.endsWith("@" + EMAIL_DOMAIN)) {
         try {
           const displayName = (profile.displayName || msEmail.split("@")[0]).trim();
           const randomPw = await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10);
@@ -624,7 +621,7 @@ export function setupAuth(app: Express) {
 
       if (!user) {
         console.log("SSO: no matching BGP user for email", msEmail);
-        return res.redirect("/?sso_error=" + encodeURIComponent("Only @brucegillinghampollard.com accounts can sign in here. Got " + msEmail));
+        return res.redirect("/?sso_error=" + encodeURIComponent(`Only @${EMAIL_DOMAIN} accounts can sign in here. Got ` + msEmail));
       }
 
       req.session.regenerate((regenErr) => {

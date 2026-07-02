@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { activeBrand } from "./brand";
 import { requireAuth } from "./auth";
 import crypto from "crypto";
 import { pool } from "./db";
@@ -462,7 +463,7 @@ export function setupCanvaRoutes(app: Express) {
         canvaFields.agents = agents.map((a: any) => a.name).join(", ");
       }
 
-      canvaFields.company_name = "Bruce Gillingham Pollard";
+      canvaFields.company_name = activeBrand().name;
       canvaFields.company_website = "www.brucegillinghampollard.com";
       canvaFields.company_phone = "+44 (0)20 7629 4175";
       canvaFields.company_address = "68 Brook Street, Mayfair, London W1K 5NR";

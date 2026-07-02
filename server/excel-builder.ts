@@ -10,6 +10,7 @@
  */
 
 import * as ExcelJS from "exceljs";
+import { activeBrand } from "./brand";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -1691,11 +1692,11 @@ function buildSummarySheet(wb: ExcelJS.Workbook, modelName: string): ExcelJS.Wor
 // ─── Apply BGP Branding ─────────────────────────────────────────────────────
 
 export function applyBGPBranding(workbook: ExcelJS.Workbook): void {
-  workbook.creator = 'Bruce Gillingham Pollard';
+  workbook.creator = activeBrand().name;
   workbook.lastModifiedBy = 'BGP Model Studio';
   workbook.created = new Date();
   workbook.modified = new Date();
-  workbook.company = 'Bruce Gillingham Pollard';
+  workbook.company = activeBrand().name;
 
   // Set workbook properties
   workbook.properties.date1904 = false;

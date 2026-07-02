@@ -13,6 +13,7 @@
 //   GET  /api/deal/:dealId/completion.pdf     — completion report PDF
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
+import { activeBrand } from "./brand";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import * as path from "path";
@@ -135,7 +136,7 @@ router.get("/api/deal/:dealId/hots.pdf", requireAuth, async (req, res) => {
     const doc = new PDFDocument({
       size: "A4",
       margins: { top: 60, bottom: 60, left: 50, right: 50 },
-      info: { Title: `Heads of Terms — ${deal.name}`, Author: "Bruce Gillingham Pollard", Creator: "BGP Dashboard" },
+      info: { Title: `Heads of Terms — ${deal.name}`, Author: activeBrand().name, Creator: "BGP Dashboard" },
       bufferPages: true,
     });
     const chunks: Buffer[] = [];
@@ -269,7 +270,7 @@ router.get("/api/deal/:dealId/offer-summary.pdf", requireAuth, async (req, res) 
     const PDFDocument = (await import("pdfkit")).default;
     const doc = new PDFDocument({
       size: "A4", margins: { top: 60, bottom: 60, left: 50, right: 50 },
-      info: { Title: `Offer Summary — ${deal.name}`, Author: "Bruce Gillingham Pollard" },
+      info: { Title: `Offer Summary — ${deal.name}`, Author: activeBrand().name },
       bufferPages: true,
     });
     const chunks: Buffer[] = [];

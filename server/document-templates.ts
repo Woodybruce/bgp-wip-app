@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { activeBrand } from "./brand";
 import { requireAuth } from "./auth";
 import { storage } from "./storage";
 import { pool } from "./db";
@@ -423,7 +424,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
     accentColor: "#232323",
     showLogo: true,
     logoPosition: "top-left",
-    headerText: "Bruce Gillingham Pollard",
+    headerText: activeBrand().name,
     footerText: "Bruce Gillingham Pollard — Confidential",
     pageMargin: "normal",
     lineSpacing: "1.15",
@@ -1056,7 +1057,7 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
   const doc = new PDFDocument({
     size: "A4",
     margins: { top: 80, bottom: 80, left: 60, right: 60 },
-    info: { Title: docTitle, Author: "Bruce Gillingham Pollard", Creator: "BGP Dashboard" },
+    info: { Title: docTitle, Author: activeBrand().name, Creator: "BGP Dashboard" },
     bufferPages: true,
   });
 
@@ -1504,7 +1505,7 @@ PAGE STRUCTURE (match BGP deck template patterns):
 - Below it, a large dramatic heading (Grotta, 28-36pt, bold) — can wrap to 2-3 lines
 - Body content in columns: main text left (55-60%), supporting content/data right
 - Thin rectangle shape dividers between major sections (#E8E6DF grey or #232323 black) — never orange
-- "Bruce Gillingham Pollard" or address footer at bottom
+- ${activeBrand().name} or address footer at bottom
 - Use GENEROUS whitespace — BGP style favours dramatic negative space over dense content
 - Use the FULL page height, don't cluster everything at the top
 - Keep each text element content under 100 characters — use section names and key {{placeholders}} only
@@ -2743,7 +2744,7 @@ Be concise, professional, and use British English. All document advice should al
         }
 
         const doc = new Document({
-          creator: "Bruce Gillingham Pollard",
+          creator: activeBrand().name,
           title: docTitle,
           styles: {
             default: {
@@ -2835,7 +2836,7 @@ Be concise, professional, and use British English. All document advice should al
         const doc = new PDFDocument({
           size: "A4",
           margins: { top: 80, bottom: 80, left: 60, right: 60 },
-          info: { Title: docTitle, Author: "Bruce Gillingham Pollard", Creator: "BGP Dashboard" },
+          info: { Title: docTitle, Author: activeBrand().name, Creator: "BGP Dashboard" },
           bufferPages: true,
         });
 
@@ -3009,7 +3010,7 @@ Be concise, professional, and use British English. All document advice should al
       if (format === "pptx") {
         const PptxGenJS = (await import("pptxgenjs")).default;
         const pptx = new PptxGenJS();
-        pptx.author = "Bruce Gillingham Pollard";
+        pptx.author = activeBrand().name;
         pptx.title = docTitle;
         pptx.layout = "LAYOUT_WIDE";
 

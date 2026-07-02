@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { activeBrand } from "./brand";
 import { requireAuth } from "./auth";
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, resolveBrandIdSubquery } from "./tenant-brand-resolver";
@@ -866,7 +867,7 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
 
     const ExcelJS = await import("exceljs");
     const wb = new ExcelJS.Workbook();
-    wb.creator = "Bruce Gillingham Pollard";
+    wb.creator = activeBrand().name;
     wb.created = new Date();
 
     // Brand palette — matches BGP house style used elsewhere in the app.

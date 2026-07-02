@@ -1,4 +1,5 @@
 import type { Express, Request, Response as ExpressResponse } from "express";
+import { activeBrand } from "./brand";
 type Response = ExpressResponse;
 import { requireAuth } from "./auth";
 import { storage } from "./storage";
@@ -7535,8 +7536,8 @@ export async function executeCrmToolRaw(
 
       const pptx = new PptxGenJS();
       pptx.layout = "LAYOUT_WIDE";
-      pptx.author = "Bruce Gillingham Pollard";
-      pptx.company = "Bruce Gillingham Pollard";
+      pptx.author = activeBrand().name;
+      pptx.company = activeBrand().name;
       pptx.title = fnArgs.title as string;
 
       const titleSlide = pptx.addSlide();
@@ -7844,7 +7845,7 @@ export async function executeCrmToolRaw(
       const { saveFile } = await import("./file-storage");
 
       const wb = new ExcelJS.Workbook();
-      wb.creator = "Bruce Gillingham Pollard";
+      wb.creator = activeBrand().name;
       wb.created = new Date();
 
       const DARK_BLUE = "FF082861";
@@ -11479,8 +11480,8 @@ export async function handleCrmToolCall(
 
       const pptx = new PptxGenJS();
       pptx.layout = "LAYOUT_WIDE";
-      pptx.author = "Bruce Gillingham Pollard";
-      pptx.company = "Bruce Gillingham Pollard";
+      pptx.author = activeBrand().name;
+      pptx.company = activeBrand().name;
       pptx.title = fnArgs.title as string;
 
       const titleSlide = pptx.addSlide();
