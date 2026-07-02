@@ -229,7 +229,7 @@ router.get("/api/companies-house/search", requireAuth, async (req, res) => {
 
 router.get("/api/companies-house/company/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}`);
     const profile = {
       companyNumber: data.company_number,
       companyName: data.company_name,
@@ -258,7 +258,7 @@ router.get("/api/companies-house/company/:number", requireAuth, async (req, res)
 
 router.get("/api/companies-house/officers/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/officers`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}/officers`);
     const officers = (data.items || []).map((o: any) => ({
       name: o.name,
       officerRole: o.officer_role,
@@ -276,7 +276,7 @@ router.get("/api/companies-house/officers/:number", requireAuth, async (req, res
 
 router.get("/api/companies-house/pscs/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/persons-with-significant-control`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}/persons-with-significant-control`);
     const pscs = (data.items || []).map((p: any) => ({
       name: p.name || (p.name_elements ? [p.name_elements?.title, p.name_elements?.forename, p.name_elements?.surname].filter(Boolean).join(" ") : "Unknown"),
       kind: p.kind,
@@ -298,7 +298,7 @@ router.get("/api/companies-house/pscs/:number", requireAuth, async (req, res) =>
 router.get("/api/companies-house/filing-history/:number", requireAuth, async (req, res) => {
   try {
     const items = Math.min(Number(req.query.items) || 25, 100);
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/filing-history?items_per_page=${items}`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}/filing-history?items_per_page=${items}`);
     const filings = (data.items || []).map((f: any) => ({
       date: f.date,
       category: f.category,
@@ -330,7 +330,7 @@ router.get("/api/companies-house/filing-history/:number", requireAuth, async (re
 router.get("/api/companies-house/document/:id", requireAuth, async (req, res) => {
   try {
     if (!CH_API_KEY) return res.status(503).json({ error: "Companies House API key not configured" });
-    const id = req.params.id;
+    const id = req.params.id as string;
     if (!/^[A-Za-z0-9_-]+$/.test(id)) return res.status(400).json({ error: "Invalid document id" });
 
     const auth = `Basic ${Buffer.from(CH_API_KEY + ":").toString("base64")}`;
@@ -384,7 +384,7 @@ async function performAutoKyc(companyId: string, opts: {
   filingsTotal?: number;
   companyNumber?: string | null;
   message?: string;
-  resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match";
+  resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match";
   diagnostics?: Array<{ step: string; outcome: string; detail?: string }>;
   experian?: any;
   riskLevel?: string;
@@ -399,7 +399,7 @@ async function performAutoKyc(companyId: string, opts: {
   if (!company) throw new Error("Company not found");
 
   let chNumber = opts.forceFromWebsite ? null : company.companiesHouseNumber;
-  let resolvedFrom: "stored" | "website" | "ai_picker" | "name_match" = "stored";
+  let resolvedFrom: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match" = "stored";
   // Per-step trace so the brand panel can show why a re-resolve picked what
   // it picked (or why it picked nothing). Without this the "Wrong company?"
   // button feels like a black box when it lands the same wrong CH again.
@@ -1122,7 +1122,7 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
     const manualEntityName = (req.body?.entityName as string | null | undefined) || null;
     const manualTcsUrl = (req.body?.tcsUrl as string | null | undefined) || null;
     const userId = (req as any).user?.id || null;
-    const result = await performAutoKyc(req.params.companyId, {
+    const result = await performAutoKyc(req.params.companyId as string, {
       forceFromWebsite,
       manualChNumber,
       manualEntityName,
@@ -1134,7 +1134,7 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
     }
     // Always run sanctions + full AML sweep after CH/Experian so the KYC badge
     // is never issued without sanctions clearance, even outside of a deal stage.
-    runAllAmlChecks(req.params.companyId, null, userId).catch(err =>
+    runAllAmlChecks(req.params.companyId as string, null, userId).catch(err =>
       console.error("[auto-kyc] post-KYC sanctions sweep failed:", err.message)
     );
     res.json(result);
@@ -1163,7 +1163,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
     const { crmProperties } = await import("@shared/schema");
     const { eq } = await import("drizzle-orm");
 
-    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId)).limit(1);
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId as string)).limit(1);
     if (!property) {
       return res.status(404).json({ error: "Property not found" });
     }
@@ -1415,7 +1415,7 @@ router.post("/api/title-search/auto-fill/:propertyId", requireAuth, async (req, 
     const { crmProperties } = await import("@shared/schema");
     const { eq } = await import("drizzle-orm");
 
-    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId)).limit(1);
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId as string)).limit(1);
     if (!property) return res.status(404).json({ error: "Property not found" });
 
     const titleNumber = (req.body.title as string || "").trim();
@@ -1527,7 +1527,7 @@ router.post("/api/title-search/auto-fill-from-postcode/:propertyId", requireAuth
     const { crmProperties, crmCompanies } = await import("@shared/schema");
     const { eq, ilike } = await import("drizzle-orm");
 
-    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId)).limit(1);
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId as string)).limit(1);
     if (!property) return res.status(404).json({ success: false, error: "Property not found" });
 
     let postcode = ((req.body?.postcode as string) || "").trim().replace(/\s+/g, "");
@@ -1880,7 +1880,7 @@ router.post("/api/companies-house/discover-parent/:companyId", requireAuth, asyn
     const { crmCompanies } = await import("@shared/schema");
     const { eq, ilike } = await import("drizzle-orm");
 
-    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
+    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId as string)).limit(1);
     if (!company) return res.status(404).json({ success: false, error: "Company not found" });
 
     const chNumber = company.companiesHouseNumber;
@@ -2011,7 +2011,7 @@ router.post("/api/title-search/download-document", requireAuth, async (req, res)
 
 router.get("/api/title-search/leaseholds/:titleNumber", requireAuth, async (req, res) => {
   try {
-    const titleNumber = req.params.titleNumber.trim();
+    const titleNumber = (req.params.titleNumber as string).trim();
     if (!titleNumber) return res.status(400).json({ error: "Title number required" });
 
     const data = await pdFetch("title", { title: titleNumber });
@@ -2921,7 +2921,7 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
     const { db } = await import("./db");
     const { crmCompanies } = await import("../shared/schema");
     const { eq } = await import("drizzle-orm");
-    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
+    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId as string)).limit(1);
     if (!company) return res.status(404).json({ error: "Company not found" });
 
     // Step 1: Scrape the brand's website for UK legal entity name
@@ -3306,7 +3306,7 @@ router.get("/api/companies-house/bulk-fetch-accounts/status", requireAuth, async
 router.post("/api/brand/:companyId/fetch-latest-accounts", requireAuth, async (req, res) => {
   try {
     const { fetchLatestAccountsForCompany } = await import("./ch-accounts");
-    const outcome = await fetchLatestAccountsForCompany(req.params.companyId);
+    const outcome = await fetchLatestAccountsForCompany(req.params.companyId as string);
     res.json(outcome);
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "fetch-latest-accounts failed" });

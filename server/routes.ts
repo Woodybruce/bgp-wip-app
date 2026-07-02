@@ -1081,7 +1081,7 @@ export async function registerRoutes(
 
   app.get("/uploads/profile-pics/:filename", requireAuth, async (req, res) => {
     try {
-      const filename = req.params.filename;
+      const filename = req.params.filename as string;
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
       const file = await getFile(`profile-pics/${filename}`);
       if (!file) {
@@ -1945,7 +1945,7 @@ export async function registerRoutes(
   app.put("/api/chat/threads/:threadId/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const { threadId, messageId } = req.params;
+      const { threadId, messageId } = req.params as { threadId: string; messageId: string };
       const { content } = req.body;
       if (!content?.trim()) return res.status(400).json({ message: "Content required" });
       const msg = await storage.getChatMessage(messageId);
@@ -1964,7 +1964,7 @@ export async function registerRoutes(
   app.delete("/api/chat/threads/:threadId/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const { threadId, messageId } = req.params;
+      const { threadId, messageId } = req.params as { threadId: string; messageId: string };
       const msg = await storage.getChatMessage(messageId);
       if (!msg) return res.status(404).json({ message: "Message not found" });
       if (msg.threadId !== threadId) return res.status(400).json({ message: "Message does not belong to this thread" });
@@ -2208,7 +2208,7 @@ export async function registerRoutes(
   // pages with JS rendering on, extracts structured intel via Haiku.
   // Returns 202 + a job state — poll /status for results.
   app.post("/api/landlord/:companyId/scrape-portfolio", requireAuth, async (req, res) => {
-    const { companyId } = req.params;
+    const { companyId } = req.params as { companyId: string };
     try {
       const { scrapeLandlordWebsite, getLandlordScrapeProgress } = await import("./landlord-scraper");
       const current = getLandlordScrapeProgress(companyId);
@@ -2229,8 +2229,8 @@ export async function registerRoutes(
   app.get("/api/landlord/:companyId/scrape-portfolio/status", requireAuth, async (req, res) => {
     try {
       const { getLandlordScrapeProgress, getLandlordFindings } = await import("./landlord-scraper");
-      const progress = getLandlordScrapeProgress(req.params.companyId);
-      const findings = await getLandlordFindings(req.params.companyId);
+      const progress = getLandlordScrapeProgress(req.params.companyId as string);
+      const findings = await getLandlordFindings(req.params.companyId as string);
       res.json({ progress, findings });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "status failed" });
@@ -2269,7 +2269,7 @@ export async function registerRoutes(
   app.get("/api/landlord/:companyId/link-diagnostic", requireAuth, async (req, res) => {
     try {
       const { getLandlordScrapeProgress } = await import("./landlord-scraper");
-      const progress = getLandlordScrapeProgress(req.params.companyId);
+      const progress = getLandlordScrapeProgress(req.params.companyId as string);
       const linkReport = (progress as any)?.result?.link_report || null;
       res.json({ progress: progress.state, linkReport });
     } catch (err: any) {
@@ -2339,7 +2339,7 @@ export async function registerRoutes(
   // jump to it.
   app.post("/api/landlord/:companyId/create-property", requireAuth, async (req, res) => {
     try {
-      const { companyId } = req.params;
+      const { companyId } = req.params as { companyId: string };
       const { name, address, postcode, sector } = req.body || {};
       if (!name || !String(name).trim()) return res.status(400).json({ error: "name is required" });
       const { createPropertyFromScraped } = await import("./landlord-scraper");
@@ -2656,7 +2656,7 @@ export async function registerRoutes(
   // POST /api/external-requirements/:id/reparse-vision
   app.post("/api/external-requirements/:id/reparse-vision", requireAuth, async (req, res) => {
     try {
-      const id = req.params.id;
+      const id = req.params.id as string;
       const { externalRequirements: extReq } = await import("@shared/schema");
       const { getFile } = await import("./file-storage");
       const { parseRequirementBrochure, mergeVisionIntoRecord } = await import("./requirement-vision-parser");
@@ -2741,7 +2741,7 @@ export async function registerRoutes(
     try {
       await db
         .delete(externalRequirements)
-        .where(eq(externalRequirements.id, req.params.id));
+        .where(eq(externalRequirements.id, req.params.id as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete requirement" });
@@ -2753,7 +2753,7 @@ export async function registerRoutes(
       const ext = await db
         .select()
         .from(externalRequirements)
-        .where(eq(externalRequirements.id, req.params.id))
+        .where(eq(externalRequirements.id, req.params.id as string))
         .limit(1);
       if (ext.length === 0) return res.status(404).json({ message: "Not found" });
       const item = ext[0];
@@ -2846,7 +2846,7 @@ export async function registerRoutes(
 
   app.patch("/api/change-requests/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const { id } = req.params as { id: string };
       const body = req.body;
       const allowedStatuses = ["pending", "reviewed", "approved", "rejected", "implemented"];
       const cleanUpdates: any = {};
@@ -2880,7 +2880,7 @@ export async function registerRoutes(
   app.patch("/api/app-feedback/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { appFeedbackLog } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       const { status, adminNotes } = req.body;
       const updates: any = {};
@@ -3076,7 +3076,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/chatbgp-learnings/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { chatbgpLearnings } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       const { active } = req.body;
       if (typeof active !== "boolean") {
@@ -3093,7 +3093,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/chatbgp-learnings/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { chatbgpLearnings } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       await db.delete(chatbgpLearnings).where(eq(chatbgpLearnings.id, id));
       invalidateContextCache("businessLearnings");
@@ -3538,7 +3538,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      const existing = await storage.getAvailableUnit(req.params.id);
+      const existing = await storage.getAvailableUnit(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
@@ -3575,7 +3575,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
-      const unit = await storage.updateAvailableUnit(req.params.id, partial);
+      const unit = await storage.updateAvailableUnit(req.params.id as string, partial);
 
       // Mirror deal-bearing fields onto the backing crm_deal so the Deals
       // board + WIP report don't drift from inline tracker edits. Without
@@ -3604,7 +3604,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if ("marketingStatus" in partial) {
         try {
           const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
-          await mirrorFromAvailableUnit(req.params.id, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
+          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
         } catch (e: any) {
           console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
           mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
@@ -4572,11 +4572,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { dealId } = req.body;
       if (!dealId) return res.status(400).json({ message: "dealId is required" });
-      const existing = await storage.getAvailableUnit(req.params.id);
+      const existing = await storage.getAvailableUnit(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const deal = await storage.getCrmDeal(dealId);
       if (!deal) return res.status(404).json({ message: "Deal not found" });
-      const unit = await storage.updateAvailableUnit(req.params.id, { dealId });
+      const unit = await storage.updateAvailableUnit(req.params.id as string, { dealId });
       res.json(unit);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to link deal" });
@@ -4585,7 +4585,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units/:id/create-deal", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
+      const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const property = await storage.getCrmProperty(unit.propertyId);
       const body = req.body || {};
@@ -4676,7 +4676,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         } as any);
       }
 
-      await storage.updateAvailableUnit(req.params.id, {
+      await storage.updateAvailableUnit(req.params.id as string, {
         dealId: deal?.id ?? unit.dealId,
         marketingStatus: "SOL",
       });
@@ -4734,10 +4734,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             tenantId: (deal as any).tenantId,
             vendorId: (deal as any).vendorId,
             purchaserId: (deal as any).purchaserId,
-            landlordEntityId: (deal as any).landlordEntityId,
-            tenantEntityId: (deal as any).tenantEntityId,
-            vendorEntityId: (deal as any).vendorEntityId,
-            purchaserEntityId: (deal as any).purchaserEntityId,
           });
           const msg = formatAmlWarning(result);
           if (msg) {
@@ -4757,10 +4753,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id/files", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
+      const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const { unitMarketingFiles } = await import("@shared/schema");
-      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id)).orderBy(unitMarketingFiles.createdAt);
+      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string)).orderBy(unitMarketingFiles.createdAt);
       res.json(files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
@@ -4793,7 +4789,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/files/:fileId", requireAuth, async (req, res) => {
     try {
       const { unitMarketingFiles } = await import("@shared/schema");
-      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       if (!file) return res.status(404).json({ message: "File not found" });
       const fileName = file.filePath.split("/").pop();
       if (fileName) {
@@ -4802,7 +4798,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const fullPath = path.join(process.cwd(), file.filePath);
       if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-      await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete file" });
@@ -4813,7 +4809,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
-      const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id)).orderBy(unitViewings.viewingDate);
+      const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id as string)).orderBy(unitViewings.viewingDate);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch viewings" });
@@ -4835,7 +4831,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
-      await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId));
+      await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete viewing" });
@@ -4846,7 +4842,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/offers", requireAuth, async (req, res) => {
     try {
       const { unitOffers } = await import("@shared/schema");
-      const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id)).orderBy(unitOffers.offerDate);
+      const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id as string)).orderBy(unitOffers.offerDate);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch offers" });
@@ -4868,7 +4864,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
       const { unitOffers } = await import("@shared/schema");
-      await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId));
+      await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete offer" });
@@ -4877,7 +4873,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/uploads/marketing-files/:filename", requireAuth, async (req, res) => {
     try {
-      const sanitized = path.basename(req.params.filename);
+      const sanitized = path.basename(req.params.filename as string);
       const file = await getFile(`marketing-files/${sanitized}`);
       if (!file) {
         const diskPath = path.join(MARKETING_FILES_DIR, sanitized);
@@ -5014,7 +5010,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/investment-tracker/:trackerId/marketing-files", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.trackerId, req.params.trackerId)).orderBy(desc(investmentMarketingFiles.createdAt));
+      const rows = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.trackerId, req.params.trackerId as string)).orderBy(desc(investmentMarketingFiles.createdAt));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5043,19 +5039,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/investment-marketing-files/:id", requireAuth, async (req, res) => {
     try {
-      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       if (file?.filePath) {
         const { deleteFile } = await import("./file-storage");
         await deleteFile(file.filePath);
       }
-      await db.delete(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      await db.delete(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   app.get("/api/investment-marketing-files/:id/download", requireAuth, async (req, res) => {
     try {
-      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       if (!file) return res.status(404).json({ message: "Not found" });
       const stored = await getFile(file.filePath);
       if (!stored) {
@@ -5070,7 +5066,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/investment-tracker/:id", requireAuth, async (req, res) => {
     try {
-      const [row] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      const [row] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -5141,7 +5137,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
 
       const row = await db.transaction(async (tx) => {
-        const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id)).returning();
+        const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id as string)).returning();
         if (!updated) return null;
 
         if (updated.propertyId) {
@@ -5198,7 +5194,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/investment-tracker/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      await db.delete(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -5208,7 +5204,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/investment-tracker/:id/link-deal", requireAuth, async (req, res) => {
     try {
       const { dealId } = req.body;
-      const [row] = await db.update(investmentTracker).set({ dealId, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id)).returning();
+      const [row] = await db.update(investmentTracker).set({ dealId, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -5218,7 +5214,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/investment-tracker/:id/unlink-deal", requireAuth, async (req, res) => {
     try {
-      const [row] = await db.update(investmentTracker).set({ dealId: null, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id)).returning();
+      const [row] = await db.update(investmentTracker).set({ dealId: null, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -5228,7 +5224,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/investment-tracker/:id/create-deal", requireAuth, async (req, res) => {
     try {
-      const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       if (!item) return res.status(404).json({ message: "Not found" });
       // Idempotent — if already linked, return the existing deal
       if (item.dealId) {
@@ -5252,7 +5248,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         fee: item.fee || undefined,
         comments: `Converted from investment tracker on ${new Date().toISOString().slice(0,10)}.`,
       } as any);
-      await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id));
+      await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string));
       res.json(deal);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -5262,7 +5258,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Viewings ---
   app.get("/api/investment-tracker/:trackerId/viewings", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentViewings).where(eq(investmentViewings.trackerId, req.params.trackerId)).orderBy(desc(investmentViewings.viewingDate));
+      const rows = await db.select().from(investmentViewings).where(eq(investmentViewings.trackerId, req.params.trackerId as string)).orderBy(desc(investmentViewings.viewingDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5276,14 +5272,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-viewings/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentViewingSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentViewings).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentViewings.id, req.params.id)).returning();
+      const [row] = await db.update(investmentViewings).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentViewings.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-viewings/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentViewings).where(eq(investmentViewings.id, req.params.id));
+      await db.delete(investmentViewings).where(eq(investmentViewings.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5291,7 +5287,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Offers ---
   app.get("/api/investment-tracker/:trackerId/offers", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentOffers).where(eq(investmentOffers.trackerId, req.params.trackerId)).orderBy(desc(investmentOffers.offerDate));
+      const rows = await db.select().from(investmentOffers).where(eq(investmentOffers.trackerId, req.params.trackerId as string)).orderBy(desc(investmentOffers.offerDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5305,14 +5301,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-offers/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentOfferSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentOffers).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentOffers.id, req.params.id)).returning();
+      const [row] = await db.update(investmentOffers).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentOffers.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-offers/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentOffers).where(eq(investmentOffers.id, req.params.id));
+      await db.delete(investmentOffers).where(eq(investmentOffers.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5320,7 +5316,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Distributions (Sent To tracking) ---
   app.get("/api/investment-tracker/:trackerId/distributions", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentDistributions).where(eq(investmentDistributions.trackerId, req.params.trackerId)).orderBy(desc(investmentDistributions.sentDate));
+      const rows = await db.select().from(investmentDistributions).where(eq(investmentDistributions.trackerId, req.params.trackerId as string)).orderBy(desc(investmentDistributions.sentDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5334,14 +5330,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-distributions/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentDistributionSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentDistributions).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentDistributions.id, req.params.id)).returning();
+      const [row] = await db.update(investmentDistributions).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentDistributions.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-distributions/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentDistributions).where(eq(investmentDistributions.id, req.params.id));
+      await db.delete(investmentDistributions).where(eq(investmentDistributions.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5792,7 +5788,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/team-folders/:folder/files", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
+      const folderName = decodeURIComponent(req.params.folder as string);
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
 
       const dir = path.join(CHATBGP_BASE, folderName);
@@ -5813,7 +5809,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/team-folders/:folder/upload", requireAuth, teamFileUpload.single("file"), async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
+      const folderName = decodeURIComponent(req.params.folder as string);
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
 
       const userId = req.session?.userId || (req as any).tokenUserId;
@@ -5842,8 +5838,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/team-folders/:folder/download/:filename", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
-      const filename = req.params.filename;
+      const folderName = decodeURIComponent(req.params.folder as string);
+      const filename = req.params.filename as string;
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
       if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) return res.status(400).json({ error: "Invalid filename" });
 
@@ -5856,8 +5852,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/team-folders/:folder/:filename", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
-      const filename = req.params.filename;
+      const folderName = decodeURIComponent(req.params.folder as string);
+      const filename = req.params.filename as string;
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
       if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) return res.status(400).json({ error: "Invalid filename" });
 

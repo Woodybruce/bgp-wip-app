@@ -3141,6 +3141,7 @@ function ImageListRow({
   selected = false,
   onToggleSelect,
   crmLinks = [],
+  version,
 }: {
   image: ImageStudioImage;
   onView: () => void;
@@ -3152,7 +3153,9 @@ function ImageListRow({
   selected?: boolean;
   onToggleSelect?: () => void;
   crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
+  version?: number;
 }) {
+  const cacheBust = version ? `?v=${version}` : "";
   return (
     <div
       className={`flex items-center gap-3 p-2 rounded-lg border cursor-pointer transition-colors ${selected ? "bg-primary/10 border-primary" : "hover:bg-muted/50"}`}
@@ -3167,7 +3170,7 @@ function ImageListRow({
       <div className="h-12 w-12 rounded overflow-hidden flex-shrink-0">
         {image.thumbnailData || (image as any).hasThumbnail ? (
           <img
-            src={image.thumbnailData || `/api/image-studio/${image.id}/thumb`}
+            src={image.thumbnailData || `/api/image-studio/${image.id}/thumb${cacheBust}`}
             alt={image.fileName}
             loading="lazy"
             className="h-full w-full object-cover"

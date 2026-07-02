@@ -244,7 +244,7 @@ export const TENURE_COLORS: Record<string, string> = {
   "Leasehold": "bg-orange-500",
   "Virtual Freehold": "bg-cyan-500",
 };
-export const TEAM_OPTIONS = CRM_OPTIONS.dealTeam;
+export const TEAM_OPTIONS: string[] = [...CRM_OPTIONS.dealTeam];
 
 export const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
@@ -3991,7 +3991,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                       return sorted.map((fh: any, i: number) => {
                         const tn = fh.title_number || fh.title;
                         const isSelected = property.titleNumber === tn;
-                        const isAiRecommended = aiMatch?.titleNumber === tn && aiMatch.confidence !== "none" && !property.titleNumber;
+                        const isAiRecommended = !!aiMatch && aiMatch.titleNumber === tn && aiMatch.confidence !== "none" && !property.titleNumber;
                         const lhCount = fh.polygons?.[0]?.leaseholds || 0;
                         const lhData = leaseholdsData[tn];
                         const isExpanded = expandedLeaseholds[tn];
@@ -5010,7 +5010,7 @@ function PropertiesList({
     // Canonical team list first, then any stray values from the data so the
     // user can still filter on legacy entries (e.g. "Hospitality", "USA").
     const canonical = [...CRM_OPTIONS.dealTeam];
-    const canonicalSet = new Set(canonical);
+    const canonicalSet = new Set<string>(canonical);
     const stray = new Set<string>();
     items.forEach((i) => {
       const vals = Array.isArray(i.bgpEngagement) ? i.bgpEngagement : i.bgpEngagement ? [i.bgpEngagement] : [];

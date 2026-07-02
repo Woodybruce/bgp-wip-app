@@ -104,6 +104,8 @@ function buildInitialLayouts(
           h: m.defaultH || 4,
           minW: m.minW || 1,
           minH: m.minH || 2,
+          maxW: m.maxW,
+          maxH: m.maxH,
         });
         addY += m.defaultH || 4;
       }
@@ -147,7 +149,7 @@ export function DraggableGrid({
   const pendingLayoutRef = useRef<ResponsiveLayouts | null>(null);
   const onLayoutSaveRef = useRef(onLayoutSave);
   onLayoutSaveRef.current = onLayoutSave;
-  const computeSignature = (lg: LayoutItem[] | undefined) =>
+  const computeSignature = (lg: Layout | undefined) =>
     lg ? JSON.stringify(lg.map(l => `${l.i}:${l.x},${l.y},${l.w},${l.h}`).sort()) : "";
   const lastSavedLayoutRef = useRef<string>(computeSignature(initialLayoutsRef.current?.lg));
 
@@ -189,7 +191,7 @@ export function DraggableGrid({
   if (items.length === 0) return null;
 
   return (
-    <div className={`relative ${className}`} ref={containerRef}>
+    <div className={`relative ${className}`} ref={containerRef as React.RefObject<HTMLDivElement>}>
       {width > 0 && (
         <ResponsiveGridLayout
           className="dashboard-grid"

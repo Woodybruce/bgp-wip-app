@@ -142,7 +142,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
   // ─── 2. CONTACT INTELLIGENCE ─────────────────────────────────────────
   app.get("/api/ai/contact-intelligence/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const contactId = req.params.id;
+      const contactId = req.params.id as string;
       const [contact] = await db.select().from(crmContacts).where(eq(crmContacts.id, contactId));
       if (!contact) return res.status(404).json({ message: "Contact not found" });
 
@@ -221,7 +221,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
   // ─── 3. REQUIREMENT MATCHING ─────────────────────────────────────────
   app.get("/api/ai/requirement-matching/:propertyId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const propertyId = req.params.id || req.params.propertyId;
+      const propertyId = (req.params.id || req.params.propertyId) as string;
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
       if (!property) return res.status(404).json({ message: "Property not found" });
 
@@ -367,7 +367,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
   // ─── 5. COMP ANALYSIS ────────────────────────────────────────────────
   app.get("/api/ai/comp-analysis/:propertyId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const propertyId = req.params.propertyId;
+      const propertyId = req.params.propertyId as string;
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
       if (!property) return res.status(404).json({ message: "Property not found" });
 
@@ -404,8 +404,8 @@ export function registerAIIntelligenceRoutes(app: Express) {
         investmentComps: relevantInvComps.map(c => ({
           address: c.address,
           price: c.price,
-          yield: c.netInitialYield,
-          sqft: c.totalSqft,
+          yield: c.capRate,
+          sqft: c.areaSqft,
           date: c.transactionDate,
         })),
       };

@@ -17,6 +17,7 @@ import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRec
 import { rectifyRows } from "./pptx-rectify";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
+import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Fable 5 via chatbgp-model-router.
 const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
@@ -1638,10 +1639,10 @@ export async function getCrmContext(): Promise<string> {
   if (cached) return cached;
   try {
     const [properties, deals, companies, contacts] = await Promise.all([
-      withTimeout(storage.getCrmProperties(), 5000, []),
-      withTimeout(storage.getCrmDeals(), 5000, []),
-      withTimeout(storage.getCrmCompanies(), 5000, []),
-      withTimeout(storage.getCrmContacts(), 5000, []),
+      withTimeout(storage.getCrmProperties() as Promise<CrmProperty[]>, 5000, []),
+      withTimeout(storage.getCrmDeals() as Promise<CrmDeal[]>, 5000, []),
+      withTimeout(storage.getCrmCompanies() as Promise<CrmCompany[]>, 5000, []),
+      withTimeout(storage.getCrmContacts() as Promise<CrmContact[]>, 5000, []),
     ]);
 
     let requirementsCtx = "";
@@ -1649,18 +1650,18 @@ export async function getCrmContext(): Promise<string> {
     let investmentCtx = "";
     try {
       const [reqRows, invReqRows, unitRows, invRows, compRows] = await Promise.all([
-        withTimeout(pool.query(`SELECT r.name, r.use, r.size, r.requirement_locations, r.under_offer, c.name as company_name 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT r.name, r.use, r.size, r.requirement_locations, r.under_offer, c.name as company_name 
           FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id 
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 25`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT r.name, r.use_types as use, r.size_range as size, r.requirement_locations, r.requirement_types, c.name as company_name, r.status 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT r.name, r.use_types as use, r.size_range as size, r.requirement_locations, r.requirement_types, c.name as company_name, r.status 
           FROM crm_requirements_investment r LEFT JOIN crm_companies c ON r.company_id = c.id 
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id 
           WHERE au.marketing_status IN ('Available', 'Under Offer') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
           WHERE status NOT IN ('Dead', 'Withdrawn') ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
           FROM crm_comps WHERE verified = true ORDER BY created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
       ]);
       if (reqRows.rows.length > 0) {
@@ -1741,14 +1742,14 @@ export async function getCrmContext(): Promise<string> {
     if (contacts.length > 0) {
       ctx += "\n### Key Contacts (latest 30)\n";
       for (const c of contacts.slice(0, 30)) {
-        ctx += `- ${c.name}${c.company ? " @ " + c.company : ""}${c.email ? " (" + c.email + ")" : ""}${(c as any).title ? " — " + (c as any).title : ""}\n`;
+        ctx += `- ${c.name}${c.companyName ? " @ " + c.companyName : ""}${c.email ? " (" + c.email + ")" : ""}${(c as any).title ? " — " + (c as any).title : ""}\n`;
       }
     }
 
     if (companies.length > 0) {
       ctx += "\n### Companies (latest 30)\n";
       for (const co of companies.slice(0, 30)) {
-        ctx += `- ${co.name}${co.sector ? " [" + co.sector + "]" : ""}${(co as any).isClient ? " ★ Client" : ""}\n`;
+        ctx += `- ${co.name}${co.companyType ? " [" + co.companyType + "]" : ""}${(co as any).isClient ? " ★ Client" : ""}\n`;
       }
     }
 
@@ -4446,8 +4447,8 @@ async function executeModelRun(args: { templateId: string; name: string; inputVa
   });
 
   try {
-    const { getMicrosoftToken } = await import("./microsoft");
-    const msToken = await getMicrosoftToken();
+    const { getAppGraphToken } = await import("./microsoft");
+    const msToken = await getAppGraphToken();
     if (msToken) {
       const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (siteRes.ok) {
@@ -4534,9 +4535,6 @@ async function getTeamMemberMapping(): Promise<Record<string, { name: string; em
   return mapping;
 }
 
-
-const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
-const SHAREPOINT_SITE_PATH = "/sites/BGP";
 
 async function resolveOneDriveShortLink(url: string): Promise<string> {
   if (url.includes("1drv.ms") || url.includes("onedrive.live.com")) {
@@ -5720,8 +5718,21 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
+    const { investmentTracker, crmProperties } = await import("@shared/schema");
+    let propertyId: string;
+    const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
+    if (existingProp) {
+      propertyId = existingProp.id;
+    } else {
+      const [newProp] = await db.insert(crmProperties).values({
+        name: fnArgs.assetName,
+        address: fnArgs.address ? { street: fnArgs.address } : null,
+        tenure: fnArgs.tenure || null,
+      }).returning();
+      propertyId = newProp.id;
+    }
     const [created] = await db.insert(investmentTracker).values({
+      propertyId,
       assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
       boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
       vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
@@ -7235,7 +7246,6 @@ export async function executeCrmToolRaw(
         const buffer = await response.arrayBuffer();
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
-        await parser.load();
         const textResult = await parser.getText();
         extractedText = textResult.pages.map((p: any) => p.text || "").join("\n\n");
         const info = await parser.getInfo();
@@ -7889,7 +7899,7 @@ export async function executeCrmToolRaw(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
+        const uploadResult = await uploadFileToSharePoint(buffer, name, attachment.contentType || "application/octet-stream", fnArgs.folderPath);
         return { data: { success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath, uploadResult } };
       }
 
@@ -9411,7 +9421,7 @@ Be thorough — include every unit row you can classify, across all properties i
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);
-        let downloadRes: Response;
+        let downloadRes: globalThis.Response;
         try {
           downloadRes = await fetch("https://content.dropboxapi.com/2/files/download", {
             method: "POST",
@@ -10889,8 +10899,21 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
+    const { investmentTracker, crmProperties } = await import("@shared/schema");
+    let propertyId: string;
+    const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
+    if (existingProp) {
+      propertyId = existingProp.id;
+    } else {
+      const [newProp] = await db.insert(crmProperties).values({
+        name: fnArgs.assetName,
+        address: fnArgs.address ? { street: fnArgs.address } : null,
+        tenure: fnArgs.tenure || null,
+      }).returning();
+      propertyId = newProp.id;
+    }
     const [created] = await db.insert(investmentTracker).values({
+      propertyId,
       assetName: fnArgs.assetName,
       address: fnArgs.address,
       status: fnArgs.status || "Reporting",
@@ -11289,7 +11312,6 @@ export async function handleCrmToolCall(
         const buffer = await response.arrayBuffer();
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
-        await parser.load();
         const textResult = await parser.getText();
         extractedText = textResult.pages.map((p: any) => p.text || "").join("\n\n");
         const info = await parser.getInfo();
@@ -11918,7 +11940,7 @@ export async function handleCrmToolCall(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
+        const uploadResult = await uploadFileToSharePoint(buffer, name, attachment.contentType || "application/octet-stream", fnArgs.folderPath);
         const reply = await summaryHelper({ success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath });
         return { handled: true, response: { reply: reply || `Saved ${name} to SharePoint at ${fnArgs.folderPath}.` } };
       }

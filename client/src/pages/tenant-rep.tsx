@@ -77,7 +77,7 @@ const COLUMNS = [
   { key: "Complete",        label: "Complete",        color: "bg-emerald-500",light: "bg-emerald-50 dark:bg-emerald-950/30", border: "border-emerald-200 dark:border-emerald-800" },
 ] as const;
 
-const STATUS_KEYS = COLUMNS.map(c => c.key);
+const STATUS_KEYS: string[] = COLUMNS.map(c => c.key);
 
 const ROLLOUT_LABELS: Record<string, string> = {
   entering_uk: "Entering UK",
@@ -461,7 +461,7 @@ export default function TenantRep() {
   const contacts: CrmContact[] = Array.isArray(contactsRes) ? contactsRes : (contactsRes as any)?.data ?? [];
 
   const createMutation = useMutation({
-    mutationFn: (data: Partial<FormState>) => apiRequest("POST", "/api/tenant-rep/searches", data),
+    mutationFn: (data: any) => apiRequest("POST", "/api/tenant-rep/searches", data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/tenant-rep/searches"] }); setDialogOpen(false); toast({ title: "Search added" }); },
     onError: () => toast({ title: "Failed to save", variant: "destructive" }),
   });

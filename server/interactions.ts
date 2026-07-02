@@ -936,7 +936,7 @@ export function registerInteractionRoutes(app: Express) {
 
   app.get("/api/interactions/contact/:contactId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { contactId } = req.params;
+      const { contactId } = req.params as { contactId: string };
       const limit = Number(req.query.limit) || 50;
       const type = req.query.type as string | undefined;
 
@@ -1002,7 +1002,7 @@ export function registerInteractionRoutes(app: Express) {
 
   app.get("/api/interactions/company/:companyId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { companyId } = req.params;
+      const { companyId } = req.params as { companyId: string };
       const limit = Number(req.query.limit) || 50;
 
       const interactions = await db

@@ -1231,7 +1231,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.delete("/api/news-feed/auth-cookies/:envVar", requireAuth, async (req: Request, res: Response) => {
     try {
-      await clearPaywallCookie(req.params.envVar);
+      await clearPaywallCookie(req.params.envVar as string);
       res.json({ status: authCookieStatus() });
     } catch (err: any) {
       res.status(400).json({ message: err?.message || "failed" });
@@ -1278,7 +1278,7 @@ export function setupNewsFeedRoutes(app: Express) {
       if (req.body?.active !== undefined) patch.active = !!req.body.active;
       if (req.body?.sortOrder !== undefined) patch.sortOrder = Number(req.body.sortOrder);
       if (Object.keys(patch).length === 0) return res.json({ ok: true });
-      const [updated] = await db.update(newsTags).set(patch).where(eq(newsTags.id, req.params.id)).returning();
+      const [updated] = await db.update(newsTags).set(patch).where(eq(newsTags.id, req.params.id as string)).returning();
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "failed" });
@@ -1287,7 +1287,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.delete("/api/news-feed/tags/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await db.delete(newsTags).where(eq(newsTags.id, req.params.id));
+      await db.delete(newsTags).where(eq(newsTags.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "failed" });
@@ -1361,7 +1361,7 @@ export function setupNewsFeedRoutes(app: Express) {
   // Toggle active flag on a source
   app.patch("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const { active, name, category } = req.body || {};
       const updates: any = {};
       if (typeof active === "boolean") updates.active = active;
@@ -1378,7 +1378,7 @@ export function setupNewsFeedRoutes(app: Express) {
   // Delete source — if it's an RSS.app-generated feed, also delete on RSS.app side.
   app.delete("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const [existing] = await db.select().from(newsSources).where(eq(newsSources.id, id)).limit(1);
       if (!existing) return res.status(404).json({ message: "Not found" });
       if (existing.type === "rssapp" && existing.feedUrl) {
@@ -1748,7 +1748,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.get("/api/properties/:id/news", requireAuth, async (req: Request, res: Response) => {
     try {
-      const propertyId = req.params.id;
+      const propertyId = req.params.id as string;
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
       if (!property) return res.status(404).json({ message: "Property not found" });
 

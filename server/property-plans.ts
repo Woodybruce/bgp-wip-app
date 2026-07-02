@@ -493,7 +493,7 @@ router.get("/api/properties/:propertyId/plan-pickable-units", requireAuth, async
     // before listing. Bluewater + most other shopping centres have
     // their schedule loaded but property_units empty/sparse — without
     // this the polygon picker would return nothing useful.
-    await ensurePropertyUnitsFromSchedule(req.params.propertyId);
+    await ensurePropertyUnitsFromSchedule(req.params.propertyId as string);
 
     const { rows } = await pool.query(
       `SELECT pu.id, pu.unit_name, pu.floor, pu.sqft, lsu.tenant_name, lsu.status AS lease_status

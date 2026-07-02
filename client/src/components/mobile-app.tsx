@@ -664,7 +664,7 @@ function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promise<void>
 }
 
 function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThread, currentUserId, onDelete, userPics }: {
-  project: { type: string; id: string; name: string; threads: any[]; dealChildren: any[] };
+  project: { type: string; id: string; name: string; threads: any[]; dealChildren?: any[] };
   isExpanded: boolean;
   singleThread: any | null;
   onToggle: () => void;

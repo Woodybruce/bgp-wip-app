@@ -2053,7 +2053,7 @@ function CompanyProgressTickCell({
   onToggle,
   testIdPrefix,
 }: {
-  company: { contacted: boolean; detailsSent: boolean; viewing: boolean; shortlisted: boolean; underOffer: boolean };
+  company: { contacted: boolean | null; detailsSent: boolean | null; viewing: boolean | null; shortlisted: boolean | null; underOffer: boolean | null };
   onToggle: (field: string, value: boolean) => void;
   testIdPrefix: string;
 }) {
@@ -2660,7 +2660,7 @@ function CompanyList() {
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
                           <InlineAddress
                             value={company.headOfficeAddress as any}
-                            onSave={(addr) => inlineUpdateMutation.mutate({ id: company.id, field: "headOfficeAddress", value: addr })}
+                            onSave={(addr) => inlineUpdateMutation.mutate({ id: company.id, field: "headOfficeAddress", value: addr as any })}
                             placeholder="Set address"
                           />
                         </TableCell>

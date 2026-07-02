@@ -114,7 +114,7 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
     setSplitMode(true);
     if (lines.length === 0) {
       setLines([{
-        amountPounds: (expense.amountPence / 100).toFixed(2),
+        amountPounds: (expense!.amountPence / 100).toFixed(2),
         category: category || "",
         vatReclaimable: null,
         allocatedToUserId: allocatedToUserId,
@@ -130,7 +130,7 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
     mutationFn: async () => {
       if (splitMode) {
         if (lines.length === 0) throw new Error("Add at least one split line, or turn splitting off.");
-        if (!splitBalanced) throw new Error(`Splits add to ${fmt(splitSum)} but the receipt total is ${fmt(expense.amountPence)}.`);
+        if (!splitBalanced) throw new Error(`Splits add to ${fmt(splitSum)} but the receipt total is ${fmt(expense!.amountPence)}.`);
         const splits = lines.map((l) => ({
           amountPence: toPence(l.amountPounds),
           category: l.category || null,
@@ -138,12 +138,12 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
           allocatedToUserId: l.allocatedToUserId,
           businessPurpose: l.businessPurpose || null,
         }));
-        await apiRequest("PUT", `/api/expenses/${expense.id}/splits`, { splits });
+        await apiRequest("PUT", `/api/expenses/${expense!.id}/splits`, { splits });
       } else {
         // Clear any existing splits so the expense posts as a single line.
-        await apiRequest("PUT", `/api/expenses/${expense.id}/splits`, { splits: [] });
+        await apiRequest("PUT", `/api/expenses/${expense!.id}/splits`, { splits: [] });
       }
-      await apiRequest("PATCH", `/api/expenses/${expense.id}`, {
+      await apiRequest("PATCH", `/api/expenses/${expense!.id}`, {
         category: category || null,
         vatReclaimable,
         allocatedToUserId,
@@ -152,7 +152,7 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses", expense.id, "splits"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses", expense!.id, "splits"] });
       toast({ title: "Saved" });
       onSaved?.();
       onClose();

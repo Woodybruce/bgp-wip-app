@@ -3863,7 +3863,7 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
     } finally { setBusy(false); }
   };
 
-  const toggleSelect = (imageStudioId?: string) => {
+  const toggleSelect = (imageStudioId?: string | null) => {
     if (!imageStudioId) return;
     setSelected((prev) => {
       const n = new Set(prev);

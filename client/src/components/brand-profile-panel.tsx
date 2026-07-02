@@ -4332,7 +4332,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           status, accounts) and the Covenant card was showing placeholder
           state. Kept the JSX in place so we can flip it back on by
           changing the false below to true once the data sources land. */}
-      {false && (
+      {(false as boolean) && (
       <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">

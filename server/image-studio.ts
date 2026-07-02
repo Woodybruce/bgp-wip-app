@@ -58,9 +58,10 @@ async function generateWithDallE3(prompt: string, size: string): Promise<Buffer 
       quality: "hd",
       response_format: "b64_json",
     });
-    if (!response.data[0]?.b64_json) return null;
+    const b64 = response.data?.[0]?.b64_json;
+    if (!b64) return null;
     logAiUsage({ provider: "openai", model: "dall-e-3", feature: "image-studio-generate", images: 1 });
-    return Buffer.from(response.data[0].b64_json, "base64");
+    return Buffer.from(b64, "base64");
   } catch (e: any) {
     console.warn("[image-studio] DALL-E 3 failed:", e.message);
     return null;
@@ -1428,7 +1429,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.get("/api/image-studio/:id/full", requireAuth, async (req: Request, res: Response) => {
     try {
-      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
 
       const imgBuffer = await readPersistedImage(image.localPath);
@@ -1480,7 +1481,7 @@ export function registerImageStudioRoutes(app: Express) {
 
       const [updated] = await db.update(imageStudioImages)
         .set(updates)
-        .where(eq(imageStudioImages.id, req.params.id))
+        .where(eq(imageStudioImages.id, req.params.id as string))
         .returning();
 
       if (!updated) return res.status(404).json({ error: "Not found" });
@@ -1739,7 +1740,7 @@ export function registerImageStudioRoutes(app: Express) {
       if (row.local_path) {
         try {
           const f = await getFile(storageKeyForImage(row.local_path));
-          inFileStorage = f ? { size: f.data.length, mimeType: f.mimeType } : null;
+          inFileStorage = f ? { size: f.data.length, mimeType: f.contentType } : null;
         } catch (e: any) {
           inFileStorage = { error: e?.message };
         }
@@ -1841,10 +1842,10 @@ export function registerImageStudioRoutes(app: Express) {
   app.post("/api/image-studio/:id/trash", requireAuth, async (req: Request, res: Response) => {
     try {
       const [image] = await db.select({ tags: imageStudioImages.tags })
-        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
       const tags = [...new Set([...(image.tags || []), "trashed"])];
-      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id));
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1853,10 +1854,10 @@ export function registerImageStudioRoutes(app: Express) {
   app.post("/api/image-studio/:id/restore", requireAuth, async (req: Request, res: Response) => {
     try {
       const [image] = await db.select({ tags: imageStudioImages.tags })
-        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
       const tags = (image.tags || []).filter((t) => t !== "trashed");
-      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id));
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1865,7 +1866,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.delete("/api/image-studio/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
 
       if (image.localPath && fs.existsSync(image.localPath)) {
@@ -1884,7 +1885,7 @@ export function registerImageStudioRoutes(app: Express) {
         "DELETE FROM image_studio_collection_images WHERE image_id = $1",
         [req.params.id]
       );
-      await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2125,7 +2126,7 @@ export function registerImageStudioRoutes(app: Express) {
   // was written so the client can show the right toast.
   app.post("/api/image-studio/:id/attach", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const targetType = String(req.body?.targetType || "").toLowerCase();
       const targetId = String(req.body?.targetId || "").trim();
       const caption = req.body?.caption ? String(req.body.caption).slice(0, 500) : null;
@@ -2181,7 +2182,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.post("/api/image-studio/:id/revert", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       // Pop the most-recent snapshot off the stack (newest is last). Fall back
       // to the legacy single-snapshot file for images edited before this change.
       const stack = undoStackPaths(id);

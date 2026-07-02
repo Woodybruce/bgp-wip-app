@@ -305,7 +305,7 @@ export async function summarizeAndIndex(
 async function crawlSharePoint(): Promise<{ indexed: number; skipped: number; errors: number; errorSamples: string[]; folderResults: Record<string, { files: number; indexed: number; skipped: number; errors: number }> }> {
   archivistFoldersChecked = 0;
   throttleBackoffMs = 0;
-  let token = await getMsTokenForBackground();
+  let token = (await getMsTokenForBackground())!;
   if (!token) {
     console.log("[archivist] No MS token available for background crawl");
     return { indexed: 0, skipped: 0, errors: 0, errorSamples: [], folderResults: {} };

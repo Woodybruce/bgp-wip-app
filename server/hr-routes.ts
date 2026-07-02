@@ -435,7 +435,7 @@ export function setupHrRoutes(app: Express) {
         if (cursor === userId) {
           return res.status(400).json({ error: "That would create a reporting cycle." });
         }
-        const { rows } = await pool.query<{ manager_id: string | null }>(
+        const { rows }: { rows: Array<{ manager_id: string | null }> } = await pool.query(
           "SELECT manager_id FROM staff_profiles WHERE user_id = $1",
           [cursor]
         );
@@ -4156,9 +4156,14 @@ Return ONLY valid JSON, nothing else.`,
       if (!fileRes.ok) return res.status(502).json({ error: `Graph returned ${fileRes.status}` });
       const buf = Buffer.from(await fileRes.arrayBuffer());
 
-      // Claude can read .docx natively via the document input type.
+      // Extract the .docx text (the Claude API's base64 document block only
+      // accepts application/pdf, so a docx source 400s) and pass it as text —
+      // mammoth is how the rest of the app reads Word buffers.
+      const mammoth = (await import("mammoth")).default;
+      const { value: docText } = await mammoth.extractRawText({ buffer: buf });
+
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      
+
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
       const msg = await client.messages.create({
@@ -4168,16 +4173,12 @@ Return ONLY valid JSON, nothing else.`,
           role: "user",
           content: [
             {
-              type: "document",
-              source: {
-                type: "base64",
-                media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                data: buf.toString("base64"),
-              },
-            },
-            {
               type: "text",
-              text: `Parse this BGP performance review .docx and return ONLY a JSON object. Money fields in pence. Long-form sections preserve bullet structure.
+              text: `Parse this BGP performance review and return ONLY a JSON object. Money fields in pence. Long-form sections preserve bullet structure.
+
+--- REVIEW DOCUMENT ---
+${docText}
+--- END DOCUMENT ---
 
 {
   "review_date": "YYYY-MM-DD or null",
