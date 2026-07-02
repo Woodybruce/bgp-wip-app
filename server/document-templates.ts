@@ -661,7 +661,7 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
-async function renderPdfPagesToImages(filePath: string, maxPages: number = 12, _scale: number = 1.5): Promise<string[]> {
+async function renderPdfPagesToImages(filePath: string, maxPages: number = 30, _scale: number = 1.5): Promise<string[]> {
   try {
     const { execSync } = await import("child_process");
     const tmpDir = path.join(os.tmpdir(), `pdf-render-${Date.now()}`);
@@ -670,7 +670,7 @@ async function renderPdfPagesToImages(filePath: string, maxPages: number = 12, _
     const prefix = path.join(tmpDir, "page");
     const cmd = `pdftoppm -png -r 150 -l ${maxPages} "${filePath}" "${prefix}"`;
     console.log(`[pdf-render] Running: ${cmd}`);
-    execSync(cmd, { timeout: 60000 });
+    execSync(cmd, { timeout: 180000 });
 
     const files = fs.readdirSync(tmpDir)
       .filter(f => f.endsWith(".png"))
@@ -1237,7 +1237,7 @@ export function setupDocumentTemplateRoutes(app: Express) {
       }
 
       console.log(`[doc-template] Re-rendering pages for template ${id} from ${filePath}`);
-      const images = await renderPdfPagesToImages(filePath, 12, 1.5);
+      const images = await renderPdfPagesToImages(filePath, 30, 1.5);
       console.log(`[doc-template] Re-rendered ${images.length} pages`);
 
       await storage.updateDocumentTemplate(id, {
@@ -1301,7 +1301,7 @@ export function setupDocumentTemplateRoutes(app: Express) {
           console.error("Auto-design failed, using defaults:", err.message);
           return null;
         }),
-        isPdf ? renderPdfPagesToImages(req.file.path, 12, 1.5) : Promise.resolve([]),
+        isPdf ? renderPdfPagesToImages(req.file.path, 30, 1.5) : Promise.resolve([]),
       ]);
 
       if (designResult.status === "fulfilled" && designResult.value) {
