@@ -1235,61 +1235,55 @@ export function setupStripeIssuingRoutes(app: Express) {
         filename: file.originalname,
       });
 
-      // Mark the receipt attached up-front — this must stick even if AI
-      // parsing fails below.
-      const baseUpdates: Record<string, any> = {
+      // Mark receipt attached immediately and respond — don't wait for AI
+      // parsing which can take 10-30s and causes 504s on Railway.
+      await db.update(expenses).set({
         receiptFilename: file.originalname,
         receiptUrl: storageKey,
         updatedAt: new Date(),
-      };
+      }).where(eq(expenses.id, expenseId));
 
-      // Best-effort parse to auto-fill merchant/category/amount. A parse
-      // failure must NOT stop the expense progressing — that was leaving
-      // receipts attached but stuck in "awaiting receipt".
-      let parsed: any = null;
-      try {
-        const { parseReceiptImage } = await import("./expense-receipt-parser");
-        parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
-        if (parsed.merchant && !exp.merchant) baseUpdates.merchant = parsed.merchant;
-        if (parsed.category && !exp.category) {
-          baseUpdates.category = parsed.category;
-          const { getCategoryCode } = await import("./expense-categories");
-          const code = await getCategoryCode(parsed.category);
-          if (code) baseUpdates.xeroAccountCode = code;
+      // Respond before AI parsing so the client never times out.
+      res.json({ success: true, parsed: null, autoposted: false });
+
+      // Background: parse receipt, update fields, submit for approval.
+      // Runs after the response is sent — a 504 can't happen here.
+      setImmediate(async () => {
+        try {
+          const updates: Record<string, any> = {};
+          try {
+            const { parseReceiptImage } = await import("./expense-receipt-parser");
+            const parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
+            if (parsed.merchant && !exp.merchant) updates.merchant = parsed.merchant;
+            if (parsed.category && !exp.category) {
+              updates.category = parsed.category;
+              const { getCategoryCode } = await import("./expense-categories");
+              const code = await getCategoryCode(parsed.category);
+              if (code) updates.xeroAccountCode = code;
+            }
+            if (parsed.totalPence && !exp.amountPence) updates.amountPence = parsed.totalPence;
+            if (parsed.vatPence != null && exp.vatPence == null) updates.vatPence = parsed.vatPence;
+            if (parsed.vatRate != null && exp.vatRate == null) updates.vatRate = parsed.vatRate;
+            if (parsed.netPence != null && exp.netPence == null) updates.netPence = parsed.netPence;
+          } catch (e: any) {
+            console.warn("[receipt-upload] parse failed (receipt still logged):", e?.message);
+          }
+          if (Object.keys(updates).length > 0) {
+            await db.update(expenses).set({ ...updates, updatedAt: new Date() }).where(eq(expenses.id, expenseId));
+          }
+          const { submitForApproval } = await import("./expense-approval");
+          const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
+          await submitForApproval(expenseId, userIdForSubmit);
+        } catch (e: any) {
+          console.error("[receipt-upload] background processing failed:", e?.message);
         }
-        if (parsed.totalPence && !exp.amountPence) baseUpdates.amountPence = parsed.totalPence;
-        if (parsed.vatPence != null && exp.vatPence == null) baseUpdates.vatPence = parsed.vatPence;
-        if (parsed.vatRate != null && exp.vatRate == null) baseUpdates.vatRate = parsed.vatRate;
-        if (parsed.netPence != null && exp.netPence == null) baseUpdates.netPence = parsed.netPence;
-      } catch (e: any) {
-        console.warn("[receipt-upload] parse failed (receipt still logged):", e?.message);
-      }
-
-      await db.update(expenses).set(baseUpdates).where(eq(expenses.id, expenseId));
-
-      // ALWAYS submit for approval once a receipt is attached — whether or
-      // not parsing worked. Missing merchant/category just becomes a flag
-      // for the approver rather than leaving the row stuck.
-      try {
-        const { submitForApproval } = await import("./expense-approval");
-        const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
-        await submitForApproval(expenseId, userIdForSubmit);
-      } catch (e: any) {
-        console.error("[receipt-upload] submitForApproval failed:", e?.message);
-      }
-
-      // No auto-post — the initial pass goes via Wendy first. The row is now
-      // pending_approval and posts to Xero only once it clears approval.
-
-      // Month-end freeze hook — this receipt may have cleared the user's
-      // last blocking expense. Fire-and-forget.
-      if (exp.cardholderId) {
-        import("./expense-freeze")
-          .then(m => m.unfreezeIfClear(exp.cardholderId!))
-          .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
-      }
-
-      res.json({ success: true, parsed, autoposted: false });
+        // Month-end freeze hook.
+        if (exp.cardholderId) {
+          import("./expense-freeze")
+            .then(m => m.unfreezeIfClear(exp.cardholderId!))
+            .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
+        }
+      });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
