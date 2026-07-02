@@ -46,6 +46,9 @@ interface RevolutCard {
   // the standard READ scope, no extra permission needed.
   last_digits?: string;
   state?: string;
+  // Server-attached: the BGP user this card is mapped to (null = unassigned).
+  assignedUserName?: string | null;
+  assignedUserId?: string | null;
 }
 
 interface BgpUser {
@@ -143,6 +146,7 @@ export default function ExpensesRevolut() {
     onSuccess: () => {
       toast({ title: "Card mapped" });
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/revolut/cards"] });
     },
     onError: (e: any) => toast({ title: "Map failed", description: e?.message, variant: "destructive" }),
   });
@@ -382,11 +386,18 @@ export default function ExpensesRevolut() {
                       <th className="px-4 py-2 font-medium">Card</th>
                       <th className="px-4 py-2 font-medium">Last 4</th>
                       <th className="px-4 py-2 font-medium">State</th>
+                      <th className="px-4 py-2 font-medium">Assigned to</th>
                     </tr>
                   </thead>
                   <tbody>
                     {cards.map((c) => (
-                      <CardRow key={c.id} card={c} />
+                      <CardRow
+                        key={c.id}
+                        card={c}
+                        users={users}
+                        onMap={(userId) => mapMutation.mutate({ revolutCardId: c.id, userId, holderId: c.holder_id, label: c.label })}
+                        mapping={mapMutation.isPending}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -441,7 +452,12 @@ function StatusRow({ ok, label }: { ok: boolean | undefined; label: string }) {
   );
 }
 
-function CardRow({ card }: { card: RevolutCard }) {
+function CardRow({ card, users, onMap, mapping }: {
+  card: RevolutCard;
+  users: BgpUser[];
+  onMap: (userId: string) => void;
+  mapping: boolean;
+}) {
   return (
     <tr className="border-t hover:bg-muted/10">
       <td className="px-4 py-2 font-medium">{card.label || card.id.slice(0, 8)}</td>
@@ -450,6 +466,28 @@ function CardRow({ card }: { card: RevolutCard }) {
         <Badge variant="outline" className={card.state === "active" ? "text-emerald-600 border-emerald-600/30" : "text-muted-foreground"}>
           {card.state || "—"}
         </Badge>
+      </td>
+      <td className="px-4 py-2">
+        <select
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs min-w-[160px] disabled:opacity-50"
+          value={card.assignedUserId || ""}
+          disabled={mapping}
+          onChange={(e) => {
+            const userId = e.target.value;
+            if (!userId) return;
+            const u = users.find(x => String(x.id) === userId);
+            if (confirm(`Assign this card (•••• ${card.last_digits || "?"}) to ${u?.name || "this user"}?`)) {
+              onMap(userId);
+            } else {
+              e.target.value = card.assignedUserId || "";
+            }
+          }}
+        >
+          <option value="">{card.assignedUserName ? "" : "— unassigned —"}</option>
+          {users.map((u) => (
+            <option key={u.id} value={String(u.id)}>{u.name}</option>
+          ))}
+        </select>
       </td>
     </tr>
   );

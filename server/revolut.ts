@@ -1127,7 +1127,17 @@ export function setupRevolutRoutes(app: Express): void {
   app.get("/api/revolut/cards", requireAdmin, async (_req: Request, res: Response) => {
     try {
       const cards = await api<any[]>(`/cards`);
-      res.json(cards);
+      // Attach the mapped BGP user per card so the admin table can show
+      // who each card belongs to (and which cards are unassigned).
+      const mapped = await pool.query<{ revolut_card_id: string; user_name: string; user_id: string }>(
+        `SELECT revolut_card_id, user_name, user_id FROM stripe_cardholders WHERE revolut_card_id IS NOT NULL`,
+      );
+      const byCardId = new Map(mapped.rows.map(r => [r.revolut_card_id, r]));
+      const enriched = (Array.isArray(cards) ? cards : []).map((c: any) => {
+        const m = byCardId.get(c.id);
+        return { ...c, assignedUserName: m?.user_name || null, assignedUserId: m?.user_id || null };
+      });
+      res.json(enriched);
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
