@@ -743,5 +743,47 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
     }
   });
 
+  // ─── Admin: bulk-load occupier units into goad_units ─────────────────────
+  // One-off ingest for a harvested/imported occupier snapshot. Gated by a
+  // shared secret (ADMIN_LOAD_SECRET) rather than a user session so it can be
+  // driven server-to-server. Accepts raw harvest records and maps them to the
+  // normalised goad_units shape. Idempotent (upsert on external_key).
+  app.post("/api/admin/load-goad-units", async (req: Request, res: Response) => {
+    try {
+      const secret = process.env.ADMIN_LOAD_SECRET;
+      if (!secret || req.get("x-admin-secret") !== secret) return res.status(403).json({ error: "forbidden" });
+      const records: any[] = Array.isArray(req.body?.units) ? req.body.units : [];
+      if (records.length === 0) return res.json({ upserted: 0 });
+
+      const { upsertGoadUnits, normaliseCategory, bboxOfGeometry } = await import("./goad-units");
+      const units = records
+        .filter((r) => r?.geometry)
+        .map((r) => {
+          const bb = bboxOfGeometry(r.geometry);
+          const key = r.toid
+            ? `edozo:GF:${r.toid}`
+            : `edozo:GF:${bb ? `${bb.centroidLat.toFixed(6)},${bb.centroidLng.toFixed(6)}` : Math.random()}`;
+          return {
+            externalKey: key,
+            source: "edozo" as const,
+            toid: r.toid ?? null,
+            floorLevel: "GF",
+            occupierName: r.occupierName ?? null,
+            classification: r.classification ?? null,
+            category: r.category ?? null,
+            categoryGroup: normaliseCategory({ occupierName: r.occupierName, rawCategory: r.category, classification: r.classification }),
+            geometry: r.geometry,
+            labelRotation: typeof r.labelRotation === "number" ? r.labelRotation : null,
+            rawProps: r.uprn ? { uprn: r.uprn, geofence: r.geofence } : (r.geofence ? { geofence: r.geofence } : null),
+          };
+        });
+      const upserted = await upsertGoadUnits(units);
+      res.json({ upserted, received: records.length });
+    } catch (err: any) {
+      console.error("[map-layers/load-goad-units] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   console.log("[map-layers] routes registered");
 }
