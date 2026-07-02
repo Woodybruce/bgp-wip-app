@@ -2763,6 +2763,51 @@ export const amlTrainingModules = pgTable("aml_training_modules", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Occupier plan units — one row per retail/commercial unit polygon, keyed on
+// OS MasterMap TOID. Fed from two interchangeable sources: `edozo` (pulled
+// per-viewport from the Edozo occupier WFS under our subscription) and
+// `experian` (imported from a licensed Goad MasterMap shapefile). Geometry is
+// stored as WGS84 GeoJSON; the flat min/max lat-lng columns exist so a
+// viewport query is a plain range scan with no PostGIS dependency.
+export const goadUnits = pgTable("goad_units", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  externalKey: text("external_key").notNull().unique(), // e.g. "edozo:GF:osgb1000042217035"
+  source: text("source").notNull(),                     // edozo | experian
+  toid: text("toid"),                                   // OS MasterMap TOID (join key across sources)
+  goadNumber: text("goad_number"),                      // Experian unit id
+  centreCode: text("centre_code"),                      // e.g. 9033MM
+  floorLevel: text("floor_level").default("GF"),        // GF | F1 | F2 | LG
+  occupierName: text("occupier_name"),
+  classification: text("classification"),               // occupied | vacant | unknown
+  category: text("category"),                           // raw source category
+  categoryGroup: text("category_group"),                // normalised RetailCategory
+  useClass: text("use_class"),
+  tradeType: text("trade_type"),
+  streetNum: text("street_num"),
+  streetName: text("street_name"),
+  postcode: text("postcode"),
+  precName: text("prec_name"),
+  areaFt2: integer("area_ft2"),
+  areaM2: integer("area_m2"),
+  centroidLat: doublePrecision("centroid_lat"),
+  centroidLng: doublePrecision("centroid_lng"),
+  minLat: doublePrecision("min_lat"),
+  minLng: doublePrecision("min_lng"),
+  maxLat: doublePrecision("max_lat"),
+  maxLng: doublePrecision("max_lng"),
+  labelRotation: real("label_rotation"),                // Edozo label placement hint (deg)
+  labelSize: real("label_size"),
+  geometry: jsonb("geometry"),                          // WGS84 GeoJSON geometry
+  surveyDate: text("survey_date"),
+  pubDate: text("pub_date"),
+  rawProps: jsonb("raw_props"),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+});
+
+export const insertGoadUnitSchema = createInsertSchema(goadUnits).omit({ id: true });
+export type InsertGoadUnit = z.infer<typeof insertGoadUnitSchema>;
+export type GoadUnit = typeof goadUnits.$inferSelect;
+
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),
