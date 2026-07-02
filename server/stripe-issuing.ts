@@ -385,6 +385,63 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Provision Stripe cardholder + card for an existing DB row that has no
+  // stripe_cardholder_id yet (e.g. receipt-only users who now need a card).
+  app.post("/api/expenses/cardholders/:id/provision", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, id)).limit(1);
+      if (!ch) return res.status(404).json({ error: "Cardholder row not found" });
+      if (ch.stripeCardholderId) return res.status(409).json({ error: "Already provisioned in Stripe", stripeCardholderId: ch.stripeCardholderId });
+
+      const cardholder = await stripeRequest("POST", "/issuing/cardholders", {
+        type: "individual",
+        name: ch.userName,
+        email: ch.email,
+        status: "active",
+        billing: {
+          address: { line1: "55 Wells Street", city: "London", postal_code: "W1T 3PT", country: "GB" },
+        },
+        individual: {
+          first_name: (ch.userName || "").split(" ")[0] || ch.userName,
+          last_name: (ch.userName || "").split(" ").slice(1).join(" ") || ch.userName,
+          card_issuing: { user_terms_acceptance: { date: Math.floor(Date.now() / 1000), ip: "127.0.0.1" } },
+        },
+        spending_controls: spendingControls({
+          monthlyLimit: ch.monthlyLimit ?? 100_000,
+          dailyLimit: ch.dailyLimit ?? 25_000,
+          singleTxLimit: ch.singleTxLimit ?? 25_000,
+        }),
+      });
+
+      await db.update(stripeCardholders).set({ stripeCardholderId: cardholder.id }).where(eq(stripeCardholders.id, id));
+
+      const card = await stripeRequest("POST", "/issuing/cards", {
+        cardholder: cardholder.id,
+        currency: "gbp",
+        type: "virtual",
+        status: "active",
+        spending_controls: spendingControls({
+          monthlyLimit: ch.monthlyLimit ?? 100_000,
+          dailyLimit: ch.dailyLimit ?? 25_000,
+          singleTxLimit: ch.singleTxLimit ?? 25_000,
+        }),
+      });
+
+      await db.insert(stripeCards).values({
+        cardholderId: id,
+        stripeCardId: card.id,
+        last4: card.last4,
+        status: "active",
+      });
+
+      res.json({ success: true, stripeCardholderId: cardholder.id, last4: card.last4 });
+    } catch (e: any) {
+      console.error("[expenses] provision error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Update limits (admin)
   app.patch("/api/expenses/cardholders/:id/limits", requireAdmin, async (req: Request, res: Response) => {
     try {

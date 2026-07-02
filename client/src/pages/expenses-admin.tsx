@@ -136,6 +136,19 @@ export default function ExpensesAdmin() {
     },
   });
 
+  const provisionMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("POST", `/api/expenses/cardholders/${id}/provision`);
+      if (!r.ok) throw new Error((await r.json()).error || "Provision failed");
+      return r.json();
+    },
+    onSuccess: (d: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
+      toast({ title: "Card provisioned", description: `Stripe cardholder created, card ending ${d.last4} issued.` });
+    },
+    onError: (e: any) => toast({ title: "Provision failed", description: e?.message, variant: "destructive" }),
+  });
+
   const freezeMutation = useMutation({
     mutationFn: async (args: { id: string; status: "active" | "inactive" }) => {
       const r = await apiRequest("PATCH", `/api/expenses/cardholders/${args.id}/status`, { status: args.status });
@@ -469,6 +482,21 @@ export default function ExpensesAdmin() {
                       </td>
                       <td className="px-4 py-2 text-right">
                         <div className="flex justify-end gap-1">
+                          {!c.stripeCardholderId && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs text-amber-700 border-amber-300 hover:bg-amber-50"
+                              onClick={() => {
+                                if (confirm(`Provision a Stripe cardholder and virtual card for ${c.userName}?`)) {
+                                  provisionMutation.mutate(c.id);
+                                }
+                              }}
+                              title="Provision Stripe cardholder + card"
+                            >
+                              Issue card
+                            </Button>
+                          )}
                           <Button size="sm" variant="ghost" className="h-7" onClick={() => setViewingCard(c)} data-testid={`view-card-${c.id}`} title="Show card details">
                             <Eye className="w-3 h-3" />
                           </Button>
