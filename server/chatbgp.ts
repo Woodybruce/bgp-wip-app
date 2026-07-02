@@ -15,9 +15,23 @@ import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
-const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
+const CHATBGP_MODEL = "claude-fable-5";         // Main chat: Fable for intelligence
+const CHATBGP_REFUSAL_FALLBACK_MODEL = "claude-opus-4-8"; // Serves the reply if Fable's safety classifiers decline a request
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
+
+// Fable 5: thinking is always on (configuring it returns a 400) and safety
+// classifiers can decline a request with stop_reason "refusal". The server-side
+// fallback re-serves declined requests on Opus inside the same API call.
+function isFableModel(model: string): boolean {
+  return model.startsWith("claude-fable");
+}
+
+function applyFableParams(claudeParams: any): void {
+  claudeParams.betas = ["server-side-fallback-2026-06-01"];
+  claudeParams.fallbacks = [{ model: CHATBGP_REFUSAL_FALLBACK_MODEL }];
+}
+
+const REFUSAL_REPLY = "I can't help with that particular request.";
 
 function sanitiseForPdf(text: string): string {
   const emojiMap: Record<string, string> = {
@@ -696,7 +710,8 @@ export async function callClaude(params: any): Promise<any> {
   // Extended thinking — let the model reason before responding.
   // Requires temperature=1 (SDK default when unset). budget_tokens must be < max_tokens.
   // Opt-in: only enabled when params.thinking === true, to avoid the token cost on helper calls.
-  if (params.thinking === true) {
+  // Fable always thinks — sending any thinking config to it returns a 400.
+  if (params.thinking === true && !isFableModel(model)) {
     claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
   }
   // Support structured system prompt (array with cache_control) for prompt caching
@@ -711,6 +726,8 @@ export async function callClaude(params: any): Promise<any> {
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  if (isFableModel(model)) applyFableParams(claudeParams);
+
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 8000];
 
@@ -721,7 +738,9 @@ export async function callClaude(params: any): Promise<any> {
     try {
       const client = attempt === 0 ? anthropic : getAnthropicClient(false);
       if (attempt > 0) claudeParams.model = model;
-      response = await client.messages.create(claudeParams);
+      response = isFableModel(model)
+        ? await client.beta.messages.create(claudeParams)
+        : await client.messages.create(claudeParams);
       break;
     } catch (err: any) {
       lastErr = err;
@@ -765,6 +784,11 @@ export async function callClaude(params: any): Promise<any> {
     }
   }
 
+  // Refusal on the final response means Fable AND the Opus fallback both declined
+  if (response.stop_reason === "refusal" && !textContent && toolCalls.length === 0) {
+    textContent = REFUSAL_REPLY;
+  }
+
   return {
     choices: [{
       message: {
@@ -797,7 +821,8 @@ export async function callClaudeStreaming(
     messages,
   };
   // Extended thinking — opt-in per callsite (see callClaude comment).
-  if (params.thinking === true) {
+  // Fable always thinks — sending any thinking config to it returns a 400.
+  if (params.thinking === true && !isFableModel(model)) {
     claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
   }
 
@@ -815,6 +840,8 @@ export async function callClaudeStreaming(
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  if (isFableModel(model)) applyFableParams(claudeParams);
+
   const MAX_RETRIES = 2;
   const RETRY_DELAYS = [2000, 4000];
 
@@ -828,9 +855,11 @@ export async function callClaudeStreaming(
       let fullText = "";
       const toolCalls: any[] = [];
 
-      const stream = client.messages.stream(claudeParams);
+      const stream = isFableModel(model)
+        ? client.beta.messages.stream(claudeParams)
+        : client.messages.stream(claudeParams);
 
-      stream.on("text", (text) => {
+      stream.on("text", (text: string) => {
         fullText += text;
         onDelta(text);
       });
@@ -846,6 +875,12 @@ export async function callClaudeStreaming(
             function: { name: block.name, arguments: JSON.stringify(block.input) },
           });
         }
+      }
+
+      // Refusal on the final response means Fable AND the Opus fallback both declined
+      if (finalMessage.stop_reason === "refusal" && !fullText && toolCalls.length === 0) {
+        fullText = REFUSAL_REPLY;
+        onDelta(fullText);
       }
 
       return {
@@ -1424,7 +1459,7 @@ export function invalidateCrmContextCache() {
   contextCache.delete("crmContext");
 }
 
-const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Opus. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
+const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Fable. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
 
 export async function getAvailableTools(): Promise<{
   modelTemplates: any[];

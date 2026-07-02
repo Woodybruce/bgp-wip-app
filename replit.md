@@ -55,6 +55,7 @@ The application is built with a modern web stack: React, Vite, TypeScript, Tailw
 - **Microsoft 365**: SharePoint, Outlook (via Microsoft Graph API).
 - **WhatsApp Business**: Cloud API.
 - **Anthropic Claude**: All AI features (ChatBGP, news feeds, document templates, deal matching, data enrichment, smart extraction, legal due diligence, Excel AI models) now use Claude exclusively via `callClaude()` helper in `server/utils/anthropic-client.ts`. Primary model: `claude-sonnet-4-6` (CHATBGP_HELPER_MODEL). OpenAI dependency removed from server.
+- **ChatBGP main chat model (July 2026)**: Upgraded from Claude Opus 4.6 to **Claude Fable 5** (`claude-fable-5`) in `server/chatbgp.ts`. Fable's thinking is always on (no `thinking` config sent), and its safety classifiers can occasionally decline a benign request — a server-side fallback automatically re-serves those on Claude Opus 4.8 within the same API call (beta header `server-side-fallback-2026-06-01`). Background/helper tasks remain on Haiku; other features (Document Studio, KYC, land registry, etc.) keep their existing models. Note: Fable is priced at $10/$50 per million tokens (vs $5/$25 for Opus).
 - **HM Land Registry**: Price paid searches, UK House Price Index.
 - **VOA Rating List**: Non-domestic property rateable values.
 - **EPC (Energy Performance Certificates)**: Domestic and non-domestic EPC lookups.
