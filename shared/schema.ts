@@ -1495,7 +1495,7 @@ export const voaRatings = pgTable("voa_ratings", {
   listYear: text("list_year").default("2023"),
 });
 
-export const insertVoaRatingSchema = createInsertSchema(voaRatings).omit({ id: true });
+export const insertVoaRatingSchema = createInsertSchema(voaRatings);
 export type InsertVoaRating = z.infer<typeof insertVoaRatingSchema>;
 export type VoaRating = typeof voaRatings.$inferSelect;
 
