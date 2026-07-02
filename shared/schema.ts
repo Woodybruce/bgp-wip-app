@@ -2804,7 +2804,7 @@ export const goadUnits = pgTable("goad_units", {
   fetchedAt: timestamp("fetched_at").defaultNow(),
 });
 
-export const insertGoadUnitSchema = createInsertSchema(goadUnits).omit({ id: true });
+export const insertGoadUnitSchema = createInsertSchema(goadUnits);
 export type InsertGoadUnit = z.infer<typeof insertGoadUnitSchema>;
 export type GoadUnit = typeof goadUnits.$inferSelect;
 
