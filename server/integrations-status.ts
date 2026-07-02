@@ -74,7 +74,10 @@ const KEYS: KeyDef[] = [
   // Web search / research
   { name: "PERPLEXITY_API_KEY", label: "Perplexity", group: "Research", fallbacks: ["PERPLEXITY_API", "PERPLEXITY API", "PERPLEXITY"] },
   { name: "EXA_API_KEY", label: "Exa.ai", group: "Research" },
-  { name: "GREEN_STREET_API_TOKEN", label: "Green Street", group: "Research" },
+  // Green Street has no news API — coverage comes from the greenstreetnews.com
+  // RSS source plus the subscriber cookie set in News → Sources → Paywall logins
+  // (stored in the DB; this env var is the fallback).
+  { name: "GREENSTREET_AUTH_COOKIE", label: "Green Street News subscriber cookie (set via News → Sources → Paywall logins)", group: "Research" },
 
   // Geospatial
   { name: "OS_PLACES_API_KEY", label: "OS Places / OS Data Hub", group: "Geospatial", fallbacks: ["OS_API_KEY"] },
