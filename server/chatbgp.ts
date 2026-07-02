@@ -36,6 +36,14 @@ function applyFableParams(claudeParams: any): void {
 
 const REFUSAL_REPLY = "I can't help with that particular request.";
 
+// PowerPoint/Excel reject XML-1.0-invalid control characters (common in text
+// extracted from PDFs) with a "repair this file?" prompt that strips content.
+// pptxgenjs/exceljs escape XML entities but pass control characters through,
+// so strip them before any Office file is built.
+function cleanOfficeText(v: any): string {
+  return String(v ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFE\uFFFF]/g, "");
+}
+
 // Resolve a list of chat-media filenames into Graph fileAttachment payloads
 // (base64 + contentType + filename). Each filename is expected to already
 // exist in chat-media storage — anything we can't find is dropped with a
@@ -7634,14 +7642,14 @@ export async function executeCrmToolRaw(
       pptx.layout = "LAYOUT_WIDE";
       pptx.author = "Bruce Gillingham Pollard";
       pptx.company = "Bruce Gillingham Pollard";
-      pptx.title = fnArgs.title as string;
+      pptx.title = cleanOfficeText(fnArgs.title);
 
       const titleSlide = pptx.addSlide();
       titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
       titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
+      titleSlide.addText(cleanOfficeText(fnArgs.title), { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
       if (fnArgs.subtitle) {
-        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
+        titleSlide.addText(cleanOfficeText(fnArgs.subtitle), { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
       }
 
       const slides = (fnArgs.slides as any[]) || [];
@@ -7649,26 +7657,26 @@ export async function executeCrmToolRaw(
         const slide = pptx.addSlide();
         slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
         slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
+        slide.addText(cleanOfficeText(slideData.title || ""), { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
 
         let yPos = 1.9;
         if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
+          const bulletText = slideData.bullets.map((b: string) => ({ text: cleanOfficeText(b), options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
           slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
           yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
         }
 
         if (slideData.table && slideData.table.headers && slideData.table.rows) {
           const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
+          tableRows.push(slideData.table.headers.map((h: string) => ({ text: cleanOfficeText(h), options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
           slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
+            tableRows.push(row.map((cell: string) => ({ text: cleanOfficeText(cell), options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
           });
           slide.addTable(rectifyRows(tableRows, slideData.table.headers.length), { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
         }
 
         if (slideData.notes) {
-          slide.addNotes(slideData.notes);
+          slide.addNotes(cleanOfficeText(slideData.notes));
         }
       }
 
@@ -7962,7 +7970,7 @@ export async function executeCrmToolRaw(
       // Coerce every cell to a clean primitive before it reaches ExcelJS.
       const cellText = (val: any): string => {
         if (val === null || val === undefined) return "";
-        if (typeof val === "string") return val;
+        if (typeof val === "string") return cleanOfficeText(val);
         if (typeof val === "number" || typeof val === "boolean") return String(val);
         if (Array.isArray(val)) return val.map(cellText).filter(Boolean).join(", ");
         if (typeof val === "object") {
@@ -11660,14 +11668,14 @@ export async function handleCrmToolCall(
       pptx.layout = "LAYOUT_WIDE";
       pptx.author = "Bruce Gillingham Pollard";
       pptx.company = "Bruce Gillingham Pollard";
-      pptx.title = fnArgs.title as string;
+      pptx.title = cleanOfficeText(fnArgs.title);
 
       const titleSlide = pptx.addSlide();
       titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
       titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
+      titleSlide.addText(cleanOfficeText(fnArgs.title), { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
       if (fnArgs.subtitle) {
-        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
+        titleSlide.addText(cleanOfficeText(fnArgs.subtitle), { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
       }
 
       const slides = (fnArgs.slides as any[]) || [];
@@ -11675,26 +11683,26 @@ export async function handleCrmToolCall(
         const slide = pptx.addSlide();
         slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
         slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
+        slide.addText(cleanOfficeText(slideData.title || ""), { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
 
         let yPos = 1.9;
         if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
+          const bulletText = slideData.bullets.map((b: string) => ({ text: cleanOfficeText(b), options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
           slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
           yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
         }
 
         if (slideData.table && slideData.table.headers && slideData.table.rows) {
           const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
+          tableRows.push(slideData.table.headers.map((h: string) => ({ text: cleanOfficeText(h), options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
           slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
+            tableRows.push(row.map((cell: string) => ({ text: cleanOfficeText(cell), options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
           });
           slide.addTable(rectifyRows(tableRows, slideData.table.headers.length), { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
         }
 
         if (slideData.notes) {
-          slide.addNotes(slideData.notes);
+          slide.addNotes(cleanOfficeText(slideData.notes));
         }
       }
 
