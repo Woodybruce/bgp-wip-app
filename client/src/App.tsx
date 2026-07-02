@@ -106,6 +106,7 @@ const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const PlaMatters = lazy(() => import("@/pages/pla-matters"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
+const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 const FinancePage = lazy(() => import("@/pages/finance"));
@@ -211,6 +212,7 @@ function Router() {
       <Route path="/pla/matters/:id" component={PlaMatters} />
       <Route path="/westminster-restaurants" component={WestminsterRestaurants} />
       <Route path="/document-briefs" component={DocumentBriefs} />
+      <Route path="/document-studio" component={DocumentStudioV2} />
       <Route path="/hunters/letting" component={HuntersLetting} />
       <Route path="/hunters/investment" component={HuntersInvestment} />
       <Route path="/today" component={TodayPage} />

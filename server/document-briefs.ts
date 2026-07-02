@@ -970,7 +970,17 @@ export function registerDocumentBriefRoutes(app: Express): void {
       const filename = `${safeName} — ${propertyName.replace(/[<>:"/\\|?*]+/g, "-").slice(0, 60)} — ${dateStr}.pdf`;
 
       const upload = await uploadFileToSharePoint(pdf, filename, "application/pdf", folder);
-      return res.json({ sharepointUrl: upload.webUrl, filename, folder, briefId: brief.briefId });
+      // Also index into the Document Studio hub so briefs appear in the one library.
+      let documentId: string | null = null;
+      try {
+        const { indexBriefDocument } = await import("./documents");
+        documentId = await indexBriefDocument({
+          title: `${brief.briefName} — ${propertyName}`, project: propertyName, category: "brief",
+          buffer: pdf, fileName: filename, contentType: "application/pdf",
+          sharepointWebUrl: upload.webUrl, sharepointPath: `${folder}/${filename}`,
+        });
+      } catch (e: any) { console.warn("[document-briefs] hub index failed:", e?.message); }
+      return res.json({ sharepointUrl: upload.webUrl, filename, folder, briefId: brief.briefId, documentId });
     } catch (err: any) {
       console.error("[document-briefs] save-pdf error:", err);
       return res.status(500).json({ error: err?.message || "save-pdf failed" });
