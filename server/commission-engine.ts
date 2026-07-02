@@ -125,14 +125,15 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
   const fyStartIso = fyStart.toISOString().slice(0, 10);
 
   // One row per (qualifying deal × non-house allocation): the deal's fee
-  // fell due this FY (exchange or completion, earliest) at EXC/COM/INV,
+  // fell due this FY (exchange, completion or invoice date, earliest) at EXC/COM/INV,
   // with paid state from synced Xero invoices. agent_user_id preferred,
   // agent_name kept for display + legacy rows.
   const rowsRes = await pool.query(`
     SELECT d.id AS "dealId", d.name AS "dealName", d.status,
            LEAST(
              COALESCE(d.exchanged_at, 'infinity'::timestamp),
-             COALESCE(d.completed_at, 'infinity'::timestamp)
+             COALESCE(d.completed_at, 'infinity'::timestamp),
+             COALESCE(d.invoiced_at, 'infinity'::timestamp)
            ) AS fee_due,
            inv.invoice_count AS "invoiceCount",
            inv.paid_count AS "paidCount",
@@ -152,7 +153,7 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
          WHERE xi.deal_id = d.id AND COALESCE(xi.status, '') <> 'ERROR'
       ) inv ON TRUE
      WHERE d.fee IS NOT NULL AND d.fee > 0
-       AND (d.exchanged_at IS NOT NULL OR d.completed_at IS NOT NULL)
+       AND (d.exchanged_at IS NOT NULL OR d.completed_at IS NOT NULL OR d.invoiced_at IS NOT NULL)
   `);
 
   // Salary lookups: by user id (preferred) and by name (legacy rows).
@@ -277,7 +278,20 @@ export async function buildCommissionStatementForUser(userId: string): Promise<{
   if (!statement) {
     const u = await pool.query(`SELECT name FROM users WHERE id = $1`, [userId]);
     const name = String(u.rows[0]?.name || "").trim().toLowerCase();
-    if (name) statement = all.statements.find(s => s.agent.trim().toLowerCase() === name) || null;
+    if (name) {
+      statement = all.statements.find(s => s.agent.trim().toLowerCase() === name) || null;
+      // Loose fallback: allocations sometimes carry a first name only
+      // ("Tracey" vs "Tracey Pollard"). Only accept when exactly one
+      // unclaimed statement matches, to avoid crediting the wrong person.
+      if (!statement) {
+        const candidates = all.statements.filter(s => {
+          if (s.userId) return false; // already resolved to a different user
+          const agent = s.agent.trim().toLowerCase();
+          return name.startsWith(agent + " ") || agent.startsWith(name.split(" ")[0] + " ") || agent === name.split(" ")[0];
+        });
+        if (candidates.length === 1) statement = candidates[0];
+      }
+    }
   }
   return { fyStart: all.fyStart, statement, assumptions: all.assumptions };
 }

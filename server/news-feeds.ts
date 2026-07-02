@@ -17,11 +17,13 @@ import * as os from "os";
 import * as path from "path";
 
 const DEFAULT_SOURCES = [
-  // Green Street News via its WordPress RSS feed, authenticated by the
-  // subscriber cookie (GREENSTREET_AUTH_COOKIE / Paywall logins panel) — an
-  // alternative to the GREEN_STREET_API_TOKEN integration. Named "(RSS)" so it
-  // doesn't collide with the API-fed "Green Street News" source.
-  { name: "Green Street News (RSS)", url: "https://greenstreetnews.com", feedUrl: "https://greenstreetnews.com/feed/", type: "rss", category: "Property" },
+  // Green Street News — their native /feed/ returns an empty channel even for
+  // logged-in subscribers (verified Jul 2026), so headlines come from a Google
+  // News site-scope like Property Week below. The subscriber cookie
+  // (GREENSTREET_AUTH_COOKIE / News → Sources → Paywall logins) still applies
+  // when fetching the article pages themselves — anonymous requests get a
+  // ~600-word stub, authenticated ones get the full article.
+  { name: "Green Street News (RSS)", url: "https://greenstreetnews.com", feedUrl: "https://news.google.com/rss/search?q=site:greenstreetnews.com&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Property" },
   // Property Week — their /rss returns malformed XML ("Invalid character in
   // entity name", unescaped & in URLs) which crashes rss-parser. Same fix as
   // Sourcing Journal below: Google News site-scope, which is clean XML and

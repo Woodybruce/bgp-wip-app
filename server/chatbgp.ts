@@ -485,6 +485,7 @@ function getToolProgressLabel(toolName: string): string {
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     rocketreach_person_lookup: "Looking up verified contact details...",
+    search_food_hygiene: "Checking the FSA hygiene register...",
     run_kyc_check: "Running KYC check...",
     create_deal: "Creating deal...",
     update_deal: "Updating deal...",
@@ -4083,6 +4084,22 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           includeWebSearch: { type: "boolean", description: "Whether to include web search for recent news/activity about the subjects. Default true." },
         },
         required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_food_hygiene",
+      description: "Search the UK Food Standards Agency hygiene-ratings register for every rated premises matching a business name. Free, authoritative, and instant — for any F&B or hospitality operator this returns their real trading footprint: each site's address, postcode, local authority, hygiene rating and inspection date. Use it to build an operator's site list, verify where a brand actually trades, or spot expansion (a recent rating date at a new address means a new site). Covers England, Wales and Northern Ireland with 0-5 ratings; Scottish premises return Pass/Improvement Required.",
+      parameters: {
+        type: "object",
+        properties: {
+          businessName: { type: "string", description: "Business/brand name as it appears on premises registrations, e.g. 'Dishoom' or 'A Wong'. Partial matches work." },
+          maxResults: { type: "number", description: "Max premises to return (1-200). Default 50." },
+        },
+        required: ["businessName"],
       },
     },
   });
@@ -9827,6 +9844,39 @@ Be thorough — include every unit row you can classify, across all properties i
     } catch (e: any) {
       console.error("[chatbgp] list_decks:", e?.message);
       return { data: { success: false, error: `List failed: ${e?.message}` } };
+    }
+  }
+
+  if (fnName === "search_food_hygiene") {
+    try {
+      const name = String(fnArgs.businessName || "").trim();
+      if (!name) return { data: { error: "businessName is required" } };
+      const top = Math.max(1, Math.min(200, Number(fnArgs.maxResults) || 50));
+      const url = `https://api.ratings.food.gov.uk/Establishments?name=${encodeURIComponent(name)}&pageSize=${top}&pageNumber=1`;
+      const res = await fetch(url, {
+        headers: { "x-api-version": "2", accept: "application/json" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return { data: { error: `FSA hygiene API returned ${res.status}` } };
+      const data = (await res.json()) as any;
+      const establishments = (data?.establishments || []).map((e: any) => ({
+        name: e.BusinessName,
+        type: e.BusinessType,
+        rating: e.RatingValue,
+        ratingDate: e.RatingDate ? String(e.RatingDate).slice(0, 10) : null,
+        address: [e.AddressLine1, e.AddressLine2, e.AddressLine3, e.AddressLine4].filter(Boolean).join(", "),
+        postcode: e.PostCode || null,
+        localAuthority: e.LocalAuthorityName || null,
+        newRatingPending: e.NewRatingPending === "True" || e.NewRatingPending === true || undefined,
+      }));
+      return { data: {
+        query: name,
+        count: establishments.length,
+        establishments,
+        note: "Authoritative FSA register of rated premises. Treat this as the operator's real trading footprint; a recent ratingDate at a new address is expansion evidence. Watch for unrelated businesses sharing the name — check the address/type fits the brand.",
+      } };
+    } catch (err: any) {
+      return { data: { error: `FSA hygiene lookup failed: ${err?.message || "unknown"}` } };
     }
   }
 
