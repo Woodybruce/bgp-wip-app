@@ -18,9 +18,23 @@ import { rectifyRows } from "./pptx-rectify";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Opus 4.8 via chatbgp-model-router.
-const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning (also the chat default now).
+const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Fable 5 via chatbgp-model-router.
+const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
+
+// Fable 5: safety classifiers can decline a request with stop_reason
+// "refusal". The server-side fallback re-serves declined requests on Opus
+// inside the same API call (requires the beta messages endpoint).
+function isFableModel(model: string): boolean {
+  return model.startsWith("claude-fable");
+}
+
+function applyFableParams(claudeParams: any): void {
+  claudeParams.betas = ["server-side-fallback-2026-06-01"];
+  claudeParams.fallbacks = [{ model: CHATBGP_OPUS_MODEL }];
+}
+
+const REFUSAL_REPLY = "I can't help with that particular request.";
 
 // Resolve a list of chat-media filenames into Graph fileAttachment payloads
 // (base64 + contentType + filename). Each filename is expected to already
@@ -751,6 +765,8 @@ export async function callClaude(params: any): Promise<any> {
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  if (isFableModel(model)) applyFableParams(claudeParams);
+
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 8000];
 
@@ -761,7 +777,9 @@ export async function callClaude(params: any): Promise<any> {
     try {
       const client = attempt === 0 ? anthropic : getAnthropicClient(false);
       if (attempt > 0) claudeParams.model = model;
-      response = await client.messages.create(claudeParams);
+      response = isFableModel(model)
+        ? await client.beta.messages.create(claudeParams)
+        : await client.messages.create(claudeParams);
       // Spend metering — exact token usage from the response, priced
       // server-side. Fire-and-forget; never blocks the call.
       try {
@@ -809,6 +827,11 @@ export async function callClaude(params: any): Promise<any> {
         function: { name: block.name, arguments: JSON.stringify(block.input) },
       });
     }
+  }
+
+  // Refusal on the final response means Fable AND the Opus fallback both declined
+  if (response.stop_reason === "refusal" && !textContent && toolCalls.length === 0) {
+    textContent = REFUSAL_REPLY;
   }
 
   return {
@@ -865,6 +888,8 @@ export async function callClaudeStreaming(
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  if (isFableModel(model)) applyFableParams(claudeParams);
+
   const MAX_RETRIES = 2;
   const RETRY_DELAYS = [2000, 4000];
 
@@ -878,9 +903,13 @@ export async function callClaudeStreaming(
       let fullText = "";
       const toolCalls: any[] = [];
 
-      const stream = client.messages.stream(claudeParams);
+      // any: MessageStream and BetaMessageStream share the on/finalMessage
+      // surface but don't unify as a callable type
+      const stream: any = isFableModel(model)
+        ? client.beta.messages.stream(claudeParams)
+        : client.messages.stream(claudeParams);
 
-      stream.on("text", (text) => {
+      stream.on("text", (text: string) => {
         fullText += text;
         onDelta(text);
       });
@@ -902,6 +931,12 @@ export async function callClaudeStreaming(
             function: { name: block.name, arguments: JSON.stringify(block.input) },
           });
         }
+      }
+
+      // Refusal on the final response means Fable AND the Opus fallback both declined
+      if (finalMessage.stop_reason === "refusal" && !fullText && toolCalls.length === 0) {
+        fullText = REFUSAL_REPLY;
+        onDelta(fullText);
       }
 
       return {
@@ -1720,7 +1755,7 @@ export function invalidateCrmContextCache() {
   contextCache.delete("crmContext");
 }
 
-const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Opus. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
+const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Fable. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
 
 export async function getAvailableTools(): Promise<{
   modelTemplates: any[];
@@ -11928,7 +11963,7 @@ export function setupChatBGPRoutes(app: Express) {
       // /opus or /sonnet at the start of the last user message — applies
       // for this single request (no thread persistence here).
       const fileThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
-      let fileSlashOverride: "opus" | "sonnet" | null = null;
+      let fileSlashOverride: "fable" | "opus" | "sonnet" | null = null;
       {
         const lastIdx = messages.length - 1;
         const lastText = typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
@@ -13016,7 +13051,7 @@ export function setupChatBGPRoutes(app: Express) {
     // thread's model_preference. If the user typed JUST the command,
     // short-circuit with an ack — no Claude call. Otherwise strip the
     // command from the message and continue with the new model.
-    let slashOverride: "opus" | "sonnet" | null = null;
+    let slashOverride: "fable" | "opus" | "sonnet" | null = null;
     {
       const allMessages = result.data.messages || [];
       const lastIdx = allMessages.length - 1;
@@ -13495,7 +13530,7 @@ export function setupChatBGPRoutes(app: Express) {
 
     // /opus or /sonnet slash-command interception (excel-chat).
     const excelThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
-    let excelSlashOverride: "opus" | "sonnet" | null = null;
+    let excelSlashOverride: "fable" | "opus" | "sonnet" | null = null;
     {
       const lastIdx = messages.length - 1;
       const lastText = lastIdx >= 0 && typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
@@ -13811,7 +13846,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
 
     // /opus or /sonnet slash-command interception (powerpoint-chat).
     const pptThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
-    let pptSlashOverride: "opus" | "sonnet" | null = null;
+    let pptSlashOverride: "fable" | "opus" | "sonnet" | null = null;
     {
       const lastIdx = messages.length - 1;
       const lastText = lastIdx >= 0 && typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
