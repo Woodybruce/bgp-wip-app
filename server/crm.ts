@@ -3429,7 +3429,6 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                   .where(eq(crmCompanies.id, deal.tenantId)).limit(1);
                 if (tenant) {
                   contactName = tenant.name;
-                  contactEmail = contactEmail || (tenant as any).email || "";
                 }
               }
 
@@ -4299,8 +4298,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
             const [newCompany] = await db.insert(crmCompanies).values({
               name: clientName,
               companyType: "Investor",
-              team: "Investment",
-            } as any).returning();
+            }).returning();
             companyId = newCompany.id;
             companyMap.set(clientName.toLowerCase().trim(), companyId);
             newCompanies.push(clientName);
