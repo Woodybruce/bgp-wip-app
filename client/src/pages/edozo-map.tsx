@@ -3533,8 +3533,56 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       loadCounterRef.current += 1;
       const thisLoad = loadCounterRef.current;
 
-      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
       const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+
+      // Prefer the occupier plan (Goad/Edozo) — names live on the polygons, so
+      // no OSM/NGD label-guessing is needed where we have coverage. Only at
+      // street zoom, matching the label-render gate.
+      if (map.getZoom() >= 17) {
+        try {
+          const opResp = await fetch(`/api/map/occupier-plan?bbox=${bboxParam}`, {
+            credentials: "include",
+            headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+          });
+          if (opResp.ok) {
+            const fc = await opResp.json();
+            if (loadCounterRef.current !== thisLoad) return;
+            const feats: any[] = fc?.features || [];
+            if (feats.length > 0) {
+              const geomToRings = (g: any): number[][][] => {
+                if (!g) return [];
+                if (g.type === "Polygon") return [g.coordinates[0]];
+                if (g.type === "MultiPolygon") return g.coordinates.map((p: number[][][]) => p[0]);
+                return [];
+              };
+              const occBuildings: any[] = [];
+              for (const f of feats) {
+                for (const ring of geomToRings(f.geometry)) {
+                  if (!Array.isArray(ring) || ring.length < 3) continue;
+                  const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
+                  const p = f.properties || {};
+                  occBuildings.push({
+                    latLngs,
+                    label: p.name || "",
+                    houseNum: p.streetNum || "",
+                    isVacant: p.classification === "vacant",
+                    areaSqM: polygonAreaSqM(latLngs),
+                    isUnit: true,
+                    _source: "occupier",
+                    _category: p.category || null,
+                  });
+                }
+              }
+              renderBuildings(occBuildings);
+              return;
+            }
+          }
+        } catch {
+          // fall through to the OSM/NGD path below
+        }
+      }
+
+      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
       const labelsPromise = fetch(`/api/map/labels?bbox=${bboxParam}`, {
         credentials: "include",
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },

@@ -640,5 +640,57 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
     }
   });
 
+  // ─── Occupier plan — Goad/Edozo unit polygons with names ─────────────────
+  // Serves goad_units (from Edozo or an Experian import) as GeoJSON for the
+  // viewport. Names live on the polygons, so this replaces the OSM/NGD name-
+  // guessing entirely for any area we have coverage for. If the viewport is
+  // uncovered and Edozo is configured, we pull it live, cache to goad_units,
+  // then serve — so coverage warms as users pan.
+  app.get("/api/map/occupier-plan", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const bbox = String(req.query.bbox || "").trim();
+      if (!bbox) return res.status(400).json({ error: "bbox required" });
+      const [s, w, n, e] = bbox.split(",").map(parseFloat);
+      if (![s, w, n, e].every(Number.isFinite)) return res.status(400).json({ error: "invalid bbox" });
+      const box = { south: s, west: w, north: n, east: e };
+
+      const { queryGoadUnitsByBbox, countGoadUnitsInBbox, upsertGoadUnits } = await import("./goad-units");
+      const { fetchEdozoOccupiers, isEdozoConfigured } = await import("./edozo-occupiers");
+
+      let count = await countGoadUnitsInBbox(box);
+      let source = "cache";
+      // Refresh from Edozo when the viewport looks uncovered. Guard on a small
+      // area so we never fan a huge bbox out to the WFS.
+      const areaOk = n - s < 0.02 && e - w < 0.03;
+      if (count < 5 && areaOk && isEdozoConfigured()) {
+        const { units, total } = await fetchEdozoOccupiers(box);
+        if (units.length) {
+          await upsertGoadUnits(units);
+          count = await countGoadUnitsInBbox(box);
+          source = `edozo:${total}`;
+        }
+      }
+
+      const units = await queryGoadUnitsByBbox(box);
+      const features = units.map((u) => ({
+        type: "Feature" as const,
+        geometry: u.geometry,
+        properties: {
+          toid: u.toid,
+          name: u.occupierName,
+          classification: u.classification,
+          category: u.categoryGroup,
+          streetNum: u.streetNum,
+          labelRotation: u.labelRotation,
+          source: u.source,
+        },
+      }));
+      res.json({ type: "FeatureCollection", features, meta: { count, source } });
+    } catch (err: any) {
+      console.error("[map-layers/occupier-plan] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   console.log("[map-layers] routes registered");
 }
