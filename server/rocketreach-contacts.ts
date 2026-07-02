@@ -140,6 +140,7 @@ export async function searchRocketReach(opts: {
   domain?: string;
   country?: string[];
   scope?: DiscoveryScope;
+  personName?: string;
 }): Promise<RocketReachPerson[]> {
   const auth = rrAuthHeader();
   if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
@@ -147,12 +148,16 @@ export async function searchRocketReach(opts: {
   const scope = opts.scope || "tenant";
   // Tenant scope sends the title whitelist; landlord scope omits it so
   // RocketReach returns every person at the company. Page size also goes
-  // up for landlords because we want broader coverage.
+  // up for landlords because we want broader coverage. A personName search
+  // targets one specific individual (e.g. a Companies House director), so
+  // the title whitelist is skipped — chef-patrons and founders often carry
+  // titles the whitelist doesn't cover.
   const body: Record<string, any> = {
-    query: scope === "landlord" ? {} : { current_title: ROLE_TITLES },
+    query: scope === "landlord" || opts.personName ? {} : { current_title: ROLE_TITLES },
     page_size: scope === "landlord" ? 100 : 25,
     start: 1,
   };
+  if (opts.personName) body.query.name = [opts.personName];
   // Field names per RocketReach v2 search API. current_employer_domain and
   // then current_employer_website were both retired (each now 400s with
   // "invalid fields"), which silently killed the brand-page domain search
@@ -188,7 +193,7 @@ export async function searchRocketReach(opts: {
 // /v2/api/lookupProfile but also returns the current_employer_id /
 // current_employer_industry / current_employer_linkedin fields, which help
 // confirm the person works at the right entity.
-async function revealProfile(profileId: string | number): Promise<RocketReachPerson | null> {
+export async function revealProfile(profileId: string | number): Promise<RocketReachPerson | null> {
   const auth = rrAuthHeader();
   if (!auth) return null;
   try {

@@ -475,6 +475,7 @@ function getToolProgressLabel(toolName: string): string {
     get_property_planning: "Pulling planning constraints + recent applications...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
+    rocketreach_person_lookup: "Looking up verified contact details...",
     run_kyc_check: "Running KYC check...",
     create_deal: "Creating deal...",
     update_deal: "Updating deal...",
@@ -4072,6 +4073,24 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           includeWebSearch: { type: "boolean", description: "Whether to include web search for recent news/activity about the subjects. Default true." },
         },
         required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "rocketreach_person_lookup",
+      description: "Look up a specific person's verified contact details (emails with SMTP validation, phones, LinkedIn) via RocketReach. Searches by person name — optionally narrowed by company name or website domain — then reveals the best-matching profile(s). Reveals cost RocketReach credits, so use this for specific named targets (e.g. directors/PSCs found via Companies House or deep_investigate), not broad discovery. Returns all candidates with employer + title so namesakes can be rejected: only trust a result whose employer matches the target brand, and only treat an email as verified (grade A material) when its smtpValid field is 'valid'.",
+      parameters: {
+        type: "object",
+        properties: {
+          personName: { type: "string", description: "The person's full name, e.g. 'Andrew Wong'." },
+          companyName: { type: "string", description: "Company or brand name to disambiguate namesakes, e.g. 'A. Wong'." },
+          domain: { type: "string", description: "The company's website domain, e.g. 'awong.co.uk'. The strongest disambiguator — prefer this over companyName when known." },
+          maxReveals: { type: "number", description: "How many top candidates to reveal full contact details for (1-3). Default 1. Each reveal costs credits." },
+        },
+        required: ["personName"],
       },
     },
   });
@@ -9761,6 +9780,70 @@ Be thorough — include every unit row you can classify, across all properties i
     } catch (e: any) {
       console.error("[chatbgp] list_decks:", e?.message);
       return { data: { success: false, error: `List failed: ${e?.message}` } };
+    }
+  }
+
+  if (fnName === "rocketreach_person_lookup") {
+    try {
+      const { searchRocketReach, revealProfile, isRocketReachConfigured } = await import("./rocketreach-contacts");
+      if (!isRocketReachConfigured()) return { data: { error: "ROCKETREACH_API_KEY not configured" } };
+      const personName = String(fnArgs.personName || "").trim();
+      if (!personName) return { data: { error: "personName is required" } };
+      const companyName = fnArgs.companyName ? String(fnArgs.companyName).trim() : undefined;
+      const domain = fnArgs.domain ? String(fnArgs.domain).trim() : undefined;
+      const maxReveals = Math.max(1, Math.min(3, Number(fnArgs.maxReveals) || 1));
+
+      let profiles: any[] = await searchRocketReach({ personName, companyName, domain });
+      // Domain/company filters can be too tight for founders whose RocketReach
+      // profile predates the current venture — retry on name alone so the
+      // model can judge the candidates by employer itself.
+      let widened = false;
+      if (profiles.length === 0 && (companyName || domain)) {
+        profiles = await searchRocketReach({ personName });
+        widened = true;
+      }
+      if (profiles.length === 0) {
+        return { data: { personName, totalMatches: 0, note: "No RocketReach profile matched this name. This tier of independent operator is often unindexed — fall back to the company's own website or a warm route." } };
+      }
+
+      const candidates = profiles.slice(0, 10).map((p: any) => ({
+        id: p.id ?? null,
+        name: p.name || [p.first_name, p.last_name].filter(Boolean).join(" "),
+        title: p.current_title || null,
+        employer: p.current_employer || null,
+        location: typeof p.location === "string" ? p.location : (p.location?.city || null),
+        linkedin: p.linkedin_url || null,
+      }));
+
+      const revealed: any[] = [];
+      for (const c of candidates.slice(0, maxReveals)) {
+        if (c.id === null || c.id === undefined) continue;
+        const full: any = await revealProfile(c.id);
+        if (!full) continue;
+        const emails = (full.emails || []).map((e: any) => ({ email: e.email, type: e.type || null, smtpValid: e.smtp_valid || "unknown" }));
+        const phones = (full.phones || []).map((ph: any) => ({ number: ph.number, type: ph.type || null }));
+        revealed.push({
+          id: c.id,
+          name: full.name || c.name,
+          title: full.current_title || c.title,
+          employer: full.current_employer || c.employer,
+          linkedin: full.linkedin_url || c.linkedin,
+          emails,
+          phones,
+          recommendedEmail: full.recommended_professional_email || full.recommended_email || emails[0]?.email || null,
+        });
+      }
+
+      return { data: {
+        personName,
+        totalMatches: profiles.length,
+        widenedToNameOnly: widened || undefined,
+        revealed,
+        otherCandidates: candidates.slice(maxReveals),
+        note: "Only emails with smtpValid='valid' count as verified. Reject any candidate whose employer doesn't line up with the target brand — namesakes are common.",
+      } };
+    } catch (err: any) {
+      return { data: { error: `RocketReach lookup failed: ${err?.message || "unknown"}` } };
     }
   }
 
