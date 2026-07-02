@@ -41,6 +41,7 @@ const KEYS: KeyDef[] = [
 
   // CRM enrichment
   { name: "ROCKETREACH_API_KEY", label: "RocketReach", group: "CRM" },
+  { name: "APOLLO_API_KEY", label: "Apollo.io", group: "CRM" },
   { name: "COMPANIES_HOUSE_API_KEY", label: "Companies House", group: "CRM" },
 
   // Commercial credit / KYB
@@ -48,6 +49,7 @@ const KEYS: KeyDef[] = [
   { name: "EXPERIAN_CLIENT_SECRET", label: "Experian Client Secret", group: "KYC" },
   { name: "EXPERIAN_USERNAME", label: "Experian Username", group: "KYC" },
   { name: "EXPERIAN_PASSWORD", label: "Experian Password", group: "KYC" },
+  { name: "EXPERIAN_ENV", label: "Experian environment — MUST be 'production' for real credit data (defaults to sandbox)", group: "KYC" },
 
   // Scraping / proxy
   { name: "WEBSHARE_PROXY_USERNAME", label: "Webshare proxy username", group: "Scraping" },
@@ -72,6 +74,7 @@ const KEYS: KeyDef[] = [
   // Web search / research
   { name: "PERPLEXITY_API_KEY", label: "Perplexity", group: "Research", fallbacks: ["PERPLEXITY_API", "PERPLEXITY API", "PERPLEXITY"] },
   { name: "EXA_API_KEY", label: "Exa.ai", group: "Research" },
+  { name: "GREEN_STREET_API_TOKEN", label: "Green Street", group: "Research" },
 
   // Geospatial
   { name: "OS_PLACES_API_KEY", label: "OS Places / OS Data Hub", group: "Geospatial", fallbacks: ["OS_API_KEY"] },
