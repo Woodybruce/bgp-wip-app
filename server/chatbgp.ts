@@ -14,7 +14,7 @@ import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage } from 
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
-import { rectifyRows } from "./pptx-rectify";
+import { rectifyRows, fixPptxSchemaViolations } from "./pptx-rectify";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
@@ -2621,6 +2621,33 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           },
         },
         required: ["title", "slides"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_org_chart",
+      description: "Generate an organisation chart as an editable PowerPoint (.pptx): the classic connected-boxes hierarchy tree (boxes joined by lines), one chart per slide. Use whenever the user asks for an org chart, organogram, team structure, reporting lines or role hierarchy — generate_pptx can only do tables, not the tree. Every box is a movable shape, so the user can reshuffle names in PowerPoint.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Chart title (e.g. 'BGP Business Organisation Chart')" },
+          tree: {
+            type: "object",
+            description: "The hierarchy as a nested tree. Each node: { name, role?, support?: string[], children?: node[] }. name = person or 'TBC'; role = function/title; support = additional team names shown under the lead in the same box. Keep total leaf nodes <= 12 for a readable single page.",
+            properties: {
+              name: { type: "string" },
+              role: { type: "string" },
+              support: { type: "array", items: { type: "string" } },
+              children: { type: "array", items: { type: "object" } },
+            },
+            required: ["name"],
+          },
+          notes: { type: "array", items: { type: "string" }, description: "Optional footnotes shown under the chart (e.g. 'names suggested based on skill sets')." },
+        },
+        required: ["title", "tree"],
       },
     },
   });
@@ -7707,7 +7734,7 @@ export async function executeCrmToolRaw(
         }
       }
 
-      const pptxBuffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
+      const pptxBuffer = await fixPptxSchemaViolations(await pptx.write({ outputType: "nodebuffer" }) as Buffer);
       const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
       const uniqueId = crypto.randomBytes(8).toString("hex");
       const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pptx`;
@@ -7725,6 +7752,33 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] PowerPoint generation error:", err?.message);
       return { data: { error: `Failed to generate PowerPoint: ${err?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "generate_org_chart") {
+    try {
+      if (!fnArgs.tree || typeof fnArgs.tree !== "object" || !fnArgs.tree.name) {
+        return { data: { error: "tree is required — a nested { name, role?, support?, children? } hierarchy" } };
+      }
+      const { buildOrgChartPptx } = await import("./org-chart-pptx");
+      const crypto = (await import("crypto")).default;
+      const { saveFile } = await import("./file-storage");
+      const pptxBuffer = await buildOrgChartPptx({ title: String(fnArgs.title || "Organisation Chart"), tree: fnArgs.tree, notes: Array.isArray(fnArgs.notes) ? fnArgs.notes : undefined });
+      const safeName = String(fnArgs.title || "Organisation_Chart").replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const storageFilename = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}.pptx`;
+      await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
+      const downloadUrl = `/api/chat-media/${storageFilename}`;
+      return {
+        data: {
+          success: true, downloadUrl, filename: `${safeName}.pptx`, action: "pptx_generated",
+          downloadMarkdown: `[📊 Download ${safeName}.pptx](${downloadUrl})`,
+          instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the file.",
+        },
+        action: { type: "download", url: downloadUrl, filename: `${safeName}.pptx` },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] org chart generation error:", err?.message);
+      return { data: { error: `Failed to generate org chart: ${err?.message || "Unknown error"}` } };
     }
   }
 
@@ -11778,7 +11832,7 @@ export async function handleCrmToolCall(
         }
       }
 
-      const pptxBuffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
+      const pptxBuffer = await fixPptxSchemaViolations(await pptx.write({ outputType: "nodebuffer" }) as Buffer);
       const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
       const uniqueId = crypto.randomBytes(8).toString("hex");
       const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pptx`;
@@ -11793,6 +11847,30 @@ export async function handleCrmToolCall(
     } catch (err: any) {
       console.error("[chatbgp] PowerPoint generation error:", err?.message);
       return { handled: true, response: { reply: `Failed to generate PowerPoint: ${err?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "generate_org_chart") {
+    try {
+      if (!fnArgs.tree || typeof fnArgs.tree !== "object" || !fnArgs.tree.name) {
+        return { handled: true, response: { reply: "I need the hierarchy as a tree to draw an org chart — tell me who reports to whom." } };
+      }
+      const { buildOrgChartPptx } = await import("./org-chart-pptx");
+      const crypto = (await import("crypto")).default;
+      const { saveFile } = await import("./file-storage");
+      const pptxBuffer = await buildOrgChartPptx({ title: String(fnArgs.title || "Organisation Chart"), tree: fnArgs.tree, notes: Array.isArray(fnArgs.notes) ? fnArgs.notes : undefined });
+      const safeName = String(fnArgs.title || "Organisation_Chart").replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const storageFilename = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}.pptx`;
+      await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
+      const downloadUrl = `/api/chat-media/${storageFilename}`;
+      const downloadLink = `[\u{1F4CA} Download ${safeName}.pptx](${downloadUrl})`;
+      let reply = await summaryHelper({ success: true, downloadUrl, filename: `${safeName}.pptx`, action: "org_chart_generated" });
+      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your organisation chart is ready as an editable PowerPoint.\n\n${downloadLink}`;
+      else if (!reply.includes(downloadUrl)) reply += `\n\n${downloadLink}`;
+      return { handled: true, response: { reply, action: { type: "download", url: downloadUrl, filename: `${safeName}.pptx` } } };
+    } catch (err: any) {
+      console.error("[chatbgp] org chart generation error:", err?.message);
+      return { handled: true, response: { reply: `Failed to generate org chart: ${err?.message || "Unknown error"}` } };
     }
   }
 

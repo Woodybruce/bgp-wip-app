@@ -3315,7 +3315,8 @@ Be concise, professional, and use British English. All document advice should al
           { x: 0.6, y: 6.2, w: 10.0, h: 1.5, fontSize: 32, color: "FFFFFF", fontFace: brandFont, bold: false }
         );
 
-        const pptxBuffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
+        const { fixPptxSchemaViolations } = await import("./pptx-rectify");
+        const pptxBuffer = await fixPptxSchemaViolations(await pptx.write({ outputType: "nodebuffer" }) as Buffer);
         const filename = `${docTitle.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "_")}.pptx`;
         res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
