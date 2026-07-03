@@ -2,4 +2,11 @@
 # poppler_utils gives us `pdfimages` (extracts embedded photos) and
 # `pdftoppm` (rasterises pages) — used by server/pdf-image-extract.ts
 # for property-pathway Stage 8 brochure image sweeps.
-nixPkgs = ["...", "poppler_utils"]
+# chromium is used by the Edozo token refresher (server/edozo-refresh.ts),
+# which headless-logs-in to mint the 24h edozo_jwt. edozo-refresh resolves the
+# binary at runtime; EDOZO_CHROMIUM_PATH can override if the path differs.
+nixPkgs = ["...", "poppler_utils", "chromium"]
+
+[phases.install]
+# Skip Playwright's own browser download — we use the Nix chromium above.
+cmds = ["...", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 true"]

@@ -789,6 +789,30 @@ app.use("/api/branding/assets", express.static(
         }
       }, 60 * 60 * 1000); // Check every hour
 
+      // Edozo token refresh — the API token (edozo_jwt) lasts 24h and there's
+      // no machine credential, so we headless-login to mint a fresh one three
+      // times a day (well inside the 24h window, so one failed run is covered
+      // by the next). Only when username/password are set and no token is
+      // pinned via EDOZO_ACCESS_TOKEN. Also runs once shortly after boot if the
+      // store is empty/stale.
+      (async () => {
+        const { isEdozoRefreshConfigured, refreshEdozoToken } = await import("./edozo-refresh");
+        if (process.env.EDOZO_ACCESS_TOKEN || !isEdozoRefreshConfigured()) return;
+        const { getStoredEdozoTokenExpiry } = await import("./edozo-token-store");
+        const runRefresh = () => refreshEdozoToken().catch(err =>
+          console.error("[edozo-refresh] run failed:", err?.message)
+        );
+        // Warm on boot if we have no comfortably-valid token yet.
+        const exp = await getStoredEdozoTokenExpiry().catch(() => null);
+        if (!exp || exp.getTime() < Date.now() + 2 * 60 * 60 * 1000) {
+          setTimeout(runRefresh, 20 * 1000);
+        }
+        setInterval(() => {
+          const h = new Date().getHours();
+          if (h === 1 || h === 9 || h === 17) runRefresh();
+        }, 60 * 60 * 1000);
+      })();
+
       // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
       // company whose KYC has gone stale (past the firm's recheck_interval_days,
       // default 365) or has an overdue aml_recheck_reminders row, and re-run

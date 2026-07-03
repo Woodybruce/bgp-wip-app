@@ -17,6 +17,7 @@
  * the Auth0 password grant (cached, refreshed on 401).
  */
 import { bngToWgs84, wgs84ToBng, normaliseCategory, type NormalisedUnit } from "./goad-units";
+import { getStoredEdozoToken } from "./edozo-token-store";
 
 const EDOZO_API = "https://api.edozo.com";
 const AUTH0_TOKEN_URL = "https://login.edozo.com/oauth/token";
@@ -25,8 +26,10 @@ const EDOZO_AUDIENCE = "https://api.edozo.com";
 export function isEdozoConfigured(): boolean {
   return Boolean(
     process.env.EDOZO_ACCESS_TOKEN ||
-      (process.env.EDOZO_CLIENT_ID && process.env.EDOZO_CLIENT_SECRET) ||
-      (process.env.EDOZO_CLIENT_ID && process.env.EDOZO_USERNAME && process.env.EDOZO_PASSWORD),
+      // Username/password enables the scheduled headless-login refresher, which
+      // populates the token store the server reads.
+      (process.env.EDOZO_USERNAME && process.env.EDOZO_PASSWORD) ||
+      (process.env.EDOZO_CLIENT_ID && process.env.EDOZO_CLIENT_SECRET),
   );
 }
 
@@ -41,6 +44,10 @@ let cachedToken: { token: string; expires: number } | null = null;
 async function getToken(force = false): Promise<string | null> {
   if (process.env.EDOZO_ACCESS_TOKEN) return process.env.EDOZO_ACCESS_TOKEN.trim();
   if (!force && cachedToken && Date.now() < cachedToken.expires) return cachedToken.token;
+
+  // The scheduled refresher writes the current edozo_jwt here.
+  const stored = await getStoredEdozoToken().catch(() => null);
+  if (stored) return stored;
 
   const clientId = process.env.EDOZO_CLIENT_ID;
   const clientSecret = process.env.EDOZO_CLIENT_SECRET;
