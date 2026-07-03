@@ -3298,6 +3298,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const buildingLayerRef = useRef<L.LayerGroup | null>(null);
   const markerRef = useRef<L.CircleMarker | null>(null);
   const lastBoundsRef = useRef("");
+  const occPlanCacheRef = useRef<Map<string, any[]>>(new Map());
   const loadCounterRef = useRef(0);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -3371,6 +3372,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       center: [51.5014, -0.1419],
       zoom: 17,
       zoomControl: false,
+      preferCanvas: true,
     });
 
     const buildingPane = map.createPane("buildingPane");
@@ -3540,42 +3542,55 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       // street zoom, matching the label-render gate.
       if (map.getZoom() >= 17) {
         try {
-          const opResp = await fetch(`/api/map/occupier-plan?bbox=${bboxParam}`, {
-            credentials: "include",
-            headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
-          });
-          if (opResp.ok) {
-            const fc = await opResp.json();
+          // Client cache keyed by rounded viewport — panning back over a
+          // loaded area re-renders instantly with no network round-trip.
+          const cacheKey = `${bounds.getSouth().toFixed(3)},${bounds.getWest().toFixed(3)},${bounds.getNorth().toFixed(3)},${bounds.getEast().toFixed(3)}`;
+          const cached = occPlanCacheRef.current.get(cacheKey);
+          let feats: any[] | null = cached ?? null;
+          if (!feats) {
+            const opResp = await fetch(`/api/map/occupier-plan?bbox=${bboxParam}`, {
+              credentials: "include",
+              headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+            });
             if (loadCounterRef.current !== thisLoad) return;
-            const feats: any[] = fc?.features || [];
-            if (feats.length > 0) {
-              const geomToRings = (g: any): number[][][] => {
-                if (!g) return [];
-                if (g.type === "Polygon") return [g.coordinates[0]];
-                if (g.type === "MultiPolygon") return g.coordinates.map((p: number[][][]) => p[0]);
-                return [];
-              };
-              const occBuildings: any[] = [];
-              for (const f of feats) {
-                for (const ring of geomToRings(f.geometry)) {
-                  if (!Array.isArray(ring) || ring.length < 3) continue;
-                  const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
-                  const p = f.properties || {};
-                  occBuildings.push({
-                    latLngs,
-                    label: p.name || "",
-                    houseNum: p.streetNum || "",
-                    isVacant: p.classification === "vacant",
-                    areaSqM: polygonAreaSqM(latLngs),
-                    isUnit: true,
-                    _source: "occupier",
-                    _category: p.category || null,
-                  });
-                }
+            if (opResp.ok) {
+              const fc = await opResp.json();
+              feats = fc?.features || [];
+              if (feats && feats.length > 0) {
+                // Cap the cache so a long panning session can't grow it forever.
+                if (occPlanCacheRef.current.size > 60) occPlanCacheRef.current.clear();
+                occPlanCacheRef.current.set(cacheKey, feats);
               }
-              renderBuildings(occBuildings);
-              return;
             }
+          }
+          if (loadCounterRef.current !== thisLoad) return;
+          if (feats && feats.length > 0) {
+            const geomToRings = (g: any): number[][][] => {
+              if (!g) return [];
+              if (g.type === "Polygon") return [g.coordinates[0]];
+              if (g.type === "MultiPolygon") return g.coordinates.map((p: number[][][]) => p[0]);
+              return [];
+            };
+            const occBuildings: any[] = [];
+            for (const f of feats) {
+              for (const ring of geomToRings(f.geometry)) {
+                if (!Array.isArray(ring) || ring.length < 3) continue;
+                const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
+                const p = f.properties || {};
+                occBuildings.push({
+                  latLngs,
+                  label: p.name || "",
+                  houseNum: p.streetNum || "",
+                  isVacant: p.classification === "vacant",
+                  areaSqM: polygonAreaSqM(latLngs),
+                  isUnit: true,
+                  _source: "occupier",
+                  _category: p.category || null,
+                });
+              }
+            }
+            renderBuildings(occBuildings);
+            return;
           }
         } catch {
           // fall through to the OSM/NGD path below

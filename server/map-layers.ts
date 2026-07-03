@@ -654,6 +654,12 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
       if (![s, w, n, e].every(Number.isFinite)) return res.status(400).json({ error: "invalid bbox" });
       const box = { south: s, west: w, north: n, east: e };
 
+      // Serve a recent identical viewport straight from cache — skips the DB
+      // query and any Edozo call. Keyed to ~100m so nearby pans reuse it.
+      const cacheKey = `occplan:${s.toFixed(3)},${w.toFixed(3)},${n.toFixed(3)},${e.toFixed(3)}`;
+      const hit = await getCachedOnly<any>(cacheKey);
+      if (hit) return res.json(hit);
+
       const { queryGoadUnitsByBbox, countGoadUnitsInBbox, upsertGoadUnits } = await import("./goad-units");
       const { fetchEdozoOccupiers, isEdozoConfigured } = await import("./edozo-occupiers");
 
@@ -685,7 +691,11 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
           source: u.source,
         },
       }));
-      res.json({ type: "FeatureCollection", features, meta: { count, source } });
+      const payload = { type: "FeatureCollection", features, meta: { count, source } };
+      // Cache only non-empty results, so an uncovered viewport can still warm
+      // later (e.g. once Edozo credentials are configured).
+      if (features.length > 0) await cached(cacheKey, async () => payload, 12);
+      res.json(payload);
     } catch (err: any) {
       console.error("[map-layers/occupier-plan] error:", err?.message);
       res.status(500).json({ error: err?.message });
