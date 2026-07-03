@@ -331,6 +331,9 @@ export async function registerRoutes(
   const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
   registerIntegrationsStatusRoutes(app);
 
+  const { registerAutoDeployRoutes } = await import("./auto-deploy");
+  registerAutoDeployRoutes(app);
+
   const { registerOSDataRoutes } = await import("./os-data");
   registerOSDataRoutes(app);
 
