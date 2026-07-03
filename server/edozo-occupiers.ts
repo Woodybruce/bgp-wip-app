@@ -25,32 +25,46 @@ const EDOZO_AUDIENCE = "https://api.edozo.com";
 export function isEdozoConfigured(): boolean {
   return Boolean(
     process.env.EDOZO_ACCESS_TOKEN ||
+      (process.env.EDOZO_CLIENT_ID && process.env.EDOZO_CLIENT_SECRET) ||
       (process.env.EDOZO_CLIENT_ID && process.env.EDOZO_USERNAME && process.env.EDOZO_PASSWORD),
   );
 }
 
 let cachedToken: { token: string; expires: number } | null = null;
 
+// Acquire a bearer token. Three modes, in order of preference:
+//   1. EDOZO_ACCESS_TOKEN            — a token pasted in (quick test; expires)
+//   2. client_credentials (M2M)      — EDOZO_CLIENT_ID + EDOZO_CLIENT_SECRET
+//                                       (the durable path; needs an Edozo M2M app)
+//   3. password grant                — EDOZO_CLIENT_ID + EDOZO_USERNAME/PASSWORD
+//                                       (only if Edozo enables it on the client)
 async function getToken(force = false): Promise<string | null> {
   if (process.env.EDOZO_ACCESS_TOKEN) return process.env.EDOZO_ACCESS_TOKEN.trim();
   if (!force && cachedToken && Date.now() < cachedToken.expires) return cachedToken.token;
+
   const clientId = process.env.EDOZO_CLIENT_ID;
+  const clientSecret = process.env.EDOZO_CLIENT_SECRET;
   const username = process.env.EDOZO_USERNAME;
   const password = process.env.EDOZO_PASSWORD;
-  if (!clientId || !username || !password) return null;
+  if (!clientId) return null;
+
+  let body: Record<string, any> | null = null;
+  if (clientSecret && !password) {
+    body = { grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret, audience: EDOZO_AUDIENCE };
+  } else if (username && password) {
+    body = {
+      grant_type: "password", username, password, client_id: clientId,
+      client_secret: clientSecret || undefined, audience: EDOZO_AUDIENCE,
+      scope: "openid profile email get:occupierWfsData list:occupierMap read:occupierMap",
+    };
+  }
+  if (!body) return null;
+
   try {
     const resp = await fetch(AUTH0_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "password",
-        username,
-        password,
-        client_id: clientId,
-        client_secret: process.env.EDOZO_CLIENT_SECRET || undefined,
-        audience: EDOZO_AUDIENCE,
-        scope: "openid profile email get:occupierWfsData list:occupierMap read:occupierMap",
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(15000),
     });
     if (!resp.ok) {
