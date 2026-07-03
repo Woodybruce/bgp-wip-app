@@ -201,7 +201,8 @@ export async function renderWhyBuyDeck(data: WhyBuyDeckData): Promise<Buffer> {
   if (data.contact) s.addText(data.contact, { x: 1, y: 5.2, w: 11.33, h: 0.4, fontFace: SANS, fontSize: 14, color: WHITE, align: "center" });
   s.addText("Editable in PowerPoint   ·   export to PDF for the final", { x: 1, y: 5.85, w: 11.33, h: 0.35, fontFace: SANS, fontSize: 11, color: LIGHT, align: "center", charSpacing: 2 });
 
-  return (await pptx.write({ outputType: "nodebuffer" })) as Buffer;
+  const { fixPptxSchemaViolations } = await import("./pptx-rectify");
+  return fixPptxSchemaViolations((await pptx.write({ outputType: "nodebuffer" })) as Buffer);
 }
 
 // ── Data assembly ───────────────────────────────────────────────────────────
