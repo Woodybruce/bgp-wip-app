@@ -3979,7 +3979,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
     mapRef.current = map;
 
+    // Leaflet measures its container once at init. This page mounts inside a
+    // lazy tab and shares the row with collapsible chrome (sidebar, ChatBGP
+    // rail), so the container often settles at a different width after init —
+    // leaving tiles frozen at the stale size with dead space beside them.
+    // Re-measure on any container resize.
+    const resizeObserver = new ResizeObserver(() => map.invalidateSize());
+    resizeObserver.observe(mapContainerRef.current);
+
     return () => {
+      resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
     };
