@@ -3170,125 +3170,127 @@ async function fetchBuildings(map: L.Map): Promise<any[]> {
 );
 out body;>;out skel qt;`;
 
-  try {
-    const resp = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      body: `data=${encodeURIComponent(query)}`,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    });
-    if (!resp.ok) return [];
-    const data = await resp.json();
+  // Parse Overpass into POI label points + fallback building polygons. Wrapped
+  // with a timeout so a slow OSM server can't hang the render.
+  const runOverpass = async (timeoutMs: number): Promise<{ poiNodes: Array<{ lat: number; lng: number; tags: Record<string, string> }>; buildings: any[] } | null> => {
+    try {
+      const resp = await fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        body: `data=${encodeURIComponent(query)}`,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
 
-    const geometryNodes = new Map<number, [number, number]>();
-    const poiNodes: Array<{ lat: number; lng: number; tags: Record<string, string> }> = [];
+      const geometryNodes = new Map<number, [number, number]>();
+      const poiNodes: Array<{ lat: number; lng: number; tags: Record<string, string> }> = [];
 
-    for (const el of data.elements) {
-      if (el.type === "node") {
-        if (el.lat !== undefined && el.lon !== undefined) {
-          geometryNodes.set(el.id, [el.lon, el.lat]);
-          if (el.tags && (el.tags.shop || el.tags.amenity || el.tags.office || el.tags.name ||
-              el.tags.craft || el.tags.leisure || el.tags.tourism || el.tags.healthcare ||
-              el.tags["addr:housenumber"])) {
-            poiNodes.push({ lat: el.lat, lng: el.lon, tags: el.tags });
+      for (const el of data.elements) {
+        if (el.type === "node") {
+          if (el.lat !== undefined && el.lon !== undefined) {
+            geometryNodes.set(el.id, [el.lon, el.lat]);
+            if (el.tags && (el.tags.shop || el.tags.amenity || el.tags.office || el.tags.name ||
+                el.tags.craft || el.tags.leisure || el.tags.tourism || el.tags.healthcare ||
+                el.tags["addr:housenumber"])) {
+              poiNodes.push({ lat: el.lat, lng: el.lon, tags: el.tags });
+            }
           }
         }
       }
-    }
 
-    const buildingWayIds = new Set<number>();
-    const buildings: any[] = [];
+      const buildings: any[] = [];
 
-    for (const el of data.elements) {
-      if (el.type === "way" && el.tags?.building) {
-        buildingWayIds.add(el.id);
-      }
-    }
+      for (const el of data.elements) {
+        if (el.type !== "way") continue;
+        const tags = el.tags || {};
 
-    for (const el of data.elements) {
-      if (el.type !== "way") continue;
-      const tags = el.tags || {};
+        const isBuilding = tags.building;
+        const isShopWay = !isBuilding && (tags.shop || tags.amenity || tags.craft || tags.office);
 
-      const isBuilding = tags.building;
-      const isShopWay = !isBuilding && (tags.shop || tags.amenity || tags.craft || tags.office);
+        if (!isBuilding && !isShopWay) continue;
 
-      if (!isBuilding && !isShopWay) continue;
+        const coords = (el.nodes || []).map((nid: number) => geometryNodes.get(nid)).filter(Boolean);
+        if (coords.length >= 3) {
+          const latLngs = coords.map((c: [number, number]) => [c[1], c[0]] as [number, number]);
 
-      const coords = (el.nodes || []).map((nid: number) => geometryNodes.get(nid)).filter(Boolean);
-      if (coords.length >= 3) {
-        const latLngs = coords.map((c: [number, number]) => [c[1], c[0]] as [number, number]);
+          let { label, houseNum, isVacant } = getLabelFromTags(tags);
 
-        let { label, houseNum, isVacant } = getLabelFromTags(tags);
+          if (isBuilding && !label && !houseNum) {
+            for (const poi of poiNodes) {
+              if (pointInPolygon(poi.lat, poi.lng, latLngs)) {
+                const poiInfo = getLabelFromTags(poi.tags);
+                if (poiInfo.label || poiInfo.houseNum) {
+                  label = poiInfo.label;
+                  houseNum = houseNum || poiInfo.houseNum;
+                  isVacant = poiInfo.isVacant && !poiInfo.label;
+                  break;
+                }
+              }
+            }
+          }
 
-        if (isBuilding && !label && !houseNum) {
-          for (const poi of poiNodes) {
-            if (pointInPolygon(poi.lat, poi.lng, latLngs)) {
-              const poiInfo = getLabelFromTags(poi.tags);
-              if (poiInfo.label || poiInfo.houseNum) {
-                label = poiInfo.label;
-                houseNum = houseNum || poiInfo.houseNum;
-                isVacant = poiInfo.isVacant && !poiInfo.label;
+          if (!houseNum) {
+            for (const poi of poiNodes) {
+              if (poi.tags["addr:housenumber"] && pointInPolygon(poi.lat, poi.lng, latLngs)) {
+                houseNum = poi.tags["addr:housenumber"];
                 break;
               }
             }
           }
-        }
 
-        if (!houseNum) {
-          for (const poi of poiNodes) {
-            if (poi.tags["addr:housenumber"] && pointInPolygon(poi.lat, poi.lng, latLngs)) {
-              houseNum = poi.tags["addr:housenumber"];
-              break;
-            }
+          const areaSqM = polygonAreaSqM(latLngs);
+
+          buildings.push({
+            latLngs,
+            label,
+            houseNum,
+            isVacant,
+            areaSqM,
+            isUnit: isShopWay && !isBuilding,
+          });
+        }
+      }
+
+      return { poiNodes, buildings };
+    } catch (err) {
+      console.error("[edozo] Overpass error:", err);
+      return null;
+    }
+  };
+
+  // NGD (our own OS proxy) is the fast, authoritative polygon source. Await it
+  // first: when it has polygons we render from those and give Overpass only a
+  // short window to supply POI labels — so a slow OSM server never gates the
+  // render. Only when NGD is empty do we wait on Overpass for fallback polygons.
+  const ngd = await ngdPromise;
+  if (ngd.length > 0) {
+    const osm = await runOverpass(3000);
+    const poiNodes = osm?.poiNodes || [];
+    for (const nb of ngd) {
+      let label = "";
+      let houseNum = "";
+      let isVacant = false;
+      for (const poi of poiNodes) {
+        if (pointInPolygon(poi.lat, poi.lng, nb.latLngs)) {
+          const info = getLabelFromTags(poi.tags);
+          if (info.label || info.houseNum) {
+            label = label || info.label;
+            houseNum = houseNum || info.houseNum;
+            isVacant = info.isVacant && !info.label;
+            if (label && houseNum) break;
           }
         }
-
-        const areaSqM = polygonAreaSqM(latLngs);
-
-        buildings.push({
-          latLngs,
-          label,
-          houseNum,
-          isVacant,
-          areaSqM,
-          isUnit: isShopWay && !isBuilding,
-        });
       }
+      nb.label = label;
+      nb.houseNum = houseNum;
+      nb.isVacant = isVacant;
     }
-
-    // Wait for NGD (fired in parallel at the top of the function). If NGD
-    // returned polygons, use those instead of OSM — NGD is subdivided and
-    // authoritative — but keep OSM's POIs to hydrate labels for each polygon.
-    const ngd = await ngdPromise;
-    if (ngd.length > 0) {
-      for (const nb of ngd) {
-        // Label / house-number fallback from OSM POIs inside this polygon.
-        let label = "";
-        let houseNum = "";
-        let isVacant = false;
-        for (const poi of poiNodes) {
-          if (pointInPolygon(poi.lat, poi.lng, nb.latLngs)) {
-            const info = getLabelFromTags(poi.tags);
-            if (info.label || info.houseNum) {
-              label = label || info.label;
-              houseNum = houseNum || info.houseNum;
-              isVacant = info.isVacant && !info.label;
-              if (label && houseNum) break;
-            }
-          }
-        }
-        nb.label = label;
-        nb.houseNum = houseNum;
-        nb.isVacant = isVacant;
-      }
-      return ngd;
-    }
-
-    return buildings;
-  } catch (err) {
-    console.error("[edozo] Overpass error:", err);
-    // If Overpass failed, still try to return whatever NGD gave us
-    try { return await ngdPromise; } catch { return []; }
+    return ngd;
   }
+
+  const osm = await runOverpass(15000);
+  return osm?.buildings || [];
 }
 
 export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void } = {}) {
