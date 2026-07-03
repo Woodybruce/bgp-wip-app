@@ -743,6 +743,89 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
     }
   });
 
+  // ─── Retail units for the map's Retail Context layer, from goad_units ─────
+  // Serves the harvested/imported occupier units (all licensed areas) in the
+  // exact GeoJSON shape the client's Retail Context renderer expects, so the
+  // one good layer covers everywhere instead of the old static West-End file.
+  // MultiPolygons are flattened to their largest outer ring (the renderer and
+  // its label code assume geometry.coordinates[0] is a single ring).
+  app.get("/api/map/retail-units", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const bbox = String(req.query.bbox || "").trim();
+      if (!bbox) return res.status(400).json({ type: "FeatureCollection", features: [] });
+      const [s, w, n, e] = bbox.split(",").map(parseFloat);
+      if (![s, w, n, e].every(Number.isFinite)) return res.status(400).json({ error: "invalid bbox" });
+
+      const { queryGoadUnitsByBbox } = await import("./goad-units");
+      const units = await queryGoadUnitsByBbox({ south: s, west: w, north: n, east: e });
+
+      const ringArea = (ring: number[][]): number => {
+        // Shoelace in m² using an equirectangular approximation at the ring's latitude.
+        if (!ring || ring.length < 3) return 0;
+        const latAvg = ring.reduce((a, c) => a + c[1], 0) / ring.length;
+        const mPerLng = 111320 * Math.cos((latAvg * Math.PI) / 180);
+        const mPerLat = 111320;
+        let area = 0;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          area += (ring[j][0] * mPerLng) * (ring[i][1] * mPerLat) - (ring[i][0] * mPerLng) * (ring[j][1] * mPerLat);
+        }
+        return Math.abs(area / 2);
+      };
+      const largestOuterRing = (geom: any): number[][] | null => {
+        if (!geom) return null;
+        if (geom.type === "Polygon") return geom.coordinates?.[0] || null;
+        if (geom.type === "MultiPolygon") {
+          let best: number[][] | null = null, bestA = -1;
+          for (const poly of geom.coordinates || []) {
+            const r = poly?.[0];
+            if (!r) continue;
+            const a = ringArea(r);
+            if (a > bestA) { bestA = a; best = r; }
+          }
+          return best;
+        }
+        return null;
+      };
+
+      const features: any[] = [];
+      for (const u of units) {
+        const ring = largestOuterRing(u.geometry);
+        if (!ring || ring.length < 3) continue;
+        let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+        for (const [lng, lat] of ring) {
+          if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
+          if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+        }
+        const name = u.occupierName || "";
+        features.push({
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [ring] },
+          properties: {
+            Fascia: name,
+            FasciaMas: name,
+            Activity: name,
+            PrimaryAc: name,
+            Category: u.categoryGroup || "other",
+            _group: u.categoryGroup || "other",
+            StreetNum: u.streetNum || "",
+            Area_ft2: Math.round(ringArea(ring) * 10.7639),
+            Subclass: "Retailgf",
+            Centroid_X: (minLng + maxLng) / 2,
+            Centroid_Y: (minLat + maxLat) / 2,
+            GoadNumber: u.toid || "",
+            _classification: u.classification || "",
+            _source: u.source,
+          },
+        });
+      }
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.json({ type: "FeatureCollection", features });
+    } catch (err: any) {
+      console.error("[map-layers/retail-units] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   // ─── Admin: bulk-load occupier units into goad_units ─────────────────────
   // One-off ingest for a harvested/imported occupier snapshot. Gated by a
   // shared secret (ADMIN_LOAD_SECRET) rather than a user session so it can be
