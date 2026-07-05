@@ -2,6 +2,12 @@
 builder = "nixpacks"
 buildCommand = "npm run build"
 
+# Fallback if Nix chromium won't launch under Playwright for the Edozo token
+# refresher: switch to the Docker build with Chromium baked in. Comment out the
+# three lines above and uncomment these two:
+#   builder = "dockerfile"
+#   dockerfilePath = "Dockerfile.playwright"
+
 [deploy]
 startCommand = "npm start"
 healthcheckPath = "/api/ping"
